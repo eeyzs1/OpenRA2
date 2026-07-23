@@ -1,21 +1,22 @@
 // Game 的主菜单与遭遇战设置界面（RA2 风格复刻）
+// 共享 UI 组件（drawTextM/textW/ra2Button/drawMenuBackdrop）供 game_settings.cpp 复用
 #include "game/game.h"
 #include "game/campaign.h"
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
 #include <ctime>
 
-static void drawTextM(Font f, const char* s, int x, int y, int size, Color c) {
+void drawTextM(Font f, const char* s, int x, int y, int size, Color c) {
     DrawTextEx(f, s, {(float)x, (float)y}, (float)size, 1, c);
 }
 
-static int textW(Font f, const char* s, int size) {
+int textW(Font f, const char* s, int size) {
     return (int)MeasureTextEx(f, s, (float)size, 1).x;
 }
 
 // RA2 式金属按钮：渐变底 + 顶部高光 + 金框，悬停泛红
-static bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size = 20,
-                      bool enabled = true, bool danger = false) {
+bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size,
+               bool enabled, bool danger) {
     bool hover = CheckCollisionPointRec(m, r) && enabled;
     Color top = enabled ? (hover ? Color{96, 44, 40, 255} : Color{58, 56, 60, 255}) : Color{34, 34, 38, 255};
     Color bot = enabled ? (hover ? Color{64, 24, 22, 255} : Color{34, 32, 36, 255}) : Color{22, 22, 26, 255};
@@ -38,7 +39,7 @@ static bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const cha
 }
 
 // 菜单通用底板：深色 + 红色顶栏 + 网格暗纹
-static void drawMenuBackdrop(Font font, const char* title) {
+void drawMenuBackdrop(Font font, const char* title) {
     ClearBackground(Color{12, 13, 17, 255});
     for (int i = 0; i < 30; i++)
         DrawLine(0, i * 30, SCREEN_W, i * 30 - 220, Color{18, 19, 25, 255});
@@ -57,28 +58,32 @@ void Game::drawMainMenu() {
     DrawRectangleGradientV(0, SCREEN_H - 220, SCREEN_W, 220, Color{10, 11, 15, 0}, Color{70, 16, 12, 120});
 
     // 标题（RA2 式：黑色投影 + 红色主体 + 金色副标）
-    const char* title = "共和国之辉";
+    const char* title = TR(S::GameTitle);
     int cx = SCREEN_W / 2;
     drawTextM(font, title, cx - textW(font, title, 84) / 2 + 5, 145, 84, Color{0, 0, 0, 255});
     drawTextM(font, title, cx - textW(font, title, 84) / 2, 140, 84, Color{216, 48, 40, 255});
     DrawRectangle(cx - 240, 258, 480, 3, Color{168, 40, 32, 255});
-    const char* sub = "COMMAND & CONQUER · OPENRA2 像素复刻";
+    const char* sub = TR(S::GameSub);
     drawTextM(font, sub, cx - textW(font, sub, 18) / 2, 278, 18, Color{196, 170, 110, 255});
 
     // 左侧竖排大按钮（RA2 主菜单布局）
     Vector2 m = mousePos();
     bool pr = mPressed(MOUSE_LEFT_BUTTON);
     int bx = 120, bw = 330, bh = 58, by = 360, gap = 18;
-    if (ra2Button(font, m, pr, {(float)bx, (float)by, (float)bw, (float)bh}, "遭遇战", 24)) phase = Phase::Setup;
-    if (ra2Button(font, m, pr, {(float)bx, (float)(by + (bh + gap)), (float)bw, (float)bh}, "战役模式", 24))
+    if (ra2Button(font, m, pr, {(float)bx, (float)by, (float)bw, (float)bh}, TR(S::Skirmish), 24)) phase = Phase::Setup;
+    if (ra2Button(font, m, pr, {(float)bx, (float)(by + (bh + gap)), (float)bw, (float)bh}, TR(S::Campaign), 24))
         phase = Phase::MissionSelect;
-    if (ra2Button(font, m, pr, {(float)bx, (float)(by + 2 * (bh + gap)), (float)bw, (float)bh}, "退出游戏", 24,
+    if (ra2Button(font, m, pr, {(float)bx, (float)(by + 2 * (bh + gap)), (float)bw, (float)bh}, TR(S::Settings), 24)) {
+        settingsFromGame = false;
+        phase = Phase::Settings;
+    }
+    if (ra2Button(font, m, pr, {(float)bx, (float)(by + 3 * (bh + gap)), (float)bw, (float)bh}, TR(S::ExitGame), 24,
                   true, true)) {
         CloseWindow();
         exit(0);
     }
 
-    const char* tip = "程序生成像素素材 · 盟军 / 苏联 / 中国";
+    const char* tip = TR(S::MainTip);
     drawTextM(font, tip, cx - textW(font, tip, 14) / 2, SCREEN_H - 46, 14, Color{110, 112, 120, 255});
 }
 
@@ -96,9 +101,34 @@ void Game::debugMenuShot(const char* file, bool setup) {
     UnloadImage(img);
 }
 
+// 按像素宽度贪心换行绘制（中文按字、英文按词），返回行数
+static int drawWrapped(Font f, const char* s, int x, int y, int maxW, int size, Color c, int maxLines) {
+    int lines = 0;
+    std::string cur;
+    auto flush = [&]() {
+        if (!cur.empty() && lines < maxLines) { drawTextM(f, cur.c_str(), x, y + lines * (size + 2), size, c); lines++; }
+        cur.clear();
+    };
+    const char* p = s;
+    while (*p && lines < maxLines) {
+        std::string word;
+        if ((unsigned char)*p < 0x80) { // ASCII 词（保留尾随空格）
+            while (*p && (unsigned char)*p < 0x80 && *p != ' ') word += *p++;
+            if (*p == ' ') word += *p++;
+        } else { // 单个 UTF-8 多字节字符
+            int n = (*p & 0xE0) == 0xC0 ? 2 : (*p & 0xF0) == 0xE0 ? 3 : (*p & 0xF8) == 0xF0 ? 4 : 1;
+            while (n-- > 0 && *p) word += *p++;
+        }
+        if (!cur.empty() && textW(f, (cur + word).c_str(), size) > maxW) flush();
+        cur += word;
+    }
+    flush();
+    return lines;
+}
+
 // ===================== 战役选择 =====================
 void Game::drawMissionSelect() {
-    drawMenuBackdrop(font, "战役模式");
+    drawMenuBackdrop(font, TR(S::Campaign));
     int cx = SCREEN_W / 2;
     Vector2 m = mousePos();
 
@@ -116,14 +146,14 @@ void Game::drawMissionSelect() {
                                hover ? Color{34, 24, 20, 255} : Color{20, 20, 26, 255});
         DrawRectangleLinesEx(r, 2, hover ? Color{255, 200, 90, 255} : Color{120, 100, 60, 255});
         int rx = (int)r.x, ry = (int)r.y;
-        drawTextM(font, TextFormat("任务 %d", i + 1), rx + 16, ry + 12, 14, Color{150, 142, 130, 255});
-        drawTextM(font, md.name, rx + 16, ry + 34, 26, Color{255, 210, 100, 255});
+        drawTextM(font, TextFormat(TR(S::MissionN), i + 1), rx + 16, ry + 12, 14, Color{150, 142, 130, 255});
+        drawTextM(font, missionName(i), rx + 16, ry + 34, 26, Color{255, 210, 100, 255});
         DrawRectangle(rx + 16, ry + 72, cardW - 32, 1, Color{90, 70, 50, 255});
-        drawTextM(font, md.brief, rx + 16, ry + 84, 15, Color{196, 194, 200, 255});
-        drawTextM(font, md.objective == 1 ? "目标：坚守十分钟" : "目标：歼灭所有敌军",
-                  rx + 16, ry + 116, 15, Color{130, 200, 140, 255});
+        int blines = drawWrapped(font, missionBrief(i), rx + 16, ry + 80, cardW - 32, 15, Color{196, 194, 200, 255}, 3);
+        drawTextM(font, md.objective == 1 ? TR(S::ObjSurvive) : TR(S::ObjEliminate),
+                  rx + 16, ry + 84 + blines * 17, 15, Color{130, 200, 140, 255});
         if (hover) {
-            drawTextM(font, "点击进入", rx + 16, ry + cardH - 34, 16, Color{255, 226, 150, 255});
+            drawTextM(font, TR(S::ClickEnter), rx + 16, ry + cardH - 34, 16, Color{255, 226, 150, 255});
             if (mPressed(MOUSE_LEFT_BUTTON)) {
                 g_sfx.play(Sfx::Click, 0.6f);
                 newCampaignGame(i);
@@ -132,7 +162,7 @@ void Game::drawMissionSelect() {
         }
     }
 
-    if (ra2Button(font, m, mPressed(MOUSE_LEFT_BUTTON), {(float)cx - 110, (float)y0 + cardH + 70, 220, 48}, "返回", 20))
+    if (ra2Button(font, m, mPressed(MOUSE_LEFT_BUTTON), {(float)cx - 110, (float)y0 + cardH + 70, 220, 48}, TR(S::Back), 20))
         phase = Phase::MainMenu;
 }
 
@@ -174,7 +204,7 @@ void Game::refreshMapPreview() {
 
 // ===================== 遭遇战设置（RA2 布局） =====================
 void Game::drawSetup() {
-    drawMenuBackdrop(font, "遭遇战");
+    drawMenuBackdrop(font, TR(S::Skirmish));
     Vector2 m = mousePos();
     bool pr = mPressed(MOUSE_LEFT_BUTTON);
     if (previewDirty) refreshMapPreview();
@@ -191,7 +221,7 @@ void Game::drawSetup() {
     if (previewTex.id > 0) DrawTexture(previewTex, ix, iy, WHITE);
     DrawRectangleLinesEx({(float)ix, (float)iy, 340, 340}, 2, Color{150, 130, 80, 255});
     // 换一张
-    if (ra2Button(font, m, pr, {(float)ix, (float)(iy + 342), 166, 36}, "更换一张", 18)) {
+    if (ra2Button(font, m, pr, {(float)ix, (float)(iy + 342), 166, 36}, TR(S::ChangeMap), 18)) {
         previewSeed = (uint64_t)time(nullptr) * 2654435761u + 97;
         previewDirty = true;
     }
@@ -206,16 +236,16 @@ void Game::drawSetup() {
         return hover && pr;
     };
     static const int sizes[] = {64, 96, 128};
-    static const char* sizeNames[] = {"小 64x64", "中 96x96", "大 128x128"};
+    const S sizeNames[] = {S::SizeS, S::SizeM, S::SizeL};
     int si = 0;
     while (si < 3 && sizes[si] != cfgMapSize) si++;
-    if (optRow(iy + 386, "地图尺寸", sizeNames[si])) {
+    if (optRow(iy + 386, TR(S::MapSize), TR(sizeNames[si]))) {
         cfgMapSize = sizes[(si + 1) % 3];
         if (cfgAI > maxAI) cfgAI = maxAI;
         previewDirty = true;
     }
-    static const char* typeNames[] = {"大陆", "岛屿", "湖泊"};
-    if (optRow(iy + 428, "地图类型", typeNames[cfgMapType])) {
+    const S typeNames[] = {S::MapContinent, S::MapIslands, S::MapLake};
+    if (optRow(iy + 428, TR(S::MapType), TR(typeNames[cfgMapType]))) {
         cfgMapType = (cfgMapType + 1) % 3;
         previewDirty = true;
     }
@@ -227,9 +257,9 @@ void Game::drawSetup() {
     // 表头
     int rowH = 48;
     int nameX = sx + 24, colorX = sx + 330, factX = sx + 520, delX = sx + sw - 96;
-    drawTextM(font, "玩家", nameX, sy + 12, 17, Color{150, 142, 130, 255});
-    drawTextM(font, "颜色", colorX, sy + 12, 17, Color{150, 142, 130, 255});
-    drawTextM(font, "阵营", factX, sy + 12, 17, Color{150, 142, 130, 255});
+    drawTextM(font, TR(S::Player), nameX, sy + 12, 17, Color{150, 142, 130, 255});
+    drawTextM(font, TR(S::Color), colorX, sy + 12, 17, Color{150, 142, 130, 255});
+    drawTextM(font, TR(S::Faction), factX, sy + 12, 17, Color{150, 142, 130, 255});
     int slotY = sy + 40;
     // 槽位行绘制：返回是否发生变更（需要刷新预览的出生点颜色）
     auto slotRow = [&](int idx, const char* name, int& color, int& faction, bool isLocal) {
@@ -245,31 +275,30 @@ void Game::drawSetup() {
         DrawRectangleLinesEx(cr, 2, chover ? WHITE : Color{60, 58, 64, 255});
         if (chover && pr) { color = (color + 1) % MAX_PLAYERS; g_sfx.play(Sfx::Click, 0.5f); }
         // 阵营按钮
-        static const char* fnames[] = {"盟军", "苏联", "中国", "随机"};
         Rectangle fr{(float)factX, (float)y + 6, 170, rowH - 16};
         bool fhover = CheckCollisionPointRec(m, fr);
         DrawRectangleRec(fr, fhover ? Color{56, 50, 44, 255} : Color{38, 36, 42, 255});
         DrawRectangleLinesEx(fr, 1, fhover ? Color{255, 200, 90, 255} : Color{96, 88, 70, 255});
-        const char* fn = fnames[faction >= 3 ? 3 : faction];
+        const char* fn = faction >= 3 ? TR(S::Random) : factName((Faction)faction);
         drawTextM(font, fn, (int)fr.x + 85 - textW(font, fn, 17) / 2, y + 13, 17, Color{230, 216, 170, 255});
         if (fhover && pr) { faction = (faction + 1) % 4; g_sfx.play(Sfx::Click, 0.5f); }
         // AI 移除按钮
         if (!isLocal) {
             Rectangle dr{(float)delX, (float)y + 8, 72, rowH - 20};
-            if (ra2Button(font, m, pr, dr, "移除", 15, true, true)) {
+            if (ra2Button(font, m, pr, dr, TR(S::Remove), 15, true, true)) {
                 for (int i = idx - 1; i < cfgAI - 1; i++) { aiColor[i] = aiColor[i + 1]; aiFaction[i] = aiFaction[i + 1]; }
                 cfgAI--;
                 previewDirty = true;
             }
         }
     };
-    slotRow(0, "指挥官（你）", cfgColor, cfgFaction, true);
+    slotRow(0, TR(S::CommanderYou), cfgColor, cfgFaction, true);
     for (int i = 0; i < cfgAI; i++)
-        slotRow(i + 1, TextFormat("电脑 %d", i + 1), aiColor[i], aiFaction[i], false);
+        slotRow(i + 1, TextFormat(TR(S::ComputerN), i + 1), aiColor[i], aiFaction[i], false);
     // 添加电脑
     if (cfgAI < maxAI) {
         int y = slotY + (cfgAI + 1) * rowH + 6;
-        if (ra2Button(font, m, pr, {(float)nameX, (float)y, 200, 40}, "+ 添加电脑", 18)) {
+        if (ra2Button(font, m, pr, {(float)nameX, (float)y, 200, 40}, TR(S::AddComputer), 18)) {
             aiColor[cfgAI] = (cfgAI + 1) % MAX_PLAYERS;
             aiFaction[cfgAI] = 3;
             cfgAI++;
@@ -292,37 +321,38 @@ void Game::drawSetup() {
         return hover && pr;
     };
     static const int monies[] = {5000, 10000, 20000, 50000};
-    if (optBtn(80, "初始资金", TextFormat("%d", cfgMoney), 130)) {
+    if (optBtn(80, TR(S::StartMoney), TextFormat("%d", cfgMoney), 130)) {
         int i = 0;
         while (i < 4 && monies[i] != cfgMoney) i++;
         cfgMoney = monies[(i + 1) % 4];
         g_sfx.play(Sfx::Click, 0.5f);
     }
-    static const char* speedNames[] = {"慢", "普通", "快"};
-    if (optBtn(420, "游戏速度", speedNames[gameSpeed], 110)) {
+    const S speedNames[] = {S::SpeedSlow, S::SpeedNormal, S::SpeedFast};
+    if (optBtn(420, TR(S::GameSpeed), TR(speedNames[gameSpeed]), 110)) {
         gameSpeed = (gameSpeed + 1) % 3;
         g_sfx.play(Sfx::Click, 0.5f);
     }
     // 音量：热更新立即生效（音效+音乐），无需重启
     static const int vols[] = {0, 25, 50, 75, 100};
-    if (optBtn(660, "音量", TextFormat("%d", vols[cfgVolume]), 70)) {
+    if (optBtn(660, TR(S::Volume), TextFormat("%d", vols[cfgVolume]), 70)) {
         cfgVolume = (cfgVolume + 1) % 5;
         g_sfx.setMasterVol(vols[cfgVolume] / 100.0f);
         g_sfx.play(Sfx::Click, 0.5f);
+        saveSettings();
     }
-    if (optBtn(830, "补给箱", cfgCrates ? "开" : "关", 70)) {
+    if (optBtn(830, TR(S::Crates), TR(cfgCrates ? S::On : S::Off), 70)) {
         cfgCrates = !cfgCrates;
         g_sfx.play(Sfx::Click, 0.5f);
     }
-    if (optBtn(1000, "AI结盟", cfgAlliance ? "开" : "关", 70)) {
+    if (optBtn(1000, TR(S::AIAlliance), TR(cfgAlliance ? S::On : S::Off), 70)) {
         cfgAlliance = !cfgAlliance;
         g_sfx.play(Sfx::Click, 0.5f);
     }
 
     // ---------- 底部：开始游戏 / 返回 ----------
     int by = 700;
-    if (ra2Button(font, m, pr, {(float)(SCREEN_W / 2 - 330), (float)by, 320, 62}, "开始游戏", 28))
+    if (ra2Button(font, m, pr, {(float)(SCREEN_W / 2 - 330), (float)by, 320, 62}, TR(S::StartGame), 28))
         newGame(previewSeed); // 用预览的同一张图开局：所见即所玩
-    if (ra2Button(font, m, pr, {(float)(SCREEN_W / 2 + 30), (float)by, 200, 62}, "返回", 24))
+    if (ra2Button(font, m, pr, {(float)(SCREEN_W / 2 + 30), (float)by, 200, 62}, TR(S::Back), 24))
         phase = Phase::MainMenu;
 }

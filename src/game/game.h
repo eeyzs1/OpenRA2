@@ -1,6 +1,7 @@
 #pragma once
 #include "game/world.h"
 #include "game/ai.h"
+#include "game/lang.h"
 #include "raylib.h"
 #include <vector>
 #include <deque>
@@ -10,7 +11,15 @@ constexpr int SCREEN_W = 1440;
 constexpr int SCREEN_H = 810;
 
 // 游戏阶段
-enum class Phase { MainMenu, Setup, MissionSelect, InGame };
+enum class Phase { MainMenu, Setup, MissionSelect, Settings, InGame };
+
+// 可重绑定按键动作（设置页修改，settings.ini 持久化，默认值为 RA2 原作键位）
+enum KeyAction : int {
+    KA_Stop = 0, KA_Unload, KA_Deploy, KA_Scatter, KA_Guard, KA_SameType,
+    KA_Music, KA_ViewBase, KA_Pause, KA_Rally, KA_Sell,
+    KA_QuickSave, KA_QuickLoad, KA_SpeedUp, KA_SpeedDown,
+    KA_COUNT
+};
 
 class Game {
 public:
@@ -45,6 +54,23 @@ private:
     bool cfgCrates = true;   // 随机补给箱
     bool cfgAlliance = false; // AI 互相结盟
     int cfgVolume = 4;       // 音量档位 0..4（0/25/50/75/100%）
+
+    // ---- 应用设置（settings.ini 持久化，改动即保存即时生效，无需重启）----
+    int cfgLang = 0;        // 界面语言：0 中文 1 English
+    int cfgWindowMode = 0;  // 显示模式：0 无边框全屏 1 窗口
+    int cfgResIdx = 1;      // 窗口分辨率档位（RES_LIST 下标，默认 1440x810）
+    bool borderlessActive = false; // 当前窗口实际状态（applyDisplay 幂等判断）
+    bool displayDirty = false;     // 显示模式/分辨率待应用（帧首执行，避免帧中改窗口）
+    int keyBind[KA_COUNT] = {};    // 动作 → raylib 键码
+    void loadSettings();      // 启动时读取 settings.ini（缺省则保持默认值）
+    void saveSettings() const; // 任何设置变更后落盘
+    void applyDisplay();      // 应用显示模式与窗口分辨率（热切换）
+    void resetKeyBinds();     // 恢复 RA2 默认键位
+    static const int RES_LIST[4][2]; // 可选窗口分辨率（16:9）
+
+    // 设置页状态
+    bool settingsFromGame = false; // 入口：false 主菜单 / true 局内菜单（返回时恢复 showMenu）
+    int rebinding = -1;            // >=0 正在为该 KeyAction 等待新按键
 
     // 遭遇战设置界面的地图预览
     Map previewMap;
@@ -138,6 +164,8 @@ private:
     void drawMainMenu();
     void drawSetup();
     void drawMissionSelect();
+    void drawSettings();     // 设置页（语言/显示/音量/按键）
+    int pollAnyKey();        // 重绑定捕获：真实 GetKeyPressed 或脚本注入
     void refreshMapPreview(); // 设置界面地图缩略图重生成
 
     // 坐标
@@ -177,3 +205,10 @@ private:
     std::vector<BldType> tabBuildings() const;
     std::vector<UnitType> tabUnits() const;
 };
+
+// 菜单共享 UI 组件（game_menu.cpp 实现，game_settings.cpp 复用）
+void drawTextM(Font f, const char* s, int x, int y, int size, Color c);
+int textW(Font f, const char* s, int size);
+bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size = 20,
+               bool enabled = true, bool danger = false);
+void drawMenuBackdrop(Font font, const char* title);

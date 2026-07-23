@@ -9,17 +9,20 @@
 // ===================== 初始化 =====================
 void Game::init(bool windowed) {
     SetConfigFlags(FLAG_WINDOW_HIGHDPI); // DPI 感知：帧缓冲=物理像素，输入仍为逻辑坐标
+    loadSettings(); // settings.ini：语言/显示模式/分辨率/音量/键位（文件缺失则全默认）
     InitWindow(SCREEN_W, SCREEN_H, "OpenRA2 - 共和国之辉 复刻");
-    if (!windowed) {
-        // 无边框全屏：窗口=桌面分辨率，逻辑画布 letterbox 缩放。
-        // 任何显示器（含低分屏/高DPI缩放）都不会出现按钮落在屏幕外的问题。
-        ToggleBorderlessWindowed();
-    }
+    if (windowed) cfgWindowMode = 1; // 调试参数：强制窗口模式
+    // 显示模式：无边框全屏（窗口=桌面分辨率，逻辑画布 letterbox 缩放，
+    // 任何显示器含低分屏/高DPI缩放都不会出现按钮落在屏幕外）或指定分辨率窗口
+    if (cfgWindowMode == 0) { ToggleBorderlessWindowed(); borderlessActive = true; }
+    else SetWindowSize(RES_LIST[cfgResIdx][0], RES_LIST[cfgResIdx][1]);
     SetTargetFPS(60);
     loadFont();
     g_sprites.init();
     g_sfx.init();
     g_sfx.initBgm();
+    static const int vols[] = {0, 25, 50, 75, 100};
+    g_sfx.setMasterVol(vols[cfgVolume] / 100.0f); // 持久化音量生效
 
     // 逻辑分辨率离屏缓冲：像素风点对点放大，高分屏不模糊
     canvas = LoadRenderTexture(SCREEN_W, SCREEN_H);
@@ -76,7 +79,7 @@ void Game::newGame(uint64_t seed) {
             camY = (float)sy - SCREEN_H / 2.0f;
             break;
         }
-    message("找到基地车，双击或按 D 展开！");
+    message(TextFormat(TR(S::MsgFindMCVFmt), keyName(keyBind[KA_Deploy])));
     phase = Phase::InGame;
 }
 
@@ -112,7 +115,7 @@ void Game::newCampaignGame(int mission) {
             camY = (float)sy - SCREEN_H / 2.0f;
             break;
         }
-    message(md.brief);
+    message(missionBrief(mission));
     phase = Phase::InGame;
 }
 
@@ -153,7 +156,7 @@ void Game::spawnCampaignWave() {
     }
     if (!spawned.empty()) {
         world.orderMove(spawned, px, py, true);
-        world.eva(0, "警告：敌军增援抵达战场");
+        world.eva(0, TR(S::EvaWaveIncoming));
     }
 }
 
@@ -225,28 +228,11 @@ bool Game::loadGameFile(const char* path) {
 
 
 void Game::loadFont() {
-    // 自动收集全部界面字符：数据表名称 + 界面文本 + ASCII，避免漏字显示为 '?'
+    // 自动收集双语全部界面字符：字符串表 + 单位/建筑/超武/阵营/战役旁表 + ASCII，
+    // 双语字模全量预载，语言热切换无需重启、任何语言下不缺字显示 '?'
     std::string all;
-    for (int i = 0; i < (int)UnitType::COUNT; i++) all += unitDef((UnitType)i).name;
-    for (int i = 0; i < (int)BldType::COUNT; i++) all += bldDef((BldType)i).name;
-    for (int i = 0; i < (int)SWType::COUNT; i++) all += swDef((SWType)i).name;
-    for (int i = 0; i < 3; i++) all += factionName((Faction)i);
+    appendAllFontText(all);
     for (int c = 32; c < 127; c++) all += (char)c;
-    all += "建筑防御步兵车辆资金电低电力就绪暂停胜利失败游戏菜单再来一局继续游戏重新开始退出游戏"
-           "左键选择框选右键移动攻击展开停止回基地卖设集结点已出售无法在此放置工程师前往占领建造厂已部署"
-           "找到基地车双击或按提示无法建造缺前置建筑或生产队列忙条件取消已选单位新目标警告维修"
-           "主要选项遭遇战颜色金钱速度小地图无足够位置确认返回合计摧毁敌军所取得指挥中心被占领等待剩余秒正在加载中"
-           "共和国之辉像素复刻电脑数量初始地图尺寸选择开始中小大指挥官主随机"
-           "程序生成素材玩家阵值·切换需充点击已发射"
-           "侦测到敌方核弹闪电风暴接近中遭受攻击单位损失被摧毁占领电力减缓"
-           "警戒模式按视野索敌散布同类编队设定音乐开关"
-           "载员登船卸载完成靠岸地点键"
-           "更换一张添加移除你慢普通快进入（）"
-           "保存读取进度音量补给箱互相结盟档"
-           "战役任务简报边境冲突近海防御决胜时刻坚守十分钟歼灭所增援抵达战场类型陆岛屿湖泊第波";
-    // 战役任务表文本与 HUD 动态文本：全部字模必须收录，否则显示 '?'
-    for (const MissionDef& md : missionTable()) { all += md.name; all += md.brief; }
-    all += "目标：歼灭所有敌军坚守·敌军增援将至（第/波）%：（），！为固";
     int count = 0;
     int* cps = LoadCodepoints(all.c_str(), &count);
     const char* paths[] = {
@@ -304,6 +290,7 @@ Vector2 Game::bldScreenPos(const World::Ent& e) const {
 // ===================== 主循环 =====================
 void Game::run() {
     while (!WindowShouldClose()) {
+        if (displayDirty) { displayDirty = false; applyDisplay(); } // 显示模式/分辨率热切换
         g_sfx.updateBgm();
         if (phase == Phase::InGame) {
             handleInput();
@@ -458,7 +445,7 @@ void Game::smokeTest(int frames) {
             for (int i = 0; i < 400 && world.valid(inf); i++) world.update();
             bool sawLost = false;
             for (const auto& ev : world.evaQueue)
-                if (ev.player == 0 && ev.text.find("单位损失") != std::string::npos) sawLost = true;
+                if (ev.player == 0 && ev.text.find(TR(S::EvaUnitLost)) != std::string::npos) sawLost = true;
             TraceLog(LOG_INFO, "crush verify: infantry alive=%d (expect 0), eva unitLost=%d (expect 1)",
                      (int)world.valid(inf), (int)sawLost);
         }
@@ -699,7 +686,7 @@ void Game::logic() {
         bool low = world.players[localPlayer].lowPower();
         if (low && !wasLowPower) {
             g_sfx.play(Sfx::Alarm, 0.8f);
-            message("电力不足，生产减缓");
+            message(TR(S::MsgLowPower));
         }
         wasLowPower = low;
     }
@@ -837,7 +824,7 @@ void Game::issueSmartOrder(int mx, int my) {
             std::vector<EID> engs;
             for (EID id : sel) if (world.valid(id) && world.ents[id].utype == UnitType::Engineer) engs.push_back(id);
             world.orderCapture(engs, enemy);
-            message("工程师：前往占领");
+            message(TR(S::MsgEngCapture));
         } else {
             world.orderAttack(sel, enemy);
         }
@@ -852,7 +839,7 @@ void Game::issueSmartOrder(int mx, int my) {
                 inf.push_back(id);
         if (!inf.empty()) {
             world.orderBoard(inf, eu);
-            message("步兵登船中");
+            message(TR(S::MsgBoarding));
             return;
         }
     }
@@ -862,7 +849,7 @@ void Game::issueSmartOrder(int mx, int my) {
             std::vector<EID> engs;
             for (EID id : sel) if (world.valid(id) && world.ents[id].utype == UnitType::Engineer) engs.push_back(id);
             world.orderRepair(engs, eb);
-            message("工程师：前往修复");
+            message(TR(S::MsgEngRepair));
         }
         return;
     }
@@ -910,7 +897,7 @@ void Game::handleInput() {
             if (world.map.inBounds(tx, ty)) {
                 SWType t = targetingSW;
                 if (world.launchSW(localPlayer, t, tx + 0.5f, ty + 0.5f)) {
-                    message(std::string(swDef(t).name) + "已发射");
+                    message(TextFormat(TR(S::MsgSWLaunchedFmt), swName(t)));
                 }
                 targetingSW = SWType::COUNT;
             }
@@ -925,11 +912,11 @@ void Game::handleInput() {
             EID b = pickBuilding((int)mouse.x, (int)mouse.y);
             if (b != INVALID_EID && world.ents[b].player == localPlayer) {
                 if (sideMode == 2) {
-                    if (world.ents[b].btype != BldType::ConYard) { world.sellBuilding(b); message("已出售建筑"); }
-                    else message("建造厂不可出售");
+                    if (world.ents[b].btype != BldType::ConYard) { world.sellBuilding(b); message(TR(S::MsgSold)); }
+                    else message(TR(S::MsgConYardNoSell));
                 } else {
-                    if (world.repairBuilding(b)) message("建筑已修复");
-                    else message("无需维修或资金不足");
+                    if (world.repairBuilding(b)) message(TR(S::MsgRepaired));
+                    else message(TR(S::MsgNoRepair));
                 }
             }
             sideMode = 0;
@@ -957,7 +944,7 @@ void Game::handleInput() {
                 if (!kDown(KEY_LEFT_SHIFT)) world.players[localPlayer].placingBld = BldType::COUNT;
                 else { world.players[localPlayer].placingBld = t; placing = true; }
             } else {
-                message("无法在此放置");
+                message(TR(S::MsgCannotPlace));
             }
         }
         return;
@@ -985,15 +972,16 @@ void Game::handleInput() {
         }
     }
 
-    // 快捷键
-    if (kPressed(KEY_S)) world.orderStop(sel);
-    if (kPressed(KEY_U) && !sel.empty()) world.orderUnload(sel); // 运输船卸载
-    if (kPressed(KEY_D)) {
+    // 快捷键（设置页可重绑；0=未绑定。A/Shift/Ctrl/方向键等修饰与镜头键固定）
+    auto ka = [&](int a) { return keyBind[a] > 0 && kPressed(keyBind[a]); };
+    if (ka(KA_Stop)) world.orderStop(sel);
+    if (ka(KA_Unload) && !sel.empty()) world.orderUnload(sel); // 运输船卸载
+    if (ka(KA_Deploy)) {
         for (EID id : sel)
             if (world.valid(id) && world.ents[id].utype == UnitType::MCV) {
                 world.orderDeploy(id);
                 sel.erase(std::remove(sel.begin(), sel.end(), id), sel.end());
-                message("建造厂已部署");
+                message(TR(S::MsgDeployed));
             }
         // 辐射工兵/重装大兵：部署/收起（RA2 原作同键）
         bool anyDeploy = false;
@@ -1003,21 +991,21 @@ void Game::handleInput() {
                 anyDeploy = true;
         if (anyDeploy) {
             world.orderRadDeploy(sel);
-            message("已切换部署状态");
+            message(TR(S::MsgDeployToggled));
         }
     }
-    // X 散布（RA2 原作键位）
-    if (kPressed(KEY_X) && !sel.empty()) {
+    // 散布（RA2 原作键位）
+    if (ka(KA_Scatter) && !sel.empty()) {
         world.orderScatter(sel);
-        message("单位散布");
+        message(TR(S::MsgScatter));
     }
-    // G 警戒（RA2 原作键位）
-    if (kPressed(KEY_G) && !sel.empty()) {
+    // 警戒（RA2 原作键位）
+    if (ka(KA_Guard) && !sel.empty()) {
         world.orderGuard(sel);
-        message("警戒模式：按视野索敌");
+        message(TR(S::MsgGuard));
     }
-    // T 选择同类（RA2 原作键位）
-    if (kPressed(KEY_T) && !sel.empty()) {
+    // 选择同类（RA2 原作键位）
+    if (ka(KA_SameType) && !sel.empty()) {
         bool types[(int)UnitType::COUNT] = {};
         for (EID id : sel)
             if (world.valid(id) && !world.ents[id].isBuilding) types[(int)world.ents[id].utype] = true;
@@ -1027,7 +1015,7 @@ void Game::handleInput() {
             if (e.alive && !e.isBuilding && e.player == localPlayer && types[(int)e.utype])
                 sel.push_back((int)i);
         }
-        message("选择同类单位");
+        message(TR(S::MsgSelSameType));
         g_sfx.play(Sfx::Click, 0.6f);
     }
     // 编队：Ctrl+数字设定 / 数字召回 / 双击数字跳转视角
@@ -1040,7 +1028,7 @@ void Game::handleInput() {
                 groups[n].erase(std::remove_if(groups[n].begin(), groups[n].end(), [&](EID id) {
                     return !world.valid(id) || world.ents[id].isBuilding;
                 }), groups[n].end());
-                message(TextFormat("编队 %d 已设定（%d 单位）", n, (int)groups[n].size()));
+                message(TextFormat(TR(S::MsgGroupSetFmt), n, (int)groups[n].size()));
                 g_sfx.play(Sfx::Click, 0.6f);
             } else {
                 auto& g = groups[n];
@@ -1067,22 +1055,22 @@ void Game::handleInput() {
             }
         }
     }
-    // M 音乐开关
-    if (kPressed(KEY_M)) {
+    // 音乐开关
+    if (ka(KA_Music)) {
         g_sfx.toggleBgm();
-        message(g_sfx.bgmEnabled() ? "音乐：开" : "音乐：关");
+        message(g_sfx.bgmEnabled() ? TR(S::MsgMusicOn) : TR(S::MsgMusicOff));
     }
-    // F5 快速存档 / F9 快速读档
-    if (kPressed(KEY_F5)) message(saveGameFile(QUICKSAVE_PATH) ? "进度已保存" : "保存失败");
-    if (kPressed(KEY_F9)) message(loadGameFile(QUICKSAVE_PATH) ? "进度已读取" : "读取失败（无存档）");
-    // Delete 出售选中建筑（X 已让位于散布）
-    if (kPressed(KEY_DELETE) && world.valid(selBuilding) && world.ents[selBuilding].player == localPlayer
+    // 快速存档 / 快速读档
+    if (ka(KA_QuickSave)) message(saveGameFile(QUICKSAVE_PATH) ? TR(S::MsgSaved) : TR(S::MsgSaveFail));
+    if (ka(KA_QuickLoad)) message(loadGameFile(QUICKSAVE_PATH) ? TR(S::MsgLoaded) : TR(S::MsgLoadFail));
+    // 出售选中建筑（默认 Del）
+    if (ka(KA_Sell) && world.valid(selBuilding) && world.ents[selBuilding].player == localPlayer
         && world.ents[selBuilding].btype != BldType::ConYard) {
         world.sellBuilding(selBuilding);
         selBuilding = INVALID_EID;
-        message("已出售建筑");
+        message(TR(S::MsgSold));
     }
-    if (kPressed(KEY_H)) {
+    if (ka(KA_ViewBase)) {
         for (auto& e : world.ents)
             if (e.alive && e.isBuilding && e.player == localPlayer && e.btype == BldType::ConYard) {
                 Vector2 p = bldScreenPos(e);
@@ -1091,21 +1079,21 @@ void Game::handleInput() {
                 break;
             }
     }
-    if (kPressed(KEY_P)) paused = !paused;
-    if (kPressed(KEY_EQUAL) || kPressed(KEY_KP_ADD)) gameSpeed = std::min(2, gameSpeed + 1);
-    if (kPressed(KEY_MINUS) || kPressed(KEY_KP_SUBTRACT)) gameSpeed = std::max(0, gameSpeed - 1);
+    if (ka(KA_Pause)) paused = !paused;
+    if (ka(KA_SpeedUp) || kPressed(KEY_KP_ADD)) gameSpeed = std::min(2, gameSpeed + 1);
+    if (ka(KA_SpeedDown) || kPressed(KEY_KP_SUBTRACT)) gameSpeed = std::max(0, gameSpeed - 1);
     if (kPressed(KEY_ESCAPE)) {
         if (!sel.empty() || world.valid(selBuilding)) { sel.clear(); selBuilding = INVALID_EID; }
         else showMenu = true;
     }
     // 设置集结点
-    if (kPressed(KEY_R) && world.valid(selBuilding)) {
+    if (ka(KA_Rally) && world.valid(selBuilding)) {
         float wx, wy;
         screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
         int tx, ty;
         screenToTile(wx, wy, tx, ty);
         world.setRally(selBuilding, tx, ty);
-        message("集结点已设置");
+        message(TR(S::MsgRallySet));
     }
 
     // 清理失效选择
@@ -1141,6 +1129,7 @@ void Game::render() {
         ClearBackground(BLACK);
         if (phase == Phase::MainMenu) drawMainMenu();
         else if (phase == Phase::MissionSelect) drawMissionSelect();
+        else if (phase == Phase::Settings) drawSettings();
         else drawSetup();
         EndTextureMode();
         if (!shotFile.empty()) {
@@ -1723,6 +1712,39 @@ int Game::playTest() {
     check(phase == Phase::MainMenu, "启动进入主菜单");
     shot("pt_01_mainmenu.png");
 
+    // ---- 1b 设置页：语言热切换 / 显示模式 / 按键重绑 / 持久化 ----
+    clickL(285, 541); // “设置”按钮 {120,512,330,58}
+    check(phase == Phase::Settings, "点击[设置]进设置页");
+    frame(2);
+    shot("pt_01b_settings.png");
+    clickL(490, 158); // 语言行值按钮 {340,140,300,36}
+    check(g_lang == 1 && cfgLang == 1, "语言热切换为英文");
+    frame(2);
+    shot("pt_01c_settings_en.png");
+    clickL(490, 158);
+    check(g_lang == 0 && cfgLang == 0, "语言切回中文");
+    // 显示模式：窗口 ⇄ 无边框全屏（还原默认值，避免干扰后续截图）
+    clickL(490, 208); // 显示模式行 {340,190,300,36}
+    check(cfgWindowMode == 1, "切换为窗口模式");
+    clickL(490, 208);
+    check(cfgWindowMode == 0, "切回无边框全屏");
+    // 按键重绑：第一行“停止”键位框 {1150,140,200,30}，注入按键 B
+    clickL(1250, 155);
+    check(rebinding == KA_Stop, "点击键位框进入重绑");
+    key(KEY_B);
+    check(rebinding < 0 && keyBind[KA_Stop] == KEY_B, "注入按键完成重绑");
+    // 持久化验证：settings.ini 已写入，重载后键位保留
+    check(FileExists("settings.ini"), "settings.ini 已落盘");
+    {
+        int saved = keyBind[KA_Stop];
+        loadSettings();
+        check(keyBind[KA_Stop] == saved, "重载配置键位保持");
+        keyBind[KA_Stop] = KEY_S; // 还原默认，避免影响后续流程
+        saveSettings();
+    }
+    clickL(720, 748); // “返回” {620,724,200,48}
+    check(phase == Phase::MainMenu, "设置页返回主菜单");
+
     // ---- 2 遭遇战设置 ----
     clickL(285, 389); // “遭遇战”按钮 {120,360,330,58}
     check(phase == Phase::Setup, "点击[遭遇战]进设置");
@@ -1847,11 +1869,13 @@ int Game::playTest() {
     }
 
     // ---- 10 ESC 菜单 → 保存进度 → F9 读档 → 返回主菜单 ----
+    // 局内菜单布局与 drawHUD 一致（mw=320, mh=426）：按钮 x=mx+60=620 宽200 中心x=720，行距42
+    auto menuBtn = [&](int offY) { clickL(720, (float)(SCREEN_H / 2 - 426 / 2 + offY + 16)); };
     key(KEY_ESCAPE); // 第一次：清除选择
     key(KEY_ESCAPE); // 第二次：打开菜单
     check(showMenu, "ESC打开游戏菜单");
     shot("pt_06_escmenu.png");
-    clickL(720, 343); // “保存进度 (F5)” {620,327,200,32}
+    menuBtn(114); // “保存进度” {620,my+114,200,32}
     check(FileExists(QUICKSAVE_PATH) && !showMenu, "菜单点击[保存进度]");
     uint64_t tick0 = world.tick;
     int money0 = world.players[0].money;
@@ -1863,7 +1887,12 @@ int Game::playTest() {
     check(world.tick == tickL + 30, "读档后模拟继续推进");
     key(KEY_ESCAPE);
     check(showMenu, "再次ESC打开菜单");
-    clickL(720, 469); // “返回主菜单” {620,453,200,32}
+    // 局内菜单 → 设置页 → 返回（settingsFromGame 恢复菜单）
+    menuBtn(198); // “设置” {620,my+198,200,32}
+    check(phase == Phase::Settings && settingsFromGame, "菜单点击[设置]进设置页");
+    clickL(720, 748); // 设置页“返回” {620,724,200,48}
+    check(phase == Phase::InGame && showMenu, "设置页返回恢复局内菜单");
+    menuBtn(282); // “返回主菜单” {620,my+282,200,32}
     check(phase == Phase::MainMenu && !showMenu, "点击[返回主菜单]");
 
     // ---- 11 战役模式 ----
@@ -1878,7 +1907,7 @@ int Game::playTest() {
     // ---- 12 战役内 ESC → 返回主菜单 ----
     key(KEY_ESCAPE);
     check(showMenu, "战役ESC打开菜单");
-    clickL(720, 469);
+    menuBtn(282); // “返回主菜单”
     check(phase == Phase::MainMenu, "战役返回主菜单");
 
     frame(2);

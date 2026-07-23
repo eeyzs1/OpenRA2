@@ -1,4 +1,5 @@
 #include "game/world.h"
+#include "game/lang.h"
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
 #include <cmath>
@@ -31,7 +32,7 @@ void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const st
         p.faction = factions[i % factions.size()];
         p.colorId = i;
         p.money = 10000;
-        p.name = p.isAI ? ("AI-" + std::to_string(i)) : "指挥官";
+        p.name = p.isAI ? ("AI-" + std::to_string(i)) : (g_lang ? "Commander" : "指挥官");
         // 出生点：一辆基地车 + 护卫
         Vec2i sp = spawns[i];
         EID mcv = spawnUnit(i, UnitType::MCV, (float)sp.x + 0.5f, (float)sp.y + 0.5f);
@@ -133,7 +134,7 @@ EID World::spawnBuilding(int player, BldType t, int bx, int by, bool free_) {
     // 超武建筑落成：向其他玩家发出侦测警告（RA2 原作设定）
     if (bldProvidesSW(t) != SWType::COUNT && tick > 10) {
         for (int p = 0; p < numPlayers; p++)
-            if (p != player) eva(p, std::string("警告：侦测到敌方") + d.name);
+            if (p != player) eva(p, TextFormat(TR(S::EvaDetectEnemySWFmt), bldName(t)));
     }
     return id;
 }
@@ -497,8 +498,8 @@ void World::orderUnload(const std::vector<EID>& sel) {
                     spawnUnit(e.player, e.cargo.back(), nx + 0.5f, ny + 0.5f);
                     e.cargo.pop_back();
                 }
-        if (e.cargo.empty()) eva(e.player, "卸载完成");
-        else eva(e.player, "警告：无可靠岸地点，无法卸载");
+        if (e.cargo.empty()) eva(e.player, TR(S::EvaUnloadDone));
+        else eva(e.player, TR(S::EvaUnloadFail));
     }
 }
 
@@ -799,7 +800,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
             n.tx = tx; n.ty = ty;
             n.timer = 75; // 2.5 秒落地
             nukes.push_back(n);
-            evaAll("警告：核弹已发射");
+            evaAll(TR(S::EvaNukeLaunched));
             g_sfx.play(Sfx::NukeLaunch, 0.9f);
             break;
         }
@@ -807,7 +808,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
             p.stormTimer = 30 * 14; // 持续 14 秒
             p.stormX = tx; p.stormY = ty;
             p.stormBoltCd = 0;
-            evaAll("警告：闪电风暴接近中");
+            evaAll(TR(S::EvaStormComing));
             g_sfx.playAt(Sfx::Storm, tx, ty);
             break;
         }
@@ -847,7 +848,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
                 }
                 chronoShiftUnits(grp, tx, ty);
             }
-            eva(player, "超时空传送启动");
+            eva(player, TR(S::EvaChronoStart));
             break;
         }
         default: break;
@@ -866,7 +867,7 @@ void World::updateSW() {
             if (p.lowPower()) continue; // 低电暂停充能
             if (++p.swCharge[i] >= swDef((SWType)i).chargeTime) {
                 p.swReady[i] = true;
-                eva(pi, std::string(swDef((SWType)i).name) + "已就绪");
+                eva(pi, TextFormat(TR(S::EvaSWReadyFmt), swName((SWType)i)));
                 if (pi == 0) g_sfx.play(Sfx::SWReady, 0.85f);
             }
         }
@@ -1096,7 +1097,7 @@ void World::updateUnit(Ent& e, EID id) {
             Effect ef; ef.kind = 9; ef.x = e.x; ef.y = e.y; ef.maxAge = 26; effects.push_back(ef);
             g_sfx.playAt(Sfx::Tesla, e.x, e.y);
             if (e.player >= 0 && players[e.player].evaUnitCd <= 0) {
-                eva(e.player, "单位损失");
+                eva(e.player, TR(S::EvaUnitLost));
                 players[e.player].evaUnitCd = 150;
             }
             e.alive = false;
@@ -1164,8 +1165,8 @@ void World::updateUnit(Ent& e, EID id) {
             const BldDef& bd = bldDef(b.btype);
             float bx = b.x + bd.w / 2.0f, by = b.y + bd.h / 2.0f;
             if (distf(e.x, e.y, bx, by) < std::max(bd.w, bd.h) / 2.0f + 1.5f) {
-                eva(b.player, std::string("建筑被占领：") + bd.name);
-                eva(e.player, std::string("已占领：") + bd.name);
+                eva(b.player, TextFormat(TR(S::EvaBldCapturedFmt), bldName(b.btype)));
+                eva(e.player, TextFormat(TR(S::EvaCapturedFmt), bldName(b.btype)));
                 b.player = e.player;
                 b.hp = bd.hp;
                 recomputePower();
@@ -1180,7 +1181,7 @@ void World::updateUnit(Ent& e, EID id) {
             float bx = b.x + bd.w / 2.0f, by = b.y + bd.h / 2.0f;
             if (distf(e.x, e.y, bx, by) < std::max(bd.w, bd.h) / 2.0f + 1.5f) {
                 b.hp = bd.hp;
-                eva(e.player, std::string("工程师已修复：") + bd.name);
+                eva(e.player, TextFormat(TR(S::EvaEngRepairedFmt), bldName(b.btype)));
                 g_sfx.playAt(Sfx::Place, bx, by);
                 e.alive = false;
                 freeList.push_back(id);
@@ -1448,7 +1449,7 @@ void World::moveAlongPath(Ent& e, EID id) {
             && od.isInfantry() && od.armor == Armor::None && o.invuln == 0 && !o.deployed) {
             g_sfx.playAt(Sfx::Crush, o.x, o.y);
             Player& vp = players[o.player];
-            if (vp.evaUnitCd <= 0) { eva(o.player, "单位损失"); vp.evaUnitCd = 150; }
+            if (vp.evaUnitCd <= 0) { eva(o.player, TR(S::EvaUnitLost)); vp.evaUnitCd = 150; }
             kill(occ);
             // 格子已空，继续走正常移动流程
         } else {
@@ -1752,17 +1753,17 @@ void World::damage(EID id, int dmg, int byPlayer, EID byEnt) {
     // EVA 遇袭播报（节流，避免刷屏）
     if (byPlayer >= 0 && byPlayer != e.player) {
         if (e.isBuilding && owner.evaBaseCd <= 0) {
-            eva(e.player, "警告：基地遭受攻击");
+            eva(e.player, TR(S::EvaBaseAttack));
             owner.evaBaseCd = 480; // 16 秒
         } else if (!e.isBuilding && e.utype == UnitType::Harvester && owner.evaMinerCd <= 0) {
-            eva(e.player, "警告：采矿车遭受攻击");
+            eva(e.player, TR(S::EvaHarvAttack));
             owner.evaMinerCd = 480;
         }
     }
     if (e.hp <= 0) {
-        if (e.isBuilding) eva(e.player, std::string("建筑被摧毁：") + bldDef(e.btype).name);
+        if (e.isBuilding) eva(e.player, TextFormat(TR(S::EvaBldDestroyedFmt), bldName(e.btype)));
         else if (!unitDef(e.utype).isInfantry() && owner.evaUnitCd <= 0) {
-            eva(e.player, "单位损失");
+            eva(e.player, TR(S::EvaUnitLost));
             owner.evaUnitCd = 150; // 5 秒
         }
         creditKill(byEnt, id);
@@ -1788,7 +1789,7 @@ void World::creditKill(EID byEnt, EID victim) {
     if (a.vetRank < 2 && a.kills >= need) {
         a.vetRank++;
         if (a.player == 0) {
-            eva(0, std::string(unitDef(a.utype).name) + (a.vetRank == 1 ? "晋升为老兵" : "晋升为精英"));
+            eva(0, TextFormat(TR(a.vetRank == 1 ? S::EvaPromoteVetFmt : S::EvaPromoteEliteFmt), unitName(a.utype)));
             g_sfx.play(Sfx::Ready, 0.6f);
         }
     }
@@ -2217,35 +2218,35 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
             int steal = players[victim].money * 2 / 5; // 窃取对方 40% 资金
             players[victim].money -= steal;
             sp.money += steal;
-            eva(spy.player, "间谍渗透：窃取资金 $" + std::to_string(steal));
-            if (victim >= 0) eva(victim, "警告：精炼厂被间谍渗透，资金失窃");
+            eva(spy.player, TextFormat(TR(S::SpyStealMoneyFmt), steal));
+            if (victim >= 0) eva(victim, TR(S::SpyMoneyVictim));
             break;
         }
         case BldType::PowerPlant: case BldType::TeslaReactor: case BldType::NuclearReactor: {
             if (victim >= 0) {
                 players[victim].powerSabotage = 30 * 30; // 断电 30 秒
-                eva(victim, "警告：电厂被间谍破坏，电力瘫痪");
+                eva(victim, TR(S::SpyPowerVictim));
             }
-            eva(spy.player, "间谍渗透：敌方电力瘫痪 30 秒");
+            eva(spy.player, TR(S::SpyPowerOk));
             break;
         }
         case BldType::Radar: {
             sp.revealTimer = 30 * 60; // 全图视野 60 秒
-            eva(spy.player, "间谍渗透：已获取敌方雷达数据");
-            if (victim >= 0) eva(victim, "警告：雷达站被间谍渗透");
+            eva(spy.player, TR(S::SpyRadarOk));
+            if (victim >= 0) eva(victim, TR(S::SpyRadarVictim));
             break;
         }
         case BldType::Barracks:
             sp.vetCat[0] = true;
-            eva(spy.player, "间谍渗透：新兵营单位直接晋升老兵");
+            eva(spy.player, TR(S::SpyBarracks));
             break;
         case BldType::WarFactory: case BldType::AirForceCmd:
             sp.vetCat[1] = true; sp.vetCat[2] = true;
-            eva(spy.player, "间谍渗透：新车辆/空军单位直接晋升老兵");
+            eva(spy.player, TR(S::SpyFactory));
             break;
         case BldType::NavalYard:
             sp.vetCat[3] = true;
-            eva(spy.player, "间谍渗透：新海军单位直接晋升老兵");
+            eva(spy.player, TR(S::SpyNavy));
             break;
         case BldType::BattleLab: {
             // 渗透高科：窃取 $1500 并重置对方超武充能
@@ -2254,14 +2255,14 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
                 players[victim].money -= steal;
                 sp.money += steal;
                 for (int i = 0; i < (int)SWType::COUNT; i++) { players[victim].swCharge[i] = 0; players[victim].swReady[i] = false; }
-                eva(victim, "警告：作战实验室被间谍渗透");
+                eva(victim, TR(S::SpyLabVictim));
             }
-            eva(spy.player, "间谍渗透：窃取技术资料，敌方超武充能已重置");
+            eva(spy.player, TR(S::SpyLabOk));
             break;
         }
         default:
             sp.revealTimer = 30 * 15; // 其他建筑：短暂全图侦查
-            eva(spy.player, std::string("间谍渗透：") + bd.name);
+            eva(spy.player, TextFormat(TR(S::SpyGenericFmt), bldName(bld.btype)));
             break;
     }
     g_sfx.playAt(Sfx::Eva, spy.x, spy.y);
@@ -2322,14 +2323,14 @@ void World::pickupCrates(Ent& e) {
         g_sfx.playAt(Sfx::Cash, e.x, e.y);
         if (c.kind == 0) {
             players[e.player].money += 1000;
-            if (e.player == 0) eva(0, "补给箱：获得资金 $1000");
+            if (e.player == 0) eva(0, TR(S::CrateMoney));
         } else if (c.kind == 1) {
             for (Ent& o : ents)
                 if (o.alive && !o.isBuilding && o.player == e.player) o.hp = unitDef(o.utype).hp;
-            if (e.player == 0) eva(0, "补给箱：全体单位完全治疗");
+            if (e.player == 0) eva(0, TR(S::CrateHeal));
         } else {
             e.vetRank = std::min(2, e.vetRank + 1);
-            if (e.player == 0) eva(0, "补给箱：单位军衔晋升");
+            if (e.player == 0) eva(0, TR(S::CrateVet));
         }
     }
     crates.erase(std::remove_if(crates.begin(), crates.end(), [](const Crate& c) { return !c.alive; }), crates.end());
@@ -2365,7 +2366,7 @@ void World::chronoShiftUnits(const std::vector<EID>& sel, float tx, float ty) {
         if (ud.isInfantry()) { anyInf = true; kill(id); continue; } // 原作设定：传送步兵即死
         chronoJump(e, tx, ty);
     }
-    if (anyInf) eva(0, "警告：步兵无法承受超时空传送");
+    if (anyInf) eva(0, TR(S::EvaInfNoChrono));
     g_sfx.playAt(Sfx::IronCurtain, tx, ty);
     Effect ef;
     ef.kind = 8; ef.x = tx; ef.y = ty; ef.maxAge = 40;

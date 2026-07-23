@@ -80,7 +80,7 @@ void Game::drawHUD() {
     // 资金
     drawTextF(font, TextFormat("%d", me.money), sbX + 46, 10, 22,
               me.money > 0 ? Color{255, 215, 80, 255} : RED);
-    drawTextF(font, "资金", sbX + 8, 14, 14, Color{200, 200, 200, 255});
+    drawTextF(font, TR(S::Money), sbX + 8, 14, 14, Color{200, 200, 200, 255});
 
     // 电力条
     int pwrX = sbX + 10, pwrY = 40, pwrH = 200;
@@ -89,8 +89,8 @@ void Game::drawHUD() {
     int usedH = (int)(pwrH * ratio);
     Color pc = me.lowPower() ? RED : (ratio > 0.8f ? YELLOW : Color{80, 220, 80, 255});
     DrawRectangle(pwrX + 1, pwrY + pwrH - usedH, 10, usedH, pc);
-    drawTextF(font, "电", pwrX - 2, pwrY + pwrH + 4, 13, Color{200, 200, 200, 255});
-    if (me.lowPower()) drawTextF(font, "低电力!", sbX + 30, pwrY + pwrH - 20, 13, RED);
+    drawTextF(font, TR(S::Power), pwrX - 2, pwrY + pwrH + 4, 13, Color{200, 200, 200, 255});
+    if (me.lowPower()) drawTextF(font, TR(S::LowPower), sbX + 30, pwrY + pwrH - 20, 13, RED);
 
     // 小地图
     drawMinimap();
@@ -113,14 +113,14 @@ void Game::drawHUD() {
             DrawRectangleRec(r, targeting ? Color{70, 48, 40, 255} : (ready ? Color{52, 60, 44, 255} : Color{30, 32, 38, 255}));
             DrawRectangleLinesEx(r, 1, targeting ? Color{255, 120, 90, 255} : (ready ? GREEN : Color{70, 74, 82, 255}));
             // 名称
-            drawTextF(font, sd.name, (int)r.x + 4, (int)r.y + 4, 13,
+            drawTextF(font, swName(t), (int)r.x + 4, (int)r.y + 4, 13,
                       hasBld ? (ready ? Color{180, 255, 150, 255} : WHITE) : Color{110, 110, 110, 255});
             if (!hasBld) {
-                drawTextF(font, "需建筑", (int)r.x + 16, (int)r.y + 40, 12, Color{120, 110, 100, 255});
+                drawTextF(font, TR(S::NeedBld), (int)r.x + 16, (int)r.y + 40, 12, Color{120, 110, 100, 255});
             } else if (ready) {
                 // 就绪：闪烁提示
-                if ((world.tick / 15) % 2) drawTextF(font, "就绪", (int)r.x + 26, (int)r.y + 30, 16, Color{120, 255, 120, 255});
-                drawTextF(font, "点击选目标", (int)r.x + 6, (int)r.y + 54, 11, Color{200, 220, 180, 255});
+                if ((world.tick / 15) % 2) drawTextF(font, TR(S::Ready), (int)r.x + 26, (int)r.y + 30, 16, Color{120, 255, 120, 255});
+                drawTextF(font, TR(S::ClickTarget), (int)r.x + 6, (int)r.y + 54, 11, Color{200, 220, 180, 255});
             } else {
                 // 充能进度条 + 倒计时
                 float frac = (float)me.swCharge[i] / sd.chargeTime;
@@ -134,16 +134,16 @@ void Game::drawHUD() {
             if (ready && CheckCollisionPointRec(mousePos(), r) && mPressed(MOUSE_LEFT_BUTTON)) {
                 targetingSW = targeting ? SWType::COUNT : t;
                 g_sfx.play(Sfx::Click, 0.6f);
-                if (targetingSW != SWType::COUNT) message("选择目标位置（右键取消）");
+                if (targetingSW != SWType::COUNT) message(TR(S::MsgSelectTargetSW));
             }
         }
     }
 
     // 选项卡
-    static const char* tabs[] = {"建筑", "防御", "步兵", "车辆", "海军"};
+    static const S tabIds[] = {S::TabBld, S::TabDef, S::TabInf, S::TabVeh, S::TabNavy};
     for (int i = 0; i < 5; i++) {
         Rectangle tr{(float)sbX + 6 + i * 37, 330, 35, 22};
-        if (uiButton(tr, tabs[i], true, uiTab == i)) uiTab = i;
+        if (uiButton(tr, TR(tabIds[i]), true, uiTab == i)) uiTab = i;
     }
 
     // 生产图标网格（行数封顶，避免画出屏幕；底部留给维修/出售/菜单按钮）
@@ -170,7 +170,7 @@ void Game::drawHUD() {
             DrawRectangle(ix, iy + (int)(gh * (1 - frac)), gw, (int)(gh * frac), Color{0, 0, 0, 130});
             drawTextF(font, TextFormat("%d%%", (int)(frac * 100)), ix + 30, iy + 26, 14, WHITE);
         }
-        if (readyThis) drawTextF(font, "就绪", ix + 27, iy + 24, 15, GREEN);
+        if (readyThis) drawTextF(font, TR(S::Ready), ix + 27, iy + 24, 15, GREEN);
         // 排队数量角标（RA2 原作：含进行中项）
         int totalN = queuedN + (activeThis ? 1 : 0);
         if (isUnit && totalN > 0) {
@@ -189,22 +189,22 @@ void Game::drawHUD() {
                     // 建筑就绪 → 进入放置模式
                     me.placingBld = (BldType)typeIdx;
                     placing = true;
-                    message("选择放置位置（右键取消）");
-                } else if (!canBuild) { message("无法建造：缺前置建筑或资金不足"); }
+                    message(TR(S::MsgPlaceBld));
+                } else if (!canBuild) { message(TR(S::MsgCannotBuild)); }
                 else if (isUnit || !activeThis) {
                     // 单位允许重复点击排队（RA2 原作）
                     bool ok = isUnit ? world.startUnitProd(localPlayer, (UnitType)typeIdx)
                                      : world.startBldProd(localPlayer, (BldType)typeIdx);
-                    if (!ok) message("生产队列忙或条件不足");
+                    if (!ok) message(TR(S::MsgQueueBusy));
                 }
             }
             if (mPressed(MOUSE_RIGHT_BUTTON)) {
                 if (isUnit && totalN > 0) {
                     world.cancelUnitProd(localPlayer, (UnitType)typeIdx);
-                    message("已取消一个");
+                    message(TR(S::MsgCanceledOne));
                 } else if (!isUnit && activeThis) {
                     world.cancelProd(localPlayer, false);
-                    message("已取消生产");
+                    message(TR(S::MsgCanceledProd));
                 }
             }
         }
@@ -215,7 +215,7 @@ void Game::drawHUD() {
             const BldDef& d = bldDef(t);
             bool can = world.hasBld(localPlayer, BldType::ConYard) && world.prereqMet(localPlayer, d)
                        && me.money >= d.cost && !me.bldProd.active;
-            drawItem(false, (int)t, g_sprites.iconBld(t, me.colorId), d.name, d.cost, can, me.bldProd, 0);
+            drawItem(false, (int)t, g_sprites.iconBld(t, me.colorId), bldName(t), d.cost, can, me.bldProd, 0);
         }
     } else {
         for (UnitType t : tabUnits()) {
@@ -226,7 +226,7 @@ void Game::drawHUD() {
                 if (q == (int)t) qn++;
             bool can = world.unitPrereqMet(localPlayer, u) && world.hasFactoryFor(localPlayer, u)
                        && me.money >= u.cost;
-            drawItem(true, (int)t, g_sprites.iconUnit(t, me.colorId), u.name, u.cost, can, me.unitProd[cat], qn);
+            drawItem(true, (int)t, g_sprites.iconUnit(t, me.colorId), unitName(t), u.cost, can, me.unitProd[cat], qn);
         }
     }
 
@@ -236,15 +236,15 @@ void Game::drawHUD() {
         Rectangle repR{(float)sbX + 6, (float)by2, (float)bw2, (float)bh2};
         Rectangle selR{(float)sbX + 6 + bw2 + 5, (float)by2, (float)bw2, (float)bh2};
         Rectangle mnuR{(float)sbX + 6 + 2 * (bw2 + 5), (float)by2, (float)bw2, (float)bh2};
-        if (uiButton(repR, "维修", true, sideMode == 1)) {
+        if (uiButton(repR, TR(S::Repair), true, sideMode == 1)) {
             sideMode = sideMode == 1 ? 0 : 1;
-            if (sideMode == 1) message("维修模式：点击己方受损建筑（右键取消）");
+            if (sideMode == 1) message(TR(S::MsgRepairMode));
         }
-        if (uiButton(selR, "出售", true, sideMode == 2)) {
+        if (uiButton(selR, TR(S::Sell), true, sideMode == 2)) {
             sideMode = sideMode == 2 ? 0 : 2;
-            if (sideMode == 2) message("出售模式：点击己方建筑（右键取消）");
+            if (sideMode == 2) message(TR(S::MsgSellMode));
         }
-        if (uiButton(mnuR, "菜单", true)) showMenu = true;
+        if (uiButton(mnuR, TR(S::Menu), true)) showMenu = true;
     }
 
     // 提示消息
@@ -257,16 +257,16 @@ void Game::drawHUD() {
     // 战役目标状态（左上角）
     if (campaignMission >= 0 && !gameOver) {
         const MissionDef& md = missionTable()[campaignMission];
-        std::string obj = md.name;
+        std::string obj = missionName(campaignMission);
         obj += " · ";
         if (md.objective == 1) {
             int remain = (md.objectiveTick - (int)world.tick) / LOGIC_FPS;
             if (remain < 0) remain = 0;
-            obj += TextFormat("坚守 %d:%02d", remain / 60, remain % 60);
+            obj += TextFormat(TR(S::ObjHoldFmt), remain / 60, remain % 60);
         } else if (nextWave < md.waves.size()) {
-            obj += TextFormat("敌军增援将至（第%d/%d波）", (int)nextWave + 1, (int)md.waves.size());
+            obj += TextFormat(TR(S::ObjWaveFmt), (int)nextWave + 1, (int)md.waves.size());
         } else {
-            obj += "歼灭所有敌军";
+            obj += TR(S::ObjElimAll);
         }
         DrawRectangle(6, 30, (int)MeasureTextEx(font, obj.c_str(), 14, 1).x + 12, 22, Color{0, 0, 0, 140});
         drawTextF(font, obj.c_str(), 12, 34, 14, Color{230, 200, 130, 255});
@@ -274,34 +274,34 @@ void Game::drawHUD() {
 
     // 选择信息
     if (!sel.empty()) {
-        drawTextF(font, TextFormat("已选 %d 单位", (int)sel.size()), 10, SCREEN_H - 24, 14, Color{180, 220, 180, 255});
+        drawTextF(font, TextFormat(TR(S::SelNFmt), (int)sel.size()), 10, SCREEN_H - 24, 14, Color{180, 220, 180, 255});
         // 单个运输载具选中：显示载员与卸载提示
         if (sel.size() == 1 && world.valid(sel[0])) {
             const World::Ent& e = world.ents[sel[0]];
             if (!e.isBuilding && unitDef(e.utype).cargoCap > 0)
-                drawTextF(font, TextFormat("载员 %d/%d  U键卸载", (int)e.cargo.size(), unitDef(e.utype).cargoCap),
+                drawTextF(font, TextFormat(TR(S::CargoNFmt), (int)e.cargo.size(), unitDef(e.utype).cargoCap,
+                                           keyName(keyBind[KA_Unload])),
                           130, SCREEN_H - 24, 14, Color{140, 200, 230, 255});
         }
     }
     // 操作提示
-    drawTextF(font, "左键选择/框选 右键移动/攻击(点己方运输船=登船) A+右键攻击移动 D展开 S停止 H回基地 X卖建筑 R设集结点 U卸载 ESC菜单",
-              10, SCREEN_H - 44, 12, Color{130, 130, 140, 255});
+    drawTextF(font, TR(S::TipLine), 10, SCREEN_H - 44, 12, Color{130, 130, 140, 255});
 
     // 暂停/菜单/结算
     if (paused && !gameOver) {
-        drawTextF(font, "已暂停", SCREEN_W / 2 - 30, SCREEN_H / 2, 28, WHITE);
+        drawTextF(font, TR(S::Paused), SCREEN_W / 2 - 30, SCREEN_H / 2, 28, WHITE);
     }
     if (showMenu || gameOver) {
         DrawRectangle(0, 0, SCREEN_W, SCREEN_H, Color{0, 0, 0, 160});
-        int mw = 320, mh = 384;
+        int mw = 320, mh = 426;
         int mx = SCREEN_W / 2 - mw / 2, my = SCREEN_H / 2 - mh / 2;
         DrawRectangle(mx, my, mw, mh, Color{30, 32, 38, 255});
         DrawRectangleLinesEx({(float)mx, (float)my, (float)mw, (float)mh}, 2, Color{100, 106, 116, 255});
         if (gameOver) {
-            const char* t = victory ? "胜 利" : "失 败";
+            const char* t = victory ? TR(S::Victory) : TR(S::Defeat);
             drawTextF(font, t, mx + mw / 2 - 40, my + 24, 34, victory ? Color{120, 255, 120, 255} : RED);
         } else {
-            drawTextF(font, "游戏菜单", mx + mw / 2 - 40, my + 20, 22, WHITE);
+            drawTextF(font, TR(S::GameMenu), mx + mw / 2 - 40, my + 20, 22, WHITE);
         }
         // 重开当前局：战役回当前任务，遭遇战重随机一张
         auto restart = [&]() {
@@ -309,25 +309,33 @@ void Game::drawHUD() {
             else newGame((uint64_t)time(nullptr));
             showMenu = false;
         };
-        if (uiButton({(float)mx + 60, (float)my + 72, 200, 32}, gameOver ? "再来一局" : "继续游戏", true)) {
+        if (uiButton({(float)mx + 60, (float)my + 72, 200, 32}, gameOver ? TR(S::PlayAgain) : TR(S::Continue), true)) {
             if (gameOver) restart();
             else showMenu = false;
         }
-        // 存读档：仅对局中可用（结算画面无意义）
-        if (uiButton({(float)mx + 60, (float)my + 114, 200, 32}, "保存进度 (F5)", !gameOver)) {
-            message(saveGameFile(QUICKSAVE_PATH) ? "进度已保存" : "保存失败");
+        // 存读档：仅对局中可用（结算画面无意义）；按钮标注当前绑定键位
+        if (uiButton({(float)mx + 60, (float)my + 114, 200, 32},
+                     TextFormat("%s (%s)", TR(S::SaveProgress), keyName(keyBind[KA_QuickSave])), !gameOver)) {
+            message(saveGameFile(QUICKSAVE_PATH) ? TR(S::MsgSaved) : TR(S::MsgSaveFail));
             showMenu = false;
         }
-        if (uiButton({(float)mx + 60, (float)my + 156, 200, 32}, "读取进度 (F9)", !gameOver)) {
-            message(loadGameFile(QUICKSAVE_PATH) ? "进度已读取" : "读取失败（无存档）");
+        if (uiButton({(float)mx + 60, (float)my + 156, 200, 32},
+                     TextFormat("%s (%s)", TR(S::LoadProgress), keyName(keyBind[KA_QuickLoad])), !gameOver)) {
+            message(loadGameFile(QUICKSAVE_PATH) ? TR(S::MsgLoaded) : TR(S::MsgLoadFail));
             showMenu = false;
         }
-        if (uiButton({(float)mx + 60, (float)my + 198, 200, 32}, "重新开始", true)) restart();
-        if (uiButton({(float)mx + 60, (float)my + 240, 200, 32}, "返回主菜单", true)) {
+        // 设置入口：局内菜单跳转设置页（返回时恢复菜单）
+        if (uiButton({(float)mx + 60, (float)my + 198, 200, 32}, TR(S::Settings), true)) {
+            settingsFromGame = true;
+            showMenu = false;
+            phase = Phase::Settings;
+        }
+        if (uiButton({(float)mx + 60, (float)my + 240, 200, 32}, TR(S::Restart), true)) restart();
+        if (uiButton({(float)mx + 60, (float)my + 282, 200, 32}, TR(S::BackToMain), true)) {
             phase = Phase::MainMenu;
             showMenu = false;
         }
-        if (uiButton({(float)mx + 60, (float)my + 282, 200, 32}, "退出游戏", true)) {
+        if (uiButton({(float)mx + 60, (float)my + 324, 200, 32}, TR(S::ExitGame), true)) {
             CloseWindow();
             exit(0);
         }
