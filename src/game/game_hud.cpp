@@ -293,7 +293,7 @@ void Game::drawHUD() {
     }
     if (showMenu || gameOver) {
         DrawRectangle(0, 0, SCREEN_W, SCREEN_H, Color{0, 0, 0, 160});
-        int mw = 320, mh = 300;
+        int mw = 320, mh = 384;
         int mx = SCREEN_W / 2 - mw / 2, my = SCREEN_H / 2 - mh / 2;
         DrawRectangle(mx, my, mw, mh, Color{30, 32, 38, 255});
         DrawRectangleLinesEx({(float)mx, (float)my, (float)mw, (float)mh}, 2, Color{100, 106, 116, 255});
@@ -309,16 +309,25 @@ void Game::drawHUD() {
             else newGame((uint64_t)time(nullptr));
             showMenu = false;
         };
-        if (uiButton({(float)mx + 60, (float)my + 80, 200, 32}, gameOver ? "再来一局" : "继续游戏", true)) {
+        if (uiButton({(float)mx + 60, (float)my + 72, 200, 32}, gameOver ? "再来一局" : "继续游戏", true)) {
             if (gameOver) restart();
             else showMenu = false;
         }
-        if (uiButton({(float)mx + 60, (float)my + 122, 200, 32}, "重新开始", true)) restart();
-        if (uiButton({(float)mx + 60, (float)my + 164, 200, 32}, "返回主菜单", true)) {
+        // 存读档：仅对局中可用（结算画面无意义）
+        if (uiButton({(float)mx + 60, (float)my + 114, 200, 32}, "保存进度 (F5)", !gameOver)) {
+            message(saveGameFile(QUICKSAVE_PATH) ? "进度已保存" : "保存失败");
+            showMenu = false;
+        }
+        if (uiButton({(float)mx + 60, (float)my + 156, 200, 32}, "读取进度 (F9)", !gameOver)) {
+            message(loadGameFile(QUICKSAVE_PATH) ? "进度已读取" : "读取失败（无存档）");
+            showMenu = false;
+        }
+        if (uiButton({(float)mx + 60, (float)my + 198, 200, 32}, "重新开始", true)) restart();
+        if (uiButton({(float)mx + 60, (float)my + 240, 200, 32}, "返回主菜单", true)) {
             phase = Phase::MainMenu;
             showMenu = false;
         }
-        if (uiButton({(float)mx + 60, (float)my + 206, 200, 32}, "退出游戏", true)) {
+        if (uiButton({(float)mx + 60, (float)my + 282, 200, 32}, "退出游戏", true)) {
             CloseWindow();
             exit(0);
         }

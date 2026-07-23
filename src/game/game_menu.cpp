@@ -303,6 +303,21 @@ void Game::drawSetup() {
         gameSpeed = (gameSpeed + 1) % 3;
         g_sfx.play(Sfx::Click, 0.5f);
     }
+    // 音量：热更新立即生效（音效+音乐），无需重启
+    static const int vols[] = {0, 25, 50, 75, 100};
+    if (optBtn(660, "音量", TextFormat("%d", vols[cfgVolume]), 70)) {
+        cfgVolume = (cfgVolume + 1) % 5;
+        g_sfx.setMasterVol(vols[cfgVolume] / 100.0f);
+        g_sfx.play(Sfx::Click, 0.5f);
+    }
+    if (optBtn(830, "补给箱", cfgCrates ? "开" : "关", 70)) {
+        cfgCrates = !cfgCrates;
+        g_sfx.play(Sfx::Click, 0.5f);
+    }
+    if (optBtn(1000, "AI结盟", cfgAlliance ? "开" : "关", 70)) {
+        cfgAlliance = !cfgAlliance;
+        g_sfx.play(Sfx::Click, 0.5f);
+    }
 
     // ---------- 底部：开始游戏 / 返回 ----------
     int by = 700;

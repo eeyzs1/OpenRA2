@@ -59,6 +59,8 @@ void Game::newGame(uint64_t seed) {
         used[c] = true;
     }
     for (int i = 0; i < world.numPlayers; i++) world.players[i].money = cfgMoney;
+    world.cratesEnabled = cfgCrates;
+    world.aiAlliance = cfgAlliance;
     ais.assign(cfgAI, SkirmishAI{});
     for (int i = 0; i < cfgAI; i++) ais[i].reset(i + 1);
     sel.clear();
@@ -94,6 +96,8 @@ void Game::newCampaignGame(int mission) {
     world.players[0].colorId = cfgColor;
     for (int i = 1; i < world.numPlayers; i++) world.players[i].colorId = pool[(i - 1) % pn];
     for (int i = 0; i < world.numPlayers; i++) world.players[i].money = md.money;
+    world.cratesEnabled = cfgCrates;
+    world.aiAlliance = cfgAlliance;
     ais.assign((int)md.aiFactions.size(), SkirmishAI{});
     for (int i = 0; i < (int)ais.size(); i++) ais[i].reset(i + 1);
     sel.clear();
@@ -153,6 +157,72 @@ void Game::spawnCampaignWave() {
     }
 }
 
+// ===================== 存档/读档 =====================
+// 文件格式：8 字节 Game 魔数 + Game 头（战役状态/镜头/速度/AI 状态）+ World 全量状态
+bool Game::saveGameFile(const char* path) {
+    MakeDirectory("saves");
+    FILE* f = fopen(path, "wb");
+    if (!f) return false;
+    bool ok = fwrite("RA2GAME1", 1, 8, f) == 8;
+    auto w = [&](const auto& v) { if (ok && fwrite(&v, sizeof(v), 1, f) != 1) ok = false; };
+    w(campaignMission);
+    uint64_t nw = (uint64_t)nextWave;
+    w(nw);
+    w(localPlayer);
+    w(camX); w(camY);
+    w(gameSpeed);
+    // AI 状态（思考计时/进攻波次/海军检测缓存，避免读档后行为跳变）
+    uint32_t an = (uint32_t)ais.size();
+    w(an);
+    for (const SkirmishAI& a : ais) {
+        w(a.player); w(a.thinkTimer); w(a.attackWave); w(a.attackTimer); w(a.difficulty);
+        w(a.hasWater); w(a.navalPlaceable); w(a.navalCheckCd); w(a.navalFail);
+    }
+    if (ok) ok = world.saveGame(f);
+    fclose(f);
+    return ok;
+}
+
+bool Game::loadGameFile(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+    bool ok = true;
+    char magic[8];
+    ok = fread(magic, 1, 8, f) == 8 && memcmp(magic, "RA2GAME1", 8) == 0;
+    auto r = [&](auto& v) { if (ok && fread(&v, sizeof(v), 1, f) != 1) ok = false; };
+    r(campaignMission);
+    uint64_t nw = 0;
+    r(nw); nextWave = (size_t)nw;
+    r(localPlayer);
+    r(camX); r(camY);
+    r(gameSpeed);
+    uint32_t an = 0;
+    r(an);
+    if (an > MAX_PLAYERS) ok = false;
+    if (ok) {
+        ais.assign(an, SkirmishAI{});
+        for (SkirmishAI& a : ais) {
+            r(a.player); r(a.thinkTimer); r(a.attackWave); r(a.attackTimer); r(a.difficulty);
+            r(a.hasWater); r(a.navalPlaceable); r(a.navalCheckCd); r(a.navalFail);
+        }
+        ok = world.loadGame(f);
+    }
+    fclose(f);
+    if (!ok) return false;
+    // 界面状态复位（与开局一致）
+    sel.clear();
+    selBuilding = INVALID_EID;
+    placing = false;
+    targetingSW = SWType::COUNT;
+    sideMode = 0;
+    paused = false;
+    showMenu = false;
+    gameOver = victory = false;
+    evaLines.clear();
+    phase = Phase::InGame;
+    return true;
+}
+
 
 void Game::loadFont() {
     // 自动收集全部界面字符：数据表名称 + 界面文本 + ASCII，避免漏字显示为 '?'
@@ -172,6 +242,7 @@ void Game::loadFont() {
            "警戒模式按视野索敌散布同类编队设定音乐开关"
            "载员登船卸载完成靠岸地点键"
            "更换一张添加移除你慢普通快进入（）"
+           "保存读取进度音量补给箱互相结盟档"
            "战役任务简报边境冲突近海防御决胜时刻坚守十分钟歼灭所增援抵达战场类型陆岛屿湖泊第波";
     // 战役任务表文本与 HUD 动态文本：全部字模必须收录，否则显示 '?'
     for (const MissionDef& md : missionTable()) { all += md.name; all += md.brief; }
@@ -527,13 +598,15 @@ void Game::smokeTest(int frames) {
             EID mir = world.spawnUnit(1, UnitType::MirageTank, bx + 6.5f, by + 2.5f);
             for (int i = 0; i < 120; i++) world.update();
             bool camoOk = world.valid(mir) && world.ents[mir].camouflaged;
-            // 4) V3 溅射：命中点相邻目标一同掉血（伪装单位不会被误选为目标）
+            // 4) V3 溅射：命中点相邻目标一同掉血（清理幻影避免其击杀 t1 干扰；t1 只能死于 V3 导弹）
+            if (world.valid(mir)) world.ents[mir].alive = false;
             EID v3 = world.spawnUnit(1, UnitType::V3Launcher, bx - 6.5f, by + 0.5f);
-            EID t1 = world.spawnUnit(0, UnitType::Conscript, bx + 8.5f, by + 4.5f);
-            EID t2 = world.spawnUnit(0, UnitType::Conscript, bx + 9.5f, by + 4.5f); // t1 相邻，处于溅射圈
+            EID t1 = world.spawnUnit(0, UnitType::Conscript, bx + 6.5f, by + 4.5f); // 距 V3 13 格，在射程 14 内
+            EID t2 = world.spawnUnit(0, UnitType::Conscript, bx + 7.5f, by + 4.5f); // t1 相邻，处于溅射圈
             world.orderAttack({v3}, t1);
             int t2hp0 = world.ents[t2].hp;
-            for (int i = 0; i < 900 && world.valid(v3) && world.valid(t1); i++) world.update();
+            // t1 死后仍继续模拟，让飞行中的导弹落地（溅射与直接命中同帧结算）
+            for (int i = 0; i < 900 && world.valid(v3) && (world.valid(t1) || world.valid(t2)); i++) world.update();
             // t2 掉血或阵亡只能来自溅射（V3 未以其为目标）
             bool splashOk = !world.valid(t2) || world.ents[t2].hp < t2hp0;
             TraceLog(LOG_INFO, "special verify: radDeploy=%d radDmg=%d chronoTp=%d mirageCamo=%d v3Splash=%d (expect 1/1/1/1/1)",
@@ -999,6 +1072,9 @@ void Game::handleInput() {
         g_sfx.toggleBgm();
         message(g_sfx.bgmEnabled() ? "音乐：开" : "音乐：关");
     }
+    // F5 快速存档 / F9 快速读档
+    if (kPressed(KEY_F5)) message(saveGameFile(QUICKSAVE_PATH) ? "进度已保存" : "保存失败");
+    if (kPressed(KEY_F9)) message(loadGameFile(QUICKSAVE_PATH) ? "进度已读取" : "读取失败（无存档）");
     // Delete 出售选中建筑（X 已让位于散布）
     if (kPressed(KEY_DELETE) && world.valid(selBuilding) && world.ents[selBuilding].player == localPlayer
         && world.ents[selBuilding].btype != BldType::ConYard) {
@@ -1770,12 +1846,24 @@ int Game::playTest() {
         sel.clear(); // 出售后可能残留选中
     }
 
-    // ---- 10 ESC 菜单 → 返回主菜单 ----
+    // ---- 10 ESC 菜单 → 保存进度 → F9 读档 → 返回主菜单 ----
     key(KEY_ESCAPE); // 第一次：清除选择
     key(KEY_ESCAPE); // 第二次：打开菜单
     check(showMenu, "ESC打开游戏菜单");
     shot("pt_06_escmenu.png");
-    clickL(720, 435); // “返回主菜单” {620,419,200,32}
+    clickL(720, 343); // “保存进度 (F5)” {620,327,200,32}
+    check(FileExists(QUICKSAVE_PATH) && !showMenu, "菜单点击[保存进度]");
+    uint64_t tick0 = world.tick;
+    int money0 = world.players[0].money;
+    key(KEY_F9); // 快速读档：状态应还原到保存时刻（误差=点击后推进的几帧）
+    check(world.tick <= tick0 && world.tick + 5 >= tick0 && world.players[0].money == money0
+          && world.hasBld(0, BldType::ConYard), "F9读档状态还原");
+    uint64_t tickL = world.tick;
+    frame(30);
+    check(world.tick == tickL + 30, "读档后模拟继续推进");
+    key(KEY_ESCAPE);
+    check(showMenu, "再次ESC打开菜单");
+    clickL(720, 469); // “返回主菜单” {620,453,200,32}
     check(phase == Phase::MainMenu && !showMenu, "点击[返回主菜单]");
 
     // ---- 11 战役模式 ----
@@ -1790,7 +1878,7 @@ int Game::playTest() {
     // ---- 12 战役内 ESC → 返回主菜单 ----
     key(KEY_ESCAPE);
     check(showMenu, "战役ESC打开菜单");
-    clickL(720, 435);
+    clickL(720, 469);
     check(phase == Phase::MainMenu, "战役返回主菜单");
 
     frame(2);

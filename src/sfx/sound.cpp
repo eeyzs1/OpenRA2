@@ -378,7 +378,7 @@ void SoundBank::initBgm() {
         return;
     }
     bgm.looping = true;
-    SetMusicVolume(bgm, 0.35f);
+    SetMusicVolume(bgm, 0.35f * masterVol);
     PlayMusicStream(bgm);
     bgmOk = true;
     TraceLog(LOG_INFO, "RA2 bgm: march synthesized, %.1fs loop", (float)b.frames() / RATE);
@@ -430,7 +430,13 @@ void SoundBank::shutdown() {
     ok = false;
 }
 
+void SoundBank::setMasterVol(float v) {
+    masterVol = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+    if (bgmOk) SetMusicVolume(bgm, 0.35f * masterVol);
+}
+
 void SoundBank::play(Sfx id, float vol) {
+    vol *= masterVol;
     if (!ok || vol <= 0.01f) return;
     int i = (int)id;
     double now = GetTime();
@@ -444,7 +450,7 @@ void SoundBank::play(Sfx id, float vol) {
 
 void SoundBank::playAt(Sfx id, float tx, float ty) {
     float d = distf(tx, ty, lisX, lisY);
-    float vol = 1.0f - d / 30.0f;
+    float vol = (1.0f - d / 30.0f) * masterVol;
     if (vol <= 0.05f) return;
     int i = (int)id;
     double now = GetTime();

@@ -49,6 +49,10 @@ public:
     void toggleBgm();
     bool bgmEnabled() const { return bgmOn; }
 
+    // 主音量 0..1（音效+音乐；选项界面热更新，无需重启）
+    void setMasterVol(float v);
+    float masterVolume() const { return masterVol; }
+
 private:
     static constexpr int ALIAS = 3; // 同音并发数
     Sound snd[(int)Sfx::COUNT][ALIAS]{};
@@ -56,6 +60,7 @@ private:
     double last[(int)Sfx::COUNT]{};
     float lisX = 0, lisY = 0;
     bool ok = false;
+    float masterVol = 1.0f;
 
     Music bgm{};
     bool bgmOk = false;

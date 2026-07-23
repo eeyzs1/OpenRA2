@@ -1898,6 +1898,314 @@ void World::updateFog(int player) {
     }
 }
 
+// ===================== 存档/读档 =====================
+namespace {
+// 二进制序列化助手：任何一步读写失败即标记 ok=false（调用方整体放弃）
+struct Ser {
+    FILE* f;
+    bool ok = true;
+    template <typename T> void w(const T& v) { if (ok && fwrite(&v, sizeof(v), 1, f) != 1) ok = false; }
+    template <typename T> void r(T& v) { if (ok && fread(&v, sizeof(v), 1, f) != 1) ok = false; }
+    void wbuf(const void* p, size_t n) { if (ok && n && fwrite(p, 1, n, f) != n) ok = false; }
+    void rbuf(void* p, size_t n) { if (ok && n && fread(p, 1, n, f) != n) ok = false; }
+    void wstr(const std::string& s) { uint32_t n = (uint32_t)s.size(); w(n); wbuf(s.data(), n); }
+    void rstr(std::string& s) {
+        uint32_t n = 0; r(n);
+        if (!ok || n > (1u << 20)) { ok = false; return; }
+        s.resize(n);
+        rbuf(s.data(), n);
+    }
+};
+
+// projSprite 是 const char*：存档写字符串，读档映射回静态字面量（悬空指针防护）
+static const char* kProjSprites[] = {"shell", "bullet", "flak", "tesla", "prism", "missile"};
+void serWeapon(Ser& s, const WeaponDef& wd) {
+    s.w(wd.damage); s.w(wd.range); s.w(wd.cooldown);
+    s.w(wd.antiAir); s.w(wd.antiGround);
+    std::string ps = wd.projSprite ? wd.projSprite : "shell";
+    s.wstr(ps);
+    s.w(wd.vsInfantry); s.w(wd.vsVehicle); s.w(wd.vsBuilding);
+    s.w(wd.navalOnly); s.w(wd.splash);
+}
+void deserWeapon(Ser& s, WeaponDef& wd) {
+    s.r(wd.damage); s.r(wd.range); s.r(wd.cooldown);
+    s.r(wd.antiAir); s.r(wd.antiGround);
+    std::string ps; s.rstr(ps);
+    wd.projSprite = "shell";
+    for (const char* k : kProjSprites)
+        if (ps == k) { wd.projSprite = k; break; }
+    s.r(wd.vsInfantry); s.r(wd.vsVehicle); s.r(wd.vsBuilding);
+    s.r(wd.navalOnly); s.r(wd.splash);
+}
+void serProd(Ser& s, const ProdItem& p) {
+    s.w(p.active); s.w(p.isUnit); s.w(p.typeIdx); s.w(p.progress); s.w(p.ready);
+}
+void deserProd(Ser& s, ProdItem& p) {
+    s.r(p.active); s.r(p.isUnit); s.r(p.typeIdx); s.r(p.progress); s.r(p.ready);
+}
+} // namespace
+
+bool World::saveGame(FILE* f) const {
+    Ser s{f};
+    s.wbuf("RA2WRLD1", 8);
+    s.w(tick); s.w(numPlayers); s.w(rng.s);
+    s.w(cratesEnabled); s.w(aiAlliance);
+    // 地图（含矿石余量与迷雾）
+    s.w(map.w); s.w(map.h);
+    for (const Cell& c : map.cells) {
+        uint8_t t = (uint8_t)c.terrain, o = (uint8_t)c.overlay;
+        s.w(t); s.w(o); s.w(c.variant); s.w(c.ore); s.w(c.oreMax);
+    }
+    for (int p = 0; p < numPlayers; p++)
+        s.wbuf(map.fog[p].data(), map.fog[p].size());
+    s.wbuf(bldOcc.data(), bldOcc.size() * sizeof(int));
+    // 玩家
+    for (const Player& p : players) {
+        s.w(p.active); s.w(p.isAI); s.w(p.defeated);
+        uint8_t fac = (uint8_t)p.faction;
+        s.w(fac);
+        s.w(p.colorId); s.w(p.money); s.wstr(p.name);
+        serProd(s, p.bldProd);
+        for (int c = 0; c < PROD_CAT_N; c++) serProd(s, p.unitProd[c]);
+        for (int c = 0; c < PROD_CAT_N; c++) {
+            uint32_t n = (uint32_t)p.unitQueue[c].size();
+            s.w(n);
+            for (int t : p.unitQueue[c]) s.w(t);
+        }
+        uint8_t pb = (uint8_t)p.placingBld;
+        s.w(pb);
+        s.w(p.powerSabotage); s.w(p.revealTimer);
+        for (int c = 0; c < PROD_CAT_N; c++) s.w(p.vetCat[c]);
+        s.w(p.aiDifficulty);
+        for (int i = 0; i < (int)SWType::COUNT; i++) s.w(p.swCharge[i]);
+        for (int i = 0; i < (int)SWType::COUNT; i++) s.w(p.swReady[i]);
+        s.w(p.stormTimer); s.w(p.stormX); s.w(p.stormY); s.w(p.stormBoltCd);
+        s.w(p.evaBaseCd); s.w(p.evaMinerCd); s.w(p.evaUnitCd);
+    }
+    // 实体
+    {
+        uint32_t n = (uint32_t)ents.size();
+        s.w(n);
+        for (const Ent& e : ents) {
+            s.w(e.alive); s.w(e.isBuilding); s.w(e.player);
+            uint8_t ut = (uint8_t)e.utype, bt = (uint8_t)e.btype, st = (uint8_t)e.state;
+            s.w(ut); s.w(bt);
+            s.w(e.x); s.w(e.y); s.w(e.dir); s.w(e.turretDir); s.w(e.hp);
+            uint32_t pn = (uint32_t)e.path.size();
+            s.w(pn);
+            for (const Vec2i& wp : e.path) { s.w(wp.x); s.w(wp.y); }
+            s.w(e.pathIdx); s.w(e.moveTick); s.w(e.blockTick);
+            s.w(e.walkFrame); s.w(e.walkAnim);
+            s.w(st); s.w(e.atkCd); s.w(e.target); s.w(e.goalX); s.w(e.goalY);
+            s.w(e.oreLoad); s.w(e.oreCell.x); s.w(e.oreCell.y); s.w(e.dockRefinery); s.w(e.digTimer);
+            s.w(e.invuln);
+            s.w(e.ammo); s.w(e.rearmTimer); s.w(e.airbase); s.w(e.orbitA);
+            s.w(e.rallyX); s.w(e.rallyY); s.w(e.bldAnim); s.w(e.undeploy); s.w(e.guard);
+            uint32_t cn = (uint32_t)e.cargo.size();
+            s.w(cn);
+            for (UnitType t : e.cargo) { uint8_t ct = (uint8_t)t; s.w(ct); }
+            s.w(e.chrono); s.w(e.tpSick); s.w(e.camouflaged); s.w(e.camoTick);
+            s.w(e.radDeployed); s.w(e.deployed); s.w(e.subReveal);
+            s.w(e.kills); s.w(e.vetRank);
+        }
+        uint32_t fn = (uint32_t)freeList.size();
+        s.w(fn);
+        for (int id : freeList) s.w(id);
+    }
+    // 投射物 / 特效 / 核弹 / 补给箱 / 定时炸弹 / EVA 队列
+    {
+        uint32_t n = (uint32_t)projs.size();
+        s.w(n);
+        for (const Projectile& p : projs) {
+            s.w(p.alive);
+            uint8_t k = (uint8_t)p.kind;
+            s.w(k);
+            s.w(p.player); s.w(p.x); s.w(p.y); s.w(p.tx); s.w(p.ty);
+            s.w(p.target); s.w(p.src);
+            serWeapon(s, p.w);
+            s.w(p.speed); s.w(p.trail);
+        }
+    }
+    {
+        uint32_t n = (uint32_t)effects.size();
+        s.w(n);
+        for (const Effect& e : effects) {
+            s.w(e.alive); s.w(e.kind); s.w(e.x); s.w(e.y); s.w(e.x2); s.w(e.y2); s.w(e.age); s.w(e.maxAge);
+        }
+    }
+    {
+        uint32_t n = (uint32_t)nukes.size();
+        s.w(n);
+        for (const Nuke& nk : nukes) { s.w(nk.active); s.w(nk.player); s.w(nk.tx); s.w(nk.ty); s.w(nk.timer); }
+    }
+    {
+        uint32_t n = (uint32_t)crates.size();
+        s.w(n);
+        for (const Crate& c : crates) { s.w(c.alive); s.w(c.x); s.w(c.y); s.w(c.kind); }
+    }
+    {
+        uint32_t n = (uint32_t)timedBombs.size();
+        s.w(n);
+        for (const TimedBomb& b : timedBombs) { s.w(b.x); s.w(b.y); s.w(b.timer); s.w(b.player); s.w(b.attachedTo); }
+    }
+    {
+        uint32_t n = (uint32_t)evaQueue.size();
+        s.w(n);
+        for (const EvaEvent& ev : evaQueue) { s.w(ev.player); s.wstr(ev.text); }
+    }
+    return s.ok;
+}
+
+bool World::loadGame(FILE* f) {
+    Ser s{f};
+    char magic[8];
+    s.rbuf(magic, 8);
+    if (!s.ok || memcmp(magic, "RA2WRLD1", 8) != 0) return false;
+    s.r(tick); s.r(numPlayers); s.r(rng.s);
+    s.r(cratesEnabled); s.r(aiAlliance);
+    // 地图
+    s.r(map.w); s.r(map.h);
+    if (!s.ok || map.w <= 0 || map.h <= 0 || map.w > 512 || map.h > 512) return false;
+    map.cells.resize((size_t)map.w * map.h);
+    for (Cell& c : map.cells) {
+        uint8_t t = 0, o = 0;
+        s.r(t); s.r(o); s.r(c.variant); s.r(c.ore); s.r(c.oreMax);
+        c.terrain = (Terrain)t; c.overlay = (Overlay)o;
+    }
+    map.fog.assign(numPlayers, std::vector<uint8_t>((size_t)map.w * map.h));
+    for (int p = 0; p < numPlayers; p++)
+        s.rbuf(map.fog[p].data(), map.fog[p].size());
+    bldOcc.assign((size_t)map.w * map.h, -1);
+    s.rbuf(bldOcc.data(), bldOcc.size() * sizeof(int));
+    map.bldOccRef = &bldOcc; // 重新挂载寻路占用表
+    // 玩家
+    players.assign(numPlayers, Player{});
+    for (Player& p : players) {
+        s.r(p.active); s.r(p.isAI); s.r(p.defeated);
+        uint8_t fac = 0;
+        s.r(fac); p.faction = (Faction)fac;
+        s.r(p.colorId); s.r(p.money); s.rstr(p.name);
+        deserProd(s, p.bldProd);
+        for (int c = 0; c < PROD_CAT_N; c++) deserProd(s, p.unitProd[c]);
+        for (int c = 0; c < PROD_CAT_N; c++) {
+            uint32_t n = 0;
+            s.r(n);
+            if (n > 64) { s.ok = false; break; }
+            p.unitQueue[c].clear();
+            for (uint32_t i = 0; i < n; i++) { int t = 0; s.r(t); p.unitQueue[c].push_back(t); }
+        }
+        uint8_t pb = 0;
+        s.r(pb); p.placingBld = (BldType)pb;
+        s.r(p.powerSabotage); s.r(p.revealTimer);
+        for (int c = 0; c < PROD_CAT_N; c++) s.r(p.vetCat[c]);
+        s.r(p.aiDifficulty);
+        for (int i = 0; i < (int)SWType::COUNT; i++) s.r(p.swCharge[i]);
+        for (int i = 0; i < (int)SWType::COUNT; i++) s.r(p.swReady[i]);
+        s.r(p.stormTimer); s.r(p.stormX); s.r(p.stormY); s.r(p.stormBoltCd);
+        s.r(p.evaBaseCd); s.r(p.evaMinerCd); s.r(p.evaUnitCd);
+    }
+    // 实体
+    {
+        uint32_t n = 0;
+        s.r(n);
+        if (!s.ok || n > 65536) return false;
+        ents.assign(n, Ent{});
+        for (Ent& e : ents) {
+            s.r(e.alive); s.r(e.isBuilding); s.r(e.player);
+            uint8_t ut = 0, bt = 0, st = 0;
+            s.r(ut); s.r(bt);
+            e.utype = (UnitType)ut; e.btype = (BldType)bt;
+            s.r(e.x); s.r(e.y); s.r(e.dir); s.r(e.turretDir); s.r(e.hp);
+            uint32_t pn = 0;
+            s.r(pn);
+            if (pn > 4096) { s.ok = false; break; }
+            e.path.resize(pn);
+            for (Vec2i& wp : e.path) { s.r(wp.x); s.r(wp.y); }
+            s.r(e.pathIdx); s.r(e.moveTick); s.r(e.blockTick);
+            s.r(e.walkFrame); s.r(e.walkAnim);
+            s.r(st); e.state = (UState)st;
+            s.r(e.atkCd); s.r(e.target); s.r(e.goalX); s.r(e.goalY);
+            s.r(e.oreLoad); s.r(e.oreCell.x); s.r(e.oreCell.y); s.r(e.dockRefinery); s.r(e.digTimer);
+            s.r(e.invuln);
+            s.r(e.ammo); s.r(e.rearmTimer); s.r(e.airbase); s.r(e.orbitA);
+            s.r(e.rallyX); s.r(e.rallyY); s.r(e.bldAnim); s.r(e.undeploy); s.r(e.guard);
+            uint32_t cn = 0;
+            s.r(cn);
+            if (cn > 64) { s.ok = false; break; }
+            e.cargo.resize(cn);
+            for (UnitType& t : e.cargo) { uint8_t ct = 0; s.r(ct); t = (UnitType)ct; }
+            s.r(e.chrono); s.r(e.tpSick); s.r(e.camouflaged); s.r(e.camoTick);
+            s.r(e.radDeployed); s.r(e.deployed); s.r(e.subReveal);
+            s.r(e.kills); s.r(e.vetRank);
+        }
+        uint32_t fn = 0;
+        s.r(fn);
+        if (fn > 65536) s.ok = false;
+        freeList.clear();
+        for (uint32_t i = 0; s.ok && i < fn; i++) { int id = 0; s.r(id); freeList.push_back(id); }
+    }
+    // 投射物 / 特效 / 核弹 / 补给箱 / 定时炸弹 / EVA 队列
+    {
+        uint32_t n = 0;
+        s.r(n);
+        if (!s.ok || n > 8192) return false;
+        projs.assign(n, Projectile{});
+        for (Projectile& p : projs) {
+            s.r(p.alive);
+            uint8_t k = 0;
+            s.r(k); p.kind = (ProjKind)k;
+            s.r(p.player); s.r(p.x); s.r(p.y); s.r(p.tx); s.r(p.ty);
+            s.r(p.target); s.r(p.src);
+            deserWeapon(s, p.w);
+            s.r(p.speed); s.r(p.trail);
+        }
+    }
+    {
+        uint32_t n = 0;
+        s.r(n);
+        if (!s.ok || n > 8192) return false;
+        effects.assign(n, Effect{});
+        for (Effect& e : effects) {
+            s.r(e.alive); s.r(e.kind); s.r(e.x); s.r(e.y); s.r(e.x2); s.r(e.y2); s.r(e.age); s.r(e.maxAge);
+        }
+    }
+    {
+        uint32_t n = 0;
+        s.r(n);
+        if (!s.ok || n > 64) return false;
+        nukes.assign(n, Nuke{});
+        for (Nuke& nk : nukes) { s.r(nk.active); s.r(nk.player); s.r(nk.tx); s.r(nk.ty); s.r(nk.timer); }
+    }
+    {
+        uint32_t n = 0;
+        s.r(n);
+        if (!s.ok || n > 1024) return false;
+        crates.assign(n, Crate{});
+        for (Crate& c : crates) { s.r(c.alive); s.r(c.x); s.r(c.y); s.r(c.kind); }
+    }
+    {
+        uint32_t n = 0;
+        s.r(n);
+        if (!s.ok || n > 1024) return false;
+        timedBombs.assign(n, TimedBomb{});
+        for (TimedBomb& b : timedBombs) { s.r(b.x); s.r(b.y); s.r(b.timer); s.r(b.player); s.r(b.attachedTo); }
+    }
+    {
+        uint32_t n = 0;
+        s.r(n);
+        if (!s.ok || n > 256) return false;
+        evaQueue.clear();
+        for (uint32_t i = 0; i < n; i++) {
+            EvaEvent ev;
+            s.r(ev.player); s.rstr(ev.text);
+            evaQueue.push_back(std::move(ev));
+        }
+    }
+    if (!s.ok) return false;
+    recomputePower();
+    return true;
+}
+
 // ===================== 间谍渗透 =====================
 // RA2 原作效果：精炼厂=偷钱，电厂=断电，雷达=获取视野，兵营/工厂=新单位直接老兵，高科=破坏超武
 void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {

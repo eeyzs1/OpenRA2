@@ -4,6 +4,7 @@
 #include <vector>
 #include <deque>
 #include <string>
+#include <cstdio>
 
 // 实体 ID 类型（索引）
 using EID = int;
@@ -258,6 +259,10 @@ public:
 
     // 主更新（逻辑帧）
     void update();
+
+    // 存档/读档（二进制序列化整个模拟状态，追加到已打开的文件；Game 层负责文件头）
+    bool saveGame(FILE* f) const;
+    bool loadGame(FILE* f);
 
     // 迷雾：以 player 视角重新计算可见
     void updateFog(int player);

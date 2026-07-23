@@ -21,6 +21,9 @@ public:
     int playTest();             // 自动化完整游玩测试：脚本注入输入，真实窗口跑全流程，返回失败数
     void debugMenuShot(const char* file, bool setup); // 菜单截图（验证用）
 
+    // 快速存档固定槽位（F5 保存 / F9 读取，游戏内菜单共用）
+    static constexpr const char* QUICKSAVE_PATH = "saves/quicksave.sav";
+
 private:
     World world;
     std::vector<SkirmishAI> ais;
@@ -37,6 +40,11 @@ private:
     // 每个 AI 槽位的颜色与阵营（RA2 式槽位配置；阵营 3=随机）
     int aiColor[7] = {1, 2, 3, 4, 5, 6, 7};
     int aiFaction[7] = {3, 3, 3, 3, 3, 3, 3};
+
+    // 遭遇战选项（设置界面可改，开局应用；音量热更新）
+    bool cfgCrates = true;   // 随机补给箱
+    bool cfgAlliance = false; // AI 互相结盟
+    int cfgVolume = 4;       // 音量档位 0..4（0/25/50/75/100%）
 
     // 遭遇战设置界面的地图预览
     Map previewMap;
@@ -106,6 +114,8 @@ private:
     void newGame(uint64_t seed);
     void newCampaignGame(int mission);
     void spawnCampaignWave();
+    bool saveGameFile(const char* path); // 快速存档（F5/菜单）：Game 头 + World 全量状态
+    bool loadGameFile(const char* path); // 快速读档（F9/菜单）
     void loadFont();
     void logic();
     void render();
