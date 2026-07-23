@@ -161,6 +161,9 @@ void Game::loadFont() {
            "警戒模式按视野索敌散布同类编队设定音乐开关"
            "载员登船卸载完成靠岸地点键"
            "战役任务简报边境冲突近海防御决胜时刻坚守十分钟歼灭所增援抵达战场类型陆岛屿湖泊第波";
+    // 战役任务表文本与 HUD 动态文本：全部字模必须收录，否则显示 '?'
+    for (const MissionDef& md : missionTable()) { all += md.name; all += md.brief; }
+    all += "目标：歼灭所有敌军坚守·敌军增援将至（第/波）%：（），！为固";
     int count = 0;
     int* cps = LoadCodepoints(all.c_str(), &count);
     const char* paths[] = {
@@ -779,10 +782,10 @@ void Game::issueSmartOrder(int mx, int my) {
             else rest.push_back(id);
         }
         world.orderHarvest(harv, tx, ty);
-        if (!rest.empty()) world.orderMove(rest, (float)tx, (float)ty, IsKeyDown(KEY_A));
+        if (!rest.empty()) world.orderMove(rest, (float)tx, (float)ty, kDown(KEY_A));
         return;
     }
-    world.orderMove(sel, (float)tx, (float)ty, IsKeyDown(KEY_A));
+    world.orderMove(sel, (float)tx, (float)ty, kDown(KEY_A));
 }
 
 void Game::message(const std::string& m) {
@@ -792,7 +795,7 @@ void Game::message(const std::string& m) {
 
 void Game::handleInput() {
     updateCamera();
-    Vector2 mouse = GetMousePosition();
+    Vector2 mouse = mousePos();
     bool overUI = mouse.x > SCREEN_W - sidebarW;
     if (showMenu || gameOver) {
         // 菜单点击在 render 中处理（立即模式）
@@ -801,11 +804,11 @@ void Game::handleInput() {
 
     // 超武目标选择模式
     if (targetingSW != SWType::COUNT) {
-        if (IsMouseButtonPressed(MOUSE_RIGHT_BUTTON) || IsKeyPressed(KEY_ESCAPE)) {
+        if (mPressed(MOUSE_RIGHT_BUTTON) || kPressed(KEY_ESCAPE)) {
             targetingSW = SWType::COUNT;
             return;
         }
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !overUI) {
+        if (mPressed(MOUSE_LEFT_BUTTON) && !overUI) {
             float wx, wy;
             screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
             int tx, ty;
@@ -823,12 +826,12 @@ void Game::handleInput() {
 
     // 放置建筑模式
     if (placing) {
-        if (IsMouseButtonPressed(MOUSE_RIGHT_BUTTON) || IsKeyPressed(KEY_ESCAPE)) {
+        if (mPressed(MOUSE_RIGHT_BUTTON) || kPressed(KEY_ESCAPE)) {
             placing = false;
             world.players[localPlayer].placingBld = BldType::COUNT;
             return;
         }
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && !overUI) {
+        if (mPressed(MOUSE_LEFT_BUTTON) && !overUI) {
             float wx, wy;
             screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
             int tx, ty;
@@ -838,7 +841,7 @@ void Game::handleInput() {
             int bx = tx - d.w / 2, by = ty - d.h / 2;
             if (world.placeBuilding(localPlayer, t, bx, by)) {
                 placing = false;
-                if (!IsKeyDown(KEY_LEFT_SHIFT)) world.players[localPlayer].placingBld = BldType::COUNT;
+                if (!kDown(KEY_LEFT_SHIFT)) world.players[localPlayer].placingBld = BldType::COUNT;
                 else { world.players[localPlayer].placingBld = t; placing = true; }
             } else {
                 message("无法在此放置");
@@ -849,30 +852,30 @@ void Game::handleInput() {
 
     if (!overUI) {
         // 左键选择
-        if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        if (mPressed(MOUSE_LEFT_BUTTON)) {
             dragging = true;
             dragStart = mouse;
         }
-        if (dragging && IsMouseButtonReleased(MOUSE_LEFT_BUTTON)) {
+        if (dragging && mReleased(MOUSE_LEFT_BUTTON)) {
             Rectangle r{
                 std::min(dragStart.x, mouse.x), std::min(dragStart.y, mouse.y),
                 fabsf(mouse.x - dragStart.x), fabsf(mouse.y - dragStart.y)};
-            bool add = IsKeyDown(KEY_LEFT_SHIFT);
+            bool add = kDown(KEY_LEFT_SHIFT);
             if (r.width < 6 && r.height < 6) doSelect((int)mouse.x, (int)mouse.y, add);
             else doBoxSelect(r, add);
             dragging = false;
         }
         // 右键指令
-        if (IsMouseButtonPressed(MOUSE_RIGHT_BUTTON) && !dragging) {
+        if (mPressed(MOUSE_RIGHT_BUTTON) && !dragging) {
             if (!sel.empty()) issueSmartOrder((int)mouse.x, (int)mouse.y);
             else { selBuilding = INVALID_EID; }
         }
     }
 
     // 快捷键
-    if (IsKeyPressed(KEY_S)) world.orderStop(sel);
-    if (IsKeyPressed(KEY_U) && !sel.empty()) world.orderUnload(sel); // 运输船卸载
-    if (IsKeyPressed(KEY_D)) {
+    if (kPressed(KEY_S)) world.orderStop(sel);
+    if (kPressed(KEY_U) && !sel.empty()) world.orderUnload(sel); // 运输船卸载
+    if (kPressed(KEY_D)) {
         for (EID id : sel)
             if (world.valid(id) && world.ents[id].utype == UnitType::MCV) {
                 world.orderDeploy(id);
@@ -881,17 +884,17 @@ void Game::handleInput() {
             }
     }
     // X 散布（RA2 原作键位）
-    if (IsKeyPressed(KEY_X) && !sel.empty()) {
+    if (kPressed(KEY_X) && !sel.empty()) {
         world.orderScatter(sel);
         message("单位散布");
     }
     // G 警戒（RA2 原作键位）
-    if (IsKeyPressed(KEY_G) && !sel.empty()) {
+    if (kPressed(KEY_G) && !sel.empty()) {
         world.orderGuard(sel);
         message("警戒模式：按视野索敌");
     }
     // T 选择同类（RA2 原作键位）
-    if (IsKeyPressed(KEY_T) && !sel.empty()) {
+    if (kPressed(KEY_T) && !sel.empty()) {
         bool types[(int)UnitType::COUNT] = {};
         for (EID id : sel)
             if (world.valid(id) && !world.ents[id].isBuilding) types[(int)world.ents[id].utype] = true;
@@ -906,9 +909,9 @@ void Game::handleInput() {
     }
     // 编队：Ctrl+数字设定 / 数字召回 / 双击数字跳转视角
     {
-        bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+        bool ctrl = kDown(KEY_LEFT_CONTROL) || kDown(KEY_RIGHT_CONTROL);
         for (int n = 0; n <= 9; n++) {
-            if (!IsKeyPressed(KEY_ZERO + n)) continue;
+            if (!kPressed(KEY_ZERO + n)) continue;
             if (ctrl) {
                 groups[n] = sel;
                 groups[n].erase(std::remove_if(groups[n].begin(), groups[n].end(), [&](EID id) {
@@ -942,18 +945,18 @@ void Game::handleInput() {
         }
     }
     // M 音乐开关
-    if (IsKeyPressed(KEY_M)) {
+    if (kPressed(KEY_M)) {
         g_sfx.toggleBgm();
         message(g_sfx.bgmEnabled() ? "音乐：开" : "音乐：关");
     }
     // Delete 出售选中建筑（X 已让位于散布）
-    if (IsKeyPressed(KEY_DELETE) && world.valid(selBuilding) && world.ents[selBuilding].player == localPlayer
+    if (kPressed(KEY_DELETE) && world.valid(selBuilding) && world.ents[selBuilding].player == localPlayer
         && world.ents[selBuilding].btype != BldType::ConYard) {
         world.sellBuilding(selBuilding);
         selBuilding = INVALID_EID;
         message("已出售建筑");
     }
-    if (IsKeyPressed(KEY_H)) {
+    if (kPressed(KEY_H)) {
         for (auto& e : world.ents)
             if (e.alive && e.isBuilding && e.player == localPlayer && e.btype == BldType::ConYard) {
                 Vector2 p = bldScreenPos(e);
@@ -962,15 +965,15 @@ void Game::handleInput() {
                 break;
             }
     }
-    if (IsKeyPressed(KEY_P)) paused = !paused;
-    if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) gameSpeed = gameSpeed == 1 ? 2 : 3;
-    if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) gameSpeed = std::max(1, gameSpeed - 1);
-    if (IsKeyPressed(KEY_ESCAPE)) {
+    if (kPressed(KEY_P)) paused = !paused;
+    if (kPressed(KEY_EQUAL) || kPressed(KEY_KP_ADD)) gameSpeed = gameSpeed == 1 ? 2 : 3;
+    if (kPressed(KEY_MINUS) || kPressed(KEY_KP_SUBTRACT)) gameSpeed = std::max(1, gameSpeed - 1);
+    if (kPressed(KEY_ESCAPE)) {
         if (!sel.empty() || world.valid(selBuilding)) { sel.clear(); selBuilding = INVALID_EID; }
         else showMenu = true;
     }
     // 设置集结点
-    if (IsKeyPressed(KEY_R) && world.valid(selBuilding)) {
+    if (kPressed(KEY_R) && world.valid(selBuilding)) {
         float wx, wy;
         screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
         int tx, ty;
@@ -987,11 +990,11 @@ void Game::handleInput() {
 void Game::updateCamera() {
     int viewW = SCREEN_W - sidebarW;
     float sp = camSpeed * gameSpeed;
-    if (IsKeyDown(KEY_LEFT)) camX -= sp;
-    if (IsKeyDown(KEY_RIGHT)) camX += sp;
-    if (IsKeyDown(KEY_UP)) camY -= sp;
-    if (IsKeyDown(KEY_DOWN)) camY += sp;
-    Vector2 m = GetMousePosition();
+    if (kDown(KEY_LEFT)) camX -= sp;
+    if (kDown(KEY_RIGHT)) camX += sp;
+    if (kDown(KEY_UP)) camY -= sp;
+    if (kDown(KEY_DOWN)) camY += sp;
+    Vector2 m = mousePos();
     if (m.x < 4) camX -= sp;
     if (m.x > viewW - 4 && m.x < viewW + 2) camX += sp;
     if (m.y < 4) camY -= sp;
@@ -1014,6 +1017,13 @@ void Game::render() {
         else if (phase == Phase::MissionSelect) drawMissionSelect();
         else drawSetup();
         EndTextureMode();
+        if (!shotFile.empty()) {
+            Image img = LoadImageFromTexture(canvas.texture);
+            ImageFlipVertical(&img);
+            ExportImage(img, shotFile.c_str());
+            UnloadImage(img);
+            shotFile.clear();
+        }
         BeginDrawing();
         ClearBackground(BLACK);
         float rw = (float)GetRenderWidth(), rh = (float)GetRenderHeight();
@@ -1397,7 +1407,7 @@ void Game::drawFogLayer() {
 void Game::drawPlacement() {
     // 超武目标选择：鼠标处画范围预览圈
     if (targetingSW != SWType::COUNT) {
-        Vector2 m = GetMousePosition();
+        Vector2 m = mousePos();
         float wx, wy;
         screenToWorld((int)m.x, (int)m.y, wx, wy);
         int tx, ty;
@@ -1421,7 +1431,7 @@ void Game::drawPlacement() {
     BldType t = world.players[localPlayer].placingBld;
     if (t == BldType::COUNT) return;
     const BldDef& d = bldDef(t);
-    Vector2 m = GetMousePosition();
+    Vector2 m = mousePos();
     float wx, wy;
     screenToWorld((int)m.x, (int)m.y, wx, wy);
     int tx, ty;
@@ -1449,4 +1459,225 @@ void Game::drawHealthBar(int px, int py, int w, float frac, bool selected) {
     DrawRectangle(px - 1, py - 1, w + 2, 5, Color{0, 0, 0, 180});
     Color c = frac > 0.5f ? Color{60, 220, 60, 255} : (frac > 0.25f ? Color{230, 210, 40, 255} : Color{220, 40, 40, 255});
     DrawRectangle(px, py, (int)(w * frac), 3, c);
+}
+
+// ===================== 输入包装（高 DPI 修正 + 脚本注入） =====================
+Vector2 Game::mousePos() const {
+    if (sim.active) return sim.pos;
+    // 物理像素 → 逻辑画布坐标：与 render() 的 letterbox 目标矩形一一对应。
+    // 高 DPI 显示器（如 150% 缩放）下 raylib 返回物理像素坐标，必须归一化，
+    // 否则所有按钮命中测试整体偏移，表现为"点任何按钮都没反应"。
+    float rw = (float)GetRenderWidth(), rh = (float)GetRenderHeight();
+    Vector2 m = GetMousePosition();
+    if (rw <= 0 || rh <= 0) return m;
+    Rectangle dst{(rw - rh * SCREEN_W / SCREEN_H) / 2, 0, rh * SCREEN_W / SCREEN_H, rh};
+    if (rw / SCREEN_W < rh / SCREEN_H) dst = Rectangle{0, (rh - rw * SCREEN_H / SCREEN_W) / 2, rw, rw * SCREEN_H / SCREEN_W};
+    return {(m.x - dst.x) * SCREEN_W / dst.width, (m.y - dst.y) * SCREEN_H / dst.height};
+}
+
+bool Game::mPressed(int b) const {
+    if (!sim.active) return IsMouseButtonPressed(b);
+    return b == MOUSE_RIGHT_BUTTON ? sim.pressedR : sim.pressedL;
+}
+bool Game::mDown(int b) const {
+    if (!sim.active) return IsMouseButtonDown(b);
+    return b == MOUSE_RIGHT_BUTTON ? sim.downR : sim.downL;
+}
+bool Game::mReleased(int b) const {
+    if (!sim.active) return IsMouseButtonReleased(b);
+    return b == MOUSE_RIGHT_BUTTON ? sim.releasedR : sim.releasedL;
+}
+bool Game::kPressed(int k) const {
+    return sim.active ? sim.keysPressed.count(k) > 0 : IsKeyPressed(k);
+}
+bool Game::kDown(int k) const {
+    return sim.active ? sim.keysDown.count(k) > 0 : IsKeyDown(k);
+}
+
+// ===================== 自动化完整游玩测试 =====================
+// 脚本注入输入，真实窗口完整操作一遍：
+// 主菜单→遭遇战设置→开局→点选MCV→D展开→侧边栏建电厂→放置→
+// 框选坦克→右键移动→ESC菜单→返回主菜单→战役选择→战役开局→返回。
+// 每步断言 PASS/FAIL 并截图 pt_XX_*.png，返回失败数（0 = 全部通过）。
+int Game::playTest() {
+    sim.active = true;
+    int fails = 0, stepNo = 0;
+    auto check = [&](bool ok, const char* name) {
+        stepNo++;
+        TraceLog(LOG_INFO, "PLAYTEST [%02d] %-30s %s", stepNo, name, ok ? "PASS" : "FAIL");
+        if (!ok) fails++;
+    };
+    // 单帧推进：逻辑 + 输入处理 + 渲染，帧末清除输入边沿
+    auto frame = [&](int n = 1) {
+        for (int i = 0; i < n; i++) {
+            if (phase == Phase::InGame && !paused && !gameOver) logic();
+            if (phase == Phase::InGame) handleInput();
+            render();
+            sim.pressedL = sim.pressedR = sim.releasedL = sim.releasedR = false;
+            sim.keysPressed.clear();
+        }
+    };
+    auto clickL = [&](float x, float y) {
+        sim.pos = {x, y}; frame();
+        sim.pressedL = true; sim.downL = true; frame();
+        sim.releasedL = true; sim.downL = false; frame();
+    };
+    auto clickR = [&](float x, float y) {
+        sim.pos = {x, y}; frame();
+        sim.pressedR = true; sim.downR = true; frame();
+        sim.releasedR = true; sim.downR = false; frame();
+    };
+    auto dragL = [&](float x1, float y1, float x2, float y2) {
+        sim.pos = {x1, y1}; frame();
+        sim.pressedL = true; sim.downL = true; frame();
+        sim.pos = {x2, y2}; frame(2);
+        sim.releasedL = true; sim.downL = false; frame();
+    };
+    auto key = [&](int k) {
+        sim.keysDown.insert(k); sim.keysPressed.insert(k);
+        frame();
+        sim.keysDown.erase(k);
+    };
+    auto shot = [&](const char* f) { shotFile = f; render(); };
+    auto findUnit = [&](UnitType t) -> EID {
+        for (size_t i = 0; i < world.ents.size(); i++)
+            if (world.ents[i].alive && !world.ents[i].isBuilding && world.ents[i].player == 0 && world.ents[i].utype == t)
+                return (int)i;
+        return INVALID_EID;
+    };
+
+    // ---- 1 主菜单 ----
+    frame(3);
+    check(phase == Phase::MainMenu, "启动进入主菜单");
+    shot("pt_01_mainmenu.png");
+
+    // ---- 2 遭遇战设置 ----
+    clickL(720, 382); // “遭遇战”按钮 {590,360,260,44}
+    check(phase == Phase::Setup, "点击[遭遇战]进设置");
+    shot("pt_02_setup.png");
+
+    // ---- 3 开始游戏 ----
+    clickL(604, 589); // “开始游戏” {504,566,200,46}
+    check(phase == Phase::InGame && campaignMission < 0, "点击[开始游戏]进遭遇战");
+    frame(5);
+
+    // ---- 4 点选基地车 ----
+    EID mcv = findUnit(UnitType::MCV);
+    check(mcv != INVALID_EID, "找到出生基地车");
+    if (mcv != INVALID_EID) {
+        Vector2 mp = unitScreenPos(world.ents[mcv]);
+        clickL(mp.x, mp.y);
+        check(sel.size() == 1 && sel[0] == mcv, "左键点选基地车");
+    }
+
+    // ---- 5 D 展开建造厂 ----
+    key(KEY_D);
+    frame(3);
+    check(world.hasBld(0, BldType::ConYard), "按D展开建造厂");
+    shot("pt_03_deployed.png");
+
+    // ---- 6 侧边栏生产电厂（建筑页签第1个图标 {1256,358,86,66}）----
+    clickL(1299, 391);
+    check(world.players[0].bldProd.active, "点击电厂图标开始生产");
+    for (int i = 0; i < 6000 && !world.players[0].bldProd.ready; i++) logic(); // 快进至就绪
+    check(world.players[0].bldProd.ready, "电厂生产就绪");
+
+    // ---- 7 放置建筑 ----
+    clickL(1299, 391); // 就绪后再点图标进入放置模式
+    check(placing, "再次点击进入放置模式");
+    BldType pt = world.players[0].placingBld;
+    const BldDef& pd = bldDef(pt);
+    int abx = 10, aby = 10;
+    for (auto& e : world.ents)
+        if (e.alive && e.isBuilding && e.player == 0 && e.btype == BldType::ConYard) { abx = (int)e.x; aby = (int)e.y; break; }
+    int pbx = -1, pby = -1;
+    for (int r = 1; r < 12 && pbx < 0; r++)
+        for (int dy = -r; dy <= r && pbx < 0; dy++)
+            for (int dx = -r; dx <= r && pbx < 0; dx++) {
+                if (std::max(abs(dx), abs(dy)) != r) continue;
+                if (world.canPlace(pt, abx + dx, aby + dy, 0)) { pbx = abx + dx; pby = aby + dy; }
+            }
+    check(pbx >= 0, "扫描到可放置位置");
+    if (pbx >= 0) {
+        int px, py;
+        tileToScreen(pbx + pd.w / 2, pby + pd.h / 2, px, py); // 点击使 bx=tx-w/2 还原到扫描点
+        clickL((float)(px - (int)camX), (float)(py - (int)camY));
+    }
+    check(world.countBlds(0, pt) >= 1 && !placing, "左键放置建筑成功");
+    shot("pt_04_placed.png");
+
+    // ---- 8 框选坦克 ----
+    EID tank = findUnit(UnitType::Type99);
+    if (tank == INVALID_EID) tank = findUnit(UnitType::Rhino);
+    if (tank == INVALID_EID) tank = findUnit(UnitType::Grizzly);
+    check(tank != INVALID_EID, "找到护卫坦克");
+    if (tank != INVALID_EID) {
+        Vector2 tp = unitScreenPos(world.ents[tank]);
+        dragL(tp.x - 60, tp.y - 60, tp.x + 60, tp.y + 60);
+        check(!sel.empty(), "拖拽框选选中单位");
+
+        // ---- 9 右键移动 ----
+        // 目标锚点：要求 3x2 区域全空（orderMove 编队偏移 x∈{-1,0,1}, y∈{0,1}，避免偏移落点不可走）
+        int mtx = -1, mty = -1;
+        auto blockClear = [&](int cx, int cy) {
+            for (int oy = 0; oy <= 1; oy++)
+                for (int ox = -1; ox <= 1; ox++) {
+                    int nx = cx + ox, ny = cy + oy;
+                    if (!world.passableFor(nx, ny, 0) || world.bldBlocked(nx, ny) || world.unitAtCell(nx, ny) != INVALID_EID)
+                        return false;
+                }
+            return true;
+        };
+        for (int r = 3; r < 14 && mtx < 0; r++)
+            for (int dx = r; dx >= -r && mtx < 0; dx--)
+                for (int dy = -r; dy <= r; dy++) {
+                    int nx = (int)world.ents[tank].x + dx, ny = (int)world.ents[tank].y + dy;
+                    if (blockClear(nx, ny)) { mtx = nx; mty = ny; break; }
+                }
+        if (mtx >= 0) {
+            int px, py;
+            tileToScreen(mtx, mty, px, py);
+            // 记录所选单位起点
+            std::vector<std::pair<float, float>> from;
+            for (EID id : sel) if (world.valid(id)) from.push_back({world.ents[id].x, world.ents[id].y});
+            clickR((float)(px - (int)camX), (float)(py - (int)camY));
+            frame(180); // 6 秒逻辑
+            float bestMoved = 0;
+            for (size_t i = 0; i < sel.size() && i < from.size(); i++)
+                if (world.valid(sel[i]))
+                    bestMoved = std::max(bestMoved, distf(from[i].first, from[i].second, world.ents[sel[i]].x, world.ents[sel[i]].y));
+            check(bestMoved > 1.5f, "右键移动单位");
+        } else {
+            check(false, "右键移动单位（无可走目标）");
+        }
+        shot("pt_05_move.png");
+    }
+
+    // ---- 10 ESC 菜单 → 返回主菜单 ----
+    key(KEY_ESCAPE); // 第一次：清除选择
+    key(KEY_ESCAPE); // 第二次：打开菜单
+    check(showMenu, "ESC打开游戏菜单");
+    shot("pt_06_escmenu.png");
+    clickL(720, 435); // “返回主菜单” {620,419,200,32}
+    check(phase == Phase::MainMenu && !showMenu, "点击[返回主菜单]");
+
+    // ---- 11 战役模式 ----
+    clickL(720, 442); // “战役模式” {590,420,260,44}
+    check(phase == Phase::MissionSelect, "点击[战役模式]");
+    shot("pt_07_missions.png");
+    clickL(354, 269); // 第一张任务卡 {184,210,340,118}
+    check(phase == Phase::InGame && campaignMission == 0, "点击任务1进入战役");
+    frame(10);
+    shot("pt_08_campaign.png");
+
+    // ---- 12 战役内 ESC → 返回主菜单 ----
+    key(KEY_ESCAPE);
+    check(showMenu, "战役ESC打开菜单");
+    clickL(720, 435);
+    check(phase == Phase::MainMenu, "战役返回主菜单");
+
+    frame(2);
+    TraceLog(LOG_INFO, "PLAYTEST DONE: %d checks, %d failed", stepNo, fails);
+    sim.active = false;
+    return fails;
 }

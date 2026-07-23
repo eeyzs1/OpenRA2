@@ -13,7 +13,7 @@ static void drawTextF(Font f, const char* s, int x, int y, int size, Color c) {
 }
 
 bool Game::uiButton(Rectangle r, const char* text, bool enabled, bool active) {
-    Vector2 m = GetMousePosition();
+    Vector2 m = mousePos();
     bool hover = CheckCollisionPointRec(m, r) && enabled;
     Color bg = active ? Color{70, 90, 60, 255} : (hover ? Color{60, 64, 72, 255} : Color{38, 40, 46, 255});
     if (!enabled) bg = Color{28, 28, 32, 255};
@@ -24,7 +24,7 @@ bool Game::uiButton(Rectangle r, const char* text, bool enabled, bool active) {
         drawTextF(font, text, (int)(r.x + r.width / 2 - tw / 2), (int)(r.y + r.height / 2 - 7), 14,
                   enabled ? WHITE : Color{110, 110, 110, 255});
     }
-    bool clicked = hover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+    bool clicked = hover && mPressed(MOUSE_LEFT_BUTTON);
     if (clicked) g_sfx.play(Sfx::Click, 0.6f);
     return clicked;
 }
@@ -130,7 +130,7 @@ void Game::drawHUD() {
                           Color{200, 190, 150, 255});
             }
             // 点击：就绪 → 进入目标选择
-            if (ready && CheckCollisionPointRec(GetMousePosition(), r) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+            if (ready && CheckCollisionPointRec(mousePos(), r) && mPressed(MOUSE_LEFT_BUTTON)) {
                 targetingSW = targeting ? SWType::COUNT : t;
                 g_sfx.play(Sfx::Click, 0.6f);
                 if (targetingSW != SWType::COUNT) message("选择目标位置（右键取消）");
@@ -173,21 +173,22 @@ void Game::drawHUD() {
         drawTextF(font, TextFormat("%d", cost), ix + 2, iy + gh - 12, 11,
                   me.money >= cost ? Color{255, 215, 80, 255} : RED);
         // 点击
-        if (CheckCollisionPointRec(GetMousePosition(), r)) {
-            if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
-                if (!canBuild) { message("无法建造：缺前置建筑或资金不足"); }
-                else if (readyThis) {
+        if (CheckCollisionPointRec(mousePos(), r)) {
+            if (mPressed(MOUSE_LEFT_BUTTON)) {
+                // 就绪项优先：canBuild 为"能否开始新生产"（含队列空闲），不能阻塞就绪建筑的放置
+                if (readyThis) {
                     // 建筑就绪 → 进入放置模式
                     me.placingBld = (BldType)typeIdx;
                     placing = true;
                     message("选择放置位置（右键取消）");
-                } else if (!activeThis) {
+                } else if (!canBuild) { message("无法建造：缺前置建筑或资金不足"); }
+                else if (!activeThis) {
                     bool ok = isUnit ? world.startUnitProd(localPlayer, (UnitType)typeIdx)
                                      : world.startBldProd(localPlayer, (BldType)typeIdx);
                     if (!ok) message("生产队列忙或条件不足");
                 }
             }
-            if (IsMouseButtonPressed(MOUSE_RIGHT_BUTTON) && activeThis) {
+            if (mPressed(MOUSE_RIGHT_BUTTON) && activeThis) {
                 world.cancelProd(localPlayer, isUnit);
                 message("已取消生产");
             }
@@ -345,10 +346,10 @@ void Game::drawMinimap() {
     DrawRectangleLines(mmX + (int)(minX * sc), mmY + (int)(minY * sc),
                        (int)((maxX - minX) * sc), (int)((maxY - minY) * sc), WHITE);
     // 小地图点击跳转
-    if (CheckCollisionPointRec(GetMousePosition(), {(float)mmX, (float)mmY, (float)mmSize, (float)mmSize})) {
-        if (IsMouseButtonDown(MOUSE_LEFT_BUTTON)) {
-            float tx = (GetMousePosition().x - mmX) / sc;
-            float ty = (GetMousePosition().y - mmY) / sc;
+    if (CheckCollisionPointRec(mousePos(), {(float)mmX, (float)mmY, (float)mmSize, (float)mmSize})) {
+        if (mDown(MOUSE_LEFT_BUTTON)) {
+            float tx = (mousePos().x - mmX) / sc;
+            float ty = (mousePos().y - mmY) / sc;
             int px, py;
             tileToScreen((int)tx, (int)ty, px, py);
             camX = (float)px - viewW / 2.0f;

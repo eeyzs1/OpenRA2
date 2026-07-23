@@ -65,7 +65,7 @@ void Game::drawMissionSelect() {
     for (int i = 0; i < (int)tbl.size(); i++) {
         const MissionDef& md = tbl[i];
         Rectangle r{(float)(x0 + i * (cardW + gap)), (float)y0, (float)cardW, (float)cardH};
-        bool hover = CheckCollisionPointRec(GetMousePosition(), r);
+        bool hover = CheckCollisionPointRec(mousePos(), r);
         DrawRectangleRec(r, hover ? Color{52, 56, 66, 255} : Color{32, 34, 40, 255});
         DrawRectangleLinesEx(r, 1, hover ? Color{180, 150, 80, 255} : Color{80, 84, 92, 255});
         int rx = (int)r.x, ry = (int)r.y;
@@ -74,7 +74,7 @@ void Game::drawMissionSelect() {
         drawTextM(font, md.brief, rx + 14, ry + 62, 14, Color{190, 192, 200, 255});
         drawTextM(font, md.objective == 1 ? "目标：坚守十分钟" : "目标：歼灭所有敌军",
                   rx + 14, ry + 92, 14, Color{130, 200, 140, 255});
-        if (hover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
+        if (hover && mPressed(MOUSE_LEFT_BUTTON)) {
             g_sfx.play(Sfx::Click, 0.6f);
             newCampaignGame(i);
             return;
@@ -104,11 +104,11 @@ void Game::drawSetup() {
         int y = rowY + idx * rowH;
         drawTextM(font, label, labelX, y + 10, 18, Color{190, 192, 200, 255});
         Rectangle r{(float)valX, (float)y, 220, 40};
-        bool hover = CheckCollisionPointRec(GetMousePosition(), r);
+        bool hover = CheckCollisionPointRec(mousePos(), r);
         DrawRectangleRec(r, hover ? Color{56, 60, 68, 255} : Color{36, 38, 44, 255});
         DrawRectangleLinesEx(r, 1, Color{90, 94, 102, 255});
         drawTextM(font, value, valX + 110 - textW(font, value, 17) / 2, y + 11, 17, Color{255, 220, 120, 255});
-        return hover && IsMouseButtonPressed(MOUSE_LEFT_BUTTON);
+        return hover && mPressed(MOUSE_LEFT_BUTTON);
     };
 
     // 玩家阵营
@@ -123,7 +123,7 @@ void Game::drawSetup() {
             Rectangle sw{(float)valX + i * 27, (float)y + 6, 23, 28};
             DrawRectangleRec(sw, HOUSE_COLORS[i]);
             DrawRectangleLinesEx(sw, i == cfgColor ? 2 : 1, i == cfgColor ? WHITE : Color{60, 62, 68, 255});
-            if (CheckCollisionPointRec(GetMousePosition(), sw) && IsMouseButtonPressed(MOUSE_LEFT_BUTTON))
+            if (CheckCollisionPointRec(mousePos(), sw) && mPressed(MOUSE_LEFT_BUTTON))
                 cfgColor = i;
         }
     }

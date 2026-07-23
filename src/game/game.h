@@ -4,6 +4,7 @@
 #include "raylib.h"
 #include <vector>
 #include <deque>
+#include <unordered_set>
 
 constexpr int SCREEN_W = 1440;
 constexpr int SCREEN_H = 810;
@@ -17,6 +18,7 @@ public:
     void shutdown();
     void run(); // 主循环
     void smokeTest(int frames); // 无头冒烟测试
+    int playTest();             // 自动化完整游玩测试：脚本注入输入，真实窗口跑全流程，返回失败数
     void debugMenuShot(const char* file, bool setup); // 菜单截图（验证用）
 
 private:
@@ -128,6 +130,24 @@ private:
     void doBoxSelect(Rectangle r, bool additive);
     void issueSmartOrder(int mx, int my);
     void message(const std::string& m);
+
+    // 输入包装：统一逻辑坐标（高 DPI 修正）+ 脚本注入（playTest 自动化）
+    Vector2 mousePos() const;
+    bool mPressed(int btn) const;
+    bool mDown(int btn) const;
+    bool mReleased(int btn) const;
+    bool kPressed(int key) const;
+    bool kDown(int key) const;
+    struct SimInput {
+        bool active = false;
+        Vector2 pos{0, 0};
+        bool downL = false, downR = false;
+        bool pressedL = false, pressedR = false;   // 本帧按下沿
+        bool releasedL = false, releasedR = false; // 本帧释放沿
+        std::unordered_set<int> keysDown;
+        std::unordered_set<int> keysPressed;
+    };
+    SimInput sim{};
 
     // UI 辅助
     bool uiButton(Rectangle r, const char* text, bool enabled, bool active = false);
