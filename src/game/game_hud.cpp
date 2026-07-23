@@ -38,7 +38,7 @@ std::vector<BldType> Game::tabBuildings() const {
             BldType::PowerPlant, BldType::TeslaReactor, BldType::OreRefinery, BldType::Barracks,
             BldType::WarFactory, BldType::Radar, BldType::AirForceCmd, BldType::NavalYard, BldType::BattleLab,
             BldType::NuclearReactor, BldType::OrePurifier, BldType::IndustrialPlant,
-            BldType::NukeSilo, BldType::WeatherDevice, BldType::IronCurtain,
+            BldType::NukeSilo, BldType::WeatherDevice, BldType::IronCurtain, BldType::ChronoSphere,
         };
         for (BldType t : mainB)
             if (bldDef(t).factionMask & (1 << (int)f)) v.push_back(t);
@@ -47,6 +47,7 @@ std::vector<BldType> Game::tabBuildings() const {
         static const BldType defB[] = {
             BldType::Pillbox, BldType::SentryGun, BldType::FlakCannon,
             BldType::PrismTower, BldType::TeslaCoil, BldType::GrandCannon,
+            BldType::PatriotMissile, BldType::Wall,
         };
         for (BldType t : defB)
             if (bldDef(t).factionMask & (1 << (int)f)) v.push_back(t);
@@ -150,7 +151,7 @@ void Game::drawHUD() {
     int maxRows = (SCREEN_H - 56 - gy) / (gh + 4);
     int idx = 0;
     auto drawItem = [&](bool isUnit, int typeIdx, const Sprite& icon, const char* name, int cost,
-                        bool canBuild, ProdItem& prod) {
+                        bool canBuild, ProdItem& prod, int queuedN) {
         int ix = gx + (idx % cols) * (gw + 4);
         int iy = gy + (idx / cols) * (gh + 4);
         idx++;
@@ -170,6 +171,12 @@ void Game::drawHUD() {
             drawTextF(font, TextFormat("%d%%", (int)(frac * 100)), ix + 30, iy + 26, 14, WHITE);
         }
         if (readyThis) drawTextF(font, "就绪", ix + 27, iy + 24, 15, GREEN);
+        // 排队数量角标（RA2 原作：含进行中项）
+        int totalN = queuedN + (activeThis ? 1 : 0);
+        if (isUnit && totalN > 0) {
+            DrawRectangle(ix + gw - 20, iy + 2, 18, 16, Color{0, 0, 0, 160});
+            drawTextF(font, TextFormat("%d", totalN), ix + gw - 15, iy + 3, 13, Color{255, 220, 100, 255});
+        }
         // 名称与造价
         drawTextF(font, name, ix + 2, iy + gh - 24, 11, canBuild ? WHITE : Color{120, 120, 120, 255});
         drawTextF(font, TextFormat("%d", cost), ix + 2, iy + gh - 12, 11,
@@ -184,15 +191,21 @@ void Game::drawHUD() {
                     placing = true;
                     message("选择放置位置（右键取消）");
                 } else if (!canBuild) { message("无法建造：缺前置建筑或资金不足"); }
-                else if (!activeThis) {
+                else if (isUnit || !activeThis) {
+                    // 单位允许重复点击排队（RA2 原作）
                     bool ok = isUnit ? world.startUnitProd(localPlayer, (UnitType)typeIdx)
                                      : world.startBldProd(localPlayer, (BldType)typeIdx);
                     if (!ok) message("生产队列忙或条件不足");
                 }
             }
-            if (mPressed(MOUSE_RIGHT_BUTTON) && activeThis) {
-                world.cancelProd(localPlayer, isUnit);
-                message("已取消生产");
+            if (mPressed(MOUSE_RIGHT_BUTTON)) {
+                if (isUnit && totalN > 0) {
+                    world.cancelUnitProd(localPlayer, (UnitType)typeIdx);
+                    message("已取消一个");
+                } else if (!isUnit && activeThis) {
+                    world.cancelProd(localPlayer, false);
+                    message("已取消生产");
+                }
             }
         }
     };
@@ -202,14 +215,18 @@ void Game::drawHUD() {
             const BldDef& d = bldDef(t);
             bool can = world.hasBld(localPlayer, BldType::ConYard) && world.prereqMet(localPlayer, d)
                        && me.money >= d.cost && !me.bldProd.active;
-            drawItem(false, (int)t, g_sprites.iconBld(t, me.colorId), d.name, d.cost, can, me.bldProd);
+            drawItem(false, (int)t, g_sprites.iconBld(t, me.colorId), d.name, d.cost, can, me.bldProd, 0);
         }
     } else {
         for (UnitType t : tabUnits()) {
             const UnitDef& u = unitDef(t);
+            int cat = u.prodCat();
+            int qn = 0;
+            for (int q : me.unitQueue[cat])
+                if (q == (int)t) qn++;
             bool can = world.unitPrereqMet(localPlayer, u) && world.hasFactoryFor(localPlayer, u)
-                       && me.money >= u.cost && !me.unitProd.active;
-            drawItem(true, (int)t, g_sprites.iconUnit(t, me.colorId), u.name, u.cost, can, me.unitProd);
+                       && me.money >= u.cost;
+            drawItem(true, (int)t, g_sprites.iconUnit(t, me.colorId), u.name, u.cost, can, me.unitProd[cat], qn);
         }
     }
 
@@ -286,14 +303,17 @@ void Game::drawHUD() {
         } else {
             drawTextF(font, "游戏菜单", mx + mw / 2 - 40, my + 20, 22, WHITE);
         }
+        // 重开当前局：战役回当前任务，遭遇战重随机一张
+        auto restart = [&]() {
+            if (campaignMission >= 0) newCampaignGame(campaignMission);
+            else newGame((uint64_t)time(nullptr));
+            showMenu = false;
+        };
         if (uiButton({(float)mx + 60, (float)my + 80, 200, 32}, gameOver ? "再来一局" : "继续游戏", true)) {
-            if (gameOver) newGame((uint64_t)time(nullptr));
-            showMenu = false;
+            if (gameOver) restart();
+            else showMenu = false;
         }
-        if (uiButton({(float)mx + 60, (float)my + 122, 200, 32}, "重新开始", true)) {
-            newGame((uint64_t)time(nullptr));
-            showMenu = false;
-        }
+        if (uiButton({(float)mx + 60, (float)my + 122, 200, 32}, "重新开始", true)) restart();
         if (uiButton({(float)mx + 60, (float)my + 164, 200, 32}, "返回主菜单", true)) {
             phase = Phase::MainMenu;
             showMenu = false;

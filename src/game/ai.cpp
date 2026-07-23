@@ -3,8 +3,9 @@
 void SkirmishAI::update(World& w) {
     Player& p = w.players[player];
     if (!p.active || p.defeated) return;
-    // 每 15 逻辑帧思考一次
-    if (++thinkTimer < 15) return;
+    // 思考间隔按难度分级：简单 25 / 普通 15 / 困难 10 逻辑帧
+    int interval = difficulty == 0 ? 25 : difficulty == 2 ? 10 : 15;
+    if (++thinkTimer < interval) return;
     thinkTimer = 0;
 
     // 1. 基地车立即展开
@@ -31,6 +32,7 @@ void SkirmishAI::update(World& w) {
         }
     }
 
+    doEngineers(w);
     doAttack(w);
     doSuperWeapon(w);
 }
@@ -124,61 +126,143 @@ void SkirmishAI::doBuildOrder(World& w) {
 
 void SkirmishAI::doProduction(World& w) {
     Player& p = w.players[player];
-    if (p.unitProd.active) return;
 
-    // 保证采矿车数量（经济命脉，最优先）
-    int harvesters = w.countUnits(player, UnitType::Harvester);
-    if (w.hasBld(player, BldType::OreRefinery) && w.hasBld(player, BldType::WarFactory) && harvesters < 3) {
-        if (w.startUnitProd(player, UnitType::Harvester)) return;
-    }
     // 攒钱建关键建筑：高科/超武造价高，建造序列未完成前暂停暴兵
     BldType swT = p.faction == Faction::Allies ? BldType::WeatherDevice : BldType::NukeSilo;
+    bool saveMoney = false;
     if (w.hasBld(player, BldType::WarFactory) && !p.bldProd.active) {
         if (!w.hasBld(player, BldType::BattleLab) && w.prereqMet(player, bldDef(BldType::BattleLab))
-            && p.money < bldDef(BldType::BattleLab).cost + 300) return;
+            && p.money < bldDef(BldType::BattleLab).cost + 300) saveMoney = true;
         if (w.hasBld(player, BldType::BattleLab) && !w.hasBld(player, swT)
-            && p.money < bldDef(swT).cost + 500) return;
+            && p.money < bldDef(swT).cost + 500) saveMoney = true;
     }
-    // 海军：有船厂后维持舰队规模（战斗舰 4 + 运输船 1）
-    if (w.hasBld(player, BldType::NavalYard)) {
+
+    // ---- 车辆队列（类别1）：采矿车优先（经济命脉），其次主战坦克 ----
+    if (w.hasBld(player, BldType::WarFactory) && w.unitQueuedCount(player, 1) < 2) {
+        // 基地重建：建造厂被毁但有重工 → 补基地车
+        if (!w.hasBld(player, BldType::ConYard)) {
+            if (w.unitPrereqMet(player, unitDef(UnitType::MCV))) w.startUnitProd(player, UnitType::MCV);
+            return;
+        }
+        int harvesters = w.countUnits(player, UnitType::Harvester);
+        if (w.hasBld(player, BldType::OreRefinery) && harvesters < 3) {
+            w.startUnitProd(player, UnitType::Harvester);
+        } else if (!saveMoney) {
+            bool late = w.hasBld(player, BldType::BattleLab);
+            UnitType want;
+            if (late) {
+                // 困难 AI 掺入特殊重单位（基洛夫/特殊坦克）
+                if (difficulty == 2 && attackWave % 3 == 2) {
+                    UnitType sp = p.faction == Faction::Allies ? UnitType::PrismTank
+                                : p.faction == Faction::Soviet ? UnitType::Kirov : UnitType::Kirov;
+                    if (w.unitPrereqMet(player, unitDef(sp))) { w.startUnitProd(player, sp); return; }
+                }
+                want = p.faction == Faction::Allies ? UnitType::PrismTank
+                     : p.faction == Faction::Soviet ? (attackWave % 2 ? UnitType::Apocalypse : UnitType::TeslaTank)
+                     : UnitType::Type99;
+                if (!w.unitPrereqMet(player, unitDef(want)))
+                    want = p.faction == Faction::Allies ? UnitType::Grizzly
+                         : p.faction == Faction::Soviet ? UnitType::Rhino : UnitType::Type99;
+            } else {
+                want = p.faction == Faction::Allies ? UnitType::Grizzly
+                     : p.faction == Faction::Soviet ? UnitType::Rhino : UnitType::Type99;
+            }
+            w.startUnitProd(player, want);
+        }
+    }
+    // ---- 海军队列（类别3）：有船厂后维持舰队规模（战斗舰 4 + 运输船 1）----
+    if (w.hasBld(player, BldType::NavalYard) && w.unitQueuedCount(player, 3) < 2) {
         UnitType shipT = p.faction == Faction::Allies ? UnitType::Destroyer
                        : p.faction == Faction::Soviet ? UnitType::Typhoon : UnitType::Aegis;
-        int ships = w.countUnits(player, shipT);
         int trans = w.countUnits(player, UnitType::AmphTransport);
         if (trans < 1 && w.unitPrereqMet(player, unitDef(UnitType::AmphTransport))) {
-            if (w.startUnitProd(player, UnitType::AmphTransport)) return;
-        }
-        if (ships < 4 && w.unitPrereqMet(player, unitDef(shipT))) {
-            if (w.startUnitProd(player, shipT)) return;
+            w.startUnitProd(player, UnitType::AmphTransport);
+        } else if (w.countUnits(player, shipT) < 4 && w.unitPrereqMet(player, unitDef(shipT))) {
+            w.startUnitProd(player, shipT);
         }
     }
-    // 战机：有空指部后维持 2 架
-    if (w.hasBld(player, BldType::AirForceCmd)) {
+    // ---- 空军队列（类别2）：有空指部后维持 2 架 ----
+    if (w.hasBld(player, BldType::AirForceCmd) && w.unitQueuedCount(player, 2) < 2) {
         UnitType airT = p.faction == Faction::Allies ? UnitType::Intruder
                       : p.faction == Faction::Soviet ? UnitType::MiG : UnitType::BlackEagle;
-        if (w.countUnits(player, airT) < 2 && w.unitPrereqMet(player, unitDef(airT))) {
-            if (w.startUnitProd(player, airT)) return;
+        if (w.countUnits(player, airT) < 2 && w.unitPrereqMet(player, unitDef(airT)))
+            w.startUnitProd(player, airT);
+    }
+    // ---- 步兵队列（类别0）：前期暴兵 + 适量工程师/特殊步兵 ----
+    if (w.hasBld(player, BldType::Barracks) && w.unitQueuedCount(player, 0) < 2) {
+        // 工程师：维持 1~2 名（占领中立建筑/修复用）
+        int engs = w.countUnits(player, UnitType::Engineer);
+        if (engs < 1 && p.money > 1200) {
+            w.startUnitProd(player, UnitType::Engineer);
+        } else if (!saveMoney) {
+            UnitType inf = p.faction == Faction::Allies ? UnitType::GI
+                         : p.faction == Faction::Soviet ? UnitType::Conscript : UnitType::PLA;
+            if (w.countUnits(player, inf) < 10) w.startUnitProd(player, inf);
+        }
+        // 特殊步兵（高科后，困难 AI 更积极）
+        if (w.hasBld(player, BldType::BattleLab) && p.money > 1500 && w.unitQueuedCount(player, 0) < 1) {
+            int roll = (attackWave + (int)(w.tick / 900)) % (difficulty == 2 ? 3 : 5);
+            UnitType sp = UnitType::COUNT;
+            if (roll == 0) {
+                sp = p.faction == Faction::Allies ? UnitType::Tanya
+                   : p.faction == Faction::Soviet ? UnitType::Desolator : UnitType::Desolator;
+            } else if (roll == 1 && p.faction == Faction::Allies) {
+                sp = UnitType::Spy; // 盟军间谍：渗透偷钱/断电
+            }
+            if (sp != UnitType::COUNT && w.unitPrereqMet(player, unitDef(sp))
+                && w.countUnits(player, sp) < 2)
+                w.startUnitProd(player, sp);
         }
     }
-    // 暴兵：前期步兵，后期坦克
-    bool late = w.hasBld(player, BldType::BattleLab);
-    UnitType want;
-    if (w.hasBld(player, BldType::WarFactory)) {
-        if (late) {
-            want = p.faction == Faction::Allies ? UnitType::PrismTank
-                 : p.faction == Faction::Soviet ? (attackWave % 2 ? UnitType::Apocalypse : UnitType::TeslaTank)
-                 : UnitType::Type99;
-            if (!w.unitPrereqMet(player, unitDef(want))) want = p.faction == Faction::Allies ? UnitType::Grizzly : p.faction == Faction::Soviet ? UnitType::Rhino : UnitType::Type99;
-        } else {
-            want = p.faction == Faction::Allies ? UnitType::Grizzly
-                 : p.faction == Faction::Soviet ? UnitType::Rhino : UnitType::Type99;
-        }
-        if (w.startUnitProd(player, want)) return;
+}
+
+// 工程师行为：占领中立科技建筑（油井优先），修复己方受损建筑；间谍渗透敌方经济建筑
+void SkirmishAI::doEngineers(World& w) {
+    // 收集空闲工程师与间谍
+    std::vector<EID> idleEngs, idleSpies;
+    for (size_t i = 0; i < w.ents.size(); i++) {
+        const World::Ent& e = w.ents[i];
+        if (!e.alive || e.isBuilding || e.player != player) continue;
+        if (e.utype == UnitType::Engineer && e.state == UState::Idle) idleEngs.push_back((int)i);
+        if (e.utype == UnitType::Spy && e.state == UState::Idle) idleSpies.push_back((int)i);
     }
-    if (w.hasBld(player, BldType::Barracks)) {
-        UnitType inf = p.faction == Faction::Allies ? UnitType::GI
-                     : p.faction == Faction::Soviet ? UnitType::Conscript : UnitType::PLA;
-        if (w.countUnits(player, inf) < 10) w.startUnitProd(player, inf);
+    // 工程师：优先占领中立科技建筑（player=-1），其次修复己方受损建筑
+    for (EID eng : idleEngs) {
+        EID best = INVALID_EID;
+        float bd = 1e9f;
+        for (size_t i = 0; i < w.ents.size(); i++) {
+            const World::Ent& b = w.ents[i];
+            if (!b.alive || !b.isBuilding) continue;
+            if (b.player != -1) continue; // 中立
+            if (!bldDef(b.btype).capturable) continue;
+            float d = distf(w.ents[eng].x, w.ents[eng].y, b.x, b.y);
+            if (d < bd) { bd = d; best = (int)i; }
+        }
+        if (best != INVALID_EID) { w.orderCapture({eng}, best); continue; }
+        // 修复己方受损建筑（造价高优先）
+        EID dmg = INVALID_EID;
+        int bestCost = 0;
+        for (size_t i = 0; i < w.ents.size(); i++) {
+            const World::Ent& b = w.ents[i];
+            if (!b.alive || !b.isBuilding || b.player != player) continue;
+            const BldDef& bd2 = bldDef(b.btype);
+            if (b.hp < bd2.hp * 2 / 3 && bd2.cost > bestCost) { bestCost = bd2.cost; dmg = (int)i; }
+        }
+        if (dmg != INVALID_EID) w.orderRepair({eng}, dmg);
+    }
+    // 间谍：渗透敌方精炼厂（偷钱）> 电厂（断电）
+    for (EID spy : idleSpies) {
+        EID best = INVALID_EID;
+        float bd = 1e9f;
+        for (size_t i = 0; i < w.ents.size(); i++) {
+            const World::Ent& b = w.ents[i];
+            if (!b.alive || !b.isBuilding || !w.isEnemy(player, b.player)) continue;
+            if (b.btype != BldType::OreRefinery && b.btype != BldType::PowerPlant
+                && b.btype != BldType::TeslaReactor) continue;
+            float d = distf(w.ents[spy].x, w.ents[spy].y, b.x, b.y);
+            if (d < bd) { bd = d; best = (int)i; }
+        }
+        if (best != INVALID_EID) w.orderAttack({spy}, best); // 无武器单位 orderAttack → 渗透目标（判定在 updateUnit）
     }
 }
 
@@ -277,9 +361,9 @@ Vec2i SkirmishAI::findArmyCenter(World& w) {
 }
 
 void SkirmishAI::doAttack(World& w) {
-    // 攒兵进攻：部队数量达标后攻击最近敌方目标
+    // 攒兵进攻：部队数量达标后攻击最近敌方目标（阈值按难度分级）
     int army = countArmy(w);
-    int threshold = 8 + attackWave * 2;
+    int threshold = (difficulty == 0 ? 12 : difficulty == 2 ? 6 : 8) + attackWave * 2;
     if (army < threshold) return;
     if (++attackTimer < 8) return;
     attackTimer = 0;
@@ -290,7 +374,7 @@ void SkirmishAI::doAttack(World& w) {
     Vec2i ac = findArmyCenter(w);
     for (size_t i = 0; i < w.ents.size(); i++) {
         const World::Ent& e = w.ents[i];
-        if (!e.alive || e.player < 0 || e.player == player) continue;
+        if (!e.alive || !w.isEnemy(player, e.player)) continue;
         float ex = e.x, ey = e.y;
         if (e.isBuilding) { ex += 1.5f; ey += 1.5f; }
         float d = distf((float)ac.x, (float)ac.y, ex, ey);
@@ -298,14 +382,42 @@ void SkirmishAI::doAttack(World& w) {
     }
     if (targetB == INVALID_EID) return;
 
-    // 全军突击
-    std::vector<EID> armyIds;
+    // 陆军/空军突击（海军分离：舰船只打水上/沿岸目标）
+    std::vector<EID> armyIds, navyIds;
     for (size_t i = 0; i < w.ents.size(); i++) {
         const World::Ent& e = w.ents[i];
         if (e.alive && !e.isBuilding && e.player == player &&
-            e.utype != UnitType::Harvester && e.utype != UnitType::MCV && e.utype != UnitType::Engineer)
-            armyIds.push_back((int)i);
+            e.utype != UnitType::Harvester && e.utype != UnitType::MCV && e.utype != UnitType::Engineer
+            && e.utype != UnitType::Spy) {
+            const UnitDef& ud = unitDef(e.utype);
+            if (ud.isNaval() && !ud.isAmphib()) navyIds.push_back((int)i);
+            else armyIds.push_back((int)i);
+        }
     }
-    w.orderAttack(armyIds, targetB);
+    if (!armyIds.empty()) w.orderAttack(armyIds, targetB);
+    // 海军分离攻击：找离舰队最近的水上/沿岸敌方目标（建筑沿岸 6 格内也算）
+    if (!navyIds.empty()) {
+        float nx = 0, ny = 0;
+        for (EID id : navyIds) { nx += w.ents[id].x; ny += w.ents[id].y; }
+        nx /= navyIds.size(); ny /= navyIds.size();
+        EID seaT = INVALID_EID;
+        float sd = 1e9f;
+        for (size_t i = 0; i < w.ents.size(); i++) {
+            const World::Ent& e = w.ents[i];
+            if (!e.alive || !w.isEnemy(player, e.player)) continue;
+            float ex = e.x, ey = e.y;
+            if (e.isBuilding) { ex += 1.5f; ey += 1.5f; }
+            // 水上目标或离岸 6 格内的沿岸目标
+            int tx0 = std::max(0, (int)ex - 6), ty0 = std::max(0, (int)ey - 6);
+            bool nearWater = false;
+            for (int ty = ty0; ty <= (int)ey + 6 && ty < w.map.h && !nearWater; ty++)
+                for (int tx = tx0; tx <= (int)ex + 6 && tx < w.map.w && !nearWater; tx++)
+                    if (w.map.at(tx, ty).terrain == Terrain::Water) nearWater = true;
+            if (!nearWater) continue;
+            float d = distf(nx, ny, ex, ey);
+            if (d < sd) { sd = d; seaT = (int)i; }
+        }
+        if (seaT != INVALID_EID) w.orderAttack(navyIds, seaT);
+    }
     attackWave++;
 }

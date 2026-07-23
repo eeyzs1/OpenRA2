@@ -101,6 +101,7 @@ void Map::generate(int w_, int h_, uint64_t seed, int numPlayers, std::vector<Ve
                     if (c.terrain == Terrain::Water) continue;
                     c.terrain = t;
                     c.ore = (int16_t)amount;
+                    c.oreMax = (int16_t)amount; // 记录上限：矿脉缓慢再生用
                     c.overlay = Overlay::None;
                 }
             }

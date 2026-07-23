@@ -151,6 +151,8 @@ PixBuf SpriteBank::baseUnitBody(UnitType t, int dir, int frame) {
                       : d.type == UnitType::Tanya ? Color{140, 90, 70, 255}        // 谭雅：棕色作战服
                       : d.type == UnitType::Desolator ? Color{80, 96, 48, 255}     // 辐射工兵：暗绿防化服
                       : d.type == UnitType::Chrono ? Color{70, 90, 130, 255}       // 超时空兵：蓝白作战服
+                      : d.type == UnitType::GuardianGI ? Color{70, 76, 92, 255}    // 重装大兵：深灰蓝重甲
+                      : d.type == UnitType::CrazyIvan ? Color{110, 60, 52, 255}    // 疯狂伊文：暗红工装
                       : Color{88, 96, 104, 255};
         int cx = 10, by = 25;
         if (d.type == UnitType::AttackDog) {
@@ -247,11 +249,72 @@ PixBuf SpriteBank::baseUnitBody(UnitType t, int dir, int frame) {
             } else if (facing == 1) {
                 p.fillEllipse(cx + 4, by - 15, 2, 2, Color{230, 245, 255, 255});
             }
+        } else if (d.type == UnitType::GuardianGI) {
+            // 重装大兵：厚肩甲 + 重型冲锋枪
+            p.fillRect(cx - 5, by - 19, 10, 3, Color{96, 104, 124, 255}); // 厚肩甲
+            if (facing == 0) {
+                p.fillRect(cx + 2, by - 15, 9, 3, Pal::GUN);          // 重枪身
+                p.fillRect(cx + 9, by - 14, 3, 2, Color{60, 64, 70, 255}); // 弹匣
+            } else if (facing == 1) {
+                p.fillRect(cx + 4, by - 15, 6, 3, Pal::GUN);
+            }
+        } else if (d.type == UnitType::CrazyIvan) {
+            // 疯狂伊文：炸药背包 + 手持雷管（红色）
+            p.fillRect(cx - 4, by - 18, 4, 6, Color{150, 60, 40, 255}); // 炸药包
+            p.set(cx - 3, by - 19, Color{255, 120, 60, 255});           // 引线火花
+            if (facing == 0) {
+                p.fillRect(cx + 3, by - 14, 4, 3, Color{170, 50, 40, 255}); // 手持炸药
+            } else if (facing == 1) {
+                p.fillRect(cx + 4, by - 14, 4, 3, Color{170, 50, 40, 255});
+            }
         }
         if (flip) p = p.flipH();
         return p;
     }
     if (d.isAir()) {
+        if (t == UnitType::Kirov) {
+            // 基洛夫空艇：巨型椭圆气囊 + 尾翼 + 吊舱（朝东基准）
+            PixBuf p(64, 48);
+            int cx = 32, cy = 20;
+            Color body{136, 110, 92, 255}, dark{96, 76, 62, 255};
+            p.fillEllipse(cx, cy, 26, 11, body);              // 主气囊
+            p.ellipse(cx, cy, 26, 11, dark);
+            p.fillEllipse(cx + 16, cy, 9, 8, body);           // 首部收拢
+            for (int i = -6; i <= 6; i += 4)                  // 气囊纵线
+                p.line(cx - 22, cy + i, cx + 22, cy + i, dark);
+            p.hline(cx - 20, cx + 10, cy - 8, Pal::REMAP);    // 阵营条纹
+            // 尾翼（西侧上下两片）
+            p.line(cx - 24, cy, cx - 30, cy - 8, dark);
+            p.line(cx - 24, cy, cx - 30, cy + 8, dark);
+            p.line(cx - 30, cy - 8, cx - 27, cy, dark);
+            p.line(cx - 30, cy + 8, cx - 27, cy, dark);
+            // 吊舱
+            p.fillRect(cx - 6, cy + 11, 14, 5, Pal::STEEL_DARK);
+            p.rect(cx - 6, cy + 11, 14, 5, Pal::GUN);
+            p.set(cx + 6, cy + 13, Pal::GLASS);
+            // 螺旋桨
+            p.line(cx - 2, cy + 16, cx + 4, cy + 16, Pal::GUN);
+            return p;
+        }
+        if (t == UnitType::Rocketeer) {
+            // 火箭飞行兵：飞行姿态步兵 + 背部火箭包 + 尾焰（朝东基准）
+            PixBuf p(32, 32);
+            int cx = 16, cy = 14;
+            Color suit{88, 96, 110, 255};
+            p.fillEllipse(cx + 4, cy - 6, 3, 3, Pal::SKIN);   // 头
+            p.fillEllipse(cx + 4, cy - 8, 3, 2, Pal::REMAP);  // 头盔
+            p.fillRect(cx - 2, cy - 4, 9, 7, suit);           // 身（前倾）
+            p.fillRect(cx - 5, cy - 3, 4, 6, Pal::STEEL_DARK);// 火箭包
+            p.fillRect(cx + 6, cy - 2, 6, 2, Pal::GUN);       // 卡宾枪
+            p.line(cx + 1, cy + 3, cx - 3, cy + 8, suit);     // 摆腿
+            p.line(cx + 4, cy + 3, cx + 1, cy + 9, suit);
+            // 尾焰
+            p.set(cx - 6, cy + 3, Color{255, 200, 90, 255});
+            p.set(cx - 7, cy + 4, Color{255, 160, 60, 255});
+            p.set(cx - 6, cy + 5, Color{255, 230, 150, 255});
+            if (dir) p = p.rotate8(dir);
+            return p;
+        }
         PixBuf p(44, 44);
         int cx = 22, cy = 22;
         Color body, dark;
@@ -295,6 +358,8 @@ PixBuf SpriteBank::baseUnitBody(UnitType t, int dir, int frame) {
     if (t == UnitType::Apocalypse || t == UnitType::MCV) cs = 56;
     if (t == UnitType::Harvester) cs = 52;
     if (t == UnitType::Destroyer || t == UnitType::Typhoon || t == UnitType::Aegis || t == UnitType::AmphTransport) cs = 56;
+    if (t == UnitType::SeaScorpion) cs = 48;
+    if (t == UnitType::Dreadnought || t == UnitType::AircraftCarrier) cs = 64;
     PixBuf p(cs, cs);
     int cx = cs / 2, cy = cs / 2;
 
@@ -433,6 +498,66 @@ PixBuf SpriteBank::baseUnitBody(UnitType t, int dir, int frame) {
             p.fillRect(cx - 8, cy - 7, 6, 3, Pal::GLASS);                 // 驾驶窗
             break;
         }
+        case UnitType::TerrorDrone: {
+            // 恐怖机器人：圆身 + 四足 + 红眼（机械蜘蛛）
+            Color metal{92, 96, 104, 255};
+            for (int s = -1; s <= 1; s += 2) { // 四条腿（前后各二）
+                p.line(cx - 3, cy + s * 3, cx - 9, cy + s * 8, metal);
+                p.line(cx + 3, cy + s * 3, cx + 9, cy + s * 8, metal);
+                p.set(cx - 9, cy + s * 8 + (s > 0 ? 1 : -1), Pal::GUN);
+                p.set(cx + 9, cy + s * 8 + (s > 0 ? 1 : -1), Pal::GUN);
+            }
+            p.fillEllipse(cx, cy, 7, 5, metal);          // 圆身
+            p.ellipse(cx, cy, 7, 5, Pal::GUN);
+            p.fillEllipse(cx + 5, cy, 3, 3, Color{70, 74, 82, 255}); // 头部
+            p.set(cx + 6, cy - 1, Color{255, 60, 50, 255});          // 红眼
+            p.set(cx + 6, cy + 1, Color{255, 60, 50, 255});
+            p.hline(cx - 4, cx + 2, cy - 4, Pal::REMAP);   // 阵营条
+            break;
+        }
+        case UnitType::SeaScorpion: {
+            // 海蝎：轻型快艇 + 四联高射炮
+            shipHull(26, 10, Color{100, 104, 96, 255});
+            p.fillRect(cx - 6, cy - 3, 8, 6, Pal::STEEL);             // 舰桥
+            p.fillEllipse(cx + 5, cy, 4, 3, Pal::STEEL_DARK);         // 炮座
+            for (int i = -1; i <= 1; i += 2) {                        // 四联炮管
+                p.fillRect(cx + 7, cy + i * 2 - 1, 7, 1, Pal::GUN);
+                p.fillRect(cx + 7, cy + i * 1 - 0, 6, 1, Pal::GUN);
+            }
+            p.hline(cx - 10, cx - 6, cy, Pal::REMAP);
+            break;
+        }
+        case UnitType::Dreadnought: {
+            // 无畏级战舰：重型舰体 + 双联 V3 导弹发射架
+            shipHull(44, 16, Color{88, 92, 104, 255});
+            p.fillRect(cx - 14, cy - 4, 10, 8, Pal::STEEL);           // 舰桥
+            p.line(cx - 10, cy - 4, cx - 10, cy - 11, Pal::GUN);      // 桅杆
+            p.hline(cx - 13, cx - 7, cy - 11, Pal::GUN);
+            for (int i = 0; i < 2; i++) {                             // 双导弹架（倾斜）
+                int mx = cx + 2 + i * 9;
+                p.line(mx, cy + 3, mx + 6, cy - 6, Color{150, 70, 56, 255});
+                p.line(mx + 2, cy + 3, mx + 8, cy - 6, Color{170, 80, 60, 255});
+                p.set(mx + 7, cy - 7, Color{220, 200, 180, 255});     // 弹头
+            }
+            p.fillRect(cx - 20, cy - 2, 5, 4, Pal::STEEL_DARK);       // 尾舱
+            p.hline(cx - 18, cx - 12, cy, Pal::REMAP);
+            break;
+        }
+        case UnitType::AircraftCarrier: {
+            // 航空母舰：全通平直甲板 + 右舷舰岛 + 舰载机
+            shipHull(46, 18, Color{96, 104, 116, 255});
+            p.fillRect(cx - 21, cy - 6, 40, 12, Color{72, 78, 88, 255}); // 甲板
+            p.hline(cx - 21, cx + 19, cy - 6, Color{120, 126, 136, 255}); // 甲板边线
+            p.hline(cx - 18, cx + 14, cy, Color{200, 200, 120, 255});     // 甲板中线
+            p.fillRect(cx - 6, cy - 11, 8, 6, Pal::STEEL);             // 舰岛
+            p.line(cx - 3, cy - 11, cx - 3, cy - 16, Pal::GUN);        // 桅杆
+            p.set(cx - 3, cy - 17, Color{170, 200, 235, 255});
+            for (int i = 0; i < 3; i++) {                              // 甲板舰载机
+                p.fillRect(cx + 4 + i * 5, cy + 2, 3, 2, Color{140, 146, 156, 255});
+            }
+            p.hline(cx - 20, cx - 14, cy + 5, Pal::REMAP);
+            break;
+        }
         default: hull(8, 6, Pal::STEEL); break;
     }
     if (dir) p = p.rotate8(dir);
@@ -557,6 +682,21 @@ PixBuf SpriteBank::baseBuilding(BldType t, bool constructing) {
 
     int topCY = baseCY - wallH;
     Color trim = Pal::REMAP;
+
+    // 围墙：低矮混凝土墙段（1x1 专用，非全尺寸建筑盒）
+    if (t == BldType::Wall && !constructing) {
+        int wy = baseCY - 8;
+        p.diamond(cx, wy, halfW - 2, halfH - 1, Color{150, 148, 140, 255}); // 墙顶
+        // 左右墙面
+        p.line(cx - halfW + 2, wy, cx, wy + halfH - 1, Color{110, 108, 100, 255});
+        p.line(cx + halfW - 2, wy, cx, wy + halfH - 1, Color{92, 90, 84, 255});
+        for (int i = 0; i < 3; i++) { // 墙面竖缝
+            p.line(cx - halfW + 2 + i * 4, wy + i * 2, cx - halfW + 2 + i * 4, wy + i * 2 + 6, Color{100, 98, 92, 255});
+            p.line(cx + halfW - 2 - i * 4, wy + i * 2, cx + halfW - 2 - i * 4, wy + i * 2 + 6, Color{84, 82, 76, 255});
+        }
+        p.hline(cx - 4, cx + 4, wy - halfH / 2, trim); // 顶部阵营标记
+        return p;
+    }
 
     // 调色板：左墙/右墙/屋面/屋顶内凹/窗
     struct BldPal { Color wallL, wallR, roof, roofIn, win; };
@@ -926,6 +1066,37 @@ PixBuf SpriteBank::baseBuilding(BldType t, bool constructing) {
             p.fillEllipse(cx, topCY - 7, 3, 3, Color{230, 200, 80, 255});
             // 屋角排气扇
             p.fillRect(cx + halfW - 9, topCY - 4, 5, 4, Pal::STEEL_DARK);
+            break;
+        }
+        case BldType::PatriotMissile: {
+            // 爱国者飞弹：低矮基座 + 四联导弹发射箱（仰角）
+            mainBox(4, wallH - 12, false);
+            int py = baseCY - wallH + 8;
+            p.fillEllipse(cx, py - 2, 7, 4, Pal::STEEL_DARK);           // 旋转座
+            for (int i = 0; i < 2; i++)                                 // 两排发射箱
+                for (int j = 0; j < 2; j++) {
+                    int bx = cx - 6 + j * 8, byy = py - 12 - i * 6;
+                    p.fillRect(bx, byy, 6, 10, Color{120, 126, 110, 255});
+                    p.rect(bx, byy, 6, 10, Pal::GUN);
+                    p.set(bx + 2, byy + 1, Color{200, 90, 70, 255});    // 弹头
+                }
+            p.hline(cx - 8, cx + 8, py + 2, trim);
+            break;
+        }
+        case BldType::ChronoSphere: {
+            // 超时空传送仪：穹顶 + 三悬浮水晶 + 环形基座
+            mainBox(2, wallH - 14, false);
+            int dy = baseCY - wallH + 10;
+            p.fillEllipse(cx, dy, halfW - 6, 8, Color{90, 110, 140, 255});  // 穹顶
+            p.ellipse(cx, dy, halfW - 6, 8, Color{60, 76, 100, 255});
+            for (int i = -1; i <= 1; i++) {                                 // 悬浮水晶
+                int kx = cx + i * 10, ky = dy - 14 - (i == 0 ? 6 : 0);
+                p.line(kx, ky - 4, kx + 3, ky, Color{170, 225, 255, 255});
+                p.line(kx + 3, ky, kx, ky + 4, Color{120, 190, 240, 255});
+                p.line(kx, ky + 4, kx - 3, ky, Color{170, 225, 255, 255});
+                p.line(kx - 3, ky, kx, ky - 4, Color{210, 240, 255, 255});
+            }
+            p.ellipse(cx, dy + 4, halfW - 2, 5, trim);                      // 阵营色环
             break;
         }
         default: mainBox(2, wallH); break;

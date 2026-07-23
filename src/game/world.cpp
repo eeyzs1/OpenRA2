@@ -2,6 +2,8 @@
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
 #include <cmath>
+#include <cstring>
+#include <algorithm>
 
 // ===================== 初始化 =====================
 void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const std::vector<Faction>& factions, int mapType) {
@@ -212,14 +214,23 @@ bool World::hasFactoryFor(int player, const UnitDef& u) const {
     return false;
 }
 
-EID World::findNearestEnemy(int player, float x, float y, float maxR, bool includeBlds, const WeaponDef* w) {
+EID World::findNearestEnemy(int player, float x, float y, float maxR, bool includeBlds, const WeaponDef* w, UnitType seeker) {
     EID best = INVALID_EID;
     float bd = maxR;
     for (size_t i = 0; i < ents.size(); i++) {
         const Ent& e = ents[i];
-        if (!e.alive || e.player < 0 || e.player == player) continue;
+        if (!e.alive || e.player < 0 || !isEnemy(player, e.player)) continue;
         if (e.isBuilding && !includeBlds) continue;
-        if (!e.isBuilding && e.camouflaged) continue; // 幻影伪装：无法被自动索敌（手动点选仍可）
+        if (!e.isBuilding) {
+            if (e.camouflaged) continue; // 幻影伪装：无法被自动索敌（手动点选仍可）
+            // 间谍伪装：除军犬外无法被自动索敌（RA2 原作：军犬嗅探）
+            if (e.utype == UnitType::Spy && seeker != UnitType::AttackDog) continue;
+            // 台风潜艇下潜隐身：仅反潜探测单位在 7 格内、或任何单位贴脸（2.5 格）可发现
+            if (e.utype == UnitType::Typhoon && e.subReveal <= 0) {
+                float sd = distf(x, y, e.x, e.y);
+                if (!(isDetector(seeker) && sd <= 7.0f) && sd > 2.5f) continue;
+            }
+        }
         // 武器射界过滤：空中目标需 antiAir，地面目标需 antiGround
         if (w) {
             bool airT = !e.isBuilding && unitDef(e.utype).isAir() && e.state != UState::Landed;
@@ -241,6 +252,26 @@ EID World::findNearestEnemy(int player, float x, float y, float maxR, bool inclu
     return best;
 }
 
+// 反潜探测单位（驱逐舰/神盾舰/海蝎，RA2 原作为驱逐舰声呐/海豚）
+bool World::isDetector(UnitType t) const {
+    return t == UnitType::Destroyer || t == UnitType::Aegis || t == UnitType::SeaScorpion;
+}
+
+// 单位可见性：潜艇隐身时仅本家/探测单位/贴脸可见
+bool World::visibleTo(const Ent& e, int viewer) const {
+    if (e.player == viewer || viewer < 0) return true;
+    if (e.isBuilding) return true;
+    if (e.utype == UnitType::Typhoon && e.subReveal <= 0) {
+        for (const Ent& o : ents) {
+            if (!o.alive || o.isBuilding || o.player != viewer) continue;
+            if (isDetector(o.utype) && distf(o.x, o.y, e.x, e.y) <= 7.0f) return true;
+            if (distf(o.x, o.y, e.x, e.y) <= 2.5f) return true;
+        }
+        return false;
+    }
+    return true;
+}
+
 // ===================== 指令 =====================
 void World::orderMove(const std::vector<EID>& sel, float x, float y, bool attackMove) {
     int n = 0;
@@ -254,6 +285,7 @@ void World::orderMove(const std::vector<EID>& sel, float x, float y, bool attack
         e.target = INVALID_EID;
         e.guard = false;
         e.radDeployed = false; // 移动命令自动收起辐射部署
+        e.deployed = false;    // 移动命令自动收起重装大兵部署
         e.goalX = x; e.goalY = y;
         // 目标点按单位散开（方阵）
         int cols = (int)ceilf(sqrtf((float)sel.size()));
@@ -301,7 +333,19 @@ void World::orderAttack(const std::vector<EID>& sel, EID target) {
         if (!valid(id) || ents[id].isBuilding) continue;
         Ent& e = ents[id];
         const UnitDef& ud = unitDef(e.utype);
-        if (ud.weapon.damage == 0) continue;
+        if (ud.weapon.damage == 0) {
+            // 间谍渗透（RA2 原作）：无武器但可指定敌方建筑为渗透目标
+            if (e.utype == UnitType::Spy && t.isBuilding && isEnemy(e.player, t.player)) {
+                e.target = target;
+                e.guard = false;
+                std::vector<Vec2i> path;
+                map.findPath((int)e.x, (int)e.y, (int)tx, (int)ty, path, 20000, ud.pathDomain());
+                e.path = std::move(path);
+                e.pathIdx = 0;
+                e.state = UState::Chasing;
+            }
+            continue;
+        }
         // 射界检查：打空中目标需 antiAir，打地面需 antiGround；鱼雷仅限水上目标
         if (airT && !ud.weapon.antiAir) continue;
         if (!airT && !ud.weapon.antiGround) continue;
@@ -484,17 +528,28 @@ bool World::chronoJump(Ent& e, float gx, float gy) {
 }
 
 // 辐射工兵：部署/收起辐射区（部署后不能移动，持续范围伤害）
+// 重装大兵：部署/收起反装甲炮（部署后不能移动、不可被碾压，射程与反甲伤害提升）
 void World::orderRadDeploy(const std::vector<EID>& sel) {
     for (EID id : sel) {
         if (!valid(id) || ents[id].isBuilding) continue;
         Ent& e = ents[id];
-        if (e.utype != UnitType::Desolator) continue;
-        e.radDeployed = !e.radDeployed;
-        if (e.radDeployed) {
-            e.path.clear();
-            e.target = INVALID_EID;
-            e.guard = false;
-            e.state = UState::Idle;
+        if (e.utype == UnitType::Desolator) {
+            e.radDeployed = !e.radDeployed;
+            if (e.radDeployed) {
+                e.path.clear();
+                e.target = INVALID_EID;
+                e.guard = false;
+                e.state = UState::Idle;
+            }
+        } else if (e.utype == UnitType::GuardianGI) {
+            e.deployed = !e.deployed;
+            if (e.deployed) {
+                e.path.clear();
+                e.target = INVALID_EID;
+                e.guard = false;
+                e.state = UState::Idle;
+                g_sfx.playAt(Sfx::Deploy, e.x, e.y);
+            }
         }
     }
 }
@@ -548,20 +603,76 @@ void World::orderCapture(const std::vector<EID>& sel, EID bldId) {
     }
 }
 
+// 工程师修复己方受损建筑（进入后回满并消耗）
+void World::orderRepair(const std::vector<EID>& sel, EID bldId) {
+    if (!valid(bldId) || !ents[bldId].isBuilding) return;
+    Ent& b = ents[bldId];
+    if (b.hp >= bldDef(b.btype).hp) return; // 满血不修
+    for (EID id : sel) {
+        if (!valid(id) || ents[id].isBuilding) continue;
+        Ent& e = ents[id];
+        if (e.utype != UnitType::Engineer) continue;
+        if (e.player != b.player) continue;
+        std::vector<Vec2i> path;
+        map.findPath((int)e.x, (int)e.y, (int)b.x, (int)b.y, path);
+        e.path = std::move(path);
+        e.pathIdx = 0;
+        e.target = bldId;
+        e.state = UState::Chasing;
+    }
+}
+
 // ===================== 生产 =====================
+// 分类生产队列（RA2 原作）：步兵/车辆/空军/海军各自独立排队，当前项空则立即开工，否则排入队尾
 bool World::startUnitProd(int player, UnitType t) {
     Player& p = players[player];
     const UnitDef& u = unitDef(t);
-    if (p.unitProd.active) return false;
     if (!unitPrereqMet(player, u)) return false;
     if (!hasFactoryFor(player, u)) return false;
-    if (p.money < u.cost) return false;
-    p.unitProd.active = true;
-    p.unitProd.isUnit = true;
-    p.unitProd.typeIdx = (int)t;
-    p.unitProd.progress = 0;
-    p.unitProd.ready = false;
+    int cat = u.prodCat();
+    ProdItem& pr = p.unitProd[cat];
+    if (!pr.active) {
+        if (p.money < u.cost) return false;
+        pr.active = true;
+        pr.isUnit = true;
+        pr.typeIdx = (int)t;
+        pr.progress = 0;
+        pr.ready = false;
+        return true;
+    }
+    // 排入队尾（排队项最多 7 个，含进行中共 8 个）
+    if ((int)p.unitQueue[cat].size() >= 7) return false;
+    p.unitQueue[cat].push_back((int)t);
     return true;
+}
+
+// 取消一个该类型：先取消队尾排队项，再取消进行中项（返还资金，队首递补）
+void World::cancelUnitProd(int player, UnitType t) {
+    Player& p = players[player];
+    int cat = unitDef(t).prodCat();
+    auto& q = p.unitQueue[cat];
+    for (auto it = q.rbegin(); it != q.rend(); ++it) {
+        if (*it == (int)t) { q.erase(std::next(it).base()); return; }
+    }
+    ProdItem& pr = p.unitProd[cat];
+    if (pr.active && pr.typeIdx == (int)t) {
+        const UnitDef& u = unitDef(t);
+        int refunded = u.cost - u.cost * pr.progress / std::max(1, u.buildTime);
+        p.money += refunded;
+        pr = ProdItem{};
+        if (!q.empty()) {
+            int nt = q.front(); q.pop_front();
+            pr.active = true; pr.isUnit = true; pr.typeIdx = nt; pr.progress = 0; pr.ready = false;
+        }
+    }
+}
+
+// 该类别排队总数（含进行中项）
+int World::unitQueuedCount(int player, int cat) const {
+    const Player& p = players[player];
+    int n = (int)p.unitQueue[cat].size();
+    if (p.unitProd[cat].active) n++;
+    return n;
 }
 
 bool World::startBldProd(int player, BldType t) {
@@ -580,11 +691,13 @@ bool World::startBldProd(int player, BldType t) {
 }
 
 void World::cancelProd(int player, bool isUnit) {
-    ProdItem& pr = isUnit ? players[player].unitProd : players[player].bldProd;
+    // 单位取消走 cancelUnitProd（分类队列）；此处仅处理建筑生产
+    if (isUnit) return;
+    ProdItem& pr = players[player].bldProd;
     if (!pr.active) return;
     // 返还剩余造价
-    int cost = isUnit ? unitDef((UnitType)pr.typeIdx).cost : bldDef((BldType)pr.typeIdx).cost;
-    int time = isUnit ? unitDef((UnitType)pr.typeIdx).buildTime : bldDef((BldType)pr.typeIdx).buildTime;
+    int cost = bldDef((BldType)pr.typeIdx).cost;
+    int time = bldDef((BldType)pr.typeIdx).buildTime;
     int refunded = cost - cost * pr.progress / std::max(1, time);
     players[player].money += refunded;
     pr = ProdItem{};
@@ -714,6 +827,29 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
             effects.push_back(ef);
             break;
         }
+        case SWType::ChronoShift: {
+            // 将超时空传送仪周边 8 格内的己方车辆传送至目标点（AI 用；人类玩家由 HUD 以选中单位调用 chronoShiftUnits）
+            EID sphere = INVALID_EID;
+            for (size_t i = 0; i < ents.size(); i++) {
+                const Ent& e = ents[i];
+                if (e.alive && e.isBuilding && e.player == player && e.btype == BldType::ChronoSphere) { sphere = (int)i; break; }
+            }
+            if (sphere != INVALID_EID) {
+                const Ent& s = ents[sphere];
+                float sx = s.x + 1.5f, sy = s.y + 1.0f;
+                std::vector<EID> grp;
+                for (size_t i = 0; i < ents.size(); i++) {
+                    Ent& e = ents[i];
+                    if (!e.alive || e.isBuilding || e.player != player) continue;
+                    const UnitDef& ud = unitDef(e.utype);
+                    if (ud.isInfantry() || ud.isAir()) continue;
+                    if (distf(e.x, e.y, sx, sy) <= 8.0f) grp.push_back((int)i);
+                }
+                chronoShiftUnits(grp, tx, ty);
+            }
+            eva(player, "超时空传送启动");
+            break;
+        }
         default: break;
     }
     return true;
@@ -807,37 +943,62 @@ void World::updateSW() {
 void World::update() {
     tick++;
     updateSW();
-    // EVA 播报节流倒计时
+    // EVA 播报节流倒计时 + 间谍效果计时
     for (int pi = 0; pi < numPlayers; pi++) {
         Player& p = players[pi];
         if (p.evaBaseCd > 0) p.evaBaseCd--;
         if (p.evaMinerCd > 0) p.evaMinerCd--;
         if (p.evaUnitCd > 0) p.evaUnitCd--;
+        if (p.powerSabotage > 0) p.powerSabotage--;
+        if (p.revealTimer > 0) p.revealTimer--;
     }
+    spawnCrateTick();    // 周期性生成补给箱
+    updateTimedBombs();  // 疯狂伊文炸弹倒计时
+    regrowOre();         // 矿脉缓慢再生
     // 生产进度
     for (int pi = 0; pi < numPlayers; pi++) {
         Player& p = players[pi];
         if (!p.active || p.defeated) continue;
         float rate = p.lowPower() ? 0.5f : 1.0f; // 低电减产
-        for (int which = 0; which < 2; which++) {
-            ProdItem& pr = which == 0 ? p.unitProd : p.bldProd;
-            if (!pr.active || pr.ready) continue;
-            int cost, time;
-            if (pr.isUnit) { cost = unitDef((UnitType)pr.typeIdx).cost; time = unitDef((UnitType)pr.typeIdx).buildTime; }
-            else { cost = bldDef((BldType)pr.typeIdx).cost; time = bldDef((BldType)pr.typeIdx).buildTime; }
-            // 每帧扣钱：cost/time
-            float perTick = (float)cost / time * rate;
+        // 单位生产：步兵/车辆/空军/海军 4 类独立队列（RA2 原作）
+        for (int cat = 0; cat < PROD_CAT_N; cat++) {
+            ProdItem& pr = p.unitProd[cat];
+            if (!pr.active) continue;
+            const UnitDef& u = unitDef((UnitType)pr.typeIdx);
+            // 多工厂加速：每个额外同类生产建筑 +50% 速度（上限 2.5x，RA2 原作设定）
+            int fac = 0;
+            for (const Ent& e : ents)
+                if (e.alive && e.isBuilding && e.player == pi && isFactoryFor(e.btype, u)) fac++;
+            float speed = rate * std::min(2.5f, 1.0f + 0.5f * std::max(0, fac - 1));
+            float perTick = (float)u.cost / u.buildTime * speed;
             if (p.money <= 0) continue; // 资金不足暂停
             p.money -= (int)ceilf(perTick);
             pr.progress++;
-            if (pr.progress >= (int)(time / rate)) {
-                if (pr.isUnit) {
-                    spawnFromFactory(pi, unitDef((UnitType)pr.typeIdx));
-                    pr = ProdItem{};
-                    if (pi == 0) g_sfx.play(Sfx::Ready, 0.7f); // 本家单位就绪提示
-                } else {
-                    pr.ready = true; // 建筑就绪等待放置（AI 会直接放）
-                    if (pi == 0) g_sfx.play(Sfx::Ready, 0.7f);
+            if (pr.progress >= (int)(u.buildTime / speed)) {
+                spawnFromFactory(pi, u);
+                pr = ProdItem{};
+                // 队首递补
+                if (!p.unitQueue[cat].empty()) {
+                    int nt = p.unitQueue[cat].front();
+                    p.unitQueue[cat].pop_front();
+                    pr.active = true; pr.isUnit = true; pr.typeIdx = nt; pr.progress = 0; pr.ready = false;
+                }
+                if (pi == 0) g_sfx.play(Sfx::Ready, 0.7f); // 本家单位就绪提示
+            }
+        }
+        // 建筑生产（单队列）
+        {
+            ProdItem& pr = p.bldProd;
+            if (pr.active && !pr.ready) {
+                const BldDef& d = bldDef((BldType)pr.typeIdx);
+                float perTick = (float)d.cost / d.buildTime * rate;
+                if (p.money > 0) {
+                    p.money -= (int)ceilf(perTick);
+                    pr.progress++;
+                    if (pr.progress >= (int)(d.buildTime / rate)) {
+                        pr.ready = true; // 建筑就绪等待放置（AI 会直接放）
+                        if (pi == 0) g_sfx.play(Sfx::Ready, 0.7f);
+                    }
                 }
             }
         }
@@ -868,7 +1029,7 @@ void World::update() {
                 float mult = 1.0f;
                 if (t.isBuilding) mult = pr.w.vsBuilding;
                 else mult = unitDef(t.utype).isInfantry() ? pr.w.vsInfantry : pr.w.vsVehicle;
-                damage(pr.target, (int)(pr.w.damage * mult), pr.player);
+                damage(pr.target, (int)(pr.w.damage * mult), pr.player, pr.src);
             }
             // 溅射伤害（V3 火箭等）：命中点范围内所有实体按距离衰减
             if (pr.w.splash > 0) {
@@ -883,7 +1044,7 @@ void World::update() {
                     float mult = o.isBuilding ? pr.w.vsBuilding
                                  : (unitDef(o.utype).isInfantry() ? pr.w.vsInfantry : pr.w.vsVehicle);
                     float falloff = 1.0f - od / (pr.w.splash + 0.5f) * 0.6f; // 中心 100%，边缘 40%
-                    damage((int)i, (int)(pr.w.damage * mult * falloff), pr.player);
+                    damage((int)i, (int)(pr.w.damage * mult * falloff), pr.player, pr.src);
                 }
             }
             if (pr.kind != ProjKind::Bullet) explodeAt(tx, ty, pr.kind == ProjKind::Missile ? 1 : 0);
@@ -969,6 +1130,26 @@ void World::updateUnit(Ent& e, EID id) {
     if (e.utype == UnitType::MirageTank && !e.camouflaged && e.state == UState::Idle) {
         if (++e.camoTick >= 90) e.camouflaged = true;
     }
+    // 精英军衔：缓慢自愈（RA2 原作设定）
+    if (e.vetRank >= 2 && e.hp < ud.hp && tick % 45 == (uint64_t)(id % 45)) e.hp++;
+    // 台风潜艇：开火暴露计时衰减
+    if (e.subReveal > 0) e.subReveal--;
+    // 重装大兵已部署：不能移动，以反装甲炮迎战（RA2 原作设定）
+    if (e.utype == UnitType::GuardianGI && e.deployed) {
+        const WeaponDef& dw = ggiDeployedWeapon();
+        if (!valid(e.target)) {
+            e.target = findNearestEnemy(e.player, e.x, e.y, (float)dw.range, true, &dw, e.utype);
+            if (e.target == INVALID_EID) { e.state = UState::Idle; return; }
+        }
+        const Ent& t = ents[e.target];
+        float tx = t.x, ty = t.y;
+        if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
+        if (distf(e.x, e.y, tx, ty) > dw.range) { e.target = INVALID_EID; e.state = UState::Idle; return; }
+        e.dir = dirFromVec(tx - e.x, ty - e.y);
+        e.turretDir = e.dir;
+        if (e.atkCd <= 0) { fireWeapon(e, id, e.target); e.atkCd = dw.cooldown; }
+        return;
+    }
     // 重伤冒烟
     if (e.hp < ud.hp / 2 && !ud.isInfantry() && tick % 25 == (uint64_t)(id % 25)) {
         Effect sm;
@@ -993,6 +1174,32 @@ void World::updateUnit(Ent& e, EID id) {
                 return;
             }
         }
+        // 己方受损建筑：进入修复（RA2 原作：瞬间回满，工程师消耗）
+        if (b.isBuilding && b.player == e.player && b.hp < bldDef(b.btype).hp) {
+            const BldDef& bd = bldDef(b.btype);
+            float bx = b.x + bd.w / 2.0f, by = b.y + bd.h / 2.0f;
+            if (distf(e.x, e.y, bx, by) < std::max(bd.w, bd.h) / 2.0f + 1.5f) {
+                b.hp = bd.hp;
+                eva(e.player, std::string("工程师已修复：") + bd.name);
+                g_sfx.playAt(Sfx::Place, bx, by);
+                e.alive = false;
+                freeList.push_back(id);
+                return;
+            }
+        }
+    }
+
+    // 间谍到达目标建筑：渗透生效（RA2 原作：间谍消耗，按建筑类型产生效果）
+    if (e.utype == UnitType::Spy && e.target != INVALID_EID && valid(e.target)) {
+        Ent& b = ents[e.target];
+        if (b.isBuilding && isEnemy(e.player, b.player)) {
+            const BldDef& bd = bldDef(b.btype);
+            float bx = b.x + bd.w / 2.0f, by = b.y + bd.h / 2.0f;
+            if (distf(e.x, e.y, bx, by) < std::max(bd.w, bd.h) / 2.0f + 1.5f) {
+                applySpyEffect(e, b, id);
+                return;
+            }
+        }
     }
 
     switch (e.state) {
@@ -1001,7 +1208,7 @@ void World::updateUnit(Ent& e, EID id) {
             if (ud.weapon.damage > 0) {
                 float scanR = e.guard ? (float)std::max(ud.sight, ud.weapon.range + 2)
                                       : (float)(ud.weapon.range + 2);
-                EID en = findNearestEnemy(e.player, e.x, e.y, scanR, true, &ud.weapon);
+                EID en = findNearestEnemy(e.player, e.x, e.y, scanR, true, &ud.weapon, e.utype);
                 if (en != INVALID_EID) { e.target = en; e.state = UState::Chasing; }
             }
             break;
@@ -1009,7 +1216,7 @@ void World::updateUnit(Ent& e, EID id) {
         case UState::Moving:
         case UState::AttackMoving: {
             if (e.state == UState::AttackMoving && ud.weapon.damage > 0) {
-                EID en = findNearestEnemy(e.player, e.x, e.y, (float)(ud.weapon.range + 1), true, &ud.weapon);
+                EID en = findNearestEnemy(e.player, e.x, e.y, (float)(ud.weapon.range + 1), true, &ud.weapon, e.utype);
                 if (en != INVALID_EID) { e.target = en; e.state = UState::Chasing; break; }
             }
             moveAlongPath(e, id);
@@ -1136,8 +1343,9 @@ void World::updateAircraft(Ent& e, EID id) {
             break;
         case UState::Moving:
         case UState::AttackMoving: {
-            if (e.state == UState::AttackMoving && ud.weapon.damage > 0 && e.ammo > 0) {
-                EID en = findNearestEnemy(e.player, e.x, e.y, (float)(ud.weapon.range + 3), true, &ud.weapon);
+            bool hasAmmo = ud.ammo == 0 || e.ammo > 0; // ammo=0 为无限弹药（基洛夫/火箭飞行兵）
+            if (e.state == UState::AttackMoving && ud.weapon.damage > 0 && hasAmmo) {
+                EID en = findNearestEnemy(e.player, e.x, e.y, (float)(ud.weapon.range + 3), true, &ud.weapon, e.utype);
                 if (en != INVALID_EID) { e.target = en; e.state = UState::Chasing; break; }
             }
             if (flyToward(e, e.goalX, e.goalY) || distf(e.x, e.y, e.goalX, e.goalY) < 0.4f) {
@@ -1150,7 +1358,7 @@ void World::updateAircraft(Ent& e, EID id) {
             const Ent& t = ents[e.target];
             float tx = t.x, ty = t.y;
             if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
-            if (e.ammo <= 0) { e.state = UState::Returning; break; }
+            if (ud.ammo > 0 && e.ammo <= 0) { e.state = UState::Returning; break; }
             if (distf(e.x, e.y, tx, ty) <= ud.weapon.range) {
                 e.state = UState::Attacking;
                 e.orbitA = atan2f(e.y - ty, e.x - tx);
@@ -1160,20 +1368,20 @@ void World::updateAircraft(Ent& e, EID id) {
             break;
         }
         case UState::Attacking: {
-            if (!valid(e.target)) { e.target = INVALID_EID; e.state = e.ammo > 0 ? UState::Circling : UState::Returning; break; }
+            if (!valid(e.target)) { e.target = INVALID_EID; e.state = (ud.ammo == 0 || e.ammo > 0) ? UState::Circling : UState::Returning; break; }
             const Ent& t = ents[e.target];
             float tx = t.x, ty = t.y;
             if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
-            if (e.ammo <= 0) { e.state = UState::Returning; break; }
+            if (ud.ammo > 0 && e.ammo <= 0) { e.state = UState::Returning; break; }
             // 环绕目标盘旋投弹
             e.orbitA += 0.10f;
             float r = ud.weapon.range * 0.75f;
             flyToward(e, tx + cosf(e.orbitA) * r, ty + sinf(e.orbitA) * r);
             if (distf(e.x, e.y, tx, ty) <= ud.weapon.range && e.atkCd <= 0) {
                 fireWeapon(e, id, e.target);
-                e.ammo--;
+                if (ud.ammo > 0) e.ammo--;
                 e.atkCd = ud.weapon.cooldown;
-                if (e.ammo <= 0) { e.target = INVALID_EID; e.state = UState::Returning; }
+                if (ud.ammo > 0 && e.ammo <= 0) { e.target = INVALID_EID; e.state = UState::Returning; }
             }
             break;
         }
@@ -1181,8 +1389,8 @@ void World::updateAircraft(Ent& e, EID id) {
             // 绕目标点小半径盘旋，自动索敌
             e.orbitA += 0.10f;
             flyToward(e, e.goalX + cosf(e.orbitA) * 1.5f, e.goalY + sinf(e.orbitA) * 1.5f);
-            if (ud.weapon.damage > 0 && e.ammo > 0) {
-                EID en = findNearestEnemy(e.player, e.x, e.y, (float)(ud.weapon.range + 3), true, &ud.weapon);
+            if (ud.weapon.damage > 0 && (ud.ammo == 0 || e.ammo > 0)) {
+                EID en = findNearestEnemy(e.player, e.x, e.y, (float)(ud.weapon.range + 3), true, &ud.weapon, e.utype);
                 if (en != INVALID_EID) { e.target = en; e.state = UState::Chasing; }
             }
             break;
@@ -1235,9 +1443,9 @@ void World::moveAlongPath(Ent& e, EID id) {
     if (occ != INVALID_EID && occ != id) {
         Ent& o = ents[occ];
         const UnitDef& od = unitDef(o.utype);
-        // 坦克碾压（RA2 原作）：重甲车辆直接碾死敌方无甲步兵（磁暴步兵等轻甲不可碾）
+        // 坦克碾压（RA2 原作）：重甲车辆直接碾死敌方无甲步兵（磁暴步兵等轻甲、已部署重装大兵不可碾）
         if (o.player != e.player && ud.move == MoveType::Vehicle && ud.armor == Armor::Heavy
-            && od.isInfantry() && od.armor == Armor::None && o.invuln == 0) {
+            && od.isInfantry() && od.armor == Armor::None && o.invuln == 0 && !o.deployed) {
             g_sfx.playAt(Sfx::Crush, o.x, o.y);
             Player& vp = players[o.player];
             if (vp.evaUnitCd <= 0) { eva(o.player, "单位损失"); vp.evaUnitCd = 150; }
@@ -1291,6 +1499,7 @@ void World::moveAlongPath(Ent& e, EID id) {
         e.pathIdx++;
         if (ud.isInfantry() && (++e.walkAnim % 4 == 0)) e.walkFrame ^= 1;
         if (e.camouflaged) { e.camouflaged = false; e.camoTick = 0; } // 幻影移动解除伪装
+        pickupCrates(e); // 驶入补给箱：拾取
     }
 }
 
@@ -1439,11 +1648,28 @@ void World::fireWeapon(Ent& e, EID id, EID targetId) {
     (void)id;
     const Ent& t = ents[targetId];
     WeaponDef w = e.isBuilding ? bldDef(e.btype).weapon : unitDef(e.utype).weapon;
+    // 重装大兵部署后切换为反装甲炮
+    if (!e.isBuilding && e.utype == UnitType::GuardianGI && e.deployed) w = ggiDeployedWeapon();
+    // 军衔伤害加成：老兵 +15%，精英 +30%
+    if (!e.isBuilding && e.vetRank > 0) w.damage = (int)(w.damage * (1.0f + 0.15f * e.vetRank));
     float sx = e.x, sy = e.y;
     if (e.isBuilding) { sx += bldDef(e.btype).w / 2.0f; sy += bldDef(e.btype).h / 2.0f; }
     float tx = t.x, ty = t.y;
     if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
 
+    // 疯狂伊文：攻击 = 在目标上安放定时炸弹（5 秒后爆炸，RA2 原作设定）
+    if (!e.isBuilding && e.utype == UnitType::CrazyIvan) {
+        TimedBomb b;
+        b.x = tx; b.y = ty; b.timer = 30 * 5; b.player = e.player; b.attachedTo = targetId;
+        timedBombs.push_back(b);
+        Effect mz;
+        mz.kind = 5; mz.x = tx; mz.y = ty; mz.maxAge = 6;
+        effects.push_back(mz);
+        g_sfx.playAt(Sfx::Click, tx, ty);
+        return;
+    }
+    // 台风潜艇开火后暴露 3 秒（可被反潜单位索敌）
+    if (!e.isBuilding && e.utype == UnitType::Typhoon) e.subReveal = 90;
     const char* ps = w.projSprite;
     // 幻影坦克开火解除伪装
     if (!e.isBuilding && e.utype == UnitType::MirageTank) { e.camouflaged = false; e.camoTick = 0; }
@@ -1467,7 +1693,7 @@ void World::fireWeapon(Ent& e, EID id, EID targetId) {
     if (strcmp(ps, "tesla") == 0) {
         // 磁暴：瞬时电弧
         float mult = t.isBuilding ? w.vsBuilding : (unitDef(t.utype).isInfantry() ? w.vsInfantry : w.vsVehicle);
-        damage(targetId, (int)(w.damage * mult), e.player);
+        damage(targetId, (int)(w.damage * mult), e.player, id);
         Effect ef;
         ef.kind = 2; ef.x = sx; ef.y = sy; ef.x2 = tx; ef.y2 = ty; ef.maxAge = 8;
         effects.push_back(ef);
@@ -1480,46 +1706,46 @@ void World::fireWeapon(Ent& e, EID id, EID targetId) {
         effects.push_back(ef);
     } else if (strcmp(ps, "prism") == 0) {
         float mult = t.isBuilding ? w.vsBuilding : (unitDef(t.utype).isInfantry() ? w.vsInfantry : w.vsVehicle);
-        damage(targetId, (int)(w.damage * mult), e.player);
+        damage(targetId, (int)(w.damage * mult), e.player, id);
         Effect ef;
         ef.kind = 3; ef.x = sx; ef.y = sy; ef.x2 = tx; ef.y2 = ty; ef.maxAge = 10;
         effects.push_back(ef);
     } else if (strcmp(ps, "bullet") == 0 || strcmp(ps, "rad") == 0) {
         Projectile p;
         p.kind = ProjKind::Bullet; p.player = e.player;
-        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.w = w;
+        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.src = id; p.w = w;
         projs.push_back(p);
     } else if (strcmp(ps, "flak") == 0) {
         Projectile p;
         p.kind = ProjKind::Flak; p.player = e.player;
-        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.w = w;
+        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.src = id; p.w = w;
         projs.push_back(p);
     } else if (strcmp(ps, "missile") == 0) {
         Projectile p;
         p.kind = ProjKind::Missile; p.player = e.player;
-        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.w = w;
+        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.src = id; p.w = w;
         projs.push_back(p);
     } else if (strcmp(ps, "naval") == 0 || strcmp(ps, "torpedo") == 0) {
         Projectile p;
         p.kind = ProjKind::Shell; p.player = e.player;
-        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.w = w;
+        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.src = id; p.w = w;
         projs.push_back(p);
     } else { // shell
         Projectile p;
         p.kind = ProjKind::Shell; p.player = e.player;
-        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.w = w;
+        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.src = id; p.w = w;
         projs.push_back(p);
     }
 }
 
-void World::damage(EID id, int dmg, int byPlayer) {
+void World::damage(EID id, int dmg, int byPlayer, EID byEnt) {
     if (!valid(id) || dmg <= 0) return;
     Ent& e = ents[id];
     if (e.invuln > 0) return; // 铁幕无敌
     e.hp -= dmg;
     // 中立单位/建筑（player=-1）：无玩家状态，仅扣血与摧毁，跳过 EVA 与反击
     if (e.player < 0) {
-        if (e.hp <= 0) kill(id);
+        if (e.hp <= 0) { creditKill(byEnt, id); kill(id); }
         return;
     }
     Player& owner = players[e.player];
@@ -1539,6 +1765,7 @@ void World::damage(EID id, int dmg, int byPlayer) {
             eva(e.player, "单位损失");
             owner.evaUnitCd = 150; // 5 秒
         }
+        creditKill(byEnt, id);
         kill(id);
         return;
     }
@@ -1547,6 +1774,23 @@ void World::damage(EID id, int dmg, int byPlayer) {
         const UnitDef& ud = unitDef(e.utype);
         EID attacker = findNearestEnemy(e.player, e.x, e.y, 20, true, &ud.weapon);
         if (attacker != INVALID_EID) { e.target = attacker; e.state = UState::Chasing; }
+    }
+}
+
+// 军衔经验（RA2 原作）：3 杀升老兵，再 6 杀升精英；老兵+15% 伤害，精英+30% 且缓慢自愈
+void World::creditKill(EID byEnt, EID victim) {
+    (void)victim;
+    if (!valid(byEnt)) return;
+    Ent& a = ents[byEnt];
+    if (a.isBuilding) return; // 防御建筑不记军衔
+    a.kills++;
+    int need = a.vetRank == 0 ? 3 : 9;
+    if (a.vetRank < 2 && a.kills >= need) {
+        a.vetRank++;
+        if (a.player == 0) {
+            eva(0, std::string(unitDef(a.utype).name) + (a.vetRank == 1 ? "晋升为老兵" : "晋升为精英"));
+            g_sfx.play(Sfx::Ready, 0.6f);
+        }
     }
 }
 
@@ -1565,8 +1809,8 @@ void World::spawnFromFactory(int player, const UnitDef& u) {
         Ent& b = ents[i];
         if (!b.alive || !b.isBuilding || b.player != player || !isFactoryFor(b.btype, u)) continue;
         const BldDef& bd = bldDef(b.btype);
-        // 战机：直接落在空指部停机位
-        if (u.isAir()) {
+        // 限弹药战机：直接落在空指部停机位（基洛夫/火箭飞行兵无限弹药，走地面出厂流程后升空）
+        if (u.isAir() && u.ammo > 0) {
             EID nu = spawnUnit(player, u.type, 0, 0);
             Ent& ne = ents[nu];
             Vec2f pad = airPadPos(b, nu);
@@ -1575,6 +1819,7 @@ void World::spawnFromFactory(int player, const UnitDef& u) {
             ne.airbase = (int)i;
             ne.state = UState::Landed;
             ne.ammo = u.ammo;
+            if (players[player].vetCat[u.prodCat()]) ne.vetRank = 1; // 间谍渗透工厂加成
             return;
         }
         // 出生点：建筑下方最近空格（海军单位须落在水面）
@@ -1583,14 +1828,22 @@ void World::spawnFromFactory(int player, const UnitDef& u) {
             int sx = (int)b.x + bd.w / 2, sy = (int)b.y + bd.h + r - 1;
             if (passableFor(sx, sy, dom) && !bldBlocked(sx, sy) && unitAtCell(sx, sy) == INVALID_EID) {
                 EID nu = spawnUnit(player, u.type, sx + 0.5f, sy + 0.5f);
+                Ent& ne0 = ents[nu];
+                if (players[player].vetCat[u.prodCat()]) ne0.vetRank = 1; // 间谍渗透工厂加成
                 // 走向集结点
                 if (b.rallyX >= 0) {
                     Ent& ne = ents[nu];
-                    std::vector<Vec2i> path;
-                    if (map.findPath(sx, sy, b.rallyX, b.rallyY, path, 20000, dom)) {
-                        ne.path = std::move(path); ne.pathIdx = 0;
-                        ne.state = UState::Moving;
+                    if (u.isAir()) {
+                        // 空中单位：直线飞往集结点，无需寻路
                         ne.goalX = (float)b.rallyX; ne.goalY = (float)b.rallyY;
+                        ne.state = UState::Moving;
+                    } else {
+                        std::vector<Vec2i> path;
+                        if (map.findPath(sx, sy, b.rallyX, b.rallyY, path, 20000, dom)) {
+                            ne.path = std::move(path); ne.pathIdx = 0;
+                            ne.state = UState::Moving;
+                            ne.goalX = (float)b.rallyX; ne.goalY = (float)b.rallyY;
+                        }
                     }
                 }
                 return;
@@ -1622,6 +1875,13 @@ void World::checkDefeat() {
 
 void World::updateFog(int player) {
     map.clearVisible(player);
+    // 间谍渗透雷达：全图可见
+    if (players[player].revealTimer > 0) {
+        for (int y = 0; y < map.h; y++)
+            for (int x = 0; x < map.w; x++)
+                map.reveal(player, x, y, 0);
+        return;
+    }
     for (const Ent& e : ents) {
         if (!e.alive || e.player != player) continue;
         int sight;
@@ -1636,4 +1896,170 @@ void World::updateFog(int player) {
         }
         map.reveal(player, cx, cy, sight);
     }
+}
+
+// ===================== 间谍渗透 =====================
+// RA2 原作效果：精炼厂=偷钱，电厂=断电，雷达=获取视野，兵营/工厂=新单位直接老兵，高科=破坏超武
+void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
+    int victim = bld.player;
+    Player& sp = players[spy.player];
+    const BldDef& bd = bldDef(bld.btype);
+    switch (bld.btype) {
+        case BldType::OreRefinery: {
+            int steal = players[victim].money * 2 / 5; // 窃取对方 40% 资金
+            players[victim].money -= steal;
+            sp.money += steal;
+            eva(spy.player, "间谍渗透：窃取资金 $" + std::to_string(steal));
+            if (victim >= 0) eva(victim, "警告：精炼厂被间谍渗透，资金失窃");
+            break;
+        }
+        case BldType::PowerPlant: case BldType::TeslaReactor: case BldType::NuclearReactor: {
+            if (victim >= 0) {
+                players[victim].powerSabotage = 30 * 30; // 断电 30 秒
+                eva(victim, "警告：电厂被间谍破坏，电力瘫痪");
+            }
+            eva(spy.player, "间谍渗透：敌方电力瘫痪 30 秒");
+            break;
+        }
+        case BldType::Radar: {
+            sp.revealTimer = 30 * 60; // 全图视野 60 秒
+            eva(spy.player, "间谍渗透：已获取敌方雷达数据");
+            if (victim >= 0) eva(victim, "警告：雷达站被间谍渗透");
+            break;
+        }
+        case BldType::Barracks:
+            sp.vetCat[0] = true;
+            eva(spy.player, "间谍渗透：新兵营单位直接晋升老兵");
+            break;
+        case BldType::WarFactory: case BldType::AirForceCmd:
+            sp.vetCat[1] = true; sp.vetCat[2] = true;
+            eva(spy.player, "间谍渗透：新车辆/空军单位直接晋升老兵");
+            break;
+        case BldType::NavalYard:
+            sp.vetCat[3] = true;
+            eva(spy.player, "间谍渗透：新海军单位直接晋升老兵");
+            break;
+        case BldType::BattleLab: {
+            // 渗透高科：窃取 $1500 并重置对方超武充能
+            if (victim >= 0) {
+                int steal = std::min(1500, players[victim].money);
+                players[victim].money -= steal;
+                sp.money += steal;
+                for (int i = 0; i < (int)SWType::COUNT; i++) { players[victim].swCharge[i] = 0; players[victim].swReady[i] = false; }
+                eva(victim, "警告：作战实验室被间谍渗透");
+            }
+            eva(spy.player, "间谍渗透：窃取技术资料，敌方超武充能已重置");
+            break;
+        }
+        default:
+            sp.revealTimer = 30 * 15; // 其他建筑：短暂全图侦查
+            eva(spy.player, std::string("间谍渗透：") + bd.name);
+            break;
+    }
+    g_sfx.playAt(Sfx::Eva, spy.x, spy.y);
+    spy.alive = false; // 间谍消耗（RA2 原作设定）
+    freeList.push_back(spyId);
+}
+
+// ===================== 疯狂伊文定时炸弹 =====================
+void World::updateTimedBombs() {
+    for (auto& b : timedBombs) {
+        if (b.timer < 0) continue;
+        // 附着目标：跟随其位置（被摧毁则留在原地）
+        if (valid(b.attachedTo)) {
+            const Ent& t = ents[b.attachedTo];
+            b.x = t.x; b.y = t.y;
+            if (t.isBuilding) { b.x += bldDef(t.btype).w / 2.0f; b.y += bldDef(t.btype).h / 2.0f; }
+        }
+        if (--b.timer > 0) continue;
+        // 爆炸：半径 2.5 格，中心 400 伤害递减
+        const float R = 2.5f;
+        for (size_t i = 0; i < ents.size(); i++) {
+            Ent& e = ents[i];
+            if (!e.alive || e.invuln > 0) continue;
+            float ex = e.x, ey = e.y;
+            if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
+            float d = distf(ex, ey, b.x, b.y);
+            if (d > R) continue;
+            int dmg = (int)(400 * (1.0f - d / (R + 1.0f)));
+            damage((int)i, dmg, b.player);
+        }
+        explodeAt(b.x, b.y, 1);
+        b.timer = -1;
+    }
+    timedBombs.erase(std::remove_if(timedBombs.begin(), timedBombs.end(), [](const TimedBomb& b) { return b.timer < 0; }), timedBombs.end());
+}
+
+// ===================== 补给箱 =====================
+void World::spawnCrateTick() {
+    if (!cratesEnabled) return;
+    if (tick % (30 * 40) != 0) return; // 每 40 秒尝试生成
+    if ((int)crates.size() >= 6) return;
+    for (int tries = 0; tries < 40; tries++) {
+        int x = rng.range(2, map.w - 3), y = rng.range(2, map.h - 3);
+        if (!map.passable(x, y) || bldBlocked(x, y)) continue;
+        Crate c;
+        c.x = x; c.y = y; c.kind = rng.range(0, 2);
+        crates.push_back(c);
+        break;
+    }
+}
+
+void World::pickupCrates(Ent& e) {
+    if (unitDef(e.utype).isAir()) return;
+    for (auto& c : crates) {
+        if (!c.alive) continue;
+        if ((int)e.x != c.x || (int)e.y != c.y) continue;
+        c.alive = false;
+        g_sfx.playAt(Sfx::Cash, e.x, e.y);
+        if (c.kind == 0) {
+            players[e.player].money += 1000;
+            if (e.player == 0) eva(0, "补给箱：获得资金 $1000");
+        } else if (c.kind == 1) {
+            for (Ent& o : ents)
+                if (o.alive && !o.isBuilding && o.player == e.player) o.hp = unitDef(o.utype).hp;
+            if (e.player == 0) eva(0, "补给箱：全体单位完全治疗");
+        } else {
+            e.vetRank = std::min(2, e.vetRank + 1);
+            if (e.player == 0) eva(0, "补给箱：单位军衔晋升");
+        }
+    }
+    crates.erase(std::remove_if(crates.begin(), crates.end(), [](const Crate& c) { return !c.alive; }), crates.end());
+}
+
+// ===================== 矿脉再生 =====================
+// RA2 矿钻等效：矿脉以极慢速度恢复，避免残局经济彻底枯竭
+void World::regrowOre() {
+    if (tick % 120 != 0) return; // 每 4 秒一批
+    for (int k = 0; k < 32; k++) {
+        int x = rng.range(0, map.w - 1), y = rng.range(0, map.h - 1);
+        Cell& c = map.at(x, y);
+        if (c.oreMax <= 0 || c.ore >= c.oreMax) continue;
+        if (c.ore == 0) {
+            // 采空的格子（已变 Rough）：无占用才恢复矿脉地形
+            if (bldBlocked(x, y) || unitAtCell(x, y) != INVALID_EID) continue;
+            c.terrain = c.oreMax <= 150 ? Terrain::Gems : Terrain::Ore;
+        }
+        c.ore++;
+    }
+}
+
+// ===================== 超时空传送 =====================
+// RA2 原作：传送车辆至目标点（步兵无法承受传送，会直接死亡；空军不可传送）
+void World::chronoShiftUnits(const std::vector<EID>& sel, float tx, float ty) {
+    bool anyInf = false;
+    for (EID id : sel) {
+        if (!valid(id)) continue;
+        Ent& e = ents[id];
+        if (e.isBuilding) continue;
+        const UnitDef& ud = unitDef(e.utype);
+        if (ud.isAir()) continue;
+        if (ud.isInfantry()) { anyInf = true; kill(id); continue; } // 原作设定：传送步兵即死
+        chronoJump(e, tx, ty);
+    }
+    if (anyInf) eva(0, "警告：步兵无法承受超时空传送");
+    g_sfx.playAt(Sfx::IronCurtain, tx, ty);
+    Effect ef;
+    ef.kind = 8; ef.x = tx; ef.y = ty; ef.maxAge = 40;
+    effects.push_back(ef);
 }

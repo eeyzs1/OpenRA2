@@ -24,7 +24,7 @@ struct Cell {
     Overlay overlay = Overlay::None;
     uint8_t variant = 0;      // 瓦片贴图变体
     int16_t ore = 0;          // 剩余矿石量
-    int8_t blockedBy = -1;    // 被建筑占用标记（-1 无）——实际由 World 的占用表管理
+    int16_t oreMax = 0;       // 矿石上限（生成时记录，用于矿脉缓慢再生）
     bool passable() const {
         return terrain != Terrain::Water && overlay != Overlay::Rock1 && overlay != Overlay::Rock2;
     }

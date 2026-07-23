@@ -27,15 +27,23 @@ enum class UnitType : uint8_t {
     Sniper, Tanya,               // 盟系
     Desolator,                   // 辐射工兵（苏，部署辐射区）
     Chrono,                      // 超时空军团兵（盟，传送+抹除）
+    GuardianGI,                  // 重装大兵（盟，可部署反装甲）
+    CrazyIvan,                   // 疯狂伊文（苏，安放定时炸弹）
     // 车辆
     Grizzly, Rhino, Type99,      // 灰熊 / 犀牛 / 99式
     FlakTrack, IFV,
     PrismTank, TeslaTank, MirageTank,
     V3Launcher, Apocalypse,      // 天启
+    TerrorDrone,                 // 恐怖机器人（苏，反车辆近战）
     // 空军
     Intruder, MiG, BlackEagle,   // 入侵者 / 米格 / 黑鹰战机
+    Kirov,                       // 基洛夫空艇（苏，重工生产，无限弹药慢速轰炸）
+    Rocketeer,                   // 火箭飞行兵（盟，兵营生产的空中步兵）
     // 海军
     Destroyer, Typhoon, Aegis,   // 驱逐舰(盟) / 台风潜艇(苏) / 中华神盾舰(中)
+    SeaScorpion,                 // 海蝎（苏中，防空快艇）
+    Dreadnought,                 // 无畏级战舰（苏，远程导弹轰炸）
+    AircraftCarrier,             // 航空母舰（盟，超远程舰载机打击）
     AmphTransport,               // 两栖运输船（通用）
     COUNT
 };
@@ -53,8 +61,11 @@ enum class BldType : uint8_t {
     NavalYard,                                  // 海军船厂（须建于水面）
     Pillbox, SentryGun, PrismTower, TeslaCoil,  // 防御
     FlakCannon, GrandCannon,                    // 高炮/巨炮
+    PatriotMissile,                             // 爱国者飞弹（盟，对空防御）
+    Wall,                                       // 围墙（通用，廉价阻挡）
     OrePurifier, IndustrialPlant,               // 矿石精炼器 / 工业工厂
     NukeSilo, WeatherDevice, IronCurtain,       // 超武：核弹井 / 天气控制器 / 铁幕装置
+    ChronoSphere,                               // 超时空传送仪（盟，传送车辆）
     // 中立科技建筑（地图生成，工程师占领，不可建造：factionMask=0）
     OilDerrick,                                 // 科技油井：持续资金
     Hospital,                                   // 医院：步兵持续回血
@@ -63,7 +74,7 @@ enum class BldType : uint8_t {
 };
 
 // ===================== 超级武器 =====================
-enum class SWType : uint8_t { Nuke = 0, Lightning, IronCurtain, COUNT };
+enum class SWType : uint8_t { Nuke = 0, Lightning, IronCurtain, ChronoShift, COUNT };
 
 struct SWDef {
     SWType type;
@@ -118,7 +129,17 @@ struct UnitDef {
     bool canHarvet() const { return type == UnitType::Harvester; }
     // 寻路域：0 陆地 1 水面 2 两栖
     int pathDomain() const { return isNaval() ? 1 : (isAmphib() ? 2 : 0); }
+    // 生产队列类别：0 步兵 1 车辆 2 空军 3 海军（各自独立排队）
+    int prodCat() const {
+        if (isInfantry()) return 0;
+        if (isNaval() || isAmphib()) return 3;
+        if (isAir()) return 2;
+        return 1;
+    }
 };
+
+// 特殊武器（运行时切换）：重装大兵部署后的反装甲炮
+const WeaponDef& ggiDeployedWeapon();
 
 // ===================== 建筑定义 =====================
 struct BldDef {

@@ -25,6 +25,20 @@ static WeaponDef wAirMissile() { return WeaponDef{80, 4, 30, false, true, "missi
 static WeaponDef wNavalGun() { return WeaponDef{60, 8, 50, false, true, "naval", 0.6f, 1.1f, 1.0f}; }      // 舰炮：对舰艇/沿岸
 static WeaponDef wTorpedo() { return WeaponDef{100, 7, 60, false, true, "torpedo", 0, 1.2f, 0.8f, true}; } // 鱼雷：仅水上目标
 static WeaponDef wAegisAA() { return WeaponDef{50, 10, 22, true, false, "missile", 0, 1.0f, 0}; }          // 神盾防空：纯对空
+static WeaponDef wPatriot() { return WeaponDef{45, 9, 20, true, false, "missile", 0, 1.2f, 0}; }           // 爱国者飞弹：纯对空
+static WeaponDef wKirovBomb() { return WeaponDef{300, 3, 55, false, true, "shell", 0.6f, 1.0f, 1.6f, false, 2.0f}; } // 基洛夫航空炸弹：范围重击
+static WeaponDef wDreadMissile() { return WeaponDef{200, 16, 210, false, true, "missile", 0.4f, 1.0f, 1.4f, false, 1.5f}; } // 无畏舰远程导弹
+static WeaponDef wHornet() { return WeaponDef{80, 18, 150, false, true, "missile", 0.8f, 1.2f, 1.0f, false, 1.0f}; } // 航母舰载机打击
+static WeaponDef wRocketGun() { return WeaponDef{10, 5, 18, true, true, "bullet", 1.0f, 0.6f, 0.5f}; }     // 火箭飞行兵卡宾枪
+static WeaponDef wGGIRifle() { return WeaponDef{6, 4, 22, false, true, "bullet", 1.0f, 0.4f, 0.3f}; }      // 重装大兵（未部署）：冲锋枪
+static WeaponDef wDroneBite() { return WeaponDef{30, 1, 8, false, true, "bullet", 0.2f, 2.0f, 0.0f}; }     // 恐怖机器人啃噬：反车辆
+static WeaponDef wIvanBomb() { return WeaponDef{1, 2, 90, false, true, "shell", 0, 0, 0}; }                // 疯狂伊文：安放炸弹（特殊处理）
+
+// 重装大兵部署后：反装甲炮（不可移动、不可被碾压）
+const WeaponDef& ggiDeployedWeapon() {
+    static const WeaponDef w{40, 6, 30, false, true, "missile", 0.3f, 1.6f, 0.4f};
+    return w;
+}
 
 // ===================== 单位表 =====================
 // 注：尾部追加 ammo 字段（0=无限）
@@ -44,6 +58,8 @@ static const UnitDef g_units[(int)UnitType::COUNT] = {
     {UnitType::Tanya,      "谭雅",      1500,300, 200, 12, 8, Armor::None, MoveType::Infantry, WeaponDef{120,6,10,false,true,"bullet",1.5f,0.3f,1.0f}, FA, BldType::BattleLab},
     {UnitType::Desolator,  "辐射工兵",   600, 110, 150, 14, 6, Armor::None, MoveType::Infantry, wRadiation(), FS, BldType::Radar},
     {UnitType::Chrono,     "超时空军团兵",1500,300, 125, 14, 8, Armor::None, MoveType::Infantry, wChrono(), FA, BldType::BattleLab},
+    {UnitType::GuardianGI, "重装大兵",   400, 90,  150, 15, 5, Armor::None, MoveType::Infantry, wGGIRifle(), FA, BldType::COUNT},
+    {UnitType::CrazyIvan,  "疯狂伊文",   600, 110, 120, 12, 5, Armor::None, MoveType::Infantry, wIvanBomb(), FS, BldType::Radar},
     {UnitType::Grizzly,    "灰熊坦克",   700, 150, 300, 12, 6, Armor::Heavy, MoveType::Vehicle, wTankGun(30, 5, 35), FA, BldType::COUNT},
     {UnitType::Rhino,      "犀牛坦克",   900, 170, 400, 14, 6, Armor::Heavy, MoveType::Vehicle, wTankGun(40, 5, 40), FS, BldType::COUNT},
     {UnitType::Type99,     "99式坦克",  1200,190, 500, 12, 6, Armor::Heavy, MoveType::Vehicle, wTankGun(55, 6, 42), FC, BldType::COUNT},
@@ -54,14 +70,21 @@ static const UnitDef g_units[(int)UnitType::COUNT] = {
     {UnitType::MirageTank, "幻影坦克",   1000,220, 250, 12, 7, Armor::Light, MoveType::Vehicle, wTankGun(45, 6, 38), FA | FC, BldType::BattleLab},
     {UnitType::V3Launcher, "V3火箭车",  800, 200, 150, 18, 6, Armor::Light, MoveType::Vehicle, wV3(), FS | FC, BldType::Radar},
     {UnitType::Apocalypse, "天启坦克",   1750,350, 800, 18, 7, Armor::Heavy, MoveType::Vehicle, WeaponDef{80,6,50,true,true,"shell",0.8f,1.2f,1.0f}, FS | FC, BldType::BattleLab},
+    {UnitType::TerrorDrone,"恐怖机器人", 500, 100, 120, 6,  5, Armor::Light, MoveType::Vehicle, wDroneBite(), FS | FC, BldType::Radar},
     // 空军：speed 越小越快；ammo 打完返航装填
     {UnitType::Intruder,   "入侵者战机", 1200,240, 200, 3,  6, Armor::Light, MoveType::Air, wBomb(150), FA, BldType::COUNT, 1},
     {UnitType::MiG,        "米格战机",   1200,240, 260, 2,  6, Armor::Light, MoveType::Air, wAirMissile(), FS, BldType::COUNT, 2},
     {UnitType::BlackEagle, "黑鹰战机",   1500,300, 320, 2,  7, Armor::Light, MoveType::Air, wBomb(250), FC, BldType::COUNT, 1},
+    // 基洛夫：ammo=0 不返航（自由飞行轰炸）；火箭飞行兵：兵营生产的空中步兵
+    {UnitType::Kirov,      "基洛夫空艇", 2000,400, 1000,5,  6, Armor::Heavy, MoveType::Air, wKirovBomb(), FS | FC, BldType::BattleLab, 0},
+    {UnitType::Rocketeer,  "火箭飞行兵", 600, 120, 100, 6,  7, Armor::None, MoveType::Air, wRocketGun(), FA, BldType::COUNT, 0},
     // 海军：speed 越小越快；船厂生产
     {UnitType::Destroyer,  "驱逐舰",     1000,240, 600, 16, 7, Armor::Heavy, MoveType::Naval, wNavalGun(), FA, BldType::COUNT},
-    {UnitType::Typhoon,    "台风潜艇",   1000,240, 600, 14, 6, Armor::Heavy, MoveType::Naval, wTorpedo(), FS, BldType::COUNT},
+    {UnitType::Typhoon,    "台风潜艇",   1000,240, 600, 14, 6, Armor::Heavy, MoveType::Naval, wTorpedo(), FS | FC, BldType::COUNT},
     {UnitType::Aegis,      "中华神盾舰", 1200,260, 800, 14, 9, Armor::Heavy, MoveType::Naval, wAegisAA(), FC, BldType::Radar},
+    {UnitType::SeaScorpion,"海蝎",       600, 130, 260, 10, 7, Armor::Light, MoveType::Naval, wFlak(), FS | FC, BldType::COUNT},
+    {UnitType::Dreadnought,"无畏级战舰", 2000,400, 800, 18, 8, Armor::Heavy, MoveType::Naval, wDreadMissile(), FS, BldType::BattleLab},
+    {UnitType::AircraftCarrier,"航空母舰",2000,400, 800, 16, 8, Armor::Heavy, MoveType::Naval, wHornet(), FA, BldType::BattleLab},
     {UnitType::AmphTransport,"两栖运输船",900, 220, 300, 12, 5, Armor::Light, MoveType::Amphibious, wNone(), ALLF, BldType::COUNT, 0, 5},
 };
 
@@ -85,12 +108,15 @@ static const BldDef g_blds[(int)BldType::COUNT] = {
     {BldType::TeslaCoil,    "磁暴线圈",  1500, 280, 600,  1,1, -75, 8, wTeslaBolt(), FS | FC, BldType::Radar, false},
     {BldType::FlakCannon,   "高射炮",   1000, 200, 500,  1,1, -50, 8, wFlak(), FS | FC, BldType::Radar, false},
     {BldType::GrandCannon,  "巨炮",     2000, 360, 700,  2,2, -100,10, WeaponDef{120,10,90,false,true,"shell",0.5f,1.2f,1.2f}, FA, BldType::BattleLab, false},
+    {BldType::PatriotMissile,"爱国者飞弹",1000, 200, 500,  1,1, -50, 8, wPatriot(), FA, BldType::Radar, false},
+    {BldType::Wall,         "围墙",     50,   20,  200,  1,1, 0,   1, wNone(), ALLF, BldType::COUNT, false},
     {BldType::OrePurifier,  "矿石精炼器",2500, 500, 900,  2,2, -200,5, wNone(), FA | FC, BldType::BattleLab, true},
     {BldType::IndustrialPlant,"工业工厂",2500, 500, 900, 3,2, -200,5, wNone(), FS, BldType::BattleLab, true},
     // 超武建筑：高耗电，建成后对应超武开始充能
     {BldType::NukeSilo,     "核弹发射井",3000, 600, 1000, 2,2, -150,5, wNone(), FS | FC, BldType::BattleLab, true},
     {BldType::WeatherDevice,"天气控制器",3000, 600, 1000, 3,2, -150,5, wNone(), FA, BldType::BattleLab, true},
     {BldType::IronCurtain,  "铁幕装置",  2500, 500, 900,  2,2, -150,5, wNone(), FS | FC, BldType::BattleLab, true},
+    {BldType::ChronoSphere, "超时空传送仪",2500,500, 900,  3,2, -150,5, wNone(), FA, BldType::BattleLab, true},
     // 中立科技建筑：不由玩家建造（factionMask=0），工程师占领后生效
     {BldType::OilDerrick,   "科技油井",  0,   0,   1000, 2,2, 0,   4, wNone(), 0, BldType::COUNT, true},
     {BldType::Hospital,     "医院",      0,   0,   800,  2,2, 0,   4, wNone(), 0, BldType::COUNT, true},
@@ -102,6 +128,7 @@ static const SWDef g_sws[(int)SWType::COUNT] = {
     {SWType::Nuke,        "战术核弹",  30 * 60 * 3, BldType::NukeSilo},      // 3 分钟
     {SWType::Lightning,   "闪电风暴",  30 * 60 * 3, BldType::WeatherDevice},
     {SWType::IronCurtain, "铁幕",      30 * 60 * 2, BldType::IronCurtain},   // 2 分钟
+    {SWType::ChronoShift, "超时空传送",30 * 60 * 3, BldType::ChronoSphere},
 };
 
 const SWDef& swDef(SWType t) { return g_sws[(int)t]; }
@@ -116,6 +143,8 @@ const UnitDef& unitDef(UnitType t) { return g_units[(int)t]; }
 const BldDef& bldDef(BldType t) { return g_blds[(int)t]; }
 
 bool isFactoryFor(BldType b, const UnitDef& u) {
+    if (u.type == UnitType::Rocketeer) return b == BldType::Barracks;    // 火箭飞行兵出自兵营
+    if (u.type == UnitType::Kirov) return b == BldType::WarFactory;      // 基洛夫出自战车工厂（RA2 原作）
     if (u.isNaval() || u.isAmphib()) return b == BldType::NavalYard;
     if (u.isInfantry()) return b == BldType::Barracks;
     if (u.isAir()) return b == BldType::AirForceCmd;

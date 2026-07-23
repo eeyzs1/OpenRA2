@@ -153,6 +153,7 @@ void Game::spawnCampaignWave() {
     }
 }
 
+
 void Game::loadFont() {
     // 自动收集全部界面字符：数据表名称 + 界面文本 + ASCII，避免漏字显示为 '?'
     std::string all;
@@ -782,8 +783,14 @@ void Game::issueSmartOrder(int mx, int my) {
             return;
         }
     }
-    // 友军建筑（工程师修理简化：占领满血）
+    // 友军建筑：工程师右键受损建筑 → 进入修复
     if (eb != INVALID_EID && world.ents[eb].player == localPlayer) {
+        if (hasEngineer && world.ents[eb].hp < bldDef(world.ents[eb].btype).hp) {
+            std::vector<EID> engs;
+            for (EID id : sel) if (world.valid(id) && world.ents[id].utype == UnitType::Engineer) engs.push_back(id);
+            world.orderRepair(engs, eb);
+            message("工程师：前往修复");
+        }
         return;
     }
     const Cell& c = world.map.at(tx, ty);
@@ -915,6 +922,16 @@ void Game::handleInput() {
                 sel.erase(std::remove(sel.begin(), sel.end(), id), sel.end());
                 message("建造厂已部署");
             }
+        // 辐射工兵/重装大兵：部署/收起（RA2 原作同键）
+        bool anyDeploy = false;
+        for (EID id : sel)
+            if (world.valid(id) && !world.ents[id].isBuilding
+                && (world.ents[id].utype == UnitType::Desolator || world.ents[id].utype == UnitType::GuardianGI))
+                anyDeploy = true;
+        if (anyDeploy) {
+            world.orderRadDeploy(sel);
+            message("已切换部署状态");
+        }
     }
     // X 散布（RA2 原作键位）
     if (kPressed(KEY_X) && !sel.empty()) {
@@ -1155,9 +1172,30 @@ void Game::drawEntities() {
                 items.push_back({(float)(tx + ty) + 0.9f, 2, ty * world.map.w + tx});
             }
         }
+    // 补给箱（地面道具，参与深度排序）
+    for (size_t i = 0; i < world.crates.size(); i++) {
+        const World::Crate& c = world.crates[i];
+        if (!c.alive) continue;
+        if (world.map.fogAt(localPlayer, c.x, c.y) != FOG_VISIBLE) continue;
+        items.push_back({(float)(c.x + c.y) + 0.5f, 3, (int)i});
+    }
     std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.depth < b.depth; });
 
     for (const Item& it : items) {
+        if (it.kind == 3) {
+            // 补给箱：木箱 + 顶盖高亮（闪烁提示可拾取）
+            const World::Crate& c = world.crates[it.id];
+            int px, py;
+            tileToScreen(c.x, c.y, px, py);
+            int sx = px - (int)camX, sy = py - (int)camY + TILE_H / 2;
+            Color box{146, 108, 62, 255}, lid{176, 134, 80, 255};
+            DrawRectangle(sx - 7, sy - 10, 14, 10, box);
+            DrawRectangle(sx - 7, sy - 13, 14, 4, lid);
+            DrawRectangleLines(sx - 7, sy - 13, 14, 13, Color{80, 58, 32, 255});
+            if ((world.tick / 12) % 2) // 闪烁顶灯
+                DrawCircle(sx, sy - 15, 2, c.kind == 0 ? Color{255, 220, 80, 255} : c.kind == 1 ? Color{120, 255, 120, 255} : Color{255, 120, 220, 255});
+            continue;
+        }
         if (it.kind == 2) {
             int tx = it.id % world.map.w, ty = it.id / world.map.w;
             const Cell& c = world.map.at(tx, ty);
@@ -1198,6 +1236,14 @@ void Game::drawEntities() {
             }
             if (selected || e.hp < ud.hp)
                 drawHealthBar((int)p.x - 14, (int)p.y - 26, 28, (float)e.hp / ud.hp, selected);
+            // 军衔标志（RA2 原作：老兵 1 杠，精英 2 杠金色）
+            if (e.vetRank > 0) {
+                Color rc = e.vetRank >= 2 ? Color{255, 200, 60, 255} : Color{220, 220, 220, 255};
+                for (int i = 0; i < e.vetRank; i++) {
+                    int vx = (int)p.x - 8 + i * 9, vy = (int)p.y + 8;
+                    DrawTriangle({(float)vx, (float)vy + 4}, {(float)vx + 3, (float)vy}, {(float)vx + 6, (float)vy + 4}, rc);
+                }
+            }
             // 战机弹药指示
             if (selected && ud.ammo > 0) {
                 for (int i = 0; i < ud.ammo; i++) {
@@ -1294,6 +1340,23 @@ void Game::drawEntities() {
         DrawLine(sx, dropY - 18, sx, dropY, Color{235, 232, 224, 255});
         DrawLine(sx + 1, dropY - 16, sx + 1, dropY - 2, Color{190, 188, 180, 255});
         DrawLine(sx, dropY, sx, dropY + 3, Color{220, 60, 50, 255});
+    }
+
+    // 疯狂伊文定时炸弹：闪烁红点 + 倒计时弧线
+    for (const World::TimedBomb& b : world.timedBombs) {
+        float fx = b.x, fy = b.y;
+        if (world.valid(b.attachedTo)) {
+            const World::Ent& t = world.ents[b.attachedTo];
+            if (!t.alive) continue;
+            fx = t.x; fy = t.y;
+            if (t.isBuilding) { fx += bldDef(t.btype).w / 2.0f; fy += bldDef(t.btype).h / 2.0f; }
+        }
+        if (world.map.fogAt(localPlayer, (int)fx, (int)fy) != FOG_VISIBLE) continue;
+        float wx = (fx - fy) * (TILE_W / 2.0f), wy = (fx + fy) * (TILE_H / 2.0f);
+        int sx = (int)wx - (int)camX, sy = (int)wy - (int)camY - 14;
+        DrawRectangle(sx - 3, sy - 3, 7, 7, Color{60, 40, 36, 255});
+        DrawRectangleLines(sx - 3, sy - 3, 7, 7, Color{120, 60, 50, 255});
+        if ((world.tick / 5) % 2) DrawCircle(sx, sy, 2, Color{255, 60, 50, 255});
     }
 }
 
