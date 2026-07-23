@@ -145,14 +145,16 @@ void Game::drawHUD() {
         if (uiButton(tr, tabs[i], true, uiTab == i)) uiTab = i;
     }
 
-    // 生产图标网格
+    // 生产图标网格（行数封顶，避免画出屏幕；底部留给维修/出售/菜单按钮）
     int gx = sbX + 6, gy = 358, gw = 86, gh = 66, cols = 2;
+    int maxRows = (SCREEN_H - 56 - gy) / (gh + 4);
     int idx = 0;
     auto drawItem = [&](bool isUnit, int typeIdx, const Sprite& icon, const char* name, int cost,
                         bool canBuild, ProdItem& prod) {
         int ix = gx + (idx % cols) * (gw + 4);
         int iy = gy + (idx / cols) * (gh + 4);
         idx++;
+        if ((idx - 1) / cols >= maxRows) return; // 超出一页：截断
         Rectangle r{(float)ix, (float)iy, (float)gw, (float)gh};
         bool activeThis = prod.active && prod.typeIdx == typeIdx && prod.isUnit == isUnit;
         bool readyThis = activeThis && prod.ready;
@@ -209,6 +211,23 @@ void Game::drawHUD() {
                        && me.money >= u.cost && !me.unitProd.active;
             drawItem(true, (int)t, g_sprites.iconUnit(t, me.colorId), u.name, u.cost, can, me.unitProd);
         }
+    }
+
+    // ---- 侧边栏底部：维修 / 出售 / 菜单（RA2 标志性按钮）----
+    {
+        int bw2 = 56, bh2 = 40, by2 = SCREEN_H - bh2 - 8;
+        Rectangle repR{(float)sbX + 6, (float)by2, (float)bw2, (float)bh2};
+        Rectangle selR{(float)sbX + 6 + bw2 + 5, (float)by2, (float)bw2, (float)bh2};
+        Rectangle mnuR{(float)sbX + 6 + 2 * (bw2 + 5), (float)by2, (float)bw2, (float)bh2};
+        if (uiButton(repR, "维修", true, sideMode == 1)) {
+            sideMode = sideMode == 1 ? 0 : 1;
+            if (sideMode == 1) message("维修模式：点击己方受损建筑（右键取消）");
+        }
+        if (uiButton(selR, "出售", true, sideMode == 2)) {
+            sideMode = sideMode == 2 ? 0 : 2;
+            if (sideMode == 2) message("出售模式：点击己方建筑（右键取消）");
+        }
+        if (uiButton(mnuR, "菜单", true)) showMenu = true;
     }
 
     // 提示消息

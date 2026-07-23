@@ -653,6 +653,21 @@ void World::sellBuilding(EID id) {
     kill(id);
 }
 
+bool World::repairBuilding(EID id) {
+    if (!valid(id) || !ents[id].isBuilding) return false;
+    Ent& e = ents[id];
+    if (e.player < 0) return false; // 中立建筑不可维修
+    const BldDef& d = bldDef(e.btype);
+    if (e.hp >= d.hp) return false;
+    int missing = d.hp - e.hp;
+    int cost = missing * d.cost / d.hp / 2;
+    if (players[e.player].money < cost) return false;
+    players[e.player].money -= cost;
+    e.hp = d.hp;
+    g_sfx.playAt(Sfx::Click, e.x, e.y);
+    return true;
+}
+
 // ===================== 超级武器 =====================
 bool World::swAvailable(int player, SWType t) const {
     if (player < 0 || player >= numPlayers || players[player].defeated) return false;

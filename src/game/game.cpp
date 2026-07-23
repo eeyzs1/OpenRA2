@@ -7,9 +7,14 @@
 #include <algorithm>
 
 // ===================== 初始化 =====================
-void Game::init() {
+void Game::init(bool windowed) {
     SetConfigFlags(FLAG_WINDOW_HIGHDPI); // DPI 感知：帧缓冲=物理像素，输入仍为逻辑坐标
     InitWindow(SCREEN_W, SCREEN_H, "OpenRA2 - 共和国之辉 复刻");
+    if (!windowed) {
+        // 无边框全屏：窗口=桌面分辨率，逻辑画布 letterbox 缩放。
+        // 任何显示器（含低分屏/高DPI缩放）都不会出现按钮落在屏幕外的问题。
+        ToggleBorderlessWindowed();
+    }
     SetTargetFPS(60);
     loadFont();
     g_sprites.init();
@@ -34,20 +39,25 @@ void Game::init() {
 }
 
 void Game::newGame(uint64_t seed) {
-    // 阵营：本地玩家选定，AI 随机
+    // 阵营：本地玩家与每个 AI 均来自遭遇战设置界面的槽位配置（3=随机）
     campaignMission = -1;
     nextWave = 0;
     std::vector<Faction> factions;
     factions.push_back((Faction)cfgFaction);
     Rng frng(seed);
-    for (int i = 0; i < cfgAI; i++) factions.push_back((Faction)frng.range(0, 2));
+    for (int i = 0; i < cfgAI; i++)
+        factions.push_back(aiFaction[i] >= 3 ? (Faction)frng.range(0, 2) : (Faction)aiFaction[i]);
     world.init(cfgMapSize, cfgMapSize, seed, 1, cfgAI, factions, cfgMapType);
-    // 颜色：本地玩家用所选，AI 依次取其余池
-    int pool[MAX_PLAYERS], pn = 0;
-    for (int i = 0; i < MAX_PLAYERS; i++)
-        if (i != cfgColor) pool[pn++] = i;
+    // 颜色：取槽位配置；冲突（与前面玩家同色）时顺延到下一个未用色
+    bool used[MAX_PLAYERS] = {};
     world.players[0].colorId = cfgColor;
-    for (int i = 1; i < world.numPlayers; i++) world.players[i].colorId = pool[(i - 1) % pn];
+    used[cfgColor] = true;
+    for (int i = 1; i < world.numPlayers; i++) {
+        int c = aiColor[i - 1];
+        while (used[c]) c = (c + 1) % MAX_PLAYERS;
+        world.players[i].colorId = c;
+        used[c] = true;
+    }
     for (int i = 0; i < world.numPlayers; i++) world.players[i].money = cfgMoney;
     ais.assign(cfgAI, SkirmishAI{});
     for (int i = 0; i < cfgAI; i++) ais[i].reset(i + 1);
@@ -160,6 +170,7 @@ void Game::loadFont() {
            "侦测到敌方核弹闪电风暴接近中遭受攻击单位损失被摧毁占领电力减缓"
            "警戒模式按视野索敌散布同类编队设定音乐开关"
            "载员登船卸载完成靠岸地点键"
+           "更换一张添加移除你慢普通快进入（）"
            "战役任务简报边境冲突近海防御决胜时刻坚守十分钟歼灭所增援抵达战场类型陆岛屿湖泊第波";
     // 战役任务表文本与 HUD 动态文本：全部字模必须收录，否则显示 '?'
     for (const MissionDef& md : missionTable()) { all += md.name; all += md.brief; }
@@ -188,6 +199,7 @@ void Game::shutdown() {
     UnloadRenderTexture(minimap);
     UnloadTexture(fogBlack);
     UnloadTexture(fogDim);
+    if (previewTex.id > 0) UnloadTexture(previewTex);
     if (fontOk) UnloadFont(font);
     CloseWindow();
 }
@@ -224,7 +236,8 @@ void Game::run() {
         if (phase == Phase::InGame) {
             handleInput();
             if (!paused && !gameOver) {
-                logicAcc += GetFrameTime() * gameSpeed;
+                static const float muls[] = {0.5f, 1.0f, 2.0f}; // 慢/普通/快
+                logicAcc += GetFrameTime() * muls[gameSpeed % 3];
                 float step = 1.0f / LOGIC_FPS;
                 int n = 0;
                 while (logicAcc >= step && n < 4) {
@@ -683,7 +696,8 @@ EID Game::pickUnit(int mx, int my) const {
 }
 
 EID Game::pickBuilding(int mx, int my) const {
-    for (size_t i = 0; i < world.ents.size(); i++) {
+    // 倒序遍历：后建的建筑渲染在上层，优先命中（符合点击直觉）
+    for (int i = (int)world.ents.size() - 1; i >= 0; i--) {
         const World::Ent& e = world.ents[i];
         if (!e.alive || !e.isBuilding) continue;
         if (e.player != localPlayer && world.map.fogAt(localPlayer, (int)e.x, (int)e.y) != FOG_VISIBLE) continue;
@@ -822,6 +836,25 @@ void Game::handleInput() {
             }
         }
         return;
+    }
+
+    // 维修/出售点击模式（侧边栏 RA2 标志性按钮；执行一次后自动退出）
+    if (sideMode != 0) {
+        if (mPressed(MOUSE_RIGHT_BUTTON) || kPressed(KEY_ESCAPE)) { sideMode = 0; return; }
+        if (mPressed(MOUSE_LEFT_BUTTON) && !overUI) {
+            EID b = pickBuilding((int)mouse.x, (int)mouse.y);
+            if (b != INVALID_EID && world.ents[b].player == localPlayer) {
+                if (sideMode == 2) {
+                    if (world.ents[b].btype != BldType::ConYard) { world.sellBuilding(b); message("已出售建筑"); }
+                    else message("建造厂不可出售");
+                } else {
+                    if (world.repairBuilding(b)) message("建筑已修复");
+                    else message("无需维修或资金不足");
+                }
+            }
+            sideMode = 0;
+        }
+        return; // 该模式下屏蔽选择/框选
     }
 
     // 放置建筑模式
@@ -966,8 +999,8 @@ void Game::handleInput() {
             }
     }
     if (kPressed(KEY_P)) paused = !paused;
-    if (kPressed(KEY_EQUAL) || kPressed(KEY_KP_ADD)) gameSpeed = gameSpeed == 1 ? 2 : 3;
-    if (kPressed(KEY_MINUS) || kPressed(KEY_KP_SUBTRACT)) gameSpeed = std::max(1, gameSpeed - 1);
+    if (kPressed(KEY_EQUAL) || kPressed(KEY_KP_ADD)) gameSpeed = std::min(2, gameSpeed + 1);
+    if (kPressed(KEY_MINUS) || kPressed(KEY_KP_SUBTRACT)) gameSpeed = std::max(0, gameSpeed - 1);
     if (kPressed(KEY_ESCAPE)) {
         if (!sel.empty() || world.valid(selBuilding)) { sel.clear(); selBuilding = INVALID_EID; }
         else showMenu = true;
@@ -1552,12 +1585,13 @@ int Game::playTest() {
     shot("pt_01_mainmenu.png");
 
     // ---- 2 遭遇战设置 ----
-    clickL(720, 382); // “遭遇战”按钮 {590,360,260,44}
+    clickL(285, 389); // “遭遇战”按钮 {120,360,330,58}
     check(phase == Phase::Setup, "点击[遭遇战]进设置");
+    frame(2); // 让地图预览生成
     shot("pt_02_setup.png");
 
     // ---- 3 开始游戏 ----
-    clickL(604, 589); // “开始游戏” {504,566,200,46}
+    clickL(550, 731); // “开始游戏” {390,700,320,62}
     check(phase == Phase::InGame && campaignMission < 0, "点击[开始游戏]进遭遇战");
     frame(5);
 
@@ -1653,6 +1687,26 @@ int Game::playTest() {
         shot("pt_05_move.png");
     }
 
+    // ---- 9.5 侧边栏出售模式（RA2 按钮）----
+    {
+        int bcnt = world.countBlds(0, pt);
+        int money0 = world.players[0].money;
+        clickL(1345, 782); // “出售”按钮 {1317,762,56,40}
+        check(sideMode == 2, "点击[出售]进入出售模式");
+        EID pbld = INVALID_EID;
+        for (size_t i = 0; i < world.ents.size(); i++)
+            if (world.ents[i].alive && world.ents[i].isBuilding && world.ents[i].player == 0
+                && world.ents[i].btype == pt) { pbld = (int)i; break; }
+        if (pbld != INVALID_EID) {
+            Vector2 bp = bldScreenPos(world.ents[pbld]);
+            const Sprite& ps = g_sprites.building(pt, world.players[0].colorId, false);
+            clickL(bp.x - ps.ox + ps.tex.width / 2.0f, bp.y - ps.oy + ps.tex.height / 2.0f); // 电厂贴图中心
+            check(world.countBlds(0, pt) == bcnt - 1 && world.players[0].money > money0 && sideMode == 0,
+                  "出售模式点击建筑卖出");
+        } else check(false, "出售模式点击建筑卖出");
+        sel.clear(); // 出售后可能残留选中
+    }
+
     // ---- 10 ESC 菜单 → 返回主菜单 ----
     key(KEY_ESCAPE); // 第一次：清除选择
     key(KEY_ESCAPE); // 第二次：打开菜单
@@ -1662,10 +1716,10 @@ int Game::playTest() {
     check(phase == Phase::MainMenu && !showMenu, "点击[返回主菜单]");
 
     // ---- 11 战役模式 ----
-    clickL(720, 442); // “战役模式” {590,420,260,44}
+    clickL(285, 465); // “战役模式” {120,436,330,58}
     check(phase == Phase::MissionSelect, "点击[战役模式]");
     shot("pt_07_missions.png");
-    clickL(354, 269); // 第一张任务卡 {184,210,340,118}
+    clickL(330, 300); // 第一张任务卡 {150,200,360,200}
     check(phase == Phase::InGame && campaignMission == 0, "点击任务1进入战役");
     frame(10);
     shot("pt_08_campaign.png");

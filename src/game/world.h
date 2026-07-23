@@ -188,6 +188,7 @@ public:
     bool placeBuilding(int player, BldType t, int bx, int by); // 消耗就绪的生产项
     void setRally(EID factory, int x, int y);
     void sellBuilding(EID id);
+    bool repairBuilding(EID id); // 花费=缺失HP占造价一半，立即修满；不可修返回false
 
     // 超武
     bool launchSW(int player, SWType t, float tx, float ty); // 释放（扣充能）

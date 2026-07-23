@@ -14,7 +14,7 @@ enum class Phase { MainMenu, Setup, MissionSelect, InGame };
 
 class Game {
 public:
-    void init();
+    void init(bool windowed = false); // 默认无边框全屏（自适应任意桌面分辨率）；windowed=true 调试用窗口
     void shutdown();
     void run(); // 主循环
     void smokeTest(int frames); // 无头冒烟测试
@@ -34,6 +34,15 @@ private:
     int cfgMoney = 10000;   // 初始资金
     int cfgMapSize = 96;    // 地图边长
     int cfgMapType = 0;     // 地图类型：0 大陆 1 岛屿 2 湖泊
+    // 每个 AI 槽位的颜色与阵营（RA2 式槽位配置；阵营 3=随机）
+    int aiColor[7] = {1, 2, 3, 4, 5, 6, 7};
+    int aiFaction[7] = {3, 3, 3, 3, 3, 3, 3};
+
+    // 遭遇战设置界面的地图预览
+    Map previewMap;
+    Texture2D previewTex{};
+    bool previewDirty = true;
+    uint64_t previewSeed = 20260723;
 
     // 战役状态（campaignMission < 0 = 遭遇战）
     int campaignMission = -1;
@@ -62,6 +71,9 @@ private:
 
     // 超武目标选择模式（COUNT = 无）
     SWType targetingSW = SWType::COUNT;
+
+    // 侧边栏维修/出售点击模式（RA2 标志性按钮）：0 无 1 维修 2 出售
+    int sideMode = 0;
 
     // UI
     Font font{};
@@ -116,6 +128,7 @@ private:
     void drawMainMenu();
     void drawSetup();
     void drawMissionSelect();
+    void refreshMapPreview(); // 设置界面地图缩略图重生成
 
     // 坐标
     void worldToScreen(float wx, float wy, int& sx, int& sy) const;

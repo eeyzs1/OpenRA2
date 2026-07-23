@@ -3,8 +3,11 @@
 #include <cstdlib>
 
 int main(int argc, char** argv) {
+    bool windowed = false;
+    for (int i = 1; i < argc; i++)
+        if (strcmp(argv[i], "--windowed") == 0) windowed = true;
     Game game;
-    game.init();
+    game.init(windowed);
     if (argc > 1 && strcmp(argv[1], "--smoke") == 0) {
         int frames = argc > 2 ? atoi(argv[2]) : 600;
         game.smokeTest(frames);
