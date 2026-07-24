@@ -161,3 +161,14 @@ Texture2D PixBuf::toTexture() const {
     SetTextureFilter(t, TEXTURE_FILTER_POINT);
     return t;
 }
+
+bool PixBuf::loadFromFile(const char* path) {
+    if (!FileExists(path)) return false;
+    Image img = LoadImage(path);
+    if (!img.data) return false;
+    ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    resize(img.width, img.height);
+    memcpy(px.data(), img.data, (size_t)w * h * sizeof(Color));
+    UnloadImage(img);
+    return true;
+}

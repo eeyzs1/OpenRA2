@@ -65,6 +65,9 @@ struct PixBuf {
 
     // 上传为 GPU 纹理（调用方负责 UnloadTexture）
     Texture2D toTexture() const;
+
+    // 从 PNG 文件加载（转为 RGBA8）；失败返回 false 且本对象不变
+    bool loadFromFile(const char* path);
 };
 
 // 常用调色板

@@ -12,17 +12,105 @@ static void drawTextF(Font f, const char* s, int x, int y, int size, Color c) {
     DrawTextEx(f, s, {(float)x, (float)y}, (float)size, 1, c);
 }
 
+// ===================== RA2 风格金属 GUI 素材 =====================
+// 调色：深蓝灰拉丝金属 + 金色描边（与主菜单 ra2Button 同系）
+static const Color GUI_GOLD{196, 162, 74, 255};
+static const Color GUI_GOLD_HI{255, 216, 120, 255};
+static const Color GUI_EDGE_HI{120, 128, 144, 255};
+static const Color GUI_EDGE_LO{6, 7, 10, 255};
+
+// 拉丝金属纹理（懒生成一次，96x96 平铺）
+static Texture2D guiMetalTex() {
+    static Texture2D t{};
+    if (t.id == 0) {
+        PixBuf p(96, 96);
+        auto hsh = [](int x, int y) {
+            uint32_t v = ((uint32_t)x * 73856093u) ^ ((uint32_t)y * 19349663u);
+            v ^= v >> 13; v *= 0x5bd1e995u; v ^= v >> 15;
+            return (float)(v % 1024) / 1024.0f;
+        };
+        for (int y = 0; y < 96; y++)
+            for (int x = 0; x < 96; x++) {
+                // 水平拉丝：行长条噪声 + 细颗粒
+                float streak = hsh(x / 9, y) * 0.62f + hsh(x / 3, y + 40) * 0.38f;
+                float v = 0.88f + (streak - 0.5f) * 0.34f + (hsh(x, y) - 0.5f) * 0.10f;
+                v *= 1.10f - 0.20f * (y / 95.0f); // 上亮下暗
+                p.set(x, y, Color{(uint8_t)clampi((int)(42 * v), 0, 255),
+                                  (uint8_t)clampi((int)(46 * v), 0, 255),
+                                  (uint8_t)clampi((int)(58 * v), 0, 255), 255});
+            }
+        t = p.toTexture();
+    }
+    return t;
+}
+
+// 平铺金属底（剪刀裁剪到目标矩形）
+static void guiMetalFill(int x, int y, int w, int h) {
+    Texture2D t = guiMetalTex();
+    BeginScissorMode(x, y, w, h);
+    for (int ty = y; ty < y + h; ty += 96)
+        for (int tx = x; tx < x + w; tx += 96)
+            DrawTexture(t, tx, ty, WHITE);
+    EndScissorMode();
+}
+
+// 铆钉（RA2 面板角饰）
+static void guiRivet(int x, int y) {
+    DrawCircle(x, y, 2.4f, Color{10, 11, 14, 255});
+    DrawCircle(x, y, 1.5f, Color{106, 114, 128, 255});
+    DrawPixel(x - 1, y - 1, Color{172, 182, 198, 255});
+}
+
+// 棱台斜面：sunken=false 凸起（按钮/面板），true 凹陷（信息槽）
+static void guiBevel(Rectangle r, bool sunken) {
+    Color hi = sunken ? GUI_EDGE_LO : GUI_EDGE_HI;
+    Color lo = sunken ? GUI_EDGE_HI : GUI_EDGE_LO;
+    int x = (int)r.x, y = (int)r.y, w = (int)r.width, h = (int)r.height;
+    DrawLine(x, y, x + w - 1, y, hi);
+    DrawLine(x, y, x, y + h - 1, hi);
+    DrawLine(x, y + h - 1, x + w - 1, y + h - 1, lo);
+    DrawLine(x + w - 1, y, x + w - 1, y + h - 1, lo);
+}
+
+// 凹陷信息槽（生产格/资金牌/超武格）
+static void guiSlot(Rectangle r) {
+    DrawRectangleRec(r, Color{15, 16, 20, 255});
+    guiBevel(r, true);
+}
+
+// 金属面板：拉丝底 + 外凸棱 + 内金线 + 四角铆钉
+static void guiPanel(int x, int y, int w, int h) {
+    guiMetalFill(x, y, w, h);
+    guiBevel({(float)x, (float)y, (float)w, (float)h}, false);
+    DrawRectangleLinesEx({(float)x + 3, (float)y + 3, (float)w - 6, (float)h - 6}, 1, GUI_GOLD);
+    guiRivet(x + 7, y + 7); guiRivet(x + w - 7, y + 7);
+    guiRivet(x + 7, y + h - 7); guiRivet(x + w - 7, y + h - 7);
+}
+
+// 带黑色投影的文字（RA2 式）
+static void drawTextS(Font f, const char* s, int x, int y, int size, Color c) {
+    DrawTextEx(f, s, {(float)x + 1, (float)y + 1}, (float)size, 1, Color{0, 0, 0, 210});
+    DrawTextEx(f, s, {(float)x, (float)y}, (float)size, 1, c);
+}
+
+// RA2 式金属按钮：竖向渐变面 + 棱台斜面 + 金框（悬停/激活加亮），按下斜面反相
 bool Game::uiButton(Rectangle r, const char* text, bool enabled, bool active) {
     Vector2 m = mousePos();
     bool hover = CheckCollisionPointRec(m, r) && enabled;
-    Color bg = active ? Color{70, 90, 60, 255} : (hover ? Color{60, 64, 72, 255} : Color{38, 40, 46, 255});
-    if (!enabled) bg = Color{28, 28, 32, 255};
-    DrawRectangleRec(r, bg);
-    DrawRectangleLinesEx(r, 1, active ? Color{120, 220, 100, 255} : Color{80, 84, 92, 255});
+    bool press = hover && mDown(MOUSE_LEFT_BUTTON);
+    Color top = enabled ? (hover ? Color{82, 62, 44, 255} : Color{54, 54, 60, 255}) : Color{30, 30, 34, 255};
+    Color bot = enabled ? (hover ? Color{48, 34, 26, 255} : Color{30, 30, 36, 255}) : Color{20, 20, 24, 255};
+    if (active) { top = Color{74, 58, 34, 255}; bot = Color{42, 30, 18, 255}; }
+    DrawRectangleGradientV((int)r.x, (int)r.y, (int)r.width, (int)r.height, top, bot);
+    guiBevel(r, press);
+    Color frame = !enabled ? Color{64, 64, 70, 255}
+                : active ? GUI_GOLD_HI : (hover ? GUI_GOLD : Color{92, 84, 62, 255});
+    DrawRectangleLinesEx(r, 1, frame);
     if (text && text[0]) {
         int tw = (int)MeasureTextEx(font, text, 14, 1).x;
-        drawTextF(font, text, (int)(r.x + r.width / 2 - tw / 2), (int)(r.y + r.height / 2 - 7), 14,
-                  enabled ? WHITE : Color{110, 110, 110, 255});
+        drawTextS(font, text, (int)(r.x + r.width / 2 - tw / 2), (int)(r.y + r.height / 2 - 7), 14,
+                  enabled ? (active || hover ? Color{255, 228, 150, 255} : Color{226, 212, 170, 255})
+                          : Color{110, 110, 110, 255});
     }
     bool clicked = hover && mPressed(MOUSE_LEFT_BUTTON);
     if (clicked) g_sfx.play(Sfx::Click, 0.6f);
@@ -72,26 +160,46 @@ std::vector<UnitType> Game::tabUnits() const {
 
 void Game::drawHUD() {
     int sbX = SCREEN_W - sidebarW;
-    // 侧边栏背景
-    DrawRectangle(sbX, 0, sidebarW, SCREEN_H, Color{22, 23, 27, 255});
-    DrawLine(sbX, 0, sbX, SCREEN_H, Color{90, 94, 102, 255});
+    // 侧边栏：拉丝金属 + 左侧金色分隔线（RA2 标志布局）
+    guiMetalFill(sbX, 0, sidebarW, SCREEN_H);
+    DrawLine(sbX, 0, sbX, SCREEN_H, GUI_EDGE_LO);
+    DrawLine(sbX + 1, 0, sbX + 1, SCREEN_H, Color{150, 130, 80, 255});
+    DrawLine(sbX + 2, 0, sbX + 2, SCREEN_H, Color{60, 52, 34, 255});
 
     Player& me = world.players[localPlayer];
 
-    // 资金
-    drawTextF(font, TextFormat("%d", me.money), sbX + 46, 10, 22,
-              me.money > 0 ? Color{255, 215, 80, 255} : RED);
-    drawTextF(font, TR(S::Money), sbX + 8, 14, 14, Color{200, 200, 200, 255});
+    // 资金牌：凹陷槽 + 金条堆图标 + 金色数字（RA2 顶部资金显示）
+    {
+        Rectangle mp{(float)sbX + 6, 4, (float)sidebarW - 12, 30};
+        guiSlot(mp);
+        DrawRectangleLinesEx(mp, 1, Color{74, 64, 42, 255});
+        DrawRectangle(sbX + 12, 22, 15, 5, Color{140, 112, 44, 255}); // 金条堆
+        DrawRectangle(sbX + 15, 16, 15, 5, GUI_GOLD);
+        DrawRectangle(sbX + 18, 10, 15, 5, GUI_GOLD_HI);
+        drawTextS(font, TextFormat("%d", me.money), sbX + 46, 9, 20,
+                  me.money > 0 ? Color{255, 216, 90, 255} : Color{255, 92, 72, 255});
+    }
 
-    // 电力条
-    int pwrX = sbX + 10, pwrY = 40, pwrH = 200;
-    DrawRectangle(pwrX, pwrY, 12, pwrH, Color{40, 40, 44, 255});
+    // 电力表：左侧竖条（RA2 标志仪表）——凹陷金属框 + 绿→黄→红渐变 + 分段刻度
+    int pwrX = sbX + 8, pwrY = 42, pwrH = 186;
+    DrawRectangle(pwrX - 2, pwrY - 2, 18, pwrH + 4, Color{15, 16, 20, 255});
+    guiBevel({(float)pwrX - 2, (float)pwrY - 2, 18, (float)pwrH + 4}, true);
+    DrawRectangle(pwrX, pwrY, 14, pwrH, Color{26, 26, 30, 255});
     float ratio = me.powerMade > 0 ? std::min(1.0f, (float)me.powerUsed / std::max(1, me.powerMade)) : 1.0f;
     int usedH = (int)(pwrH * ratio);
-    Color pc = me.lowPower() ? RED : (ratio > 0.8f ? YELLOW : Color{80, 220, 80, 255});
-    DrawRectangle(pwrX + 1, pwrY + pwrH - usedH, 10, usedH, pc);
-    drawTextF(font, TR(S::Power), pwrX - 2, pwrY + pwrH + 4, 13, Color{200, 200, 200, 255});
-    if (me.lowPower()) drawTextF(font, TR(S::LowPower), sbX + 30, pwrY + pwrH - 20, 13, RED);
+    if (me.lowPower() && (world.tick / 10) % 2) {
+        DrawRectangle(pwrX + 1, pwrY + pwrH - usedH, 12, usedH, Color{220, 50, 36, 255}); // 低电红闪
+    } else if (usedH > 0) {
+        // 顶部红 → 中部黄 → 底部绿 三段渐变
+        int fy = pwrY + pwrH - usedH;
+        int half = usedH / 2;
+        if (half > 0) DrawRectangleGradientV(pwrX + 1, fy, 12, half, Color{230, 70, 40, 255}, Color{230, 200, 60, 255});
+        if (usedH - half > 0) DrawRectangleGradientV(pwrX + 1, fy + half, 12, usedH - half, Color{230, 200, 60, 255}, Color{70, 210, 80, 255});
+    }
+    for (int ty = pwrY + pwrH / 10; ty < pwrY + pwrH; ty += pwrH / 10)
+        DrawLine(pwrX + 1, ty, pwrX + 12, ty, Color{0, 0, 0, 130});
+    drawTextS(font, TR(S::Power), pwrX - 4, pwrY + pwrH + 6, 13, Color{210, 200, 170, 255});
+    if (me.lowPower()) drawTextS(font, TR(S::LowPower), sbX + 34, pwrY + pwrH - 22, 13, Color{255, 90, 70, 255});
 
     // 小地图
     drawMinimap();
@@ -110,9 +218,11 @@ void Game::drawHUD() {
             bi++;
             bool ready = me.swReady[i];
             bool targeting = targetingSW == t;
-            // 背景与边框
-            DrawRectangleRec(r, targeting ? Color{70, 48, 40, 255} : (ready ? Color{52, 60, 44, 255} : Color{30, 32, 38, 255}));
-            DrawRectangleLinesEx(r, 1, targeting ? Color{255, 120, 90, 255} : (ready ? GREEN : Color{70, 74, 82, 255}));
+            // 凹陷槽 + 目标选择红框/就绪金色脉冲
+            guiSlot(r);
+            DrawRectangleLinesEx(r, 1, targeting ? Color{255, 120, 90, 255}
+                                 : (ready && hasBld ? (((world.tick / 12) % 2) ? GUI_GOLD_HI : GUI_GOLD)
+                                                    : Color{56, 60, 68, 255}));
             // 名称
             drawTextF(font, swName(t), (int)r.x + 4, (int)r.y + 4, 13,
                       hasBld ? (ready ? Color{180, 255, 150, 255} : WHITE) : Color{110, 110, 110, 255});
@@ -144,8 +254,10 @@ void Game::drawHUD() {
             Rectangle r{(float)sbX + 6 + bi * 90, (float)swY, 86, 74};
             bi++;
             bool ready = me.paradropReady;
-            DrawRectangleRec(r, targetingParadrop ? Color{70, 48, 40, 255} : (ready ? Color{52, 60, 44, 255} : Color{30, 32, 38, 255}));
-            DrawRectangleLinesEx(r, 1, targetingParadrop ? Color{255, 120, 90, 255} : (ready ? GREEN : Color{70, 74, 82, 255}));
+            guiSlot(r);
+            DrawRectangleLinesEx(r, 1, targetingParadrop ? Color{255, 120, 90, 255}
+                                 : (ready ? (((world.tick / 12) % 2) ? GUI_GOLD_HI : GUI_GOLD)
+                                          : Color{56, 60, 68, 255}));
             drawTextF(font, TR(S::Paradrop), (int)r.x + 4, (int)r.y + 4, 13,
                       ready ? Color{180, 255, 150, 255} : WHITE);
             if (ready) {
@@ -188,9 +300,10 @@ void Game::drawHUD() {
         Rectangle r{(float)ix, (float)iy, (float)gw, (float)gh};
         bool activeThis = prod.active && prod.typeIdx == typeIdx && prod.isUnit == isUnit;
         bool readyThis = activeThis && prod.ready;
-        // 背景与图标
-        DrawRectangleRec(r, activeThis ? Color{50, 58, 46, 255} : Color{30, 32, 38, 255});
-        DrawRectangleLinesEx(r, 1, readyThis ? GREEN : (activeThis ? Color{180, 200, 120, 255} : Color{70, 74, 82, 255}));
+        // 槽位：凹陷金属槽 + 就绪金色脉冲（RA2 式）
+        guiSlot(r);
+        DrawRectangleLinesEx(r, 1, readyThis ? (((world.tick / 12) % 2) ? GUI_GOLD_HI : GUI_GOLD)
+                             : (activeThis ? Color{196, 180, 110, 255} : Color{56, 60, 68, 255}));
         DrawTexture(icon.tex, ix + (gw - icon.tex.width) / 2, iy + 2, canBuild ? WHITE : Color{90, 90, 90, 255});
         // 进度遮罩
         if (activeThis && !prod.ready) {
@@ -324,8 +437,7 @@ void Game::drawHUD() {
         DrawRectangle(0, 0, SCREEN_W, SCREEN_H, Color{0, 0, 0, 160});
         int mw = 320, mh = 426;
         int mx = SCREEN_W / 2 - mw / 2, my = SCREEN_H / 2 - mh / 2;
-        DrawRectangle(mx, my, mw, mh, Color{30, 32, 38, 255});
-        DrawRectangleLinesEx({(float)mx, (float)my, (float)mw, (float)mh}, 2, Color{100, 106, 116, 255});
+        guiPanel(mx, my, mw, mh);
         if (gameOver) {
             const char* t = victory ? TR(S::Victory) : TR(S::Defeat);
             drawTextF(font, t, mx + mw / 2 - 40, my + 24, 34, victory ? Color{120, 255, 120, 255} : RED);
@@ -410,12 +522,17 @@ void Game::updateMinimap() {
 
 void Game::drawMinimap() {
     int sbX = SCREEN_W - sidebarW;
-    int mmSize = 178;
-    int mmX = sbX + 6, mmY = 64;
-    // 绘制
-    DrawTextureRec(minimap.texture, {0, 0, (float)minimap.texture.width, -(float)minimap.texture.height},
-                   {(float)mmX, (float)mmY}, WHITE);
-    DrawRectangleLinesEx({(float)mmX, (float)mmY, (float)mmSize * 256.0f / 256, (float)mmSize}, 1, Color{90, 94, 102, 255});
+    // RA2 布局：电力条占左侧 28px，小地图居右，缩放适配（旧版按原生 256px 绘制会越界遮挡电力表）
+    int mmSize = sidebarW - 34;
+    int mmX = sbX + 28, mmY = 42;
+    // 凹陷金属框
+    DrawRectangle(mmX - 2, mmY - 2, mmSize + 4, mmSize + 4, Color{15, 16, 20, 255});
+    guiBevel({(float)mmX - 2, (float)mmY - 2, (float)mmSize + 4, (float)mmSize + 4}, true);
+    DrawRectangleLinesEx({(float)mmX - 2, (float)mmY - 2, (float)mmSize + 4, (float)mmSize + 4}, 1, Color{74, 64, 42, 255});
+    // 绘制（256 渲染纹理 → mmSize 缩放）
+    DrawTexturePro(minimap.texture,
+                   {0, 0, (float)minimap.texture.width, -(float)minimap.texture.height},
+                   {(float)mmX, (float)mmY, (float)mmSize, (float)mmSize}, {0, 0}, 0, WHITE);
     // 摄像机视野框
     int w = world.map.w, h = world.map.h;
     float sc = mmSize / (float)std::max(w, h);

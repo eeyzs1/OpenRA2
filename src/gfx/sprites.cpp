@@ -1,5 +1,8 @@
 #include "gfx/sprites.h"
+#include "gfx/assets.h"
 #include <cmath>
+#include <cstdarg>
+#include <cstdio>
 
 const Color HOUSE_COLORS[MAX_PLAYERS] = {
     {255, 200, 40, 255},  // 金
@@ -26,6 +29,15 @@ int dirFromVec(float dx, float dy) {
 static uint64_t keyOf(int cat, int a, int b, int c, int player) {
     return ((uint64_t)cat << 56) | ((uint64_t)(a & 0xFFFF) << 40) |
            ((uint64_t)(b & 0xFF) << 32) | ((uint64_t)(c & 0xFF) << 24) | (uint64_t)(player & 0xFF);
+}
+
+// ---------------- 外部素材覆盖（assets/sprites/*.png，命名约定见 gfx/assets.h） ----------------
+static bool loadSpr(PixBuf& out, const char* fmt, ...) {
+    char path[192];
+    va_list ap; va_start(ap, fmt);
+    vsnprintf(path, sizeof(path), fmt, ap);
+    va_end(ap);
+    return out.loadFromFile(path);
 }
 
 // ---------------- RA2 补全：新单位/建筑图形别名（复用近似旧图形，后续批次补专属图形） ----------------
@@ -63,12 +75,45 @@ Sprite SpriteBank::makeSprite(PixBuf&& pb, int ox, int oy) {
     return s;
 }
 
+// ---------------- RA2 风格地面投影 ----------------
+// 在画布内烘烧软椭圆投影（下偏右，RA2 标志性视觉锚点）
+static void bakeShadow(PixBuf& pb, int cx, int cy, int rx, int ry) {
+    for (int y = cy - ry; y <= cy + ry; y++)
+        for (int x = cx - rx; x <= cx + rx; x++) {
+            float ddx = (x - cx) / (float)rx, ddy = (y - cy) / (float)ry;
+            float d = ddx * ddx + ddy * ddy;
+            if (d > 1.0f) continue;
+            uint8_t a = (uint8_t)(86.0f * (1.0f - d));
+            pb.blend(x, y, Color{8, 10, 6, a});
+        }
+}
+// 扩充画布（内容偏移到 left,top），用于容纳投影
+static PixBuf padCanvas(const PixBuf& src, int left, int top, int right, int bottom) {
+    PixBuf r(src.w + left + right, src.h + top + bottom);
+    r.blit(src, left, top);
+    return r;
+}
+
 // ---------------- 地形 ----------------
+// 平滑值噪声：格点哈希 + 双线性插值（smoothstep），比白噪声更接近 RA2 地表斑块感
+static float vnoise(int x, int y, int scale, uint64_t seed) {
+    auto hash = [&](int gx, int gy) {
+        uint32_t h = ((uint32_t)gx * 73856093u) ^ ((uint32_t)gy * 19349663u) ^ ((uint32_t)seed * 83492791u);
+        h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+        return (float)(h % 1024) / 1024.0f;
+    };
+    int gx = x / scale, gy = y / scale;
+    float fx = (x % scale) / (float)scale, fy = (y % scale) / (float)scale;
+    fx = fx * fx * (3.0f - 2.0f * fx); fy = fy * fy * (3.0f - 2.0f * fy);
+    float a = hash(gx, gy), b = hash(gx + 1, gy), c = hash(gx, gy + 1), d = hash(gx + 1, gy + 1);
+    return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+}
+static uint8_t lerp8(int a, int b, float t) { return (uint8_t)(a + (b - a) * t); }
+
 PixBuf SpriteBank::baseTile(Terrain t, int variant) {
     PixBuf p(TILE_W, TILE_H);
     uint64_t seed = (uint64_t)t * 1000 + variant * 77;
-    Rng rng(seed);
-    auto noise = [&](int x, int y) {
+    auto grain = [&](int x, int y) { // 细颗粒（低幅白噪声）
         return (float)((((uint32_t)x * 73856093u) ^ ((uint32_t)y * 19349663u) ^ ((uint32_t)seed * 83492791u)) % 1000) / 1000.0f;
     };
     for (int y = 0; y < TILE_H; y++)
@@ -77,45 +122,62 @@ PixBuf SpriteBank::baseTile(Terrain t, int variant) {
             float dx = fabsf(x - TILE_W / 2.0f) / (TILE_W / 2.0f);
             float dy = fabsf(y - TILE_H / 2.0f) / (TILE_H / 2.0f);
             if (dx + dy > 1.0f) continue;
-            float n = noise(x, y) * 0.18f;
+            float n1 = vnoise(x, y, 8, seed);        // 大斑块
+            float n2 = vnoise(x, y, 3, seed + 5);    // 中斑块
+            float n = n1 * 0.62f + n2 * 0.38f;       // 0..1
+            float g = (grain(x, y) - 0.5f) * 14.0f;  // 细颗粒 ±7
             Color c;
             switch (t) {
                 case Terrain::Clear: {
-                    int g = 118 + (int)(n * 90);
-                    c = Color{(uint8_t)(76 + n * 60), (uint8_t)g, (uint8_t)(58 + n * 40), 255};
+                    // RA2 温带草地：黄绿基调，深绿/浅绿斑块交错，偶发枯草点
+                    c = Color{lerp8(64, 106, n), lerp8(102, 148, n), lerp8(44, 70, n), 255};
+                    if (n2 > 0.84f && n1 > 0.45f) { c.r = 118; c.g = 122; c.b = 58; } // 枯草
                     break;
                 }
                 case Terrain::Rough: {
-                    int v = 120 + (int)(n * 80);
-                    c = Color{(uint8_t)v, (uint8_t)(v * 0.86f), (uint8_t)(v * 0.62f), 255};
+                    // 沙土：黄褐基调 + 深土斑
+                    c = Color{lerp8(126, 162, n), lerp8(104, 138, n), lerp8(66, 92, n), 255};
+                    if (n2 < 0.16f) { c.r -= 22; c.g -= 20; c.b -= 14; }              // 碎石暗斑
                     break;
                 }
                 case Terrain::Water: {
-                    int b = 150 + (int)(n * 105);
-                    c = Color{30, (uint8_t)(70 + n * 60), (uint8_t)b, 255};
+                    // 深水蓝绿 + 横向波光条带（RA2 水面有轻微波纹感）
+                    float wv = sinf((y + n2 * 6.0f) * 1.2f) * 0.5f + 0.5f; // 波带
+                    float m = n * 0.7f + wv * 0.3f;
+                    c = Color{lerp8(22, 44, m), lerp8(58, 104, m), lerp8(104, 164, m), 255};
+                    if (wv > 0.86f && n2 > 0.55f) { c.r += 22; c.g += 26; c.b += 26; } // 波峰高光
                     break;
                 }
                 case Terrain::Ore: {
-                    // 黄褐土地 + 金色斑点
-                    int v = 96 + (int)(n * 60);
-                    c = Color{(uint8_t)(v + 30), (uint8_t)(v * 0.85f), (uint8_t)(v * 0.55f), 255};
-                    if (noise(x * 3 + 7, y * 3 + 11) > 0.72f) c = Pal::ORE_GOLD;
+                    // 矿脉：棕黄土地 + 成簇金矿晶体（含高光点）
+                    c = Color{lerp8(96, 130, n), lerp8(74, 104, n), lerp8(40, 62, n), 255};
+                    if (n2 > 0.66f) {
+                        c = Color{lerp8(196, 232, n1), lerp8(148, 186, n1), lerp8(36, 64, n1), 255};
+                        if (grain(x * 5 + 3, y * 5 + 1) > 0.80f) c = Color{255, 240, 170, 255}; // 晶面闪光
+                    }
                     break;
                 }
                 case Terrain::Gems: {
-                    int v = 90 + (int)(n * 50);
-                    c = Color{(uint8_t)(v * 0.8f), (uint8_t)v, (uint8_t)(v * 0.85f), 255};
-                    if (noise(x * 3 + 5, y * 3 + 3) > 0.68f) c = Pal::GEM_GRN;
+                    // 彩矿：深壤 + 翠绿晶簇
+                    c = Color{lerp8(56, 84, n), lerp8(66, 96, n), lerp8(50, 72, n), 255};
+                    if (n2 > 0.64f) {
+                        c = Color{lerp8(60, 120, n1), lerp8(190, 236, n1), lerp8(100, 150, n1), 255};
+                        if (grain(x * 5 + 9, y * 5 + 7) > 0.78f) c = Color{220, 255, 225, 255};
+                    }
                     break;
                 }
                 case Terrain::Bridge: {
-                    // 木质桥面：棕褐色木板 + 横向板缝（RA2 原作木桥质感）
-                    int v = 130 + (int)(n * 60);
-                    c = Color{(uint8_t)v, (uint8_t)(v * 0.68f), (uint8_t)(v * 0.38f), 255};
-                    if (y % 4 == 0) { c.r = (uint8_t)(c.r * 0.62f); c.g = (uint8_t)(c.g * 0.62f); c.b = (uint8_t)(c.b * 0.62f); }
+                    // 木质桥面：棕褐木板 + 横向板缝 + 板间色差
+                    float plank = (float)((y / 4) % 2) * 0.10f;
+                    float v = 0.75f + n * 0.35f - plank;
+                    c = Color{(uint8_t)(150 * v), (uint8_t)(102 * v), (uint8_t)(58 * v), 255};
+                    if (y % 4 == 0) { c.r = (uint8_t)(c.r * 0.55f); c.g = (uint8_t)(c.g * 0.55f); c.b = (uint8_t)(c.b * 0.55f); }
                     break;
                 }
             }
+            c.r = (uint8_t)clampi(c.r + (int)g, 0, 255);
+            c.g = (uint8_t)clampi(c.g + (int)g, 0, 255);
+            c.b = (uint8_t)clampi(c.b + (int)g, 0, 255);
             // 边缘暗化
             if (dx + dy > 0.92f) { c.r = (uint8_t)(c.r * 0.7f); c.g = (uint8_t)(c.g * 0.7f); c.b = (uint8_t)(c.b * 0.7f); }
             p.set(x, y, c);
@@ -127,28 +189,45 @@ PixBuf SpriteBank::baseOverlay(Overlay o) {
     switch (o) {
         case Overlay::Tree1: case Overlay::Tree2: case Overlay::Tree3: {
             int s = o == Overlay::Tree1 ? 14 : (o == Overlay::Tree2 ? 18 : 12);
-            PixBuf p(s * 2, s * 3);
+            PixBuf p(s * 2 + 8, s * 3 + 4);
             Rng rng((uint64_t)o * 991);
-            int cx = s, baseY = s * 3 - 2;
+            int cx = s + 4, baseY = s * 3 + 1;
+            // 地面投影（RA2 树木有清晰倒影）
+            for (int y = -3; y <= 3; y++)
+                for (int x = -s; x <= s; x++) {
+                    float d = (x * x) / (float)(s * s) + (y * y) / 9.0f;
+                    if (d <= 1.0f) p.blend(cx + 3 + x, baseY + y, Color{8, 10, 6, (uint8_t)(64 * (1.0f - d))});
+                }
             // 树干
-            p.fillRect(cx - 1, baseY - s / 2, 2, s / 2, Color{92, 60, 36, 255});
-            // 树冠：多层椭圆
-            for (int i = 0; i < 3; i++) {
-                int ry = s - i * s / 4;
-                Color g{ (uint8_t)(30 + i * 22), (uint8_t)(95 + i * 30), (uint8_t)(36 + i * 18), 255 };
-                p.fillEllipse(cx, baseY - s / 2 - ry / 2 - i * 2, s - i * 2, ry / 2 + 2, g);
+            p.fillRect(cx - 1, baseY - s / 2 - 2, 3, s / 2 + 2, Color{82, 54, 32, 255});
+            p.fillRect(cx, baseY - s / 2 - 2, 1, s / 2 + 2, Color{110, 76, 46, 255});
+            // 树冠：多层椭圆（下深上浅，左侧高光，模拟 RA2 树冠体积感）
+            for (int i = 0; i < 4; i++) {
+                int ry = s - i * s / 5;
+                int rw = s + 2 - i * 3;
+                int cy = baseY - s / 2 - ry / 2 - i * 3;
+                Color g{ (uint8_t)(26 + i * 20), (uint8_t)(84 + i * 26), (uint8_t)(30 + i * 16), 255 };
+                p.fillEllipse(cx, cy, rw > 2 ? rw : 2, ry / 2 + 2, g);
+                // 顶部高光弧
+                p.fillEllipse(cx - rw / 4, cy - ry / 4, rw / 3 > 1 ? rw / 3 : 1, ry / 5 + 1, Color{(uint8_t)(60 + i * 20), (uint8_t)(140 + i * 24), (uint8_t)(56 + i * 16), 255});
             }
-            // 高光点
-            for (int i = 0; i < s; i++)
-                p.set(cx - s / 2 + rng.range(0, s), baseY - s - rng.range(0, s / 2), Color{90, 160, 70, 200});
+            // 叶隙噪点（深色孔洞 + 高光点）
+            for (int i = 0; i < s * 2; i++) {
+                int px = cx - s + rng.range(0, s * 2), py = baseY - s - rng.range(0, s);
+                Color cur = p.get(px, py);
+                if (cur.a && cur.g > 60) p.set(px, py, rng.unit() > 0.5f ? Color{18, 58, 22, 255} : Color{104, 168, 78, 220});
+            }
             return p;
         }
         case Overlay::Rock1: case Overlay::Rock2: {
-            PixBuf p(20, 12);
-            Color base{110, 108, 104, 255}, dark{70, 68, 66, 255}, lite{150, 148, 142, 255};
-            p.fillEllipse(10, 7, o == Overlay::Rock1 ? 8 : 6, 5, base);
-            p.fillEllipse(8, 5, 4, 3, lite);
-            p.fillEllipse(13, 9, 4, 2, dark);
+            PixBuf p(24, 15);
+            // 投影
+            p.fillEllipse(12, 11, 9, 3, Color{8, 10, 6, 60});
+            Color base{112, 110, 106, 255}, dark{66, 64, 62, 255}, lite{158, 156, 150, 255};
+            p.fillEllipse(11, 8, o == Overlay::Rock1 ? 8 : 6, 5, base);
+            p.fillEllipse(9, 6, 4, 3, lite);   // 顶部受光面
+            p.fillEllipse(14, 10, 4, 2, dark); // 背光面
+            p.set(8, 5, Color{190, 188, 182, 255}); // 高光点
             return p;
         }
         default: return PixBuf(1, 1);
@@ -1144,65 +1223,141 @@ PixBuf SpriteBank::baseBuilding(BldType t, bool constructing) {
 
 // ---------------- 特效 ----------------
 PixBuf SpriteBank::baseExplosion(int frame) {
-    int R = 6 + frame * 2;
-    PixBuf p(R * 2 + 4, R * 2 + 4);
-    int cx = R + 2, cy = R + 2;
-    Rng rng(frame * 51 + 7);
-    float life = frame / 11.0f;
-    for (int y = 0; y < p.h; y++)
-        for (int x = 0; x < p.w; x++) {
-            float d = distf((float)x, (float)y, (float)cx, (float)cy) / R;
-            float n = rng.unit() * 0.3f;
-            if (d + n > 1.0f) continue;
+    // RA2 式火球：白闪星芒 → 湍流橙红火球（噪声边缘+外缘黑烟） → 黑烟余烬 + 四散火星
+    float life = frame / (float)(EXPLOSION_FRAMES - 1); // 0..1
+    int R = 7 + (int)(frame * 1.8f);
+    int S = R * 2 + 12;
+    PixBuf p(S, S);
+    int cx = S / 2, cy = S / 2;
+    Rng rng(frame * 131 + 7);
+    // 湍流：角向正弦扰动半径 → 火焰舌状边缘
+    auto turb = [&](float ang) {
+        return 1.0f + 0.26f * sinf(ang * 3 + frame * 1.7f) + 0.16f * sinf(ang * 7 + frame * 2.9f);
+    };
+    for (int y = 0; y < S; y++)
+        for (int x = 0; x < S; x++) {
+            float dx = (float)(x - cx), dy = (float)(y - cy);
+            float d = sqrtf(dx * dx + dy * dy) / R;
+            if (d > 1.7f) continue;
+            d /= turb(atan2f(dy, dx));
+            if (d > 1.0f) continue;
             Color c;
-            if (life < 0.35f) {
-                // 白-黄-橙核心
-                float t = d;
-                c = Color{255, (uint8_t)(240 - t * 160), (uint8_t)(180 - t * 170), 255};
-            } else if (life < 0.7f) {
-                c = Color{(uint8_t)(230 - d * 120), (uint8_t)(110 - d * 60), 30, 230};
+            if (life < 0.22f) {
+                // 白炽核心 → 黄边
+                c = Color{255, (uint8_t)(250 - d * 90), (uint8_t)(230 - d * 200), 255};
+            } else if (life < 0.6f) {
+                // 火球：核心白黄 → 橙 → 外缘暗红混入黑烟
+                float t = (life - 0.22f) / 0.38f;
+                float e = d * d;
+                int rr = (int)(255 - e * 90 - t * 40);
+                int gg = (int)(212 - e * 165 - t * 95);
+                int bb = (int)(96 - e * 86);
+                if (d > 0.82f) { // 外缘黑烟团
+                    float m = (d - 0.82f) / 0.18f;
+                    int sv = (int)(72 - t * 32);
+                    rr = (int)(rr * (1 - m) + sv * m);
+                    gg = (int)(gg * (1 - m) + sv * m);
+                    bb = (int)(bb * (1 - m) + sv * m);
+                }
+                c = Color{(uint8_t)clampi(rr, 0, 255), (uint8_t)clampi(gg, 0, 255),
+                          (uint8_t)clampi(bb, 0, 255), 255};
             } else {
-                uint8_t v = (uint8_t)(70 + n * 200);
-                c = Color{v, v, v, (uint8_t)(200 * (1 - life))};
+                // 末期：黑烟 + 残余橙烬
+                float t = (life - 0.6f) / 0.4f;
+                int v = (int)(64 - t * 30);
+                c = Color{(uint8_t)v, (uint8_t)v, (uint8_t)(v + 2),
+                          (uint8_t)(235 * (1.0f - t * 0.75f))};
+                if (d < 0.45f && rng.unit() > 0.55f) // 烬核
+                    c = Color{(uint8_t)(200 - t * 140), (uint8_t)(90 - t * 60), 30, c.a};
             }
             p.set(x, y, c);
         }
+    // 火星：早中期帧向外飞散的亮点
+    if (life < 0.7f) {
+        int nSpark = 10 - (int)(life * 10);
+        for (int i = 0; i < nSpark; i++) {
+            float ang = rng.unit() * 6.2831853f;
+            float rr = R * (0.6f + life * 0.9f) + rng.unit() * 4;
+            int sx = cx + (int)(cosf(ang) * rr), sy = cy + (int)(sinf(ang) * rr * 0.9f);
+            p.set(sx, sy, Color{255, 230, 160, 255});
+            if (rng.unit() > 0.5f) p.set(sx + 1, sy, Color{255, 160, 60, 220});
+        }
+    }
+    // 第 0 帧附加白闪十字星芒
+    if (frame == 0) {
+        for (int i = 0; i < R + 6; i++) {
+            uint8_t a = (uint8_t)(255 - i * 30);
+            Color ray{255, 255, 240, a};
+            p.set(cx + i, cy, ray); p.set(cx - i, cy, ray);
+            p.set(cx, cy + i, ray); p.set(cx, cy - i, ray);
+        }
+    }
     return p;
 }
 
 PixBuf SpriteBank::baseMuzzle() {
-    PixBuf p(12, 12);
-    p.fillEllipse(6, 6, 5, 5, Color{255, 200, 80, 255});
-    p.fillEllipse(6, 6, 2, 2, Color{255, 255, 220, 255});
+    // RA2 式枪口焰：十字星芒 + 对角短芒 + 白炽核心
+    PixBuf p(14, 14);
+    int c = 7;
+    for (int i = 0; i < 7; i++) {
+        Color ray{255, (uint8_t)(220 - i * 18), (uint8_t)(120 - i * 14), (uint8_t)(255 - i * 32)};
+        p.set(c + i, c, ray); p.set(c - i, c, ray);
+        p.set(c, c + i, ray); p.set(c, c - i, ray);
+    }
+    for (int i = 1; i < 4; i++) {
+        Color dc{255, (uint8_t)(190 - i * 20), 90, (uint8_t)(220 - i * 50)};
+        p.set(c + i, c + i, dc); p.set(c - i, c - i, dc);
+        p.set(c + i, c - i, dc); p.set(c - i, c + i, dc);
+    }
+    p.fillEllipse(c, c, 2, 2, Color{255, 255, 235, 255});
     return p;
 }
 
 PixBuf SpriteBank::baseProjectile(int kind, int dir) {
     PixBuf p;
-    if (kind == 0) { // 炮弹
-        p.resize(10, 10);
-        p.fillEllipse(5, 5, 3, 2, Pal::GUN);
-        p.fillEllipse(4, 4, 1, 1, Color{255, 220, 150, 255});
-    } else { // 导弹（朝东基准）
-        p.resize(16, 8);
-        p.fillRect(3, 3, 9, 3, Color{200, 200, 205, 255});
-        p.line(12, 3, 15, 4, Color{220, 90, 60, 255});
-        p.line(12, 5, 15, 4, Color{220, 90, 60, 255});
-        p.hline(0, 2, 4, Color{255, 180, 80, 255}); // 尾焰
-        p.set(1, 5, Color{255, 220, 120, 255});
-        p.line(4, 2, 6, 0, Color{160, 160, 165, 255});
-        p.line(4, 6, 6, 7, Color{160, 160, 165, 255});
+    if (kind == 0) { // 炮弹：灼热弹头 + 高光点
+        p.resize(12, 12);
+        p.fillEllipse(6, 6, 3, 2, Color{60, 58, 54, 255});
+        p.fillEllipse(5, 5, 2, 1, Color{255, 214, 130, 255});
+        p.set(4, 4, Color{255, 246, 200, 255});
+    } else { // 导弹（朝东基准）：弹体高光 + 红头 + 尾翼 + 尾焰
+        p.resize(18, 10);
+        p.fillRect(4, 4, 10, 3, Color{204, 204, 210, 255});
+        p.fillRect(4, 4, 10, 1, Color{240, 240, 245, 255});   // 顶部高光
+        p.line(14, 4, 17, 5, Color{220, 90, 60, 255});        // 弹头
+        p.line(14, 6, 17, 5, Color{220, 90, 60, 255});
+        p.line(4, 3, 7, 1, Color{160, 160, 165, 255});        // 尾翼
+        p.line(4, 7, 7, 8, Color{160, 160, 165, 255});
+        p.hline(0, 3, 5, Color{255, 180, 80, 255});           // 尾焰
+        p.set(0, 5, Color{255, 220, 120, 200});
+        p.set(1, 6, Color{255, 220, 120, 255});
+        p.set(2, 6, Color{255, 140, 60, 200});
     }
     if (dir) p = p.rotate8(dir);
     return p;
 }
 
 PixBuf SpriteBank::baseSmoke(int frame) {
-    int R = 4 + frame;
-    PixBuf p(R * 2 + 4, R * 2 + 4);
-    uint8_t a = (uint8_t)(140 * (1.0f - frame / 6.0f));
-    p.fillEllipse(R + 2, R + 2, R, R - 1, Color{120, 120, 122, a});
-    p.fillEllipse(R, R, R / 2, R / 2, Color{150, 150, 152, a});
+    // RA2 式烟团：多团瓣叠加 + 上升扩散 + 渐稀 + 顶部亮缘
+    float t = frame / (float)(SMOKE_FRAMES - 1); // 0..1
+    int R = 5 + frame * 2;
+    int S = R * 2 + 10;
+    PixBuf p(S, S);
+    int cx = S / 2, cy = S / 2;
+    uint8_t a = (uint8_t)(150 * (1.0f - t * 0.8f));
+    // 4 个烟瓣（随帧旋转扩散、上升）
+    for (int l = 0; l < 4; l++) {
+        float ang = l * 1.9f + frame * 0.35f;
+        int ox = (int)(cosf(ang) * R * 0.4f), oy = (int)(sinf(ang) * R * 0.3f) - (int)(t * 6);
+        int lr = R - l * 2; if (lr < 3) lr = 3;
+        int v = (int)(96 + l * 14 - t * 30);
+        p.fillEllipse(cx + ox, cy + oy, lr, lr * 3 / 4,
+                      Color{(uint8_t)v, (uint8_t)v, (uint8_t)(v + 4), a});
+    }
+    // 顶部受光亮缘
+    int hv = (int)(150 - t * 40);
+    p.fillEllipse(cx - 1, cy - R / 3 - (int)(t * 6), R / 3, R / 5,
+                  Color{(uint8_t)hv, (uint8_t)hv, (uint8_t)(hv + 4), (uint8_t)(a * 0.7f)});
     return p;
 }
 
@@ -1211,7 +1366,10 @@ const Sprite& SpriteBank::tile(Terrain t, int variant) {
     uint64_t k = keyOf(1, (int)t, variant, 0, 0);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
-    Sprite s = makeSprite(baseTile(t, variant), TILE_W / 2, 0);
+    PixBuf pb;
+    if (!loadSpr(pb, "assets/sprites/tile_%s_%d.png", terrainAssetName(t), variant))
+        pb = baseTile(t, variant);
+    Sprite s = makeSprite(std::move(pb), TILE_W / 2, 0);
     return cache.emplace(k, s).first->second;
 }
 
@@ -1219,13 +1377,16 @@ const Sprite& SpriteBank::overlaySpr(Overlay o) {
     uint64_t k = keyOf(2, (int)o, 0, 0, 0);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
-    PixBuf pb = baseOverlay(o);
+    PixBuf pb;
+    if (!loadSpr(pb, "assets/sprites/overlay_%s.png", overlayAssetName(o)))
+        pb = baseOverlay(o);
     Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2; s.oy = s.tex.height - 1;
     return cache.emplace(k, s).first->second;
 }
 
 const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
+    UnitType orig = t;
     t = spriteAliasUnit(t);
     dir &= 7;
     // 满载采矿车用 frame=1（只对载具有效；步兵 frame 为行走帧）
@@ -1233,7 +1394,26 @@ const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
     uint64_t k = keyOf(3, (int)t, dir, fKey, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
-    PixBuf pb = baseUnitBody(t, dir, fKey);
+    PixBuf pb;
+    // 外部素材：优先原始类型名，其次别名（如 unit_chronominer_d2.png → unit_harvester_d2.png）
+    bool ext = loadSpr(pb, "assets/sprites/unit_%s_d%d_f%d.png", unitAssetName(orig), dir, fKey)
+            || loadSpr(pb, "assets/sprites/unit_%s_d%d.png", unitAssetName(orig), dir)
+            || (orig != t && (loadSpr(pb, "assets/sprites/unit_%s_d%d_f%d.png", unitAssetName(t), dir, fKey)
+                           || loadSpr(pb, "assets/sprites/unit_%s_d%d.png", unitAssetName(t), dir)));
+    if (!ext) {
+        pb = baseUnitBody(t, dir, fKey);
+        // RA2 风格地面投影：仅地面单位（空军/海军不烘投影）
+        const UnitDef& ud = unitDef(t);
+        if (!ud.isAir() && !ud.isNaval()) {
+            int ow = pb.w, oh = pb.h;
+            bool inf = ud.isInfantry();
+            PixBuf canvas(ow + 12, oh + 8);
+            bakeShadow(canvas, 6 + ow / 2 + 3, 4 + (inf ? oh - 2 : (int)(oh * 0.72f)),
+                       inf ? 7 : (int)(ow * 0.30f), inf ? 3 : (int)(oh * 0.10f));
+            canvas.blit(pb, 6, 4);
+            pb = std::move(canvas);
+        }
+    }
     pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
     Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2; s.oy = s.tex.height / 2 + 4;
@@ -1241,12 +1421,16 @@ const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
 }
 
 const Sprite& SpriteBank::unitTurret(UnitType t, int dir, int player) {
+    UnitType orig = t;
     t = spriteAliasUnit(t);
     dir &= 7;
     uint64_t k = keyOf(4, (int)t, dir, 0, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
-    PixBuf pb = baseUnitTurret(t, dir);
+    PixBuf pb;
+    bool ext = loadSpr(pb, "assets/sprites/turret_%s_d%d.png", unitAssetName(orig), dir)
+            || (orig != t && loadSpr(pb, "assets/sprites/turret_%s_d%d.png", unitAssetName(t), dir));
+    if (!ext) pb = baseUnitTurret(t, dir);
     pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
     Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2; s.oy = s.tex.height / 2 + 4;
@@ -1254,14 +1438,28 @@ const Sprite& SpriteBank::unitTurret(UnitType t, int dir, int player) {
 }
 
 const Sprite& SpriteBank::building(BldType t, int player, bool constructing) {
+    BldType orig = t;
     t = spriteAliasBld(t);
     uint64_t k = keyOf(5, (int)t, constructing ? 1 : 0, 0, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
-    PixBuf pb = baseBuilding(t, constructing);
+    PixBuf pb;
+    bool ext = loadSpr(pb, "assets/sprites/bld_%s%s.png", bldAssetName(orig), constructing ? "_scaffold" : "")
+            || (orig != t && loadSpr(pb, "assets/sprites/bld_%s%s.png", bldAssetName(t), constructing ? "_scaffold" : ""));
+    if (!ext) {
+        pb = baseBuilding(t, constructing);
+        // RA2 风格地面投影（底部偏右椭圆，建筑视觉锚地感）
+        int ow = pb.w, oh = pb.h;
+        PixBuf canvas(ow + 14, oh + 10);
+        bakeShadow(canvas, 6 + ow / 2 + 5, 4 + oh - 6, (int)(ow * 0.40f), 6);
+        canvas.blit(pb, 6, 4);
+        pb = std::move(canvas);
+    }
     pb.remap(Pal::REMAP, player >= 0 ? HOUSE_COLORS[player] : Color{150, 150, 155, 255}); // 中立=灰
     Sprite s = makeSprite(std::move(pb), 0, 0);
-    s.ox = s.tex.width / 2; s.oy = s.tex.height - 4;
+    // 锚点 = 原画布底中点经填充后的坐标（左填 6 上填 4）
+    s.ox = ext ? s.tex.width / 2 : (s.tex.width - 14) / 2 + 6;
+    s.oy = ext ? s.tex.height - 4 : s.tex.height - 10;
     return cache.emplace(k, s).first->second;
 }
 
@@ -1270,7 +1468,10 @@ const Sprite& SpriteBank::explosion(int frame) {
     uint64_t k = keyOf(6, frame, 0, 0, 0);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
-    Sprite s = makeSprite(baseExplosion(frame), 0, 0);
+    PixBuf pb;
+    if (!loadSpr(pb, "assets/sprites/fx_explosion_%d.png", frame))
+        pb = baseExplosion(frame);
+    Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2; s.oy = s.tex.height / 2;
     return cache.emplace(k, s).first->second;
 }
@@ -1279,7 +1480,11 @@ const Sprite& SpriteBank::muzzle() {
     uint64_t k = keyOf(7, 0, 0, 0, 0);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
-    Sprite s = makeSprite(baseMuzzle(), 6, 6);
+    PixBuf pb;
+    if (!loadSpr(pb, "assets/sprites/fx_muzzle.png"))
+        pb = baseMuzzle();
+    Sprite s = makeSprite(std::move(pb), 0, 0);
+    s.ox = s.tex.width / 2; s.oy = s.tex.height / 2;
     return cache.emplace(k, s).first->second;
 }
 
@@ -1287,7 +1492,10 @@ const Sprite& SpriteBank::projectile(int kind, int dir) {
     uint64_t k = keyOf(8, kind, dir & 7, 0, 0);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
-    Sprite s = makeSprite(baseProjectile(kind, dir), 0, 0);
+    PixBuf pb;
+    if (!loadSpr(pb, "assets/sprites/fx_proj_%d_d%d.png", kind, dir & 7))
+        pb = baseProjectile(kind, dir);
+    Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2; s.oy = s.tex.height / 2;
     return cache.emplace(k, s).first->second;
 }
@@ -1297,7 +1505,10 @@ const Sprite& SpriteBank::smoke(int frame) {
     uint64_t k = keyOf(9, frame, 0, 0, 0);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
-    Sprite s = makeSprite(baseSmoke(frame), 0, 0);
+    PixBuf pb;
+    if (!loadSpr(pb, "assets/sprites/fx_smoke_%d.png", frame))
+        pb = baseSmoke(frame);
+    Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2; s.oy = s.tex.height / 2;
     return cache.emplace(k, s).first->second;
 }
@@ -1322,6 +1533,13 @@ const Sprite& SpriteBank::iconUnit(UnitType t, int player) {
     uint64_t k = keyOf(10, (int)t, 0, 0, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
+    PixBuf ext;
+    if (loadSpr(ext, "assets/sprites/icon_unit_%s.png", unitAssetName(t))) {
+        ext.remap(Pal::REMAP, HOUSE_COLORS[player]);
+        Sprite s = makeSprite(std::move(ext), 0, 0);
+        return cache.emplace(k, s).first->second;
+    }
+    t = spriteAliasUnit(t);
     PixBuf body = baseUnitBody(t, 2, 0);
     if (hasTurret(t)) {
         PixBuf tur = baseUnitTurret(t, 2);
@@ -1336,6 +1554,13 @@ const Sprite& SpriteBank::iconBld(BldType t, int player) {
     uint64_t k = keyOf(11, (int)t, 0, 0, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
+    PixBuf ext;
+    if (loadSpr(ext, "assets/sprites/icon_bld_%s.png", bldAssetName(t))) {
+        ext.remap(Pal::REMAP, HOUSE_COLORS[player]);
+        Sprite s = makeSprite(std::move(ext), 0, 0);
+        return cache.emplace(k, s).first->second;
+    }
+    t = spriteAliasBld(t);
     PixBuf pb = baseBuilding(t, false);
     pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
     Sprite s = makeSprite(makeIcon(pb, 0, 0), 0, 0);

@@ -1,4 +1,5 @@
 #include "sfx/sound.h"
+#include "gfx/assets.h"
 #include "core/util.h"
 #include <cmath>
 #include <vector>
@@ -302,46 +303,156 @@ void snare(Buf& b, float atSec, Rng& rng) {
     toneSweep(b, (int)(atSec * RATE), 210, 150, 0.07f, 26, 0.30f);
 }
 
-Buf genMarch() {
+// ---- RA2 工业金属音色（Frank Klepacki 风格）----
+// 软削波（近似吉他音箱过载）
+inline float dist(float x, float drive) { return tanhf(x * drive); }
+
+// 强力和弦：根音+五度 双方波 + 低通柔化 + 重削波
+void powerChord(Buf& b, float atSec, int midi, float dur, float amp, float drive = 2.8f) {
+    int start = (int)(atSec * RATE);
+    int n = (int)(dur * RATE);
+    float f1 = midiFreq(midi), f2 = midiFreq(midi + 7);
+    float p1 = 0, p2 = 0, lp = 0;
+    for (int i = 0; i < n; i++) {
+        p1 += 2 * PI * f1 / RATE; p2 += 2 * PI * f2 / RATE;
+        float s = (sinf(p1) >= 0 ? 0.6f : -0.6f) + (sinf(p2) >= 0 ? 0.4f : -0.4f);
+        lp += 0.30f * (s - lp);
+        float t = (float)i / n;
+        float env = t < 0.05f ? t / 0.05f : expf(-3.0f * (t - 0.05f));
+        b.mix(start + i, dist(lp, drive) * env * amp);
+    }
+}
+
+// 闷音 chug：极短衰减的失真低音（掌闷节奏吉他）
+void chug(Buf& b, float atSec, int midi, float amp) {
+    int start = (int)(atSec * RATE);
+    int n = (int)(0.085f * RATE);
+    float f = midiFreq(midi);
+    float p = 0, lp = 0;
+    for (int i = 0; i < n; i++) {
+        p += 2 * PI * f / RATE;
+        float s = sinf(p) >= 0 ? 1.0f : -1.0f;
+        lp += 0.22f * (s - lp);
+        b.mix(start + i, dist(lp, 3.2f) * expf(-24.0f * i / (float)RATE) * amp);
+    }
+}
+
+// 闭镲：高通短噪声
+void hat(Buf& b, float atSec, Rng& rng, float amp = 0.16f) {
+    int start = (int)(atSec * RATE);
+    int n = (int)(0.03f * RATE);
+    float lp = 0;
+    for (int i = 0; i < n; i++) {
+        float w = rng.unit() * 2.0f - 1.0f;
+        lp += 0.5f * (w - lp);
+        b.mix(start + i, (w - lp) * expf(-80.0f * i / (float)RATE) * amp);
+    }
+}
+
+// 主音合成器：双方波轻度失谐 + 快速起音（合成铜管感）
+void leadNote(Buf& b, float atSec, int midi, float dur, float amp) {
+    int start = (int)(atSec * RATE);
+    int n = (int)(dur * RATE);
+    float f1 = midiFreq(midi), f2 = f1 * 1.004f;
+    float p1 = 0, p2 = 0;
+    for (int i = 0; i < n; i++) {
+        p1 += 2 * PI * f1 / RATE; p2 += 2 * PI * f2 / RATE;
+        float t = (float)i / RATE;
+        float s = ((sinf(p1) >= 0 ? 0.5f : -0.5f) + (sinf(p2) >= 0 ? 0.5f : -0.5f)) * 0.5f;
+        float env = t < 0.02f ? t / 0.02f : expf(-4.0f * t);
+        b.mix(start + i, dist(s, 1.8f) * env * amp);
+    }
+}
+
+// 警报pad：缓慢升降正弦（空袭警报氛围，用于引子/过门）
+void siren(Buf& b, float atSec, float dur, float amp) {
+    int start = (int)(atSec * RATE);
+    int n = (int)(dur * RATE);
+    float p = 0;
+    for (int i = 0; i < n; i++) {
+        float t = (float)i / RATE;
+        float f = 640.0f + 220.0f * sinf(2 * PI * t / (dur * 0.5f));
+        p += 2 * PI * f / RATE;
+        float edge = t < dur - t ? t : dur - t;
+        edge = edge * 2.0f > 1.0f ? 1.0f : edge * 2.0f;
+        b.mix(start + i, sinf(p) * edge * amp);
+    }
+}
+
+// ===================== RA2 风格工业进行曲（D 小调，112 BPM，16 小节无缝循环）=====================
+Buf genIndustrial() {
     Buf b;
-    const float BEAT = 60.0f / 116.0f; // 四分音符时长
-    const float E8 = BEAT / 2.0f;      // 八分音符时长
-    b.alloc((int)(8 * 4 * BEAT * RATE)); // 8 小节整，无缝循环
-    Rng rng(0xBEEF);
+    const float BEAT = 60.0f / 112.0f;
+    const float E8 = BEAT / 2.0f, E16 = BEAT / 4.0f;
+    const int BARS = 16;
+    b.alloc((int)(BARS * 4 * BEAT * RATE));
+    Rng rng(0xDEAD); // 固定种子保证可复现
 
-    // 主旋律：8 小节 × 8 个八分位（0=休止 -1=延音）
-    static const int LEAD[64] = {
-        62, 65, 69, 74, -1, 72, 69, 65, // D 小调上行
-        62, 65, 69, 74, -1, 76, 74, 72,
-        67, 70, 74, 79, -1, 77, 74, 70, // G 小调
-        69, 73, 76, 81, -1, 76, 73, 69, // A7
-        74, -1, -1, 00, 69, 72, 74, 76, // 长音 + 过渡
-        77, -1, 76, 74, 72, 74, 69, 65,
-        70, 74, 77, 82, -1, 77, 74, 70, // Bb
-        69, 73, 76, 81, -1, 79, 76, 73, // A7 回主
+    // 每小节 chug 根音（D2 区）：主 riff | D | D | Bb | C | ×2，后 8 小节变化 | D | F | G | A |
+    static const int RIFF[16] = {
+        38, 38, 46, 48,  38, 38, 46, 48,
+        38, 41, 43, 45,  38, 41, 46, 45,
     };
-    // 每小节低音根音（D D G A D D Bb A）
-    static const int ROOT[8] = {38, 38, 43, 45, 38, 38, 46, 45};
+    // 强力和弦落点（每小节第 1 拍 stab， midi D5 区）
+    static const int STAB[16] = {
+        50, 50, 58, 60,  50, 50, 58, 60,
+        50, 53, 55, 57,  50, 53, 58, 57,
+    };
+    // 主音旋律（第 9..14 小节进入，16 分步进；0=休止 -1=延音）D 和声小调
+    static const int LEAD[6 * 16] = {
+        // bar9:  D5 E5 F5 E5 D5 C#5 D5 ~
+        74, 0, 76, 0, 77, 0, 76, 0, 74, 0, 73, 0, 74, 0, -1, 0,
+        // bar10: F5 G5 A5 G5 F5 E5 F5 ~
+        77, 0, 79, 0, 81, 0, 79, 0, 77, 0, 76, 0, 77, 0, -1, 0,
+        // bar11: A5 G5 F5 E5 D5 ~ ~
+        81, 0, 79, 0, 77, 0, 76, 0, 74, 0, -1, 0, -1, 0, 0, 0,
+        // bar12: C#5 D5 E5 ~ 过门
+        73, 0, 74, 0, 76, 0, -1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        // bar13: D5 D5 F5 E5 D5 C#5 D5 ~
+        74, 0, 74, 0, 77, 0, 76, 0, 74, 0, 73, 0, 74, 0, -1, 0,
+        // bar14: Bb4 C#5 D5 ~ ~ （回落）
+        70, 0, 73, 0, 74, 0, -1, 0, -1, 0, 0, 0, 0, 0, 0, 0,
+    };
 
-    for (int bar = 0; bar < 8; bar++) {
-        float barStart = bar * 4 * BEAT;
-        // 鼓：四踩 + 二四军鼓
-        for (int e = 0; e < 8; e += 2) kick(b, barStart + e * E8);
-        snare(b, barStart + 2 * E8, rng);
-        snare(b, barStart + 6 * E8, rng);
-        if (bar == 7) // 结尾军鼓滚奏
-            for (int e = 4; e < 8; e++) snare(b, barStart + e * E8 + E8 / 2, rng);
-        // 贝斯：根音-五音交替八分
-        for (int e = 0; e < 8; e++) {
-            int m = ROOT[bar] + (e % 2 ? 7 : 0);
-            note(b, barStart + e * E8, m, E8 * 0.9f, 0.34f, false);
+    for (int bar = 0; bar < BARS; bar++) {
+        float bs = bar * 4 * BEAT;
+        int root = RIFF[bar];
+        bool intro = bar < 2; // 引子：行军鼓 + 警报，无吉他
+        // ---- 鼓 ----
+        for (int e = 0; e < 8; e += 2) kick(b, bs + e * E8);
+        kick(b, bs + 7 * E8); // 小节末双踩推进
+        if (intro) {
+            // 行军鼓点：密集 16 分滚奏
+            for (int e = 0; e < 16; e++) snare(b, bs + e * E16, rng);
+        } else {
+            snare(b, bs + 2 * E8, rng);
+            snare(b, bs + 6 * E8, rng);
+            for (int e = 0; e < 8; e++) hat(b, bs + e * E8, rng);
         }
-        // 旋律：方波 lead
-        for (int e = 0; e < 8; e++) {
-            int m = LEAD[bar * 8 + e];
-            if (m > 0) note(b, barStart + e * E8, m, E8 * 0.92f, 0.26f, true);
+        if (bar == 1 || bar == 7 || bar == 14 || bar == 15) // 过门军鼓滚奏
+            for (int e = 12; e < 16; e++) snare(b, bs + e * E16, rng);
+        // ---- 引子警报 pad ----
+        if (bar == 0) siren(b, bs, 4 * BEAT, 0.10f);
+        if (bar == 8) siren(b, bs, 2 * BEAT, 0.08f);
+        if (intro) continue;
+        // ---- 节奏吉他 chug：8 分驱动 + 小节末 16 分加花 ----
+        for (int e = 0; e < 8; e++) chug(b, bs + e * E8, root, e % 2 ? 0.30f : 0.38f);
+        chug(b, bs + 14 * E16, root, 0.30f);
+        chug(b, bs + 15 * E16, root + (bar % 4 == 3 ? 2 : 0), 0.32f); // 每 4 小节末升全音推下小节
+        // ---- 强力和弦 stab（第 1 拍，第 3 拍半）----
+        powerChord(b, bs, STAB[bar], E8 * 3.0f, 0.30f);
+        if (bar % 2 == 1) powerChord(b, bs + 5 * E8, STAB[bar], E8 * 1.5f, 0.24f);
+        // ---- 贝斯：根音 8 分 ----
+        for (int e = 0; e < 8; e++) note(b, bs + e * E8, root - 12, E8 * 0.9f, 0.30f, false);
+        // ---- 主音（第 9..14 小节）----
+        if (bar >= 8 && bar <= 13) {
+            const int* row = LEAD + (bar - 8) * 16;
+            for (int e = 0; e < 16; e++)
+                if (row[e] > 0) leadNote(b, bs + e * E16, row[e], E16 * 1.8f, 0.20f);
         }
     }
+    // 结尾 stab 收束回循环点
+    powerChord(b, (BARS - 1) * 4 * BEAT + 3 * BEAT, 50, BEAT * 0.8f, 0.34f);
     return b;
 }
 
@@ -368,9 +479,37 @@ std::vector<unsigned char> wavBytes(const Buf& b) {
 } // namespace
 
 // ===================== BGM =====================
+void SoundBank::playBgmTrack(int idx) {
+    if (bgmOk) { StopMusicStream(bgm); UnloadMusicStream(bgm); bgmOk = false; }
+    if (idx < 0 || idx >= (int)bgmFiles.size()) return;
+    bgm = LoadMusicStream(bgmFiles[idx].c_str());
+    if (!bgm.stream.buffer) { TraceLog(LOG_WARNING, "RA2 bgm: failed to load %s", bgmFiles[idx].c_str()); return; }
+    bgm.looping = false; // 手动轮换下一首
+    bgmIdx = idx;
+    SetMusicVolume(bgm, 0.35f * masterVol);
+    PlayMusicStream(bgm);
+    bgmOk = true;
+    TraceLog(LOG_INFO, "RA2 bgm: playing %s", bgmFiles[idx].c_str());
+}
+
 void SoundBank::initBgm() {
     if (!IsAudioDeviceReady()) return;
-    Buf b = genMarch();
+    // 扫描 assets/music/ 外部音乐（ogg/mp3/wav/flac）
+    if (DirectoryExists("assets/music")) {
+        FilePathList list = LoadDirectoryFilesEx("assets/music", nullptr, false);
+        for (unsigned i = 0; i < list.count; i++) {
+            const char* p = list.paths[i];
+            if (IsFileExtension(p, ".ogg;.mp3;.wav;.flac")) bgmFiles.emplace_back(p);
+        }
+        UnloadDirectoryFiles(list);
+    }
+    if (!bgmFiles.empty()) {
+        bgmFromFiles = true;
+        playBgmTrack(bgmFiles.size() > 1 ? GetRandomValue(0, (int)bgmFiles.size() - 1) : 0);
+        return;
+    }
+    // 回退：程序合成 RA2 风格工业进行曲
+    Buf b = genIndustrial();
     std::vector<unsigned char> w = wavBytes(b);
     bgm = LoadMusicStreamFromMemory(".wav", w.data(), (int)w.size());
     if (bgm.stream.buffer == nullptr) {
@@ -381,11 +520,20 @@ void SoundBank::initBgm() {
     SetMusicVolume(bgm, 0.35f * masterVol);
     PlayMusicStream(bgm);
     bgmOk = true;
-    TraceLog(LOG_INFO, "RA2 bgm: march synthesized, %.1fs loop", (float)b.frames() / RATE);
+    TraceLog(LOG_INFO, "RA2 bgm: industrial march synthesized, %.1fs loop", (float)b.frames() / RATE);
 }
 
 void SoundBank::updateBgm() {
-    if (bgmOk && bgmOn) UpdateMusicStream(bgm);
+    if (!bgmOk || !bgmOn) return;
+    UpdateMusicStream(bgm);
+    // 外部播放列表：当前曲目播完 → 随机轮换下一首（RA2 原作为多曲轮换）
+    if (bgmFromFiles && !IsMusicStreamPlaying(bgm) && !bgmFiles.empty()) {
+        int next = bgmIdx;
+        if (bgmFiles.size() > 1) {
+            while (next == bgmIdx) next = GetRandomValue(0, (int)bgmFiles.size() - 1);
+        }
+        playBgmTrack(next);
+    }
 }
 
 void SoundBank::toggleBgm() {
@@ -404,20 +552,33 @@ void SoundBank::init() {
         TraceLog(LOG_WARNING, "RA2 sfx: no audio device, muted");
         return;
     }
+    int external = 0;
     for (int i = 0; i < (int)Sfx::COUNT; i++) {
-        Buf b = genSfx((Sfx)i);
-        Wave w;
-        w.frameCount = (unsigned)b.frames();
-        w.sampleRate = RATE;
-        w.sampleSize = 16;
-        w.channels = 1;
-        w.data = b.d.data();
-        Sound base = LoadSoundFromWave(w);
+        // 外部素材优先：assets/sfx/<name>.wav / .ogg / .mp3
+        char path[192];
+        Sound base{};
+        const char* nm = sfxAssetName((Sfx)i);
+        for (const char* ext : {".wav", ".ogg", ".mp3"}) {
+            snprintf(path, sizeof(path), "assets/sfx/%s%s", nm, ext);
+            if (FileExists(path)) { base = LoadSound(path); break; }
+        }
+        if (base.stream.buffer) { external++; }
+        else {
+            Buf b = genSfx((Sfx)i);
+            Wave w;
+            w.frameCount = (unsigned)b.frames();
+            w.sampleRate = RATE;
+            w.sampleSize = 16;
+            w.channels = 1;
+            w.data = b.d.data();
+            base = LoadSoundFromWave(w);
+        }
         snd[i][0] = base;
         for (int a = 1; a < ALIAS; a++) snd[i][a] = LoadSoundAlias(base);
     }
     ok = true;
-    TraceLog(LOG_INFO, "RA2 sfx: %d sounds synthesized", (int)Sfx::COUNT);
+    TraceLog(LOG_INFO, "RA2 sfx: %d sounds ready (%d external, %d synthesized)",
+             (int)Sfx::COUNT, external, (int)Sfx::COUNT - external);
 }
 
 void SoundBank::shutdown() {

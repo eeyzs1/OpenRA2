@@ -1,8 +1,10 @@
 #pragma once
 #include "raylib.h"
 #include <cstdint>
+#include <vector>
+#include <string>
 
-// 程序化音效：全部波形由代码合成，无外部素材
+// 音效系统：优先加载 assets/sfx/ 外部音频，缺失时回退到程序合成波形
 enum class Sfx : uint8_t {
     Shot = 0,   // 步枪
     Cannon,     // 坦克炮
@@ -65,6 +67,11 @@ private:
     Music bgm{};
     bool bgmOk = false;
     bool bgmOn = true;
+    // 外部音乐播放列表（assets/music/）；空时使用内置合成进行曲
+    std::vector<std::string> bgmFiles;
+    int bgmIdx = -1;
+    bool bgmFromFiles = false;
+    void playBgmTrack(int idx);
 };
 
 extern SoundBank g_sfx;
