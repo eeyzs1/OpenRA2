@@ -1,0 +1,46 @@
+# 中国战役第6关：长江天堑
+# 96x96，长江横贯中部（42-49 行），两座 3 宽桥梁（30-32 / 63-65 列）连通南北
+# 玩家0(中国)南岸，AI1/AI2(苏联)北岸东西两翼
+size 96 96
+fill clear
+# 地表质感
+rect rough 10 60 12 6
+rect rough 70 70 14 8
+rect rough 10 10 10 6
+rect rough 60 8 12 6
+rect rough 40 62 16 5
+rect rough 36 22 20 5
+# 长江
+rect water 0 42 96 8
+# 两座公路桥
+rect bridge 30 42 3 8
+rect bridge 63 42 3 8
+# 矿脉：南岸玩家 / 北岸两翼 AI / 中央彩矿
+blob ore 14 70 4
+blob ore 34 74 3
+blob gems 48 78 2
+blob ore 14 26 4
+blob ore 34 12 3
+blob ore 62 12 3
+blob ore 82 26 4
+blob gems 48 18 2
+# 植被与岩石
+deco tree1 4 52 20 20 14
+deco tree2 60 60 24 24 12
+deco tree1 4 4 24 20 10
+deco tree2 56 4 32 20 12
+deco rock1 40 20 16 12 4
+deco rock2 44 64 16 12 4
+# 出生点
+spawn 0 24 78
+spawn 1 24 16
+spawn 2 72 16
+# 中立科技/掩体（两岸油井 + 桥头民房）
+bld -1 OilDerrick 46 36
+bld -1 OilDerrick 50 54
+bld -1 CivHouse 26 34
+bld -1 CivHouse 66 58
+bld -1 CivHouse 48 36
+bld -1 CivHouse 20 56
+bld -1 Hospital 78 66
+bld -1 MachineShop 12 40

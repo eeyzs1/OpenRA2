@@ -150,6 +150,9 @@ std::vector<UnitType> Game::tabUnits() const {
     for (int i = 0; i < (int)UnitType::COUNT; i++) {
         const UnitDef& u = unitDef((UnitType)i);
         if (!(u.factionMask & (1 << (int)f))) continue;
+        // 偷科技单位：未解锁前不显示在侧边栏（RA2 原作：渗透敌高科后才出现）
+        int stBit = stolenTechBit((UnitType)i);
+        if (stBit && !(world.players[localPlayer].stolenTech & stBit)) continue;
         bool nav = u.isNaval() || u.isAmphib();
         if (uiTab == 2 && u.isInfantry()) v.push_back((UnitType)i);          // 步兵
         if (uiTab == 3 && !u.isInfantry() && !nav) v.push_back((UnitType)i); // 车辆/空军
@@ -401,7 +404,9 @@ void Game::drawHUD() {
         const MissionDef& md = missionTable()[campaignMission];
         std::string obj = missionName(campaignMission);
         obj += " · ";
-        if (md.objective == 1) {
+        if (!objectiveText.empty()) {
+            obj += objectiveText; // P7 触发器脚本设定的目标文本（优先于默认波次/歼灭提示）
+        } else if (md.objective == 1) {
             int remain = (md.objectiveTick - (int)world.tick) / LOGIC_FPS;
             if (remain < 0) remain = 0;
             obj += TextFormat(TR(S::ObjHoldFmt), remain / 60, remain % 60);

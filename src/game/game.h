@@ -2,6 +2,7 @@
 #include "game/world.h"
 #include "game/ai.h"
 #include "game/lang.h"
+#include "game/campaign.h"
 #include "raylib.h"
 #include <vector>
 #include <deque>
@@ -27,6 +28,7 @@ public:
     void shutdown();
     void run(); // 主循环
     void smokeTest(int frames); // 无头冒烟测试
+    void campaignSmokeTest(int mission, int frames); // 战役冒烟测试：开局跑 N 帧，校验手工地图/触发器
     int playTest();             // 自动化完整游玩测试：脚本注入输入，真实窗口跑全流程，返回失败数
     void debugMenuShot(const char* file, bool setup); // 菜单截图（验证用）
 
@@ -82,6 +84,10 @@ private:
     // 战役状态（campaignMission < 0 = 遭遇战）
     int campaignMission = -1;
     size_t nextWave = 0;
+    // P7 触发器运行时：开局从 MissionDef 拷贝（fired/armed 为可变状态），HUD 目标文本
+    std::vector<Trigger> missionTriggers;
+    std::string objectiveText;
+    void updateTriggers(); // 战役触发器求值与执行（logic 内每帧调用）
 
     // 摄像机（世界像素偏移）
     float camX = 0, camY = 0;

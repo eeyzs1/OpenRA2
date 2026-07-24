@@ -45,6 +45,8 @@ void Game::newGame(uint64_t seed) {
     // 国家（RA2 原作：国家即定阵营与特色单位；随机槽位在全部 10 国中抽取，跳过 None）
     campaignMission = -1;
     nextWave = 0;
+    missionTriggers.clear();
+    objectiveText.clear();
     Rng frng(seed);
     auto pickCountry = [&](int c) {
         return c >= (int)Country::COUNT ? (Country)frng.range(1, (int)Country::COUNT - 1) : (Country)c;
@@ -93,11 +95,14 @@ void Game::newCampaignGame(int mission) {
     const MissionDef& md = missionTable()[mission];
     campaignMission = mission;
     nextWave = 0;
+    missionTriggers = md.triggers; // 运行时副本（fired/armed 可变）
+    objectiveText.clear();
     std::vector<Faction> factions;
     factions.push_back(md.playerFaction);
     for (Faction f : md.aiFactions) factions.push_back(f);
-    // 固定种子：战役地图可复现
-    world.init(md.mapSize, md.mapSize, 20260723ull + mission * 977, 1, (int)md.aiFactions.size(), factions, md.mapType);
+    // 固定种子：战役地图可复现；手工地图关卡从 maps/xxx.txt 加载地形与预置实体
+    world.init(md.mapSize, md.mapSize, 20260723ull + mission * 977, 1, (int)md.aiFactions.size(), factions, md.mapType,
+               md.mapFile, md.noStartForce);
     // 战役国家：按阵营取默认国（盟=美国 苏=苏俄 中=中国），使国家特色单位/支援可用
     for (int i = 0; i < world.numPlayers; i++)
         world.players[i].country = countriesOf(world.players[i].faction).front();
@@ -168,13 +173,106 @@ void Game::spawnCampaignWave() {
     }
 }
 
+// ===================== P7：战役触发器 =====================
+// 每逻辑帧求值条件，满足即执行动作（once 默认只触发一次）
+void Game::updateTriggers() {
+    if (campaignMission < 0) return;
+    for (Trigger& t : missionTriggers) {
+        if (t.once && t.fired) continue;
+        bool cond = false;
+        switch (t.cond) {
+            case TrigCond::Always: cond = true; break;
+            case TrigCond::Time: cond = world.tick >= (uint64_t)t.c[0]; break;
+            case TrigCond::PlayerBldLost: {
+                int p = t.c[0];
+                if (p < 0 || p >= world.numPlayers) break;
+                int n = world.countBlds(p, (BldType)t.c[1]);
+                if (n > 0) t.armed = true;              // 目标曾存在过才允许"全灭"成立
+                cond = t.armed && n == 0;
+                break;
+            }
+            case TrigCond::PlayerAllDead: {
+                int p = t.c[0];
+                cond = p >= 0 && p < world.numPlayers && world.players[p].defeated;
+                break;
+            }
+            case TrigCond::UnitInRect: {
+                int p = t.c[0];
+                if (p < 0 || p >= world.numPlayers) break;
+                int x1 = std::min(t.c[1], t.c[3]), x2 = std::max(t.c[1], t.c[3]);
+                int y1 = std::min(t.c[2], t.c[4]), y2 = std::max(t.c[2], t.c[4]);
+                for (auto& e : world.ents)
+                    if (e.alive && !e.isBuilding && e.player == p
+                        && e.x >= (float)x1 && e.x <= (float)x2 && e.y >= (float)y1 && e.y <= (float)y2) {
+                        cond = true;
+                        break;
+                    }
+                break;
+            }
+            case TrigCond::MoneyBelow: {
+                int p = t.c[0];
+                cond = p >= 0 && p < world.numPlayers && world.players[p].money < t.c[1];
+                break;
+            }
+        }
+        if (!cond) continue;
+        t.fired = true;
+        const char* txt = (g_lang && t.msgEn) ? t.msgEn : t.msg; // 双语：英文缺省回退中文
+        switch (t.act) {
+            case TrigAct::SpawnAt: {
+                int p = t.a[0];
+                if (p < 0 || p >= world.numPlayers) break;
+                // 在 (a1,a2) 附近按寻路域找空格刷兵；a3>=0 时攻击移动至 (a3,a4)
+                std::vector<EID> spawned;
+                for (UnitType ut : t.units) {
+                    int dom = unitDef(ut).pathDomain();
+                    int bx = -1, by = -1;
+                    for (int r = 0; r < 16 && bx < 0; r++)
+                        for (int dy = -r; dy <= r && bx < 0; dy++)
+                            for (int dx = -r; dx <= r && bx < 0; dx++) {
+                                if (std::max(std::abs(dx), std::abs(dy)) != r) continue;
+                                int nx = t.a[1] + dx, ny = t.a[2] + dy;
+                                if (world.passableFor(nx, ny, dom) && !world.bldBlocked(nx, ny)
+                                    && world.unitAtCell(nx, ny) == INVALID_EID) { bx = nx; by = ny; }
+                            }
+                    if (bx < 0) continue;
+                    spawned.push_back(world.spawnUnit(p, ut, bx + 0.5f, by + 0.5f));
+                }
+                if (!spawned.empty() && t.a[3] >= 0)
+                    world.orderMove(spawned, t.a[3] + 0.5f, t.a[4] + 0.5f, true);
+                if (txt) world.eva(0, txt);
+                break;
+            }
+            case TrigAct::Eva:
+                if (txt) world.eva(0, txt);
+                break;
+            case TrigAct::GiveMoney: {
+                int p = t.a[0];
+                if (p >= 0 && p < world.numPlayers) world.players[p].money += t.a[1];
+                if (txt) world.eva(0, txt);
+                break;
+            }
+            case TrigAct::RevealMap: {
+                int p = t.a[0];
+                if (p >= 0 && p < world.numPlayers) world.map.reveal(p, t.a[1], t.a[2], t.a[3]);
+                break;
+            }
+            case TrigAct::Win:  gameOver = true; victory = true; break;
+            case TrigAct::Lose: gameOver = true; victory = false; break;
+            case TrigAct::Objective:
+                if (txt) { objectiveText = txt; message(txt); }
+                break;
+        }
+    }
+}
+
 // ===================== 存档/读档 =====================
-// 文件格式：8 字节 Game 魔数 + Game 头（战役状态/镜头/速度/AI 状态）+ World 全量状态
+// 文件格式：8 字节 Game 魔数 + Game 头（战役状态/镜头/速度/AI 状态/触发器状态）+ World 全量状态
 bool Game::saveGameFile(const char* path) {
     MakeDirectory("saves");
     FILE* f = fopen(path, "wb");
     if (!f) return false;
-    bool ok = fwrite("RA2GAME1", 1, 8, f) == 8;
+    bool ok = fwrite("RA2GAME2", 1, 8, f) == 8;
     auto w = [&](const auto& v) { if (ok && fwrite(&v, sizeof(v), 1, f) != 1) ok = false; };
     w(campaignMission);
     uint64_t nw = (uint64_t)nextWave;
@@ -189,6 +287,16 @@ bool Game::saveGameFile(const char* path) {
         w(a.player); w(a.thinkTimer); w(a.attackWave); w(a.attackTimer); w(a.difficulty);
         w(a.hasWater); w(a.navalPlaceable); w(a.navalCheckCd); w(a.navalFail);
     }
+    // P7 触发器运行时状态（fired/armed）与 HUD 目标文本
+    uint32_t tn = (uint32_t)missionTriggers.size();
+    w(tn);
+    for (const Trigger& t : missionTriggers) {
+        uint8_t fired = t.fired ? 1 : 0, armed = t.armed ? 1 : 0;
+        w(fired); w(armed);
+    }
+    uint32_t ol = (uint32_t)objectiveText.size();
+    w(ol);
+    if (ok && ol > 0 && fwrite(objectiveText.data(), 1, ol, f) != ol) ok = false;
     if (ok) ok = world.saveGame(f);
     fclose(f);
     return ok;
@@ -199,7 +307,7 @@ bool Game::loadGameFile(const char* path) {
     if (!f) return false;
     bool ok = true;
     char magic[8];
-    ok = fread(magic, 1, 8, f) == 8 && memcmp(magic, "RA2GAME1", 8) == 0;
+    ok = fread(magic, 1, 8, f) == 8 && memcmp(magic, "RA2GAME2", 8) == 0;
     auto r = [&](auto& v) { if (ok && fread(&v, sizeof(v), 1, f) != 1) ok = false; };
     r(campaignMission);
     uint64_t nw = 0;
@@ -216,7 +324,33 @@ bool Game::loadGameFile(const char* path) {
             r(a.player); r(a.thinkTimer); r(a.attackWave); r(a.attackTimer); r(a.difficulty);
             r(a.hasWater); r(a.navalPlaceable); r(a.navalCheckCd); r(a.navalFail);
         }
-        ok = world.loadGame(f);
+    }
+    // P7 触发器状态：从任务表重建脚本，再覆盖 fired/armed
+    uint32_t tn = 0;
+    r(tn);
+    if (tn > 256) ok = false;
+    if (ok) {
+        missionTriggers.clear();
+        if (campaignMission >= 0 && campaignMission < (int)missionTable().size())
+            missionTriggers = missionTable()[campaignMission].triggers;
+        for (uint32_t i = 0; i < tn; i++) {
+            uint8_t fired = 0, armed = 0;
+            r(fired); r(armed);
+            if (ok && i < missionTriggers.size()) {
+                missionTriggers[i].fired = fired != 0;
+                missionTriggers[i].armed = armed != 0;
+            }
+        }
+        uint32_t ol = 0;
+        r(ol);
+        if (ol > 1024) ok = false;
+        if (ok && ol > 0) {
+            objectiveText.resize(ol);
+            if (fread(objectiveText.data(), 1, ol, f) != ol) ok = false;
+        } else {
+            objectiveText.clear();
+        }
+        if (ok) ok = world.loadGame(f);
     }
     fclose(f);
     if (!ok) return false;
@@ -665,7 +799,7 @@ void Game::smokeTest(int frames) {
     }
     // ---- 战役验证：任务表 + 首波增援刷出 ----
     {
-        bool tblOk = missionTable().size() == 3;
+        bool tblOk = missionTable().size() == 24;
         newCampaignGame(0);
         int before = 0;
         for (auto& e : world.ents) if (e.alive && e.player == 1 && !e.isBuilding) before++;
@@ -678,6 +812,42 @@ void Game::smokeTest(int frames) {
     }
     TraceLog(LOG_INFO, "smoke test done: %d frames, ents=%zu tick=%llu", frames, world.ents.size(),
              (unsigned long long)world.tick);
+}
+
+// 战役冒烟测试：开局跑 N 帧，输出实体/触发器/目标状态（校验手工地图加载与触发器运行）
+void Game::campaignSmokeTest(int mission, int frames) {
+    newCampaignGame(mission);
+    const MissionDef& md = missionTable()[mission];
+    TraceLog(LOG_INFO, "campaign smoke: mission=%d map=%s size=%dx%d players=%d triggers=%zu",
+             mission, md.mapFile ? md.mapFile : "(generated)", world.map.w, world.map.h,
+             world.numPlayers, missionTriggers.size());
+    // 开局实体快照
+    for (int p = 0; p < world.numPlayers; p++) {
+        int blds = 0, units = 0;
+        for (auto& e : world.ents)
+            if (e.alive && e.player == p) { if (e.isBuilding) blds++; else units++; }
+        TraceLog(LOG_INFO, "  start player %d: blds=%d units=%d money=%d", p, blds, units, world.players[p].money);
+    }
+    {
+        int neutral = 0;
+        for (auto& e : world.ents)
+            if (e.alive && e.player == -1) neutral++;
+        TraceLog(LOG_INFO, "  start neutral ents: %d", neutral);
+    }
+    for (int i = 0; i < frames && !gameOver; i++) logic();
+    int firedN = 0;
+    for (const Trigger& t : missionTriggers)
+        if (t.fired) firedN++;
+    TraceLog(LOG_INFO, "  after %d frames: tick=%llu gameOver=%d victory=%d triggersFired=%d/%zu objective='%s'",
+             frames, (unsigned long long)world.tick, (int)gameOver, (int)victory, firedN,
+             missionTriggers.size(), objectiveText.c_str());
+    for (int p = 0; p < world.numPlayers; p++) {
+        int blds = 0, units = 0;
+        for (auto& e : world.ents)
+            if (e.alive && e.player == p) { if (e.isBuilding) blds++; else units++; }
+        TraceLog(LOG_INFO, "  end player %d: blds=%d units=%d money=%d defeated=%d",
+                 p, blds, units, world.players[p].money, (int)world.players[p].defeated);
+    }
 }
 
 void Game::logic() {
@@ -720,14 +890,18 @@ void Game::logic() {
     if (!gameOver) {
         bool meDead = world.players[0].defeated;
         if (campaignMission >= 0) {
-            // 战役：先刷波次再判定
+            // 战役：先刷波次与触发器再判定
             const MissionDef& md = missionTable()[campaignMission];
             if (nextWave < md.waves.size() && world.tick >= (uint64_t)md.waves[nextWave].atTick) {
                 spawnCampaignWave();
                 nextWave++;
             }
-            if (meDead) { gameOver = true; victory = false; }
-            else if (md.objective == 1) {
+            updateTriggers(); // P7 触发器脚本（可在判定前直接 Win/Lose）
+            if (gameOver) { /* 触发器已终结本局 */ }
+            else if (meDead) { gameOver = true; victory = false; }
+            else if (md.objective == 2) {
+                // 触发器决定胜负：等待 Win/Lose 动作，无默认胜负
+            } else if (md.objective == 1) {
                 // 存活目标：坚守到指定帧数
                 if (world.tick >= (uint64_t)md.objectiveTick) { gameOver = true; victory = true; }
             } else {

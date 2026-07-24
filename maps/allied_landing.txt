@@ -1,0 +1,46 @@
+# 盟军战役第6关：诺曼底回响
+# 96x96，登陆作战：中部 26 行海峡（34-59 行），玩家0(盟军)南岸滩头，AI1(苏联)北岸岛屿
+# 苏军预置岸防与近海舰队，玩家登陆建立基地后渡海总攻
+size 96 96
+fill clear
+# 地表质感
+rect rough 20 70 12 5
+rect rough 60 84 12 5
+rect rough 60 8 12 5
+rect rough 20 12 12 5
+# 海峡
+rect water 0 34 96 26
+# 矿脉：南岸滩头 / 北岸岛屿 / 两岸彩矿
+blob ore 36 78 4
+blob ore 60 80 3
+blob gems 48 76 2
+blob ore 36 16 4
+blob ore 60 14 3
+blob gems 48 20 2
+# 植被
+deco tree1 8 66 24 22 12
+deco tree2 64 66 24 22 12
+deco tree1 8 6 24 20 10
+deco tree2 64 6 24 20 10
+# 出生点：南滩头 / 北岛
+spawn 0 48 84
+spawn 1 48 10
+# ---- 苏军岸防（北岸滩线） ----
+bld 1 SentryGun 38 31
+bld 1 SentryGun 58 31
+bld 1 TeslaCoil 48 30
+bld 1 FlakCannon 44 32
+unit 1 Conscript 42 32 guard
+unit 1 Conscript 54 32 guard
+unit 1 Rhino 52 30 guard
+# ---- 苏军近海舰队（警戒巡航） ----
+unit 1 Typhoon 40 44 guard
+unit 1 Typhoon 56 48 guard
+unit 1 SeaScorpion 48 40 guard
+# ---- 中立设施（两岸油井与民房） ----
+bld -1 OilDerrick 20 70
+bld -1 OilDerrick 76 70
+bld -1 CivHouse 24 74
+bld -1 CivHouse 72 74
+bld -1 OilDerrick 20 24
+bld -1 CivHouse 72 22

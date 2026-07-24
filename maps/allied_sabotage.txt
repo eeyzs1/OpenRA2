@@ -1,0 +1,78 @@
+# 盟军战役第5关：敌后武工队
+# 96x96，突击队关（noStartForce）：谭雅+间谍+工程师小队渗透苏军腹地，摧毁核弹发射井
+# 玩家0 小队自西南角潜入；AI1(苏联)基地盘踞东北，核弹井围墙环绕
+size 96 96
+fill clear
+# 地表质感
+rect rough 16 30 14 6
+rect rough 40 56 16 6
+rect rough 56 30 12 5
+rect rough 8 60 10 6
+# 中央小湖与西部水塘（渗透路线参照物）
+blob water 34 44 5
+blob water 14 52 3
+# 矿脉与彩矿（中立资源点）
+blob ore 22 48 4
+blob gems 58 58 3
+blob ore 46 20 3
+# 植被岩石
+deco tree1 6 20 26 22 14
+deco tree2 40 66 30 20 12
+deco tree1 50 40 18 14 8
+deco rock1 30 30 12 10 4
+deco rock2 60 66 14 10 4
+# ---- 玩家0 渗透小队（西南角） ----
+unit 0 Tanya 8 82
+unit 0 Spy 10 84
+unit 0 Engineer 8 84
+unit 0 Engineer 12 84
+unit 0 GI 6 80
+unit 0 GI 7 82
+unit 0 GI 9 80
+unit 0 GuardianGI 11 82
+# ---- 苏军基地（东北） ----
+bld 1 ConYard 72 10
+bld 1 TeslaReactor 64 10
+bld 1 TeslaReactor 64 16
+bld 1 Barracks 72 18
+bld 1 WarFactory 80 16
+bld 1 Radar 66 24
+# 核弹发射井：围墙环绕，南侧留缺口（C4 破墙或缺口突入）
+bld 1 NukeSilo 84 8
+bld 1 Wall 83 7
+bld 1 Wall 84 7
+bld 1 Wall 85 7
+bld 1 Wall 86 7
+bld 1 Wall 83 8
+bld 1 Wall 86 8
+bld 1 Wall 83 9
+bld 1 Wall 86 9
+bld 1 Wall 83 10
+bld 1 Wall 86 10
+# 基地防御
+bld 1 SentryGun 62 14
+bld 1 SentryGun 70 28
+bld 1 SentryGun 82 28
+bld 1 TeslaCoil 78 24
+bld 1 FlakCannon 68 20
+# 守军（警戒驻守）
+unit 1 Conscript 66 14 guard
+unit 1 Conscript 68 15 guard
+unit 1 Conscript 70 13 guard
+unit 1 Conscript 76 20 guard
+unit 1 Conscript 74 22 guard
+unit 1 TeslaTrooper 80 12 guard
+unit 1 TeslaTrooper 82 14 guard
+unit 1 Rhino 74 26 guard
+unit 1 Rhino 78 28 guard
+unit 1 Rhino 88 18 guard
+unit 1 AttackDog 70 18 guard
+unit 1 AttackDog 76 12 guard
+unit 1 V3Launcher 86 24 guard
+# ---- 中立设施 ----
+bld -1 OilDerrick 20 46
+bld -1 Hospital 12 26
+bld -1 CivHouse 30 62
+bld -1 CivHouse 34 62
+bld -1 CivHouse 52 40
+bld -1 SecretLab 44 70

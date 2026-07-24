@@ -5,6 +5,7 @@
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
 #include <ctime>
+#include <algorithm>
 
 void drawTextM(Font f, const char* s, int x, int y, int size, Color c) {
     DrawTextEx(f, s, {(float)x, (float)y}, (float)size, 1, c);
@@ -132,16 +133,37 @@ void Game::drawMissionSelect() {
     int cx = SCREEN_W / 2;
     Vector2 m = mousePos();
 
-    // 任务卡片（4 列网格）：名称 + 简报 + 目标
+    // 阵营页签（24 关 = 中国/盟军/苏军 各 8 关，单页 2x4 网格避免超出屏幕）
+    static int campTab = 0; // 0 中国 1 盟军 2 苏军（与任务表分段一致）
     const auto& tbl = missionTable();
+    const int perCamp = 8;
+    const Faction campFac[3] = {Faction::China, Faction::Allies, Faction::Soviet};
+    int tabW = 150, tabH = 40, tabGap = 12;
+    int tabsX = cx - (3 * tabW + 2 * tabGap) / 2, tabsY = 108;
+    for (int t = 0; t < 3; t++) {
+        Rectangle r{(float)(tabsX + t * (tabW + tabGap)), (float)tabsY, (float)tabW, (float)tabH};
+        bool sel = campTab == t;
+        bool hover = CheckCollisionPointRec(m, r);
+        DrawRectangleGradientV((int)r.x, (int)r.y, (int)r.width, (int)r.height,
+                               sel ? Color{70, 48, 30, 255} : hover ? Color{44, 36, 30, 255} : Color{26, 26, 32, 255},
+                               sel ? Color{40, 26, 18, 255} : Color{18, 18, 24, 255});
+        DrawRectangleLinesEx(r, 2, sel ? Color{255, 200, 90, 255} : Color{110, 96, 60, 255});
+        const char* fn = factName(campFac[t]);
+        drawTextM(font, fn, (int)r.x + tabW / 2 - textW(font, fn, 19) / 2, (int)r.y + 10, 19,
+                  sel ? Color{255, 220, 120, 255} : Color{190, 186, 178, 255});
+        if (hover && mPressed(MOUSE_LEFT_BUTTON)) { g_sfx.play(Sfx::Click, 0.6f); campTab = t; }
+    }
+
+    // 任务卡片（4 列网格）：名称 + 简报 + 目标
     const int cols = 4;
     int cardW = 320, cardH = 168, gapX = 24, gapY = 20;
-    int rows = ((int)tbl.size() + cols - 1) / cols;
     int totalW = cols * cardW + (cols - 1) * gapX;
-    int x0 = cx - totalW / 2, y0 = 150;
-    for (int i = 0; i < (int)tbl.size(); i++) {
+    int x0 = cx - totalW / 2, y0 = 180;
+    int begin = campTab * perCamp, end = std::min(begin + perCamp, (int)tbl.size());
+    for (int i = begin; i < end; i++) {
         const MissionDef& md = tbl[i];
-        int gx = x0 + (i % cols) * (cardW + gapX), gy = y0 + (i / cols) * (cardH + gapY);
+        int j = i - begin;
+        int gx = x0 + (j % cols) * (cardW + gapX), gy = y0 + (j / cols) * (cardH + gapY);
         Rectangle r{(float)gx, (float)gy, (float)cardW, (float)cardH};
         bool hover = CheckCollisionPointRec(m, r);
         DrawRectangleGradientV((int)r.x, (int)r.y, (int)r.width, (int)r.height,
@@ -153,8 +175,9 @@ void Game::drawMissionSelect() {
         drawTextM(font, missionName(i), rx + 14, ry + 28, 22, Color{255, 210, 100, 255});
         DrawRectangle(rx + 14, ry + 58, cardW - 28, 1, Color{90, 70, 50, 255});
         int blines = drawWrapped(font, missionBrief(i), rx + 14, ry + 66, cardW - 28, 14, Color{196, 194, 200, 255}, 3);
-        drawTextM(font, md.objective == 1 ? TextFormat(TR(S::ObjSurvive), md.objectiveTick / (30 * 60)) : TR(S::ObjEliminate),
-                  rx + 14, ry + 68 + blines * 16, 14, Color{130, 200, 140, 255});
+        const char* objText = md.objective == 1 ? TextFormat(TR(S::ObjSurvive), md.objectiveTick / (30 * 60))
+                              : md.objective == 2 ? TR(S::ObjTrigger) : TR(S::ObjEliminate);
+        drawTextM(font, objText, rx + 14, ry + 68 + blines * 16, 14, Color{130, 200, 140, 255});
         if (hover) {
             drawTextM(font, TR(S::ClickEnter), rx + 14, ry + cardH - 28, 15, Color{255, 226, 150, 255});
             if (mPressed(MOUSE_LEFT_BUTTON)) {
@@ -165,6 +188,7 @@ void Game::drawMissionSelect() {
         }
     }
 
+    int rows = 2;
     if (ra2Button(font, m, mPressed(MOUSE_LEFT_BUTTON), {(float)cx - 110, (float)(y0 + rows * (cardH + gapY) + 16), 220, 48}, TR(S::Back), 20))
         phase = Phase::MainMenu;
 }

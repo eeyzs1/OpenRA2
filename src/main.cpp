@@ -24,6 +24,13 @@ int main(int argc, char** argv) {
         game.shutdown();
         return 0;
     }
+    if (argc > 1 && strcmp(argv[1], "--smoke-campaign") == 0) {
+        int mission = argc > 2 ? atoi(argv[2]) : 0;
+        int frames = argc > 3 ? atoi(argv[3]) : 600;
+        game.campaignSmokeTest(mission, frames);
+        game.shutdown();
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "--play-test") == 0) {
         int fails = game.playTest();
         game.shutdown();
