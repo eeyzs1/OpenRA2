@@ -44,6 +44,9 @@ static WeaponDef wSquidGrab() { return WeaponDef{15, 1, 30, false, true, "shell"
 static WeaponDef wFortressGun() { return WeaponDef{20, 5, 18, false, true, "bullet", 1.0f, 0.8f, 0.6f}; } // 战斗要塞机枪
 static WeaponDef wNighthawkGun() { return WeaponDef{8, 4, 20, false, true, "bullet", 1.0f, 0.4f, 0.3f}; } // 夜鹰舱门机枪
 static WeaponDef wHornetBomb() { return WeaponDef{80, 3, 40, false, true, "shell", 0.5f, 1.0f, 1.2f, false, 0.5f}; } // 舰载机航弹
+// ---- P6：海豹/尤里/偷科技武器 ----
+static WeaponDef wSMG() { return WeaponDef{25, 4, 12, false, true, "bullet", 1.6f, 0.15f, 0.05f}; }      // 海豹冲锋枪：反步兵专精
+static WeaponDef wPsychic() { return WeaponDef{1, 7, 90, false, true, "psi", 1.0f, 1.0f, 0.0f}; }         // 心灵波：不造成伤害，命中夺取控制权（特殊处理）
 
 // ---- RA2 补全：精英武器（RA2 原作：精英军衔武器质变） ----
 static WeaponDef ewGrizzly() { return WeaponDef{45, 5, 24, false, true, "shell", 0.7f, 1.1f, 0.9f}; }
@@ -135,6 +138,15 @@ static const UnitDef g_units[(int)UnitType::COUNT] = {
     {UnitType::RobotTank,  "遥控坦克",   700, 150, 250, 10, 6, Armor::Light, MoveType::Amphibious, wTankGun(25, 5, 32), FA, BldType::Radar},
     {UnitType::BattleFortress,"战斗要塞",2000,400, 800, 14, 7, Armor::Heavy, MoveType::Vehicle, wFortressGun(), FA, BldType::BattleLab, 0, 5},
     {UnitType::Hornet,     "舰载机",     0,   0,   100, 3,  5, Armor::Light, MoveType::Air, wHornetBomb(), 0, BldType::COUNT, 1},
+    // ---- P6：海豹部队/尤里/偷科技单位 ----
+    // 海豹部队：可游泳渡水（寻路域 2），冲锋枪反步兵，近身 C4 爆破建筑/舰船
+    {UnitType::NavySEAL,   "海豹部队",   1000,200, 125, 12, 7, Armor::None, MoveType::Infantry, wSMG(), FA, BldType::AirForceCmd},
+    // 尤里：心灵控制敌方地面单位（夺取控制权；自身死亡则被控单位复原）
+    {UnitType::Yuri,       "尤里",       1200,240, 100, 14, 8, Armor::None, MoveType::Infantry, wPsychic(), FS, BldType::BattleLab},
+    // 超时空突击队：渗透盟军作战实验室解锁；传送机动 + 冲锋枪 + C4
+    {UnitType::ChronoCommando,"超时空突击队",2000,300, 150, 12, 8, Armor::None, MoveType::Infantry, wSMG(), ALLF, BldType::BattleLab},
+    // 心灵突击队：渗透苏军/中国作战实验室解锁；心灵控制 + C4
+    {UnitType::PsiCommando,"心灵突击队", 1500,280, 125, 13, 8, Armor::None, MoveType::Infantry, wPsychic(), ALLF, BldType::BattleLab},
 };
 
 // ===================== 建筑表 =====================

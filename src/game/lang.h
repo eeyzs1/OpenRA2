@@ -14,7 +14,7 @@ enum class S : int {
     // 主菜单
     GameTitle, GameSub, Skirmish, Campaign, ExitGame, MainTip,
     // 战役选择
-    MissionN, ObjSurvive, ObjEliminate, ClickEnter,
+    MissionN, ObjSurvive, ObjEliminate, ObjTrigger, ClickEnter,
     // 遭遇战设置
     ChangeMap, MapSize, SizeS, SizeM, SizeL, MapType, MapContinent, MapIslands, MapLake,
     Player, Color, Country, CommanderYou, ComputerN, Remove, AddComputer,
@@ -40,6 +40,7 @@ enum class S : int {
     SpyStealMoneyFmt, SpyMoneyVictim, SpyPowerVictim, SpyPowerOk, SpyRadarOk, SpyRadarVictim,
     SpyBarracks, SpyFactory, SpyNavy, SpyLabVictim, SpyLabOk, SpyGenericFmt,
     CrateMoney, CrateHeal, CrateVet, EvaInfNoChrono, EvaWaveIncoming,
+    SpyTechChrono, SpyTechPsi, SpySWVictim, SpySWReset, EvaMindGain, EvaMindLost,
     // 设置页
     Language, DisplaySection, WindowMode, WMFullscreen, WMWindowed, Resolution, ResDesktop,
     KeysSection, ResetKeys, PressKey, KeysTip,

@@ -52,6 +52,10 @@ static UnitType spriteAliasUnit(UnitType t) {
         case UnitType::RobotTank: return UnitType::IFV;
         case UnitType::BattleFortress: return UnitType::Apocalypse;
         case UnitType::Hornet: return UnitType::Intruder;
+        case UnitType::NavySEAL: return UnitType::Tanya;
+        case UnitType::Yuri: return UnitType::Spy;
+        case UnitType::ChronoCommando: return UnitType::Chrono;
+        case UnitType::PsiCommando: return UnitType::Desolator;
         default: return t;
     }
 }

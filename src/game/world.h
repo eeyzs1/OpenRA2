@@ -75,6 +75,7 @@ struct Player {
     int aiDifficulty = 1;    // AI 难度 0 简单 1 普通 2 困难（仅 AI 玩家）
     // ---- RA2 补全：国家/支援技能/中立科技 ----
     int secretLabUnlock = 0;   // 秘密实验室解锁的国家特色（(int)Country；0=未解锁）
+    int stolenTech = 0;        // 间谍渗透敌高科解锁的偷科技单位位掩码（bit0 超时空突击队 bit1 心灵突击队）
     int paradropCharge = 0;    // 伞兵充能（>=PARADROP_TIME 就绪；美国空指部/科技机场提供）
     bool paradropReady = false;
     bool lowPower() const { return powerSabotage > 0 || powerUsed > powerMade; }
@@ -161,6 +162,10 @@ public:
         EID parasiteHost = INVALID_EID; // 恐怖机器人：当前寄生的宿主
         bool parasiting = false;        // 恐怖机器人：已附着宿主（隐藏、持续啃噬）
         int teslaCharge = 0;            // 磁暴线圈：正在为其充电的磁暴步兵数
+        // ---- P6：心灵控制 ----
+        EID mindBy = INVALID_EID;       // 被控单位：控制者（尤里/心灵突击队）实体
+        EID mindTarget = INVALID_EID;   // 控制者：当前被控单位（同一时刻仅一个，RA2 原作）
+        int origPlayer = -1;            // 被控单位：被控制前的原属玩家（控制解除时恢复）
     };
 
     // 补给箱（RA2 随机箱子）：地面单位驶入拾取
@@ -206,7 +211,19 @@ public:
     // 建筑占格（cellIdx -> eid+1）
     std::vector<int> bldOcc;
 
-    void init(int w, int h, uint64_t seed, int numHumans, int numAI, const std::vector<Faction>& factions, int mapType = 0);
+    // mapFile 非空时加载手工地图（maps/xxx.txt：地形+预置实体+出生点），失败回退程序生成；
+    // noStartForce=true 时不刷初始基地车部队（全部由地图文件放置，仅手工地图有效）
+    void init(int w, int h, uint64_t seed, int numHumans, int numAI, const std::vector<Faction>& factions, int mapType = 0,
+              const char* mapFile = nullptr, bool noStartForce = false);
+
+    // 手工地图待放置实体（loadHandMap 解析产出，init 内统一放置）
+    struct PendingEnt {
+        bool isBld = false;
+        int player = -1;     // -1 中立
+        int typeIdx = 0;     // UnitType / BldType
+        int x = 0, y = 0;
+        bool guard = false;  // 单位警戒（AI 防守部队）
+    };
 
     // 创建
     EID spawnUnit(int player, UnitType t, float x, float y);
@@ -324,6 +341,8 @@ private:
     bool boardGoal(const Ent& t, int domain, int& gx, int& gy) const; // 登船寻路目标：运输船不可走时取附近最近可走格
     bool chronoJump(Ent& e, float gx, float gy); // 超时空传送：瞬移至目标点附近空格，按距离产生相位不适
     void placeNeutralTechs();                   // 地图生成后放置中立科技建筑（油井/医院/机械店/科技机场/秘密实验室/民房）
+    bool loadHandMap(const char* path, int numPlayers, std::vector<Vec2i>& spawns,
+                     std::vector<PendingEnt>& out); // P7 手工地图：解析地形/实体/出生点；失败返回 false
     void applySpyEffect(Ent& spy, Ent& bld, EID spyId); // 间谍渗透建筑效果
     void creditKill(EID byEnt, EID victim);     // 军衔经验：击杀计数与晋升
     void spawnCrateTick();                      // 周期性生成补给箱
@@ -333,6 +352,9 @@ private:
     void garrisonFire(Ent& b, EID id);          // 驻军轮流出击（民房/战斗碉堡/坦克碉堡）
     void applyGapShroud();                      // 裂缝产生器：敌军在黑幕半径内的迷雾降为不可见
     void updateParadrop();                      // 伞兵充能（美国空指部/科技机场）
+    // ---- P6：心灵控制 ----
+    void mindControlTake(Ent& yuri, EID yid, EID tid); // 夺取目标控制权（先释放旧目标）
+    void mindControlRelease(Ent& yuri);                // 释放当前控制（目标恢复原属）
     void applyCaptureEffect(Ent& b, int newOwner); // 工程师占领建筑的特殊效果（科技机场/秘密实验室）
     EID allocEnt();
 };

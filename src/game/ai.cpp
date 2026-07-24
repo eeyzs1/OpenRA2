@@ -242,9 +242,13 @@ void SkirmishAI::doProduction(World& w) {
                 UnitType sp = UnitType::COUNT;
                 if (roll == 0) {
                     sp = p.faction == Faction::Allies ? UnitType::Tanya
-                       : p.faction == Faction::Soviet ? UnitType::Desolator : UnitType::Desolator;
+                       : p.faction == Faction::Soviet ? UnitType::Yuri : UnitType::Desolator;
                 } else if (roll == 1 && p.faction == Faction::Allies) {
                     sp = UnitType::Spy; // 盟军间谍：渗透偷钱/断电
+                } else if (roll == 2 && p.faction == Faction::Allies) {
+                    sp = UnitType::NavySEAL; // 海豹部队：两栖 C4 突击
+                } else if (roll == 2 && p.faction != Faction::Allies) {
+                    sp = UnitType::CrazyIvan;
                 }
                 if (sp != UnitType::COUNT && w.unitPrereqMet(player, unitDef(sp))
                     && w.countUnits(player, sp) < 2)

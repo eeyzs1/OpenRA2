@@ -25,6 +25,7 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"任务 %d", "Mission %d"},
     {"目标：坚守 %d 分钟", "Objective: Hold for %d minutes"},
     {"目标：歼灭所有敌军", "Objective: Eliminate all enemies"},
+    {"目标：完成使命目标", "Objective: Complete mission objectives"},
     {"点击进入", "Click to start"},
     // 遭遇战设置
     {"更换一张", "New Map"},
@@ -159,6 +160,12 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"补给箱：单位军衔晋升", "Crate: unit promoted"},
     {"警告：步兵无法承受超时空传送", "Warning: infantry cannot survive chrono shift"},
     {"警告：敌军增援抵达战场", "Warning: enemy reinforcements have arrived"},
+    {"间谍渗透：窃取盟方高科，解锁超时空突击队", "Spy: Allied tech stolen, Chrono Commando unlocked"},
+    {"间谍渗透：窃取苏方高科，解锁心灵突击队", "Spy: Soviet tech stolen, Psi Commando unlocked"},
+    {"警告：超武被间谍渗透，充能已重置", "Warning: superweapon infiltrated, charge reset"},
+    {"间谍渗透：敌方超武充能已重置", "Spy: enemy superweapon charge reset"},
+    {"心灵控制：已夺取敌方单位", "Mind control: enemy unit captured"},
+    {"警告：我方单位被心灵控制", "Warning: our unit is mind-controlled"},
     // 设置页
     {"语言", "Language"},
     {"显示与声音", "Display & Sound"},
@@ -214,6 +221,7 @@ static const char* UNIT_EN[(int)UnitType::COUNT] = {
     "Tank Destroyer", "Terrorist", "Demolition Truck",
     "Nighthawk", "Dolphin", "Giant Squid",
     "Robot Tank", "Battle Fortress", "Hornet",
+    "Navy SEAL", "Yuri", "Chrono Commando", "Psi Commando",
 };
 
 static const char* BLD_EN[(int)BldType::COUNT] = {
@@ -257,19 +265,32 @@ const char* countryName(Country c) {
     return g_lang ? COUNTRY_EN[i] : COUNTRY_CN[i];
 }
 
-static const char* MISSION_EN[12][2] = {
+// 与 campaign.h 任务表一一对应（24 关：中国 8 + 盟军 8 + 苏军 8）
+static const char* MISSION_EN[][2] = {
     {"Border Skirmish", "Soviet forces cross the border. Build your base, repel reinforcements, and eliminate all enemies."},
     {"Coastal Defense", "An Allied fleet approaches from the sea. Build your navy and eliminate all enemies."},
     {"Shield of the Republic", "Two Soviet armies close in. Hold the town for eight minutes until reinforcements arrive."},
     {"Sword Unsheathed", "Expedition forces land on Allied-held islands. Win the seas and eliminate both Allied bases."},
+    {"Gobi Outpost", "An Allied outpost is found in the border Gobi. Capture tech structures and destroy it."},
+    {"Yangtze Rampart", "The enemy holds the far bank. Control the bridges, hold ten minutes, and destroy the invaders."},
+    {"Deep Sea Thunder", "An Allied carrier group blockades the strait. Mass the fleet and annihilate enemy ships and shore base."},
+    {"Glory of the Republic", "The final battle. Soviet and Allied remnants fight as one — strike on three fronts and liberate all."},
     {"Light of Freedom", "Russian armored division approaches. Rally the Allied remnants and destroy the invaders."},
     {"Deep Sea Hunt", "Typhoon subs blockade the strait. Break out with the fleet and destroy the Soviet coastal base."},
     {"Chrono Storm", "Soviets march on the Chrono research center. Hold for ten minutes to keep the Chronosphere safe."},
     {"Battle for Moscow", "Assault the heart of Soviet power. Crush the Kremlin guard and end the war."},
+    {"Behind Enemy Lines", "A small team infiltrates Soviet territory: Tanya, a spy and an engineer. Destroy the silo and get out."},
+    {"Normandy Echoes", "Amphibious assault: take the beachhead, build a forward base, and eliminate the defenders."},
+    {"Ark Guardian", "The Chronosphere prototype is exposed. Protect it at all costs for twelve minutes."},
+    {"Freedom's Finale", "Soviet remnants gather at their last arctic stronghold. Launch the final assault and end the war."},
     {"Steel Torrent", "Allied outposts hold the border plains. Crush their line with armored waves and eliminate them all."},
     {"Island Clash", "An Allied carrier group controls the resource islands. Win the seas and take the islands back."},
     {"Red Alert", "Allied and vassal forces surround the nuclear facility. Hold for nine minutes to save our arsenal."},
     {"Nuclear Dawn", "The final battle. Crush the Allied coalition and raise the red flag over the world."},
+    {"Ural Defense Line", "The Allied expedition drives at the Ural industry zone. Hold eleven minutes for strategic reserves."},
+    {"Black Sea Fleet", "An Allied fleet invades the Black Sea. Sortie the fleet, retake the sea, and destroy the shore bases."},
+    {"Psychic Conquest", "Yuri's psychic corps faces its combat trial. Break the Allied line with mind control and destroy them."},
+    {"World Revolution", "The last battle of the revolution. Three Allied armies fight cornered — attack on all fronts."},
 };
 
 const char* unitName(UnitType t) { return g_lang ? UNIT_EN[(int)t] : unitDef(t).name; }
@@ -277,11 +298,13 @@ const char* bldName(BldType t) { return g_lang ? BLD_EN[(int)t] : bldDef(t).name
 const char* swName(SWType t) { return g_lang ? SW_EN[(int)t] : swDef(t).name; }
 const char* factName(Faction f) { return g_lang ? FACTION_EN[(int)f] : factionName(f); }
 const char* missionName(int i) {
-    if (g_lang && i >= 0 && i < 12) return MISSION_EN[i][0];
+    int n = (int)missionTable().size();
+    if (g_lang && i >= 0 && i < n) return MISSION_EN[i][0];
     return missionTable()[i].name;
 }
 const char* missionBrief(int i) {
-    if (g_lang && i >= 0 && i < 12) return MISSION_EN[i][1];
+    int n = (int)missionTable().size();
+    if (g_lang && i >= 0 && i < n) return MISSION_EN[i][1];
     return missionTable()[i].brief;
 }
 

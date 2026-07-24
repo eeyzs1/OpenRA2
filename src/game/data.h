@@ -88,6 +88,11 @@ enum class UnitType : uint8_t {
     RobotTank,                   // 遥控坦克（盟，两栖悬浮轻坦）
     BattleFortress,              // 战斗要塞（盟，重甲运兵，载兵加成火力）
     Hornet,                      // 航母舰载机（不可生产，航母自动放飞）
+    // ---- RA2 补全 P6：心灵控制/两栖步兵/偷科技 ----
+    NavySEAL,                    // 海豹部队（盟，可游泳，C4 爆破建筑/舰船）
+    Yuri,                        // 尤里（苏，心灵控制敌方地面单位）
+    ChronoCommando,              // 超时空突击队（偷盟高科解锁：传送+C4+冲锋枪）
+    PsiCommando,                 // 心灵突击队（偷苏/中高科解锁：心灵控制+C4）
     COUNT
 };
 
@@ -184,8 +189,15 @@ struct UnitDef {
     bool isNaval() const { return move == MoveType::Naval; }
     bool isAmphib() const { return move == MoveType::Amphibious; }
     bool canHarvet() const { return type == UnitType::Harvester || type == UnitType::ChronoMiner || type == UnitType::WarMiner; }
+    // RA2 原作：海豹部队/谭雅可游泳渡水（两栖步兵，仍走兵营队列）
+    bool canSwim() const { return type == UnitType::NavySEAL || type == UnitType::Tanya; }
+    // RA2 原作：C4 爆破手（近身爆破建筑；会游泳的还可炸舰船）
+    bool hasC4() const { return type == UnitType::Tanya || type == UnitType::NavySEAL
+                          || type == UnitType::ChronoCommando || type == UnitType::PsiCommando; }
+    // RA2 原作：心灵控制者（尤里/心灵突击队）
+    bool isPsychic() const { return type == UnitType::Yuri || type == UnitType::PsiCommando; }
     // 寻路域：0 陆地 1 水面 2 两栖
-    int pathDomain() const { return isNaval() ? 1 : (isAmphib() ? 2 : 0); }
+    int pathDomain() const { return canSwim() ? 2 : (isNaval() ? 1 : (isAmphib() ? 2 : 0)); }
     // 生产队列类别：0 步兵 1 车辆 2 空军 3 海军（各自独立排队）
     int prodCat() const {
         if (isInfantry()) return 0;
@@ -254,4 +266,24 @@ inline int garrisonDomain(BldType t) {
         case BldType::TankBunker: return 2;
         default: return 0;
     }
+}
+
+// 心灵控制免疫（RA2 原作）：军犬/心灵单位/机器人（恐怖机器人/遥控坦克）/采矿车/英雄（谭雅）/战斗要塞
+inline bool psychicImmune(UnitType t) {
+    switch (t) {
+        case UnitType::AttackDog: case UnitType::Yuri: case UnitType::PsiCommando:
+        case UnitType::TerrorDrone: case UnitType::RobotTank:
+        case UnitType::Harvester: case UnitType::ChronoMiner: case UnitType::WarMiner:
+        case UnitType::Tanya: case UnitType::BattleFortress:
+            return true;
+        default: return false;
+    }
+}
+
+// 偷科技单位（渗透敌作战实验室解锁，见 Player::stolenTech）
+// bit0=超时空突击队（盟高科） bit1=心灵突击队（苏/中高科）
+inline int stolenTechBit(UnitType t) {
+    if (t == UnitType::ChronoCommando) return 1;
+    if (t == UnitType::PsiCommando) return 2;
+    return 0;
 }

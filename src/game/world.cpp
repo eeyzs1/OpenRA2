@@ -7,7 +7,8 @@
 #include <algorithm>
 
 // ===================== 初始化 =====================
-void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const std::vector<Faction>& factions, int mapType) {
+void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const std::vector<Faction>& factions, int mapType,
+                 const char* mapFile, bool noStartForce) {
     // 全局状态复位：支持局内"重新开始"不留残局
     ents.clear();
     freeList.clear();
@@ -18,10 +19,14 @@ void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const st
     tick = 0;
     rng = Rng(seed);
     numPlayers = numHumans + numAI;
+    // P7：手工地图（地形/实体/出生点来自 maps/xxx.txt）；加载失败回退程序生成
     std::vector<Vec2i> spawns;
-    map.generate(w, h, seed, numPlayers, spawns, mapType);
+    std::vector<PendingEnt> pend;
+    bool hand = mapFile && loadHandMap(mapFile, numPlayers, spawns, pend);
+    if (mapFile && !hand) TraceLog(LOG_WARNING, "RA2 hand map failed, fallback to generate: %s", mapFile);
+    if (!hand) map.generate(w, h, seed, numPlayers, spawns, mapType);
     map.initFog(numPlayers);
-    bldOcc.assign((size_t)w * h, -1);
+    bldOcc.assign((size_t)map.w * map.h, -1);
     map.bldOccRef = &bldOcc; // 寻路避开建筑占用
     players.assign(numPlayers, Player{});
 
@@ -33,6 +38,7 @@ void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const st
         p.colorId = i;
         p.money = 10000;
         p.name = p.isAI ? ("AI-" + std::to_string(i)) : (g_lang ? "Commander" : "指挥官");
+        if (hand && noStartForce) continue; // 手工突击队地图：开局部队全部由地图文件放置
         // 出生点：一辆基地车 + 护卫
         Vec2i sp = spawns[i];
         EID mcv = spawnUnit(i, UnitType::MCV, (float)sp.x + 0.5f, (float)sp.y + 0.5f);
@@ -48,7 +54,215 @@ void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const st
         spawnUnit(i, infT, sp.x - 0.5f, sp.y + 3.5f);
         map.reveal(i, sp.x, sp.y, 10);
     }
-    placeNeutralTechs();
+    if (hand) {
+        // 地图文件预置实体（建筑/单位；精炼厂附赠矿车与生产放置一致，保障 AI 经济启动）
+        for (const PendingEnt& pe : pend) {
+            if (pe.isBld) {
+                BldType bt = (BldType)pe.typeIdx;
+                spawnBuilding(pe.player, bt, pe.x, pe.y, true);
+                if (bt == BldType::OreRefinery && pe.player >= 0) {
+                    const BldDef& d = bldDef(bt);
+                    for (int r = 1; r < 6; r++) {
+                        int sx = pe.x + d.w / 2, sy = pe.y + d.h + r - 1;
+                        if (map.passable(sx, sy) && !bldBlocked(sx, sy) && unitAtCell(sx, sy) == INVALID_EID) {
+                            spawnUnit(pe.player, harvesterType(players[pe.player].faction), sx + 0.5f, sy + 0.5f);
+                            break;
+                        }
+                    }
+                }
+            } else {
+                EID uid = spawnUnit(pe.player, (UnitType)pe.typeIdx, pe.x + 0.5f, pe.y + 0.5f);
+                if (pe.guard && valid(uid) && unitDef(ents[uid].utype).weapon.damage > 0)
+                    ents[uid].guard = true;
+            }
+        }
+        // 开局视野：每个玩家以其首个实体为中心揭示（无基地车部队的突击队关卡）
+        for (int i = 0; i < numPlayers; i++)
+            for (auto& e : ents)
+                if (e.alive && e.player == i) { map.reveal(i, (int)e.x, (int)e.y, 10); break; }
+    } else {
+        placeNeutralTechs();
+    }
+}
+
+// ===================== P7：手工地图加载 =====================
+// 文本格式（# 后为注释，指令按序执行）：
+//   size <w> <h>                    尺寸（须为首个指令）
+//   fill <terrain>                  全图填充
+//   rect <terrain> <x> <y> <w> <h>  矩形填充
+//   blob <terrain> <cx> <cy> <r>    圆形填充（矿脉/湖泊）
+//   deco <overlay> <x> <y> <w> <h> <n>  矩形内确定性撒布 n 个装饰（树/岩石）
+//   spawn <player> <x> <y>          覆盖默认出生点（四角/边中）
+//   unit <player> <type> <x> <y> [guard]  预置单位（-1 中立；guard 警戒驻守）
+//   bld  <player> <type> <x> <y>    预置建筑（-1 中立科技建筑）
+// terrain: clear rough water ore gems bridge    overlay: tree1 tree2 tree3 rock1 rock2
+namespace hm {
+const std::pair<const char*, Terrain> kTerr[] = {
+    {"clear", Terrain::Clear}, {"rough", Terrain::Rough}, {"water", Terrain::Water},
+    {"ore", Terrain::Ore}, {"gems", Terrain::Gems}, {"bridge", Terrain::Bridge},
+};
+const std::pair<const char*, Overlay> kOver[] = {
+    {"tree1", Overlay::Tree1}, {"tree2", Overlay::Tree2}, {"tree3", Overlay::Tree3},
+    {"rock1", Overlay::Rock1}, {"rock2", Overlay::Rock2},
+};
+const std::pair<const char*, UnitType> kUnit[] = {
+    {"MCV", UnitType::MCV}, {"Harvester", UnitType::Harvester},
+    {"GI", UnitType::GI}, {"Conscript", UnitType::Conscript}, {"PLA", UnitType::PLA},
+    {"Engineer", UnitType::Engineer}, {"AttackDog", UnitType::AttackDog}, {"Spy", UnitType::Spy},
+    {"FlakTrooper", UnitType::FlakTrooper}, {"TeslaTrooper", UnitType::TeslaTrooper},
+    {"Sniper", UnitType::Sniper}, {"Tanya", UnitType::Tanya}, {"Desolator", UnitType::Desolator},
+    {"Chrono", UnitType::Chrono}, {"GuardianGI", UnitType::GuardianGI}, {"CrazyIvan", UnitType::CrazyIvan},
+    {"Grizzly", UnitType::Grizzly}, {"Rhino", UnitType::Rhino}, {"Type99", UnitType::Type99},
+    {"FlakTrack", UnitType::FlakTrack}, {"IFV", UnitType::IFV},
+    {"PrismTank", UnitType::PrismTank}, {"TeslaTank", UnitType::TeslaTank}, {"MirageTank", UnitType::MirageTank},
+    {"V3Launcher", UnitType::V3Launcher}, {"Apocalypse", UnitType::Apocalypse}, {"TerrorDrone", UnitType::TerrorDrone},
+    {"Intruder", UnitType::Intruder}, {"MiG", UnitType::MiG}, {"BlackEagle", UnitType::BlackEagle},
+    {"Kirov", UnitType::Kirov}, {"Rocketeer", UnitType::Rocketeer},
+    {"Destroyer", UnitType::Destroyer}, {"Typhoon", UnitType::Typhoon}, {"Aegis", UnitType::Aegis},
+    {"SeaScorpion", UnitType::SeaScorpion}, {"Dreadnought", UnitType::Dreadnought},
+    {"AircraftCarrier", UnitType::AircraftCarrier}, {"AmphTransport", UnitType::AmphTransport},
+    {"ChronoMiner", UnitType::ChronoMiner}, {"WarMiner", UnitType::WarMiner},
+    {"TankDestroyer", UnitType::TankDestroyer}, {"Terrorist", UnitType::Terrorist}, {"DemoTruck", UnitType::DemoTruck},
+    {"Nighthawk", UnitType::Nighthawk}, {"Dolphin", UnitType::Dolphin}, {"Squid", UnitType::Squid},
+    {"RobotTank", UnitType::RobotTank}, {"BattleFortress", UnitType::BattleFortress}, {"Hornet", UnitType::Hornet},
+    {"NavySEAL", UnitType::NavySEAL}, {"Yuri", UnitType::Yuri},
+    {"ChronoCommando", UnitType::ChronoCommando}, {"PsiCommando", UnitType::PsiCommando},
+};
+const std::pair<const char*, BldType> kBld[] = {
+    {"ConYard", BldType::ConYard}, {"PowerPlant", BldType::PowerPlant}, {"TeslaReactor", BldType::TeslaReactor},
+    {"NuclearReactor", BldType::NuclearReactor}, {"Barracks", BldType::Barracks}, {"WarFactory", BldType::WarFactory},
+    {"OreRefinery", BldType::OreRefinery}, {"Radar", BldType::Radar}, {"BattleLab", BldType::BattleLab},
+    {"AirForceCmd", BldType::AirForceCmd}, {"NavalYard", BldType::NavalYard},
+    {"Pillbox", BldType::Pillbox}, {"SentryGun", BldType::SentryGun}, {"PrismTower", BldType::PrismTower},
+    {"TeslaCoil", BldType::TeslaCoil}, {"FlakCannon", BldType::FlakCannon}, {"GrandCannon", BldType::GrandCannon},
+    {"PatriotMissile", BldType::PatriotMissile}, {"Wall", BldType::Wall},
+    {"OrePurifier", BldType::OrePurifier}, {"IndustrialPlant", BldType::IndustrialPlant},
+    {"NukeSilo", BldType::NukeSilo}, {"WeatherDevice", BldType::WeatherDevice}, {"IronCurtain", BldType::IronCurtain},
+    {"ChronoSphere", BldType::ChronoSphere},
+    {"OilDerrick", BldType::OilDerrick}, {"Hospital", BldType::Hospital}, {"MachineShop", BldType::MachineShop},
+    {"CloningVat", BldType::CloningVat}, {"ServiceDepot", BldType::ServiceDepot}, {"GapGenerator", BldType::GapGenerator},
+    {"SpySat", BldType::SpySat}, {"PsychicSensor", BldType::PsychicSensor},
+    {"BattleBunker", BldType::BattleBunker}, {"TankBunker", BldType::TankBunker},
+    {"TechAirport", BldType::TechAirport}, {"SecretLab", BldType::SecretLab}, {"CivHouse", BldType::CivHouse},
+};
+template <typename T, size_t N>
+bool lookup(const std::pair<const char*, T>(&tbl)[N], const char* name, T& out) {
+    for (const auto& p : tbl)
+        if (strcmp(p.first, name) == 0) { out = p.second; return true; }
+    return false;
+}
+// 确定性散列（地图撒布/贴图变体：与种子无关，保证手工地图可复现）
+uint64_t hash3(uint64_t a, uint64_t b, uint64_t c) {
+    uint64_t x = a * 0x8C8674F5C7A5A5B5ull ^ b * 0xC2B2AE3D27D4EB4Full ^ c * 0x9E3779B97F4A7C15ull;
+    x ^= x >> 29; x *= 0x9E3779B97F4A7C15ull; x ^= x >> 32;
+    return x;
+}
+} // namespace hm
+
+bool World::loadHandMap(const char* path, int numPlayers, std::vector<Vec2i>& spawns, std::vector<PendingEnt>& out) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+    bool ok = true, sized = false;
+    char line[256];
+    int lineNo = 0;
+    auto bad = [&](const char* what) {
+        TraceLog(LOG_WARNING, "RA2 hand map %s:%d bad %s: %s", path, lineNo, what, line);
+        ok = false;
+    };
+    auto setTerr = [&](int x, int y, Terrain t) {
+        if (!map.inBounds(x, y)) return;
+        Cell& c = map.at(x, y);
+        c.terrain = t;
+        if (t == Terrain::Ore) c.ore = c.oreMax = 300;
+        else if (t == Terrain::Gems) c.ore = c.oreMax = 150;
+        else c.ore = c.oreMax = 0;
+    };
+    while (ok && fgets(line, sizeof(line), f)) {
+        lineNo++;
+        char* hash = strchr(line, '#');
+        if (hash) *hash = 0;
+        char kw[32];
+        if (sscanf(line, "%31s", kw) != 1) continue;
+        if (!strcmp(kw, "size")) {
+            int W = 0, H = 0;
+            if (sized || sscanf(line, "%*s %d %d", &W, &H) != 2 || W < 32 || H < 32 || W > 256 || H > 256) { bad("size"); break; }
+            map.w = W; map.h = H;
+            map.cells.assign((size_t)W * H, Cell{});
+            sized = true;
+            // 默认出生点：与 Map::generate 相同的四角 + 边中分布
+            spawns.clear();
+            int m = 10;
+            const Vec2i corners[] = {
+                {m, m}, {W - m - 1, H - m - 1}, {W - m - 1, m}, {m, H - m - 1},
+                {W / 2, m}, {W / 2, H - m - 1}, {m, H / 2}, {W - m - 1, H / 2},
+            };
+            for (int i = 0; i < numPlayers && i < 8; i++) spawns.push_back(corners[i]);
+        } else if (!sized) {
+            bad("directive before size");
+            break;
+        } else if (!strcmp(kw, "fill")) {
+            char tn[32];
+            Terrain t;
+            if (sscanf(line, "%*s %31s", tn) != 1 || !hm::lookup(hm::kTerr, tn, t)) { bad("fill"); break; }
+            for (int y = 0; y < map.h; y++)
+                for (int x = 0; x < map.w; x++) setTerr(x, y, t);
+        } else if (!strcmp(kw, "rect")) {
+            char tn[32]; int x, y, rw, rh; Terrain t;
+            if (sscanf(line, "%*s %31s %d %d %d %d", tn, &x, &y, &rw, &rh) != 5 || !hm::lookup(hm::kTerr, tn, t)) { bad("rect"); break; }
+            for (int dy = 0; dy < rh; dy++)
+                for (int dx = 0; dx < rw; dx++) setTerr(x + dx, y + dy, t);
+        } else if (!strcmp(kw, "blob")) {
+            char tn[32]; int cx, cy, r; Terrain t;
+            if (sscanf(line, "%*s %31s %d %d %d", tn, &cx, &cy, &r) != 4 || !hm::lookup(hm::kTerr, tn, t)) { bad("blob"); break; }
+            for (int dy = -r; dy <= r; dy++)
+                for (int dx = -r; dx <= r; dx++)
+                    if (dx * dx + dy * dy <= r * r) setTerr(cx + dx, cy + dy, t);
+        } else if (!strcmp(kw, "deco")) {
+            char tn[32]; int x, y, rw, rh, n; Overlay ov;
+            if (sscanf(line, "%*s %31s %d %d %d %d %d", tn, &x, &y, &rw, &rh, &n) != 6 || !hm::lookup(hm::kOver, tn, ov)
+                || rw <= 0 || rh <= 0 || n < 0) { bad("deco"); break; }
+            for (int i = 0, placed = 0; i < n * 8 && placed < n; i++) {
+                int px = x + (int)(hm::hash3((uint64_t)x, (uint64_t)y, (uint64_t)i * 2) % (uint64_t)rw);
+                int py = y + (int)(hm::hash3((uint64_t)x, (uint64_t)y, (uint64_t)i * 2 + 1) % (uint64_t)rh);
+                if (!map.inBounds(px, py)) continue;
+                Cell& c = map.at(px, py);
+                if (c.overlay != Overlay::None) continue;
+                if (c.terrain != Terrain::Clear && c.terrain != Terrain::Rough) continue;
+                c.overlay = ov;
+                placed++;
+            }
+        } else if (!strcmp(kw, "spawn")) {
+            int p, x, y;
+            if (sscanf(line, "%*s %d %d %d", &p, &x, &y) != 3 || p < 0 || p >= numPlayers) { bad("spawn"); break; }
+            spawns[p] = {x, y};
+        } else if (!strcmp(kw, "unit")) {
+            int p, x, y; char tn[32], extra[32] = "";
+            UnitType ut;
+            int got = sscanf(line, "%*s %d %31s %d %d %31s", &p, tn, &x, &y, extra);
+            if (got < 4 || !hm::lookup(hm::kUnit, tn, ut) || p >= numPlayers) { bad("unit"); break; }
+            PendingEnt pe;
+            pe.isBld = false; pe.player = p; pe.typeIdx = (int)ut; pe.x = x; pe.y = y;
+            pe.guard = got >= 5 && !strcmp(extra, "guard");
+            out.push_back(pe);
+        } else if (!strcmp(kw, "bld")) {
+            int p, x, y; char tn[32];
+            BldType bt;
+            if (sscanf(line, "%*s %d %31s %d %d", &p, tn, &x, &y) != 4 || !hm::lookup(hm::kBld, tn, bt) || p >= numPlayers) { bad("bld"); break; }
+            PendingEnt pe;
+            pe.isBld = true; pe.player = p; pe.typeIdx = (int)bt; pe.x = x; pe.y = y;
+            out.push_back(pe);
+        } else {
+            bad("unknown directive");
+            break;
+        }
+    }
+    fclose(f);
+    if (!ok || !sized || (int)spawns.size() < numPlayers) return false;
+    // 贴图变体：确定性散列（与 generate 的 rng.range(0,3) 同范围）
+    for (int y = 0; y < map.h; y++)
+        for (int x = 0; x < map.w; x++)
+            map.at(x, y).variant = (uint8_t)(hm::hash3((uint64_t)x, (uint64_t)y, 7) & 3);
+    return true;
 }
 
 // 中立科技建筑：随机撒布油井/医院/机械店/科技机场/秘密实验室/民房（player=-1，工程师占领后生效）
@@ -195,6 +409,11 @@ void World::kill(EID id) {
         }
         // 恐怖机器人被消灭（维修厂摘除）：解除宿主寄生标记
         if (e.parasiting && valid(e.parasiteHost)) ents[e.parasiteHost].parasite = INVALID_EID;
+        // 心灵控制：被控单位阵亡 → 解除控制者链接（RA2 原作）
+        if (e.mindBy != INVALID_EID && valid(e.mindBy) && ents[e.mindBy].mindTarget == id)
+            ents[e.mindBy].mindTarget = INVALID_EID;
+        // 控制者阵亡 → 被控单位恢复原属（RA2 原作）
+        if (e.mindTarget != INVALID_EID) mindControlRelease(e);
     }
     checkDefeat();
 }
@@ -253,6 +472,9 @@ bool World::unitPrereqMet(int player, const UnitDef& u) const {
     // 国家限制（RA2 原作：如狙击手仅英国、磁能坦克仅苏俄）；秘密实验室解锁亦放行
     if (u.countryReq != Country::None && players[player].country != u.countryReq
         && players[player].secretLabUnlock != (int)u.countryReq) return false;
+    // 偷科技单位（RA2 原作：间谍渗透敌作战实验室后解锁，见 applySpyEffect）
+    int stBit = stolenTechBit(u.type);
+    if (stBit && !(players[player].stolenTech & stBit)) return false;
     return u.prereq == BldType::COUNT || hasBld(player, u.prereq);
 }
 
@@ -279,7 +501,12 @@ EID World::findNearestEnemy(int player, float x, float y, float maxR, bool inclu
                 float sd = distf(x, y, e.x, e.y);
                 if (!(isDetector(seeker) && sd <= 7.0f) && sd > 2.5f) continue;
             }
+            // 心灵控制者索敌：跳过免疫目标与已被控制单位（RA2 原作）
+            if ((seeker == UnitType::Yuri || seeker == UnitType::PsiCommando)
+                && (psychicImmune(e.utype) || e.mindBy != INVALID_EID)) continue;
         }
+        // 尤里无法控制建筑（心灵突击队有 C4 可炸建筑，不在此过滤）
+        if (e.isBuilding && seeker == UnitType::Yuri) continue;
         // 武器射界过滤：空中目标需 antiAir，地面目标需 antiGround
         if (w) {
             bool airT = !e.isBuilding && unitDef(e.utype).isAir() && e.state != UState::Landed;
@@ -1322,6 +1549,9 @@ void World::updateUnit(Ent& e, EID id) {
     const UnitDef& ud = unitDef(e.utype);
     if (e.atkCd > 0) e.atkCd--;
     if (e.invuln > 0) e.invuln--;
+    // 心灵控制链接维护：被控单位消失（运输装载/进驻等消耗路径）则清空控制者链接
+    if (e.mindTarget != INVALID_EID && !valid(e.mindTarget)) e.mindTarget = INVALID_EID;
+    if (e.mindBy != INVALID_EID && !valid(e.mindBy)) { e.player = e.origPlayer; e.mindBy = INVALID_EID; e.origPlayer = -1; }
     if (ud.isAir()) { updateAircraft(e, id); return; }
     // 超时空传送后相位不适：完全冻结
     if (e.tpSick > 0) { e.tpSick--; return; }
@@ -1549,14 +1779,16 @@ void World::updateUnit(Ent& e, EID id) {
             float tx = t.x, ty = t.y;
             if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
             float d = distf(e.x, e.y, tx, ty);
-            if (d <= ew.range) {
+            // C4 爆破手攻击建筑需贴脸（2.5 格），而非武器射程
+            float effR = (ud.hasC4() && t.isBuilding) ? 2.5f : (float)ew.range;
+            if (d <= effR) {
                 e.path.clear();
                 e.state = UState::Attacking;
             } else {
-                // 超时空军团兵追击：直接传送至目标射程边缘
-                if (e.utype == UnitType::Chrono) {
-                    float nx = tx - (tx - e.x) / d * (ud.weapon.range * 0.8f);
-                    float ny = ty - (ty - e.y) / d * (ud.weapon.range * 0.8f);
+                // 超时空军团兵/超时空突击队追击：直接传送至目标射程边缘
+                if (e.utype == UnitType::Chrono || e.utype == UnitType::ChronoCommando) {
+                    float nx = tx - (tx - e.x) / d * (effR * 0.8f);
+                    float ny = ty - (ty - e.y) / d * (effR * 0.8f);
                     chronoJump(e, nx, ny);
                     break;
                 }
@@ -1579,6 +1811,10 @@ void World::updateUnit(Ent& e, EID id) {
             if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
             float d = distf(e.x, e.y, tx, ty);
             if (d > ew.range + 1) { e.state = UState::Chasing; break; }
+            // C4 爆破手：建筑目标超出贴脸距离 → 重新贴近
+            if (ud.hasC4() && t.isBuilding && d > 2.5f) { e.state = UState::Chasing; break; }
+            // 尤里无法控制建筑：放弃目标
+            if (e.utype == UnitType::Yuri && t.isBuilding) { e.target = INVALID_EID; e.state = UState::Idle; break; }
             // 航空母舰：放飞舰载机空袭（RA2 原作：大黄蜂起飞→投弹→返航整备）
             if (e.utype == UnitType::AircraftCarrier) {
                 if (e.atkCd <= 0 && !e.cargo.empty()) {
@@ -1630,18 +1866,36 @@ void World::updateUnit(Ent& e, EID id) {
                     break;
                 }
             }
-            // 谭雅：近身建筑安放 C4（RA2 原作：一发入魂直接爆破）
-            if (e.utype == UnitType::Tanya && t.isBuilding && d <= 2.5f && e.atkCd <= 0) {
-                TimedBomb b;
-                b.x = tx; b.y = ty; b.timer = 45; b.player = e.player;
-                b.attachedTo = e.target; b.dmg = 6000; b.radius = 0.6f;
-                timedBombs.push_back(b);
-                Effect mz; mz.kind = 5; mz.x = tx; mz.y = ty; mz.maxAge = 6;
-                effects.push_back(mz);
-                g_sfx.playAt(Sfx::Click, tx, ty);
-                e.atkCd = 60; // 撤离间隙
+            // 尤里/心灵突击队：心灵控制地面单位（RA2 原作：夺取敌方单位控制权，同一时刻仅一个）
+            if (ud.isPsychic() && !t.isBuilding) {
+                if (psychicImmune(t.utype) || t.mindBy != INVALID_EID) {
+                    // 免疫/已被控制：放弃该目标，避免无效贴身
+                    e.target = INVALID_EID; e.state = UState::Idle;
+                    break;
+                }
+                if (e.atkCd <= 0) {
+                    mindControlTake(e, id, e.target);
+                    e.atkCd = ew.cooldown;
+                }
                 break;
             }
+            // C4 爆破手（谭雅/海豹/超时空突击队/心灵突击队）：近身建筑安放 C4；会游泳的还可炸舰船
+            if (ud.hasC4() && e.atkCd <= 0) {
+                bool navalTgt = !t.isBuilding && (unitDef(t.utype).isNaval() || unitDef(t.utype).isAmphib());
+                if ((t.isBuilding || (navalTgt && ud.canSwim())) && d <= 2.5f) {
+                    TimedBomb b;
+                    b.x = tx; b.y = ty; b.timer = 45; b.player = e.player;
+                    b.attachedTo = e.target; b.dmg = 6000; b.radius = 0.6f;
+                    timedBombs.push_back(b);
+                    Effect mz; mz.kind = 5; mz.x = tx; mz.y = ty; mz.maxAge = 6;
+                    effects.push_back(mz);
+                    g_sfx.playAt(Sfx::Click, tx, ty);
+                    e.atkCd = 60; // 撤离间隙
+                    break;
+                }
+            }
+            // C4 爆破手不对建筑开枪：等待下次爆破冷却（RA2 原作：谭雅/海豹对建筑仅用 C4）
+            if (ud.hasC4() && t.isBuilding) break;
             // 面向目标
             int wantDir = dirFromVec(tx - e.x, ty - e.y);
             e.turretDir = wantDir;
@@ -2196,6 +2450,8 @@ void World::fireWeapon(Ent& e, EID id, EID targetId) {
         g_sfx.playAt(Sfx::Click, tx, ty);
         return;
     }
+    // 心灵波：控制效果在攻击状态机（mindControlTake）结算；对无效目标（建筑等）不发弹
+    if (!e.isBuilding && unitDef(e.utype).isPsychic()) return;
     // 台风潜艇开火后暴露 3 秒（可被反潜单位索敌）
     if (!e.isBuilding && e.utype == UnitType::Typhoon) e.subReveal = 90;
     const char* ps = w.projSprite;
@@ -2595,7 +2851,7 @@ void deserProd(Ser& s, ProdItem& p) {
 
 bool World::saveGame(FILE* f) const {
     Ser s{f};
-    s.wbuf("RA2WRLD3", 8);
+    s.wbuf("RA2WRLD4", 8);
     s.w(tick); s.w(numPlayers); s.w(rng.s);
     s.w(cratesEnabled); s.w(aiAlliance);
     // 地图（含矿石余量与迷雾）
@@ -2627,6 +2883,7 @@ bool World::saveGame(FILE* f) const {
         s.w(pb);
         s.w(p.powerSabotage); s.w(p.revealTimer);
         for (int c = 0; c < PROD_CAT_N; c++) s.w(p.vetCat[c]);
+        s.w(p.stolenTech);
         s.w(p.aiDifficulty);
         for (int i = 0; i < (int)SWType::COUNT; i++) s.w(p.swCharge[i]);
         for (int i = 0; i < (int)SWType::COUNT; i++) s.w(p.swReady[i]);
@@ -2663,6 +2920,8 @@ bool World::saveGame(FILE* f) const {
             s.w(gn);
             for (UnitType t : e.garrison) { uint8_t gt = (uint8_t)t; s.w(gt); }
             s.w(e.parasite); s.w(e.parasiteHost); s.w(e.parasiting); s.w(e.teslaCharge);
+            // P6 心灵控制
+            s.w(e.mindBy); s.w(e.mindTarget); s.w(e.origPlayer);
         }
         uint32_t fn = (uint32_t)freeList.size();
         s.w(fn);
@@ -2716,7 +2975,7 @@ bool World::loadGame(FILE* f) {
     Ser s{f};
     char magic[8];
     s.rbuf(magic, 8);
-    if (!s.ok || memcmp(magic, "RA2WRLD3", 8) != 0) return false;
+    if (!s.ok || memcmp(magic, "RA2WRLD4", 8) != 0) return false;
     s.r(tick); s.r(numPlayers); s.r(rng.s);
     s.r(cratesEnabled); s.r(aiAlliance);
     // 地图
@@ -2757,6 +3016,7 @@ bool World::loadGame(FILE* f) {
         s.r(pb); p.placingBld = (BldType)pb;
         s.r(p.powerSabotage); s.r(p.revealTimer);
         for (int c = 0; c < PROD_CAT_N; c++) s.r(p.vetCat[c]);
+        s.r(p.stolenTech);
         s.r(p.aiDifficulty);
         for (int i = 0; i < (int)SWType::COUNT; i++) s.r(p.swCharge[i]);
         for (int i = 0; i < (int)SWType::COUNT; i++) s.r(p.swReady[i]);
@@ -2803,6 +3063,8 @@ bool World::loadGame(FILE* f) {
             e.garrison.resize(gn);
             for (UnitType& t : e.garrison) { uint8_t gt = 0; s.r(gt); t = (UnitType)gt; }
             s.r(e.parasite); s.r(e.parasiteHost); s.r(e.parasiting); s.r(e.teslaCharge);
+            // P6 心灵控制
+            s.r(e.mindBy); s.r(e.mindTarget); s.r(e.origPlayer);
         }
         uint32_t fn = 0;
         s.r(fn);
@@ -2872,6 +3134,41 @@ bool World::loadGame(FILE* f) {
     return true;
 }
 
+// ===================== 心灵控制（P6，RA2 原作：尤里/心灵突击队） =====================
+void World::mindControlRelease(Ent& yuri) {
+    if (yuri.mindTarget == INVALID_EID) return;
+    if (valid(yuri.mindTarget)) {
+        Ent& t = ents[yuri.mindTarget];
+        if (t.mindBy != INVALID_EID) {
+            t.player = t.origPlayer;      // 恢复原属（RA2 原作：控制者死亡则解放）
+            t.mindBy = INVALID_EID;
+            t.origPlayer = -1;
+            t.state = UState::Idle; t.target = INVALID_EID; t.path.clear();
+        }
+    }
+    yuri.mindTarget = INVALID_EID;
+}
+
+void World::mindControlTake(Ent& yuri, EID yid, EID tid) {
+    if (!valid(tid)) return;
+    Ent& t = ents[tid];
+    if (t.isBuilding || psychicImmune(t.utype) || t.mindBy != INVALID_EID) return;
+    if (t.player < 0 || !isEnemy(yuri.player, t.player)) return;
+    mindControlRelease(yuri); // RA2 原作：同一时刻仅控制一个单位，控制新目标即释放旧目标
+    Ent& tt = ents[tid];      // release 不会触发实体扩容，但保险起见重新取引用
+    tt.origPlayer = tt.player;
+    tt.player = yuri.player;
+    tt.mindBy = yid;
+    yuri.mindTarget = tid;
+    tt.state = UState::Idle; tt.target = INVALID_EID; tt.path.clear();
+    // 心灵波特效（控制者→目标）
+    Effect fx; fx.kind = 2; fx.x = yuri.x; fx.y = yuri.y; fx.x2 = tt.x; fx.y2 = tt.y; fx.maxAge = 12;
+    effects.push_back(fx);
+    g_sfx.playAt(Sfx::Tesla, tt.x, tt.y);
+    if (yuri.player == 0) eva(0, TR(S::EvaMindGain));
+    if (tt.origPlayer == 0) eva(0, TR(S::EvaMindLost));
+}
+
 // ===================== 间谍渗透 =====================
 // RA2 原作效果：精炼厂=偷钱，电厂=断电，雷达=获取视野，兵营/工厂=新单位直接老兵，高科=破坏超武
 void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
@@ -2898,7 +3195,12 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
         case BldType::Radar: {
             sp.revealTimer = 30 * 60; // 全图视野 60 秒
             eva(spy.player, TR(S::SpyRadarOk));
-            if (victim >= 0) eva(victim, TR(S::SpyRadarVictim));
+            if (victim >= 0) {
+                // RA2 原作：雷达被渗透 → 受害方战争迷雾重置（已探索区域重新遮蔽）
+                for (auto& c : map.fog[victim])
+                    if (c == FOG_SEEN) c = FOG_UNSEEN;
+                eva(victim, TR(S::SpyRadarVictim));
+            }
             break;
         }
         case BldType::Barracks:
@@ -2914,15 +3216,29 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
             eva(spy.player, TR(S::SpyNavy));
             break;
         case BldType::BattleLab: {
-            // 渗透高科：窃取 $1500 并重置对方超武充能
+            // 渗透高科：窃取 $1500 + RA2 原作偷科技 —— 盟高科→超时空突击队，苏/中高科→心灵突击队
             if (victim >= 0) {
                 int steal = std::min(1500, players[victim].money);
                 players[victim].money -= steal;
                 sp.money += steal;
-                for (int i = 0; i < (int)SWType::COUNT; i++) { players[victim].swCharge[i] = 0; players[victim].swReady[i] = false; }
+                int bit = (players[victim].faction == Faction::Allies) ? 1 : 2;
+                if (!(sp.stolenTech & bit)) {
+                    sp.stolenTech |= bit;
+                    eva(spy.player, TR(bit == 1 ? S::SpyTechChrono : S::SpyTechPsi));
+                }
                 eva(victim, TR(S::SpyLabVictim));
             }
             eva(spy.player, TR(S::SpyLabOk));
+            break;
+        }
+        // RA2 原作：渗透超武建筑 → 重置其充能倒计时
+        case BldType::NukeSilo: case BldType::WeatherDevice:
+        case BldType::IronCurtain: case BldType::ChronoSphere: {
+            if (victim >= 0) {
+                for (int i = 0; i < (int)SWType::COUNT; i++) { players[victim].swCharge[i] = 0; players[victim].swReady[i] = false; }
+                eva(victim, TR(S::SpySWVictim));
+            }
+            eva(spy.player, TR(S::SpySWReset));
             break;
         }
         default:
