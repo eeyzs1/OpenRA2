@@ -38,6 +38,7 @@ std::vector<BldType> Game::tabBuildings() const {
             BldType::PowerPlant, BldType::TeslaReactor, BldType::OreRefinery, BldType::Barracks,
             BldType::WarFactory, BldType::Radar, BldType::AirForceCmd, BldType::NavalYard, BldType::BattleLab,
             BldType::NuclearReactor, BldType::OrePurifier, BldType::IndustrialPlant,
+            BldType::CloningVat, BldType::ServiceDepot, BldType::GapGenerator, BldType::SpySat, BldType::PsychicSensor,
             BldType::NukeSilo, BldType::WeatherDevice, BldType::IronCurtain, BldType::ChronoSphere,
         };
         for (BldType t : mainB)
@@ -47,7 +48,7 @@ std::vector<BldType> Game::tabBuildings() const {
         static const BldType defB[] = {
             BldType::Pillbox, BldType::SentryGun, BldType::FlakCannon,
             BldType::PrismTower, BldType::TeslaCoil, BldType::GrandCannon,
-            BldType::PatriotMissile, BldType::Wall,
+            BldType::PatriotMissile, BldType::Wall, BldType::BattleBunker, BldType::TankBunker,
         };
         for (BldType t : defB)
             if (bldDef(t).factionMask & (1 << (int)f)) v.push_back(t);
@@ -133,8 +134,36 @@ void Game::drawHUD() {
             // 点击：就绪 → 进入目标选择
             if (ready && CheckCollisionPointRec(mousePos(), r) && mPressed(MOUSE_LEFT_BUTTON)) {
                 targetingSW = targeting ? SWType::COUNT : t;
+                targetingParadrop = false;
                 g_sfx.play(Sfx::Click, 0.6f);
                 if (targetingSW != SWType::COUNT) message(TR(S::MsgSelectTargetSW));
+            }
+        }
+        // ---- 伞兵支援按钮（RA2 原作：美国空指部/科技机场）----
+        if (world.hasParadropSource(localPlayer)) {
+            Rectangle r{(float)sbX + 6 + bi * 90, (float)swY, 86, 74};
+            bi++;
+            bool ready = me.paradropReady;
+            DrawRectangleRec(r, targetingParadrop ? Color{70, 48, 40, 255} : (ready ? Color{52, 60, 44, 255} : Color{30, 32, 38, 255}));
+            DrawRectangleLinesEx(r, 1, targetingParadrop ? Color{255, 120, 90, 255} : (ready ? GREEN : Color{70, 74, 82, 255}));
+            drawTextF(font, TR(S::Paradrop), (int)r.x + 4, (int)r.y + 4, 13,
+                      ready ? Color{180, 255, 150, 255} : WHITE);
+            if (ready) {
+                if ((world.tick / 15) % 2) drawTextF(font, TR(S::Ready), (int)r.x + 26, (int)r.y + 30, 16, Color{120, 255, 120, 255});
+                drawTextF(font, TR(S::ClickTarget), (int)r.x + 6, (int)r.y + 54, 11, Color{200, 220, 180, 255});
+            } else {
+                float frac = (float)me.paradropCharge / World::PARADROP_TIME;
+                DrawRectangle((int)r.x + 6, (int)r.y + 38, 74, 8, Color{40, 40, 44, 255});
+                DrawRectangle((int)r.x + 7, (int)r.y + 39, (int)(72 * frac), 6, Color{220, 170, 60, 255});
+                int secs = (World::PARADROP_TIME - me.paradropCharge) / LOGIC_FPS;
+                drawTextF(font, TextFormat("%d:%02d", secs / 60, secs % 60), (int)r.x + 26, (int)r.y + 54, 13,
+                          Color{200, 190, 150, 255});
+            }
+            if (ready && CheckCollisionPointRec(mousePos(), r) && mPressed(MOUSE_LEFT_BUTTON)) {
+                targetingParadrop = !targetingParadrop;
+                targetingSW = SWType::COUNT;
+                g_sfx.play(Sfx::Click, 0.6f);
+                if (targetingParadrop) message(TR(S::MsgParadropTarget));
             }
         }
     }
@@ -361,6 +390,7 @@ void Game::updateMinimap() {
                 case Terrain::Rough: col = Color{110, 96, 70, 255}; break;
                 case Terrain::Ore:   col = Color{200, 160, 40, 255}; break;
                 case Terrain::Gems:  col = Color{60, 210, 110, 255}; break;
+                case Terrain::Bridge: col = Color{160, 110, 60, 255}; break;
                 default:             col = Color{70, 105, 55, 255}; break;
             }
             if (fs == FOG_SEEN) { col.r /= 2; col.g /= 2; col.b /= 2; }

@@ -133,6 +133,44 @@ void Map::generate(int w_, int h_, uint64_t seed, int numPlayers, std::vector<Ve
         for (int dy = -4; dy <= 4; dy++)
             for (int dx = -4; dx <= 4; dx++)
                 if (inBounds(sp.x + dx, sp.y + dy)) at(sp.x + dx, sp.y + dy).overlay = Overlay::None;
+
+    // 5. 桥梁（RA2 标志性战术地形）：横跨 1~4 格狭窄水域、两端接陆地的直线通道
+    //    岛屿图海宽不生成；大陆/湖泊图在湖岸窄处生成，成为陆军跨水捷径
+    if (mapType != 1) {
+        auto isLand = [&](int x, int y) {
+            return inBounds(x, y) && at(x, y).terrain != Terrain::Water && at(x, y).terrain != Terrain::Bridge;
+        };
+        int want = std::max(2, (w * h) / 3000);
+        for (int tries = 0; tries < want * 80 && want > 0; tries++) {
+            bool horiz = rng.chance(0.5f);
+            int x = rng.range(3, w - 4), y = rng.range(3, h - 4);
+            if (at(x, y).terrain != Terrain::Water) continue;
+            // 从水格向负向找陆端
+            int dx = horiz ? 1 : 0, dy = horiz ? 0 : 1;
+            int sx = x, sy = y;
+            while (inBounds(sx - dx, sy - dy) && at(sx - dx, sy - dy).terrain == Terrain::Water) { sx -= dx; sy -= dy; }
+            // sx,sy = 水段首格；前一格必须是陆地
+            if (!isLand(sx - dx, sy - dy)) continue;
+            // 量水段长度
+            int len = 0;
+            while (inBounds(sx + dx * len, sy + dy * len) && at(sx + dx * len, sy + dy * len).terrain == Terrain::Water) len++;
+            if (len < 1 || len > 4) continue;
+            // 水段末端后必须是陆地
+            if (!isLand(sx + dx * len, sy + dy * len)) continue;
+            // 远离出生点（避免堵基地），且桥身两侧不全为陆（保证真的是跨水通道）
+            bool nearSpawn = false;
+            for (auto& sp : outSpawns)
+                if (abs(sp.x - sx) < 9 && abs(sp.y - sy) < 9) { nearSpawn = true; break; }
+            if (nearSpawn) continue;
+            for (int i = 0; i < len; i++) {
+                Cell& c = at(sx + dx * i, sy + dy * i);
+                c.terrain = Terrain::Bridge;
+                c.overlay = Overlay::None;
+                c.ore = 0;
+            }
+            want--;
+        }
+    }
 }
 
 int Map::harvestAt(int x, int y, int want) {

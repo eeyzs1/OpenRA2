@@ -28,6 +28,34 @@ static uint64_t keyOf(int cat, int a, int b, int c, int player) {
            ((uint64_t)(b & 0xFF) << 32) | ((uint64_t)(c & 0xFF) << 24) | (uint64_t)(player & 0xFF);
 }
 
+// ---------------- RA2 补全：新单位/建筑图形别名（复用近似旧图形，后续批次补专属图形） ----------------
+static UnitType spriteAliasUnit(UnitType t) {
+    switch (t) {
+        case UnitType::ChronoMiner: case UnitType::WarMiner: return UnitType::Harvester;
+        case UnitType::TankDestroyer: return UnitType::Grizzly;
+        case UnitType::Terrorist: return UnitType::CrazyIvan;
+        case UnitType::DemoTruck: return UnitType::V3Launcher;
+        case UnitType::Nighthawk: return UnitType::BlackEagle;
+        case UnitType::Dolphin: case UnitType::Squid: return UnitType::Typhoon;
+        case UnitType::RobotTank: return UnitType::IFV;
+        case UnitType::BattleFortress: return UnitType::Apocalypse;
+        case UnitType::Hornet: return UnitType::Intruder;
+        default: return t;
+    }
+}
+static BldType spriteAliasBld(BldType t) {
+    switch (t) {
+        case BldType::CloningVat: return BldType::IndustrialPlant;
+        case BldType::ServiceDepot: return BldType::MachineShop;
+        case BldType::GapGenerator: case BldType::SpySat: case BldType::PsychicSensor: return BldType::Radar;
+        case BldType::BattleBunker: case BldType::TankBunker: return BldType::SentryGun;
+        case BldType::TechAirport: return BldType::AirForceCmd;
+        case BldType::SecretLab: return BldType::BattleLab;
+        case BldType::CivHouse: return BldType::Hospital;
+        default: return t;
+    }
+}
+
 Sprite SpriteBank::makeSprite(PixBuf&& pb, int ox, int oy) {
     Sprite s;
     s.tex = pb.toTexture();
@@ -78,6 +106,13 @@ PixBuf SpriteBank::baseTile(Terrain t, int variant) {
                     int v = 90 + (int)(n * 50);
                     c = Color{(uint8_t)(v * 0.8f), (uint8_t)v, (uint8_t)(v * 0.85f), 255};
                     if (noise(x * 3 + 5, y * 3 + 3) > 0.68f) c = Pal::GEM_GRN;
+                    break;
+                }
+                case Terrain::Bridge: {
+                    // 木质桥面：棕褐色木板 + 横向板缝（RA2 原作木桥质感）
+                    int v = 130 + (int)(n * 60);
+                    c = Color{(uint8_t)v, (uint8_t)(v * 0.68f), (uint8_t)(v * 0.38f), 255};
+                    if (y % 4 == 0) { c.r = (uint8_t)(c.r * 0.62f); c.g = (uint8_t)(c.g * 0.62f); c.b = (uint8_t)(c.b * 0.62f); }
                     break;
                 }
             }
@@ -629,6 +664,7 @@ PixBuf SpriteBank::baseUnitTurret(UnitType t, int dir) {
 }
 
 bool SpriteBank::hasTurret(UnitType t) const {
+    t = spriteAliasUnit(t);
     switch (t) {
         case UnitType::Grizzly: case UnitType::Rhino: case UnitType::Type99:
         case UnitType::Apocalypse: case UnitType::PrismTank: case UnitType::TeslaTank:
@@ -1190,6 +1226,7 @@ const Sprite& SpriteBank::overlaySpr(Overlay o) {
 }
 
 const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
+    t = spriteAliasUnit(t);
     dir &= 7;
     // 满载采矿车用 frame=1（只对载具有效；步兵 frame 为行走帧）
     int fKey = (t == UnitType::Harvester) ? (frame ? 1 : 0) : (unitDef(t).isInfantry() ? (frame & 1) : 0);
@@ -1204,6 +1241,7 @@ const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
 }
 
 const Sprite& SpriteBank::unitTurret(UnitType t, int dir, int player) {
+    t = spriteAliasUnit(t);
     dir &= 7;
     uint64_t k = keyOf(4, (int)t, dir, 0, player);
     auto it = cache.find(k);
@@ -1216,6 +1254,7 @@ const Sprite& SpriteBank::unitTurret(UnitType t, int dir, int player) {
 }
 
 const Sprite& SpriteBank::building(BldType t, int player, bool constructing) {
+    t = spriteAliasBld(t);
     uint64_t k = keyOf(5, (int)t, constructing ? 1 : 0, 0, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
@@ -1306,7 +1345,7 @@ const Sprite& SpriteBank::iconBld(BldType t, int player) {
 void SpriteBank::init() {
     inited = true;
     // 预生成地形瓦片（常用）
-    for (int t = 0; t <= (int)Terrain::Gems; t++)
+    for (int t = 0; t <= (int)Terrain::Bridge; t++)
         for (int v = 0; v < 4; v++) tile((Terrain)t, v);
     for (int o = 1; o <= (int)Overlay::Rock2; o++) overlaySpr((Overlay)o);
     for (int f = 0; f < EXPLOSION_FRAMES; f++) explosion(f);

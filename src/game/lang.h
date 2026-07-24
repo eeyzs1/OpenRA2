@@ -17,7 +17,7 @@ enum class S : int {
     MissionN, ObjSurvive, ObjEliminate, ClickEnter,
     // 遭遇战设置
     ChangeMap, MapSize, SizeS, SizeM, SizeL, MapType, MapContinent, MapIslands, MapLake,
-    Player, Color, Faction, CommanderYou, ComputerN, Remove, AddComputer,
+    Player, Color, Country, CommanderYou, ComputerN, Remove, AddComputer,
     StartMoney, GameSpeed, SpeedSlow, SpeedNormal, SpeedFast, Volume, Crates, AIAlliance, StartGame,
     // HUD / 侧边栏
     Money, Power, LowPower, NeedBld, Ready, ClickTarget,
@@ -31,6 +31,8 @@ enum class S : int {
     MsgSold, MsgConYardNoSell, MsgRepaired, MsgNoRepair, MsgDeployed, MsgDeployToggled,
     MsgScatter, MsgGuard, MsgSelSameType, MsgGroupSetFmt, MsgMusicOn, MsgMusicOff,
     MsgSaved, MsgSaveFail, MsgLoaded, MsgLoadFail, MsgRallySet, MsgSWLaunchedFmt, MsgSelectTargetSW,
+    MsgGarrison, MsgUngarrison, MsgService,
+    Paradrop, MsgParadropTarget, EvaParadropDrop, EvaSecretLabFmt, EvaAirportCaptured,
     // EVA 播报（world.cpp）
     EvaDetectEnemySWFmt, EvaUnloadDone, EvaUnloadFail, EvaNukeLaunched, EvaStormComing, EvaChronoStart,
     EvaSWReadyFmt, EvaUnitLost, EvaBldCapturedFmt, EvaCapturedFmt, EvaEngRepairedFmt,
@@ -53,6 +55,7 @@ const char* unitName(UnitType t);
 const char* bldName(BldType t);
 const char* swName(SWType t);
 const char* factName(Faction f);
+const char* countryName(Country c);
 const char* missionName(int i);
 const char* missionBrief(int i);
 

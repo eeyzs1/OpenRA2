@@ -40,15 +40,16 @@ private:
 
     // 阶段与遭遇战配置
     Phase phase = Phase::MainMenu;
-    int cfgFaction = 2;     // 玩家阵营（默认中国）
+    int cfgCountry = (int)Country::China; // 玩家国家（RA2 原作：国家决定阵营与特色单位；COUNT=随机）
     int cfgColor = 0;       // 玩家颜色
     int cfgAI = 2;          // AI 数量
     int cfgMoney = 10000;   // 初始资金
     int cfgMapSize = 96;    // 地图边长
     int cfgMapType = 0;     // 地图类型：0 大陆 1 岛屿 2 湖泊
-    // 每个 AI 槽位的颜色与阵营（RA2 式槽位配置；阵营 3=随机）
+    // 每个 AI 槽位的颜色与国家（RA2 式槽位配置；国家 COUNT=随机，国家即定阵营）
     int aiColor[7] = {1, 2, 3, 4, 5, 6, 7};
-    int aiFaction[7] = {3, 3, 3, 3, 3, 3, 3};
+    int aiCountry[7] = {(int)Country::COUNT, (int)Country::COUNT, (int)Country::COUNT, (int)Country::COUNT,
+                        (int)Country::COUNT, (int)Country::COUNT, (int)Country::COUNT};
 
     // 遭遇战选项（设置界面可改，开局应用；音量热更新）
     bool cfgCrates = true;   // 随机补给箱
@@ -105,6 +106,8 @@ private:
 
     // 超武目标选择模式（COUNT = 无）
     SWType targetingSW = SWType::COUNT;
+    // 伞兵空降点选择模式（RA2 原作：美国空指部/科技机场支援技能）
+    bool targetingParadrop = false;
 
     // 侧边栏维修/出售点击模式（RA2 标志性按钮）：0 无 1 维修 2 出售
     int sideMode = 0;

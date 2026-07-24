@@ -23,7 +23,7 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"程序生成像素素材 · 盟军 / 苏联 / 中国", "Procedural pixel assets · Allies / Soviet / China"},
     // 战役选择
     {"任务 %d", "Mission %d"},
-    {"目标：坚守十分钟", "Objective: Hold for 10 minutes"},
+    {"目标：坚守 %d 分钟", "Objective: Hold for %d minutes"},
     {"目标：歼灭所有敌军", "Objective: Eliminate all enemies"},
     {"点击进入", "Click to start"},
     // 遭遇战设置
@@ -38,7 +38,7 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"湖泊", "Lake"},
     {"玩家", "Player"},
     {"颜色", "Color"},
-    {"阵营", "Faction"},
+    {"国家", "Country"},
     {"指挥官（你）", "Commander (You)"},
     {"电脑 %d", "Computer %d"},
     {"移除", "Remove"},
@@ -117,6 +117,14 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"集结点已设置", "Rally point set"},
     {"%s已发射", "%s launched"},
     {"选择目标位置（右键取消）", "Select target (right-click to cancel)"},
+    {"步兵进驻建筑", "Infantry garrisoning"},
+    {"驻军已撤出", "Garrison evacuated"},
+    {"车辆前往维修厂", "Moving to service depot"},
+    {"伞兵", "Paradrop"},
+    {"选择伞兵空降点（右键取消）", "Select paradrop zone (right-click to cancel)"},
+    {"伞兵已空降", "Paratroopers dropped"},
+    {"秘密实验室：解锁%s特色科技", "Secret Lab: %s special tech unlocked"},
+    {"科技机场：伞兵支援开始充能", "Tech Airport: paradrop support charging"},
     // EVA 播报
     {"警告：侦测到敌方%s", "Warning: enemy %s detected"},
     {"卸载完成", "Unload complete"},
@@ -188,7 +196,7 @@ const char* TR(S id) {
 
 // ===================== 本地化名称 =====================
 static const char* UNIT_EN[(int)UnitType::COUNT] = {
-    "MCV", "War Miner",
+    "MCV", "Harvester",
     "GI", "Conscript", "PLA",
     "Engineer", "Attack Dog", "Spy",
     "Flak Trooper", "Tesla Trooper",
@@ -202,6 +210,10 @@ static const char* UNIT_EN[(int)UnitType::COUNT] = {
     "Kirov Airship", "Rocketeer",
     "Destroyer", "Typhoon Sub", "Aegis Cruiser",
     "Sea Scorpion", "Dreadnought", "Aircraft Carrier", "Amphibious Transport",
+    "Chrono Miner", "War Miner",
+    "Tank Destroyer", "Terrorist", "Demolition Truck",
+    "Nighthawk", "Dolphin", "Giant Squid",
+    "Robot Tank", "Battle Fortress", "Hornet",
 };
 
 static const char* BLD_EN[(int)BldType::COUNT] = {
@@ -219,6 +231,10 @@ static const char* BLD_EN[(int)BldType::COUNT] = {
     "Nuclear Silo", "Weather Device", "Iron Curtain",
     "Chronosphere",
     "Tech Oil Derrick", "Hospital", "Machine Shop",
+    "Cloning Vat", "Service Depot", "Gap Generator",
+    "Spy Satellite", "Psychic Sensor",
+    "Battle Bunker", "Tank Bunker",
+    "Tech Airport", "Secret Lab", "Civilian House",
 };
 
 static const char* SW_EN[(int)SWType::COUNT] = {
@@ -227,10 +243,33 @@ static const char* SW_EN[(int)SWType::COUNT] = {
 
 static const char* FACTION_EN[3] = {"Allies", "Soviet", "China"};
 
-static const char* MISSION_EN[3][2] = {
+static const char* COUNTRY_CN[(int)Country::COUNT] = {
+    "", "美国", "韩国", "法国", "德国", "英国",
+    "苏俄", "古巴", "利比亚", "伊拉克", "中国",
+};
+static const char* COUNTRY_EN[(int)Country::COUNT] = {
+    "", "America", "Korea", "France", "Germany", "Great Britain",
+    "Russia", "Cuba", "Libya", "Iraq", "China",
+};
+const char* countryName(Country c) {
+    int i = (int)c;
+    if (i < 0 || i >= (int)Country::COUNT) return "?";
+    return g_lang ? COUNTRY_EN[i] : COUNTRY_CN[i];
+}
+
+static const char* MISSION_EN[12][2] = {
     {"Border Skirmish", "Soviet forces cross the border. Build your base, repel reinforcements, and eliminate all enemies."},
     {"Coastal Defense", "An Allied fleet approaches from the sea. Build your navy and eliminate all enemies."},
-    {"Decisive Moment", "Soviet and Allied forces surround the great lake. Hold for ten minutes until the counterattack."},
+    {"Shield of the Republic", "Two Soviet armies close in. Hold the town for eight minutes until reinforcements arrive."},
+    {"Sword Unsheathed", "Expedition forces land on Allied-held islands. Win the seas and eliminate both Allied bases."},
+    {"Light of Freedom", "Russian armored division approaches. Rally the Allied remnants and destroy the invaders."},
+    {"Deep Sea Hunt", "Typhoon subs blockade the strait. Break out with the fleet and destroy the Soviet coastal base."},
+    {"Chrono Storm", "Soviets march on the Chrono research center. Hold for ten minutes to keep the Chronosphere safe."},
+    {"Battle for Moscow", "Assault the heart of Soviet power. Crush the Kremlin guard and end the war."},
+    {"Steel Torrent", "Allied outposts hold the border plains. Crush their line with armored waves and eliminate them all."},
+    {"Island Clash", "An Allied carrier group controls the resource islands. Win the seas and take the islands back."},
+    {"Red Alert", "Allied and vassal forces surround the nuclear facility. Hold for nine minutes to save our arsenal."},
+    {"Nuclear Dawn", "The final battle. Crush the Allied coalition and raise the red flag over the world."},
 };
 
 const char* unitName(UnitType t) { return g_lang ? UNIT_EN[(int)t] : unitDef(t).name; }
@@ -238,11 +277,11 @@ const char* bldName(BldType t) { return g_lang ? BLD_EN[(int)t] : bldDef(t).name
 const char* swName(SWType t) { return g_lang ? SW_EN[(int)t] : swDef(t).name; }
 const char* factName(Faction f) { return g_lang ? FACTION_EN[(int)f] : factionName(f); }
 const char* missionName(int i) {
-    if (g_lang && i >= 0 && i < 3) return MISSION_EN[i][0];
+    if (g_lang && i >= 0 && i < 12) return MISSION_EN[i][0];
     return missionTable()[i].name;
 }
 const char* missionBrief(int i) {
-    if (g_lang && i >= 0 && i < 3) return MISSION_EN[i][1];
+    if (g_lang && i >= 0 && i < 12) return MISSION_EN[i][1];
     return missionTable()[i].brief;
 }
 

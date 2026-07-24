@@ -132,28 +132,31 @@ void Game::drawMissionSelect() {
     int cx = SCREEN_W / 2;
     Vector2 m = mousePos();
 
-    // 任务卡片：名称 + 简报 + 目标
+    // 任务卡片（4 列网格）：名称 + 简报 + 目标
     const auto& tbl = missionTable();
-    int cardW = 360, cardH = 200, gap = 30;
-    int totalW = (int)tbl.size() * cardW + ((int)tbl.size() - 1) * gap;
-    int x0 = cx - totalW / 2, y0 = 200;
+    const int cols = 4;
+    int cardW = 320, cardH = 168, gapX = 24, gapY = 20;
+    int rows = ((int)tbl.size() + cols - 1) / cols;
+    int totalW = cols * cardW + (cols - 1) * gapX;
+    int x0 = cx - totalW / 2, y0 = 150;
     for (int i = 0; i < (int)tbl.size(); i++) {
         const MissionDef& md = tbl[i];
-        Rectangle r{(float)(x0 + i * (cardW + gap)), (float)y0, (float)cardW, (float)cardH};
+        int gx = x0 + (i % cols) * (cardW + gapX), gy = y0 + (i / cols) * (cardH + gapY);
+        Rectangle r{(float)gx, (float)gy, (float)cardW, (float)cardH};
         bool hover = CheckCollisionPointRec(m, r);
         DrawRectangleGradientV((int)r.x, (int)r.y, (int)r.width, (int)r.height,
                                hover ? Color{52, 42, 34, 255} : Color{30, 30, 36, 255},
                                hover ? Color{34, 24, 20, 255} : Color{20, 20, 26, 255});
         DrawRectangleLinesEx(r, 2, hover ? Color{255, 200, 90, 255} : Color{120, 100, 60, 255});
         int rx = (int)r.x, ry = (int)r.y;
-        drawTextM(font, TextFormat(TR(S::MissionN), i + 1), rx + 16, ry + 12, 14, Color{150, 142, 130, 255});
-        drawTextM(font, missionName(i), rx + 16, ry + 34, 26, Color{255, 210, 100, 255});
-        DrawRectangle(rx + 16, ry + 72, cardW - 32, 1, Color{90, 70, 50, 255});
-        int blines = drawWrapped(font, missionBrief(i), rx + 16, ry + 80, cardW - 32, 15, Color{196, 194, 200, 255}, 3);
-        drawTextM(font, md.objective == 1 ? TR(S::ObjSurvive) : TR(S::ObjEliminate),
-                  rx + 16, ry + 84 + blines * 17, 15, Color{130, 200, 140, 255});
+        drawTextM(font, TextFormat(TR(S::MissionN), i + 1), rx + 14, ry + 10, 13, Color{150, 142, 130, 255});
+        drawTextM(font, missionName(i), rx + 14, ry + 28, 22, Color{255, 210, 100, 255});
+        DrawRectangle(rx + 14, ry + 58, cardW - 28, 1, Color{90, 70, 50, 255});
+        int blines = drawWrapped(font, missionBrief(i), rx + 14, ry + 66, cardW - 28, 14, Color{196, 194, 200, 255}, 3);
+        drawTextM(font, md.objective == 1 ? TextFormat(TR(S::ObjSurvive), md.objectiveTick / (30 * 60)) : TR(S::ObjEliminate),
+                  rx + 14, ry + 68 + blines * 16, 14, Color{130, 200, 140, 255});
         if (hover) {
-            drawTextM(font, TR(S::ClickEnter), rx + 16, ry + cardH - 34, 16, Color{255, 226, 150, 255});
+            drawTextM(font, TR(S::ClickEnter), rx + 14, ry + cardH - 28, 15, Color{255, 226, 150, 255});
             if (mPressed(MOUSE_LEFT_BUTTON)) {
                 g_sfx.play(Sfx::Click, 0.6f);
                 newCampaignGame(i);
@@ -162,7 +165,7 @@ void Game::drawMissionSelect() {
         }
     }
 
-    if (ra2Button(font, m, mPressed(MOUSE_LEFT_BUTTON), {(float)cx - 110, (float)y0 + cardH + 70, 220, 48}, TR(S::Back), 20))
+    if (ra2Button(font, m, mPressed(MOUSE_LEFT_BUTTON), {(float)cx - 110, (float)(y0 + rows * (cardH + gapY) + 16), 220, 48}, TR(S::Back), 20))
         phase = Phase::MainMenu;
 }
 
@@ -259,10 +262,10 @@ void Game::drawSetup() {
     int nameX = sx + 24, colorX = sx + 330, factX = sx + 520, delX = sx + sw - 96;
     drawTextM(font, TR(S::Player), nameX, sy + 12, 17, Color{150, 142, 130, 255});
     drawTextM(font, TR(S::Color), colorX, sy + 12, 17, Color{150, 142, 130, 255});
-    drawTextM(font, TR(S::Faction), factX, sy + 12, 17, Color{150, 142, 130, 255});
+    drawTextM(font, TR(S::Country), factX, sy + 12, 17, Color{150, 142, 130, 255});
     int slotY = sy + 40;
     // 槽位行绘制：返回是否发生变更（需要刷新预览的出生点颜色）
-    auto slotRow = [&](int idx, const char* name, int& color, int& faction, bool isLocal) {
+    auto slotRow = [&](int idx, const char* name, int& color, int& country, bool isLocal) {
         int y = slotY + idx * rowH;
         bool even = idx % 2 == 0;
         DrawRectangle(sx + 8, y, sw - 16, rowH - 4, even ? Color{30, 30, 38, 255} : Color{24, 24, 30, 255});
@@ -274,33 +277,36 @@ void Game::drawSetup() {
         DrawRectangleRec(cr, HOUSE_COLORS[color]);
         DrawRectangleLinesEx(cr, 2, chover ? WHITE : Color{60, 58, 64, 255});
         if (chover && pr) { color = (color + 1) % MAX_PLAYERS; g_sfx.play(Sfx::Click, 0.5f); }
-        // 阵营按钮
+        // 国家按钮（RA2 原作：选国家即定阵营；循环 10 国 + 随机）
         Rectangle fr{(float)factX, (float)y + 6, 170, rowH - 16};
         bool fhover = CheckCollisionPointRec(m, fr);
         DrawRectangleRec(fr, fhover ? Color{56, 50, 44, 255} : Color{38, 36, 42, 255});
         DrawRectangleLinesEx(fr, 1, fhover ? Color{255, 200, 90, 255} : Color{96, 88, 70, 255});
-        const char* fn = faction >= 3 ? TR(S::Random) : factName((Faction)faction);
+        const char* fn = country >= (int)Country::COUNT ? TR(S::Random) : countryName((Country)country);
         drawTextM(font, fn, (int)fr.x + 85 - textW(font, fn, 17) / 2, y + 13, 17, Color{230, 216, 170, 255});
-        if (fhover && pr) { faction = (faction + 1) % 4; g_sfx.play(Sfx::Click, 0.5f); }
+        if (fhover && pr) {
+            country = country >= (int)Country::COUNT ? 1 : country + 1; // 跳过 None(0)，COUNT=随机
+            g_sfx.play(Sfx::Click, 0.5f);
+        }
         // AI 移除按钮
         if (!isLocal) {
             Rectangle dr{(float)delX, (float)y + 8, 72, rowH - 20};
             if (ra2Button(font, m, pr, dr, TR(S::Remove), 15, true, true)) {
-                for (int i = idx - 1; i < cfgAI - 1; i++) { aiColor[i] = aiColor[i + 1]; aiFaction[i] = aiFaction[i + 1]; }
+                for (int i = idx - 1; i < cfgAI - 1; i++) { aiColor[i] = aiColor[i + 1]; aiCountry[i] = aiCountry[i + 1]; }
                 cfgAI--;
                 previewDirty = true;
             }
         }
     };
-    slotRow(0, TR(S::CommanderYou), cfgColor, cfgFaction, true);
+    slotRow(0, TR(S::CommanderYou), cfgColor, cfgCountry, true);
     for (int i = 0; i < cfgAI; i++)
-        slotRow(i + 1, TextFormat(TR(S::ComputerN), i + 1), aiColor[i], aiFaction[i], false);
+        slotRow(i + 1, TextFormat(TR(S::ComputerN), i + 1), aiColor[i], aiCountry[i], false);
     // 添加电脑
     if (cfgAI < maxAI) {
         int y = slotY + (cfgAI + 1) * rowH + 6;
         if (ra2Button(font, m, pr, {(float)nameX, (float)y, 200, 40}, TR(S::AddComputer), 18)) {
             aiColor[cfgAI] = (cfgAI + 1) % MAX_PLAYERS;
-            aiFaction[cfgAI] = 3;
+            aiCountry[cfgAI] = (int)Country::COUNT;
             cfgAI++;
             previewDirty = true;
         }

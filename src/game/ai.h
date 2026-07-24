@@ -24,6 +24,7 @@ private:
     void doProduction(World& w);
     void doAttack(World& w);
     void doSuperWeapon(World& w);
+    void doSupport(World& w);   // 支援技能：伞兵空投 + 维修厂修车 + 碉堡驻军
     void doEngineers(World& w); // 工程师：占领中立科技建筑 + 修复己方受损建筑
     bool tryPlaceBld(World& w, BldType t);
     bool detectWater(World& w); // 全图扫描水域（结果缓存）

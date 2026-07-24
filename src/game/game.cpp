@@ -42,15 +42,20 @@ void Game::init(bool windowed) {
 }
 
 void Game::newGame(uint64_t seed) {
-    // 阵营：本地玩家与每个 AI 均来自遭遇战设置界面的槽位配置（3=随机）
+    // 国家（RA2 原作：国家即定阵营与特色单位；随机槽位在全部 10 国中抽取，跳过 None）
     campaignMission = -1;
     nextWave = 0;
-    std::vector<Faction> factions;
-    factions.push_back((Faction)cfgFaction);
     Rng frng(seed);
-    for (int i = 0; i < cfgAI; i++)
-        factions.push_back(aiFaction[i] >= 3 ? (Faction)frng.range(0, 2) : (Faction)aiFaction[i]);
+    auto pickCountry = [&](int c) {
+        return c >= (int)Country::COUNT ? (Country)frng.range(1, (int)Country::COUNT - 1) : (Country)c;
+    };
+    std::vector<Country> countries;
+    countries.push_back(pickCountry(cfgCountry));
+    for (int i = 0; i < cfgAI; i++) countries.push_back(pickCountry(aiCountry[i]));
+    std::vector<Faction> factions;
+    for (Country c : countries) factions.push_back(countryFaction(c));
     world.init(cfgMapSize, cfgMapSize, seed, 1, cfgAI, factions, cfgMapType);
+    for (int i = 0; i < world.numPlayers; i++) world.players[i].country = countries[i];
     // 颜色：取槽位配置；冲突（与前面玩家同色）时顺延到下一个未用色
     bool used[MAX_PLAYERS] = {};
     world.players[0].colorId = cfgColor;
@@ -93,6 +98,9 @@ void Game::newCampaignGame(int mission) {
     for (Faction f : md.aiFactions) factions.push_back(f);
     // 固定种子：战役地图可复现
     world.init(md.mapSize, md.mapSize, 20260723ull + mission * 977, 1, (int)md.aiFactions.size(), factions, md.mapType);
+    // 战役国家：按阵营取默认国（盟=美国 苏=苏俄 中=中国），使国家特色单位/支援可用
+    for (int i = 0; i < world.numPlayers; i++)
+        world.players[i].country = countriesOf(world.players[i].faction).front();
     int pool[MAX_PLAYERS], pn = 0;
     for (int i = 0; i < MAX_PLAYERS; i++)
         if (i != cfgColor) pool[pn++] = i;
@@ -217,6 +225,7 @@ bool Game::loadGameFile(const char* path) {
     selBuilding = INVALID_EID;
     placing = false;
     targetingSW = SWType::COUNT;
+    targetingParadrop = false;
     sideMode = 0;
     paused = false;
     showMenu = false;
@@ -363,7 +372,7 @@ void Game::smokeTest(int frames) {
         for (auto& e : world.ents) {
             if (!e.alive || e.isBuilding || e.player != p) continue;
             cnt[(int)e.utype]++;
-            if (e.utype == UnitType::Harvester && (int)e.state < 12) harvState[(int)e.state]++;
+            if (unitDef(e.utype).canHarvet() && (int)e.state < 12) harvState[(int)e.state]++;
         }
         std::string det;
         for (int i = 0; i < (int)UnitType::COUNT; i++)
@@ -763,7 +772,8 @@ EID Game::pickBuilding(int mx, int my) const {
         if (!e.alive || !e.isBuilding) continue;
         if (e.player != localPlayer && world.map.fogAt(localPlayer, (int)e.x, (int)e.y) != FOG_VISIBLE) continue;
         Vector2 p = bldScreenPos(e);
-        const Sprite& s = g_sprites.building(e.btype, world.players[e.player].colorId, false);
+        // 中立建筑 player=-1：传 -1 让精灵层用灰色，避免 players[-1] 越界
+        const Sprite& s = g_sprites.building(e.btype, e.player >= 0 ? world.players[e.player].colorId : -1, false);
         if (mx >= p.x - s.ox && mx <= p.x - s.ox + s.tex.width &&
             my >= p.y - s.oy && my <= p.y - s.oy + s.tex.height)
             return (int)i;
@@ -816,7 +826,43 @@ void Game::issueSmartOrder(int mx, int my) {
     for (EID id : sel) {
         if (!world.valid(id)) continue;
         if (world.ents[id].utype == UnitType::Engineer) hasEngineer = true;
-        if (world.ents[id].utype == UnitType::Harvester) hasHarvester = true;
+        if (unitDef(world.ents[id].utype).canHarvet()) hasHarvester = true;
+    }
+
+    // 右键可进驻建筑（己方/中立民房/战斗碉堡/坦克碉堡）→ 按进驻类型过滤（优先于攻击判定：中立建筑不算敌人）
+    if (eb != INVALID_EID) {
+        const World::Ent& b = world.ents[eb];
+        const BldDef& bd = bldDef(b.btype);
+        int gdom = garrisonDomain(b.btype);
+        if (bd.garrisonCap > 0 && (b.player == localPlayer || b.player < 0)) {
+            std::vector<EID> fit;
+            for (EID id : sel) {
+                if (!world.valid(id) || world.ents[id].isBuilding) continue;
+                const UnitDef& ud = unitDef(world.ents[id].utype);
+                bool ok = (gdom == 1 && ud.isInfantry())
+                       || (gdom == 2 && !ud.isInfantry() && !ud.isAir() && ud.pathDomain() == 0 && !ud.canHarvet());
+                if (ok) fit.push_back(id);
+            }
+            if (!fit.empty()) {
+                world.orderGarrison(fit, eb);
+                message(TR(S::MsgGarrison));
+                return;
+            }
+        }
+        // 己方维修厂：受损/被寄生车辆右键 → 开往维修
+        if (b.btype == BldType::ServiceDepot && b.player == localPlayer) {
+            std::vector<EID> veh;
+            for (EID id : sel) {
+                if (!world.valid(id) || world.ents[id].isBuilding) continue;
+                const UnitDef& ud = unitDef(world.ents[id].utype);
+                if (!ud.isInfantry() && !ud.isAir() && ud.pathDomain() == 0 && !ud.canHarvet()) veh.push_back(id);
+            }
+            if (!veh.empty()) {
+                world.orderService(veh, eb);
+                message(TR(S::MsgService));
+                return;
+            }
+        }
     }
 
     if (enemy != INVALID_EID) {
@@ -859,7 +905,7 @@ void Game::issueSmartOrder(int mx, int my) {
         std::vector<EID> rest;
         for (EID id : sel) {
             if (!world.valid(id)) continue;
-            if (world.ents[id].utype == UnitType::Harvester) harv.push_back(id);
+            if (unitDef(world.ents[id].utype).canHarvet()) harv.push_back(id);
             else rest.push_back(id);
         }
         world.orderHarvest(harv, tx, ty);
@@ -900,6 +946,25 @@ void Game::handleInput() {
                     message(TextFormat(TR(S::MsgSWLaunchedFmt), swName(t)));
                 }
                 targetingSW = SWType::COUNT;
+            }
+        }
+        return;
+    }
+
+    // 伞兵空降点选择模式（RA2 原作：美国空指部/科技机场支援技能）
+    if (targetingParadrop) {
+        if (mPressed(MOUSE_RIGHT_BUTTON) || kPressed(KEY_ESCAPE)) {
+            targetingParadrop = false;
+            return;
+        }
+        if (mPressed(MOUSE_LEFT_BUTTON) && !overUI) {
+            float wx, wy;
+            screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
+            int tx, ty;
+            screenToTile(wx, wy, tx, ty);
+            if (world.map.inBounds(tx, ty)) {
+                world.orderParadrop(localPlayer, tx + 0.5f, ty + 0.5f);
+                targetingParadrop = false;
             }
         }
         return;
@@ -975,7 +1040,15 @@ void Game::handleInput() {
     // 快捷键（设置页可重绑；0=未绑定。A/Shift/Ctrl/方向键等修饰与镜头键固定）
     auto ka = [&](int a) { return keyBind[a] > 0 && kPressed(keyBind[a]); };
     if (ka(KA_Stop)) world.orderStop(sel);
-    if (ka(KA_Unload) && !sel.empty()) world.orderUnload(sel); // 运输船卸载
+    if (ka(KA_Unload)) {
+        if (!sel.empty()) world.orderUnload(sel); // 运输船卸载
+        // 选中建筑有驻军：撤出全部驻军（RA2 原作同键）
+        if (world.valid(selBuilding) && world.ents[selBuilding].isBuilding
+            && !world.ents[selBuilding].garrison.empty()) {
+            world.orderUngarrison({selBuilding});
+            message(TR(S::MsgUngarrison));
+        }
+    }
     if (ka(KA_Deploy)) {
         for (EID id : sel)
             if (world.valid(id) && world.ents[id].utype == UnitType::MCV) {
@@ -983,11 +1056,12 @@ void Game::handleInput() {
                 sel.erase(std::remove(sel.begin(), sel.end(), id), sel.end());
                 message(TR(S::MsgDeployed));
             }
-        // 辐射工兵/重装大兵：部署/收起（RA2 原作同键）
+        // 辐射工兵/重装大兵/美国大兵：部署/收起（RA2 原作同键）
         bool anyDeploy = false;
         for (EID id : sel)
             if (world.valid(id) && !world.ents[id].isBuilding
-                && (world.ents[id].utype == UnitType::Desolator || world.ents[id].utype == UnitType::GuardianGI))
+                && (world.ents[id].utype == UnitType::Desolator || world.ents[id].utype == UnitType::GuardianGI
+                    || world.ents[id].utype == UnitType::GI))
                 anyDeploy = true;
         if (anyDeploy) {
             world.orderRadDeploy(sel);
@@ -1287,7 +1361,7 @@ void Game::drawEntities() {
                         Color{0, 0, 0, (unsigned char)(flying ? 50 : 70)});
             if (flying) p.y -= AIR_ALT;
             const Sprite& body = g_sprites.unitBody(e.utype, e.dir,
-                e.utype == UnitType::Harvester ? (e.oreLoad > 10 ? 1 : 0) : e.walkFrame, cid);
+                unitDef(e.utype).canHarvet() ? (e.oreLoad > 10 ? 1 : 0) : e.walkFrame, cid);
             Color tint = (e.player != localPlayer && fs == FOG_SEEN) ? Color{120, 120, 120, 255} : WHITE;
             DrawTexture(body.tex, (int)p.x - body.ox, (int)p.y - body.oy, tint);
             if (g_sprites.hasTurret(e.utype)) {
@@ -1326,7 +1400,7 @@ void Game::drawEntities() {
             FogState fs = world.map.fogAt(localPlayer, (int)e.x, (int)e.y);
             if (e.player != localPlayer && fs == FOG_UNSEEN) continue;
             Vector2 p = bldScreenPos(e);
-            int cid = world.players[e.player].colorId;
+            int cid = e.player >= 0 ? world.players[e.player].colorId : -1; // 中立建筑 player=-1：精灵层用灰色
             const Sprite& s = g_sprites.building(e.btype, cid, false);
             Color tint = (e.player != localPlayer && fs == FOG_SEEN) ? Color{110, 110, 110, 255} : WHITE;
             DrawTexture(s.tex, (int)p.x - s.ox, (int)p.y - s.oy, tint);
@@ -1542,6 +1616,20 @@ void Game::drawEffectsLayer() {
             DrawEllipseLines(sx, sy, r * 0.7f, r * 0.35f, Color{255, 120, 100, (uint8_t)(160 * (1 - t))});
         }
     }
+    // 心灵探测器（RA2 原作）：显示视野内敌方单位的攻击目标线
+    if (world.hasBld(localPlayer, BldType::PsychicSensor) && (world.tick / 20) % 2) {
+        for (const World::Ent& e : world.ents) {
+            if (!e.alive || e.isBuilding || e.player < 0 || !world.isEnemy(e.player, localPlayer)) continue;
+            if (e.target == INVALID_EID || !world.valid(e.target)) continue;
+            if (world.map.fogAt(localPlayer, (int)e.x, (int)e.y) != FOG_VISIBLE) continue;
+            const World::Ent& t = world.ents[e.target];
+            Vector2 a = unitScreenPos(e);
+            float txp = (t.x - t.y) * (TILE_W / 2.0f), typ = (t.x + t.y) * (TILE_H / 2.0f);
+            Vector2 b{txp - camX, typ - camY};
+            DrawLineEx({a.x, a.y - 10}, {b.x, b.y - 6}, 1.5f, Color{255, 80, 220, 150});
+            DrawCircleV({b.x, b.y - 6}, 3.0f, Color{255, 80, 220, 180});
+        }
+    }
 }
 
 void Game::drawFogLayer() {
@@ -1566,6 +1654,25 @@ void Game::drawFogLayer() {
 }
 
 void Game::drawPlacement() {
+    // 伞兵空降点选择：鼠标处画降落区预览圈
+    if (targetingParadrop) {
+        Vector2 m = mousePos();
+        float wx, wy;
+        screenToWorld((int)m.x, (int)m.y, wx, wy);
+        int tx, ty;
+        screenToTile(wx, wy, tx, ty);
+        int px, py;
+        tileToScreen(tx, ty, px, py);
+        int sx = px - (int)camX, sy = py - (int)camY + TILE_H / 2;
+        float ex = 2.5f * TILE_W / 2.0f, ey = 2.5f * TILE_H / 2.0f;
+        Color cc{140, 220, 255, 220};
+        if ((world.tick / 8) % 2) cc.a = 130;
+        DrawEllipseLines(sx, sy, ex, ey, cc);
+        DrawEllipse(sx, sy, ex, ey, Color{140, 220, 255, 30});
+        DrawLine(sx - 10, sy, sx + 10, sy, cc);
+        DrawLine(sx, sy - 6, sx, sy + 6, cc);
+        return;
+    }
     // 超武目标选择：鼠标处画范围预览圈
     if (targetingSW != SWType::COUNT) {
         Vector2 m = mousePos();

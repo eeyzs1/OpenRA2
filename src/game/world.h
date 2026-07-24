@@ -28,6 +28,7 @@ struct Projectile {
     WeaponDef w;
     int speed;          // 每逻辑帧移动比例
     int trail = 0;
+    int hp = 0;         // 可拦截导弹生命（0=不可拦截；V3/无畏舰大型导弹 >0，防空火力可击落）
 };
 
 struct Effect {
@@ -56,6 +57,7 @@ struct Player {
     bool isAI = false;
     bool defeated = false;
     Faction faction = Faction::Allies;
+    Country country = Country::None; // 国家（RA2 原作：阵营内细分，决定特色单位/能力）
     int colorId = 0;
     int money = 10000;
     std::string name;
@@ -71,6 +73,10 @@ struct Player {
     int revealTimer = 0;     // 间谍渗透雷达：>0 期间全图可见
     bool vetCat[PROD_CAT_N] = {}; // 间谍渗透工厂：对应类别新造单位直接 1 级军衔
     int aiDifficulty = 1;    // AI 难度 0 简单 1 普通 2 困难（仅 AI 玩家）
+    // ---- RA2 补全：国家/支援技能/中立科技 ----
+    int secretLabUnlock = 0;   // 秘密实验室解锁的国家特色（(int)Country；0=未解锁）
+    int paradropCharge = 0;    // 伞兵充能（>=PARADROP_TIME 就绪；美国空指部/科技机场提供）
+    bool paradropReady = false;
     bool lowPower() const { return powerSabotage > 0 || powerUsed > powerMade; }
 
     // 超武：充能进度（>=chargeTime 即就绪）；激活效果计时
@@ -149,6 +155,12 @@ public:
         int subReveal = 0;          // 台风潜艇：开火后暴露计时（>0 期间可被索敌）
         int kills = 0;              // 击杀数（军衔经验）
         int vetRank = 0;            // 军衔：0 新兵 1 老兵 2 精英（伤害加成，精英自愈）
+        // ---- RA2 补全：驻军/寄生/磁暴充电 ----
+        std::vector<UnitType> garrison; // 建筑内驻军（garrisonCap>0 的建筑：民房/战斗碉堡）
+        EID parasite = INVALID_EID;     // 宿主车辆：附着其上的恐怖机器人
+        EID parasiteHost = INVALID_EID; // 恐怖机器人：当前寄生的宿主
+        bool parasiting = false;        // 恐怖机器人：已附着宿主（隐藏、持续啃噬）
+        int teslaCharge = 0;            // 磁暴线圈：正在为其充电的磁暴步兵数
     };
 
     // 补给箱（RA2 随机箱子）：地面单位驶入拾取
@@ -158,12 +170,14 @@ public:
         int kind = 0; // 0 资金 1 治疗 2 升阶
     };
 
-    // 疯狂伊文定时炸弹
+    // 疯狂伊文定时炸弹（谭雅 C4 复用：高伤害单点）
     struct TimedBomb {
         float x = 0, y = 0;
         int timer = 0;
         int player = 0;
         EID attachedTo = INVALID_EID; // 附着的实体（INVALID=地面）
+        int dmg = 400;                // 中心伤害（谭雅 C4=6000）
+        float radius = 2.5f;          // 溅射半径（谭雅 C4≈单点）
     };
 
     std::vector<Ent> ents;
@@ -215,7 +229,11 @@ public:
     void orderGuard(const std::vector<EID>& sel);   // G 警戒（视野索敌）
     void orderBoard(const std::vector<EID>& sel, EID transportId); // 步兵登上运输载具
     void orderUnload(const std::vector<EID>& sel);  // 运输载具卸下乘员（U）
+    void orderGarrison(const std::vector<EID>& sel, EID bldId);   // 步兵/车辆进驻建筑（民房/战斗碉堡/坦克碉堡）
+    void orderUngarrison(const std::vector<EID>& sel);            // 建筑撤出驻军（U）
     void orderRadDeploy(const std::vector<EID>& sel); // 辐射工兵：部署/收起辐射区（D）
+    void orderParadrop(int player, float x, float y);  // 伞兵空投（美国空指部/科技机场）
+    void orderService(const std::vector<EID>& sel, EID depotId); // 车辆开往维修厂（维修+摘除寄生）
 
     // EVA 播报事件（Game 层消费：字幕+提示音；player = 接收方）
     struct EvaEvent { int player; std::string text; };
@@ -243,7 +261,14 @@ public:
 
     // 单位可见性（潜艇隐身等）：viewer 能否看见该实体
     bool visibleTo(const Ent& e, int viewer) const;
-    bool isDetector(UnitType t) const; // 反潜探测单位（驱逐舰/神盾/海蝎）
+    bool isDetector(UnitType t) const; // 反潜探测单位（驱逐舰/神盾/海蝎/海豚）
+    // 有效武器：部署形态 / IFV 载兵 / 精英军衔 综合（RA2 原作：状态与军衔改变武器）
+    WeaponDef effWeapon(const Ent& e) const;
+
+    // 伞兵充能就绪所需帧数（RA2 原作约 4 分钟一波）
+    static constexpr int PARADROP_TIME = 30 * 60 * 4;
+    // 伞兵来源：美国空指部 或 已占领的科技机场
+    bool hasParadropSource(int player) const;
 
     // 查询
     bool hasBld(int player, BldType t) const;
@@ -298,12 +323,16 @@ private:
     bool stepTo(Ent& e, EID id, int nx, int ny);
     bool boardGoal(const Ent& t, int domain, int& gx, int& gy) const; // 登船寻路目标：运输船不可走时取附近最近可走格
     bool chronoJump(Ent& e, float gx, float gy); // 超时空传送：瞬移至目标点附近空格，按距离产生相位不适
-    void placeNeutralTechs();                   // 地图生成后放置中立科技建筑（油井/医院/机械店）
+    void placeNeutralTechs();                   // 地图生成后放置中立科技建筑（油井/医院/机械店/科技机场/秘密实验室/民房）
     void applySpyEffect(Ent& spy, Ent& bld, EID spyId); // 间谍渗透建筑效果
     void creditKill(EID byEnt, EID victim);     // 军衔经验：击杀计数与晋升
     void spawnCrateTick();                      // 周期性生成补给箱
     void pickupCrates(Ent& e);                  // 地面单位拾取补给箱
     void regrowOre();                           // 矿脉缓慢再生（RA2 矿钻等效）
     void updateTimedBombs();                    // 疯狂伊文炸弹倒计时与引爆
+    void garrisonFire(Ent& b, EID id);          // 驻军轮流出击（民房/战斗碉堡/坦克碉堡）
+    void applyGapShroud();                      // 裂缝产生器：敌军在黑幕半径内的迷雾降为不可见
+    void updateParadrop();                      // 伞兵充能（美国空指部/科技机场）
+    void applyCaptureEffect(Ent& b, int newOwner); // 工程师占领建筑的特殊效果（科技机场/秘密实验室）
     EID allocEnt();
 };

@@ -35,6 +35,7 @@ void SkirmishAI::update(World& w) {
     doEngineers(w);
     doAttack(w);
     doSuperWeapon(w);
+    doSupport(w);
 }
 
 // 全图扫描是否有 3x3 以上水域（决定是否在建造序列中加入船厂）
@@ -83,6 +84,13 @@ void SkirmishAI::doBuildOrder(World& w) {
         BldType::AirForceCmd,   // 空指部：解锁战机
         BldType::TeslaCoil,
         BldType::BattleLab,
+        BldType::ServiceDepot,   // 维修厂（通用，前置=重工，自动修理车辆）
+        BldType::CloningVat,     // 复制中心（苏，盟军 factionMask 自动跳过）
+        BldType::GapGenerator,   // 裂缝产生器（盟，苏军自动跳过）
+        BldType::SpySat,         // 间谍卫星（盟）
+        BldType::PsychicSensor,  // 心灵探测器（苏）
+        BldType::BattleBunker,   // 战斗碉堡（苏）
+        BldType::TankBunker,     // 坦克碉堡（苏）
         BldType::NuclearReactor,
         BldType::NukeSilo,      // 超武1：核弹井（盟替换为天气控制器）
         BldType::TeslaCoil,
@@ -144,9 +152,9 @@ void SkirmishAI::doProduction(World& w) {
             if (w.unitPrereqMet(player, unitDef(UnitType::MCV))) w.startUnitProd(player, UnitType::MCV);
             return;
         }
-        int harvesters = w.countUnits(player, UnitType::Harvester);
+        int harvesters = w.countUnits(player, harvesterType(p.faction));
         if (w.hasBld(player, BldType::OreRefinery) && harvesters < 3) {
-            w.startUnitProd(player, UnitType::Harvester);
+            w.startUnitProd(player, harvesterType(p.faction));
         } else if (!saveMoney) {
             bool late = w.hasBld(player, BldType::BattleLab);
             UnitType want;
@@ -157,6 +165,16 @@ void SkirmishAI::doProduction(World& w) {
                                 : p.faction == Faction::Soviet ? UnitType::Kirov : UnitType::Kirov;
                     if (w.unitPrereqMet(player, unitDef(sp))) { w.startUnitProd(player, sp); return; }
                 }
+                // 国家特色战车（RA2 原作：德国坦克杀手/苏俄磁能/利比亚自爆卡车）
+                UnitType csp = UnitType::COUNT;
+                switch (p.country) {
+                    case Country::Germany: csp = UnitType::TankDestroyer; break;
+                    case Country::Russia:  csp = UnitType::TeslaTank; break;
+                    case Country::Libya:   csp = UnitType::DemoTruck; break;
+                    default: break;
+                }
+                if (csp != UnitType::COUNT && attackWave % 2 == 1 && w.countUnits(player, csp) < 6
+                    && w.unitPrereqMet(player, unitDef(csp))) { w.startUnitProd(player, csp); return; }
                 want = p.faction == Faction::Allies ? UnitType::PrismTank
                      : p.faction == Faction::Soviet ? (attackWave % 2 ? UnitType::Apocalypse : UnitType::TeslaTank)
                      : UnitType::Type99;
@@ -164,6 +182,13 @@ void SkirmishAI::doProduction(World& w) {
                     want = p.faction == Faction::Allies ? UnitType::Grizzly
                          : p.faction == Faction::Soviet ? UnitType::Rhino : UnitType::Type99;
             } else {
+                // 中期国家特色（德国坦克杀手前置=雷达即可）
+                if (p.country == Country::Germany && attackWave % 2 == 1
+                    && w.countUnits(player, UnitType::TankDestroyer) < 4
+                    && w.unitPrereqMet(player, unitDef(UnitType::TankDestroyer))) {
+                    w.startUnitProd(player, UnitType::TankDestroyer);
+                    return;
+                }
                 want = p.faction == Faction::Allies ? UnitType::Grizzly
                      : p.faction == Faction::Soviet ? UnitType::Rhino : UnitType::Type99;
             }
@@ -181,10 +206,11 @@ void SkirmishAI::doProduction(World& w) {
             w.startUnitProd(player, shipT);
         }
     }
-    // ---- 空军队列（类别2）：有空指部后维持 2 架 ----
+    // ---- 空军队列（类别2）：有空指部后维持 2 架（韩国黑鹰/中国无轻航改后期基洛夫）----
     if (w.hasBld(player, BldType::AirForceCmd) && w.unitQueuedCount(player, 2) < 2) {
-        UnitType airT = p.faction == Faction::Allies ? UnitType::Intruder
-                      : p.faction == Faction::Soviet ? UnitType::MiG : UnitType::BlackEagle;
+        UnitType airT = p.country == Country::Korea ? UnitType::BlackEagle
+                      : p.faction == Faction::Allies ? UnitType::Intruder
+                      : p.faction == Faction::Soviet ? UnitType::MiG : UnitType::Kirov;
         if (w.countUnits(player, airT) < 2 && w.unitPrereqMet(player, unitDef(airT)))
             w.startUnitProd(player, airT);
     }
@@ -199,19 +225,31 @@ void SkirmishAI::doProduction(World& w) {
                          : p.faction == Faction::Soviet ? UnitType::Conscript : UnitType::PLA;
             if (w.countUnits(player, inf) < 10) w.startUnitProd(player, inf);
         }
-        // 特殊步兵（高科后，困难 AI 更积极）
-        if (w.hasBld(player, BldType::BattleLab) && p.money > 1500 && w.unitQueuedCount(player, 0) < 1) {
-            int roll = (attackWave + (int)(w.tick / 900)) % (difficulty == 2 ? 3 : 5);
-            UnitType sp = UnitType::COUNT;
-            if (roll == 0) {
-                sp = p.faction == Faction::Allies ? UnitType::Tanya
-                   : p.faction == Faction::Soviet ? UnitType::Desolator : UnitType::Desolator;
-            } else if (roll == 1 && p.faction == Faction::Allies) {
-                sp = UnitType::Spy; // 盟军间谍：渗透偷钱/断电
+        // 特殊步兵（高科后，困难 AI 更积极；国家特色步兵优先：英狙击/古巴恐怖分子/伊辐射工兵）
+        if (p.money > 1500 && w.unitQueuedCount(player, 0) < 1) {
+            UnitType csp = UnitType::COUNT;
+            switch (p.country) {
+                case Country::UK:   csp = UnitType::Sniper; break;
+                case Country::Cuba: csp = UnitType::Terrorist; break;
+                case Country::Iraq: csp = UnitType::Desolator; break;
+                default: break;
             }
-            if (sp != UnitType::COUNT && w.unitPrereqMet(player, unitDef(sp))
-                && w.countUnits(player, sp) < 2)
-                w.startUnitProd(player, sp);
+            if (csp != UnitType::COUNT && w.countUnits(player, csp) < 3
+                && w.unitPrereqMet(player, unitDef(csp))) {
+                w.startUnitProd(player, csp);
+            } else if (w.hasBld(player, BldType::BattleLab)) {
+                int roll = (attackWave + (int)(w.tick / 900)) % (difficulty == 2 ? 3 : 5);
+                UnitType sp = UnitType::COUNT;
+                if (roll == 0) {
+                    sp = p.faction == Faction::Allies ? UnitType::Tanya
+                       : p.faction == Faction::Soviet ? UnitType::Desolator : UnitType::Desolator;
+                } else if (roll == 1 && p.faction == Faction::Allies) {
+                    sp = UnitType::Spy; // 盟军间谍：渗透偷钱/断电
+                }
+                if (sp != UnitType::COUNT && w.unitPrereqMet(player, unitDef(sp))
+                    && w.countUnits(player, sp) < 2)
+                    w.startUnitProd(player, sp);
+            }
         }
     }
 }
@@ -344,16 +382,92 @@ int SkirmishAI::countArmy(World& w) {
     int n = 0;
     for (const World::Ent& e : w.ents)
         if (e.alive && !e.isBuilding && e.player == player &&
-            e.utype != UnitType::Harvester && e.utype != UnitType::MCV && e.utype != UnitType::Engineer)
+            !unitDef(e.utype).canHarvet() && e.utype != UnitType::MCV && e.utype != UnitType::Engineer)
             n++;
     return n;
 }
+
+// 支援技能（RA2 原作机制）：伞兵就绪即空投敌基地；受损车辆送维修厂；闲置步兵/坦克进驻碉堡
+void SkirmishAI::doSupport(World& w) {
+    Player& p = w.players[player];
+    // 1. 伞兵：空投到敌方建造厂附近（骚扰敌后）
+    if (p.paradropReady) {
+        float bx = -1, by = -1;
+        for (const World::Ent& e : w.ents)
+            if (e.alive && e.isBuilding && e.player >= 0 && w.isEnemy(e.player, player)
+                && e.btype == BldType::ConYard) { bx = e.x + 3; by = e.y + 5; break; }
+        if (bx < 0)
+            for (const World::Ent& e : w.ents)
+                if (e.alive && e.isBuilding && e.player >= 0 && w.isEnemy(e.player, player)) { bx = e.x + 2; by = e.y + 3; break; }
+        if (bx >= 0) {
+            // 落点须为可站立陆地：向外找最近可通行格
+            for (int r = 0; r < 8 && p.paradropReady; r++) {
+                for (int dy = -r; dy <= r && p.paradropReady; dy++)
+                    for (int dx = -r; dx <= r && p.paradropReady; dx++) {
+                        int nx = (int)bx + dx, ny = (int)by + dy;
+                        if (!w.map.inBounds(nx, ny) || !w.map.passable(nx, ny)) continue;
+                        if (w.map.at(nx, ny).terrain == Terrain::Water) continue;
+                        w.orderParadrop(player, nx + 0.5f, ny + 0.5f);
+                    }
+            }
+        }
+    }
+    // 2. 维修厂：重伤（<55%）或被寄生的车辆自动回厂维修
+    EID depot = INVALID_EID;
+    for (size_t i = 0; i < w.ents.size(); i++)
+        if (w.ents[i].alive && w.ents[i].isBuilding && w.ents[i].player == player
+            && w.ents[i].btype == BldType::ServiceDepot) { depot = (int)i; break; }
+    if (depot != INVALID_EID) {
+        std::vector<EID> hurt;
+        for (size_t i = 0; i < w.ents.size(); i++) {
+            World::Ent& e = w.ents[i];
+            if (!e.alive || e.isBuilding || e.player != player) continue;
+            const UnitDef& ud = unitDef(e.utype);
+            if (ud.isInfantry() || ud.isAir() || ud.pathDomain() != 0 || ud.canHarvet()) continue;
+            bool needFix = e.hp < ud.hp * 55 / 100 || e.parasite != INVALID_EID;
+            if (!needFix) continue;
+            if (e.state == UState::Idle || (e.state == UState::Moving && e.target == INVALID_EID))
+                hurt.push_back((int)i);
+            if ((int)hurt.size() >= 3) break; // 每波最多送修 3 辆，避免前线空虚
+        }
+        if (!hurt.empty()) w.orderService(hurt, depot);
+    }
+    // 3. 碉堡驻军：闲置步兵进驻战斗碉堡/中立民房，闲置坦克进驻坦克碉堡（加固基地防线）
+    {
+        // 基地中心（建造厂位置）
+        float bcx = -1, bcy = -1;
+        for (const World::Ent& e : w.ents)
+            if (e.alive && e.isBuilding && e.player == player && e.btype == BldType::ConYard) { bcx = e.x; bcy = e.y; break; }
+        if (bcx >= 0) {
+            for (size_t i = 0; i < w.ents.size(); i++) {
+                World::Ent& b = w.ents[i];
+                if (!b.alive || !b.isBuilding) continue;
+                int gdom = garrisonDomain(b.btype);
+                if (gdom == 0 || (int)b.garrison.size() >= bldDef(b.btype).garrisonCap) continue;
+                if (b.player >= 0 && b.player != player) continue; // 只填己方或中立碉堡
+                if (distf(b.x, b.y, bcx, bcy) > 24.0f) continue;   // 只填基地附近
+                std::vector<EID> idle;
+                for (size_t j = 0; j < w.ents.size(); j++) {
+                    World::Ent& u = w.ents[j];
+                    if (!u.alive || u.isBuilding || u.player != player || u.state != UState::Idle) continue;
+                    const UnitDef& ud = unitDef(u.utype);
+                    bool fit = (gdom == 1 && ud.isInfantry() && u.utype != UnitType::Engineer)
+                            || (gdom == 2 && !ud.isInfantry() && !ud.isAir() && ud.pathDomain() == 0 && !ud.canHarvet());
+                    if (fit) idle.push_back((int)j);
+                    if ((int)idle.size() >= bldDef(b.btype).garrisonCap - (int)b.garrison.size()) break;
+                }
+                if (!idle.empty()) w.orderGarrison(idle, (int)i);
+            }
+        }
+    }
+}
+
 
 Vec2i SkirmishAI::findArmyCenter(World& w) {
     int sx = 0, sy = 0, n = 0;
     for (const World::Ent& e : w.ents)
         if (e.alive && !e.isBuilding && e.player == player &&
-            e.utype != UnitType::Harvester && e.utype != UnitType::MCV) {
+            !unitDef(e.utype).canHarvet() && e.utype != UnitType::MCV) {
             sx += (int)e.x; sy += (int)e.y; n++;
         }
     if (n == 0) return {w.map.w / 2, w.map.h / 2};
@@ -387,7 +501,7 @@ void SkirmishAI::doAttack(World& w) {
     for (size_t i = 0; i < w.ents.size(); i++) {
         const World::Ent& e = w.ents[i];
         if (e.alive && !e.isBuilding && e.player == player &&
-            e.utype != UnitType::Harvester && e.utype != UnitType::MCV && e.utype != UnitType::Engineer
+            !unitDef(e.utype).canHarvet() && e.utype != UnitType::MCV && e.utype != UnitType::Engineer
             && e.utype != UnitType::Spy) {
             const UnitDef& ud = unitDef(e.utype);
             if (ud.isNaval() && !ud.isAmphib()) navyIds.push_back((int)i);
