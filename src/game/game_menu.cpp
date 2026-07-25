@@ -72,13 +72,18 @@ void Game::drawMainMenu() {
     bool pr = mPressed(MOUSE_LEFT_BUTTON);
     int bx = 120, bw = 330, bh = 58, by = 360, gap = 18;
     if (ra2Button(font, m, pr, {(float)bx, (float)by, (float)bw, (float)bh}, TR(S::Skirmish), 24)) phase = Phase::Setup;
-    if (ra2Button(font, m, pr, {(float)bx, (float)(by + (bh + gap)), (float)bw, (float)bh}, TR(S::Campaign), 24))
+    if (ra2Button(font, m, pr, {(float)bx, (float)(by + (bh + gap)), (float)bw, (float)bh}, TR(S::LanGame), 24)) {
+        lobbyState = 0; // 回角色选择（上次失败/退出残留）
+        lobbyEditingIp = false;
+        phase = Phase::NetLobby;
+    }
+    if (ra2Button(font, m, pr, {(float)bx, (float)(by + 2 * (bh + gap)), (float)bw, (float)bh}, TR(S::Campaign), 24))
         phase = Phase::MissionSelect;
-    if (ra2Button(font, m, pr, {(float)bx, (float)(by + 2 * (bh + gap)), (float)bw, (float)bh}, TR(S::Settings), 24)) {
+    if (ra2Button(font, m, pr, {(float)bx, (float)(by + 3 * (bh + gap)), (float)bw, (float)bh}, TR(S::Settings), 24)) {
         settingsFromGame = false;
         phase = Phase::Settings;
     }
-    if (ra2Button(font, m, pr, {(float)bx, (float)(by + 3 * (bh + gap)), (float)bw, (float)bh}, TR(S::ExitGame), 24,
+    if (ra2Button(font, m, pr, {(float)bx, (float)(by + 4 * (bh + gap)), (float)bw, (float)bh}, TR(S::ExitGame), 24,
                   true, true)) {
         CloseWindow();
         exit(0);

@@ -42,6 +42,13 @@ int main(int argc, char** argv) {
         game.shutdown();
         return 0;
     }
+    // P8 联机双进程自测：先起 --net-host，再起 --net-client；两端日志比对校验和
+    if (argc > 1 && (strcmp(argv[1], "--net-host") == 0 || strcmp(argv[1], "--net-client") == 0)) {
+        int frames = argc > 2 ? atoi(argv[2]) : 900;
+        int rc = game.netSelfTestDriver(strcmp(argv[1], "--net-host") == 0 ? 0 : 1, frames);
+        game.shutdown();
+        return rc;
+    }
     game.run();
     game.shutdown();
     return 0;

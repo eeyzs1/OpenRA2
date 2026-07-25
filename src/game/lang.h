@@ -46,6 +46,9 @@ enum class S : int {
     KeysSection, ResetKeys, PressKey, KeysTip,
     KaStop, KaUnload, KaDeploy, KaScatter, KaGuard, KaSameType, KaMusic, KaViewBase,
     KaPause, KaRally, KaSell, KaQuickSave, KaQuickLoad, KaSpeedUp, KaSpeedDown,
+    // LAN 联机（P8）
+    LanGame, HostGame, JoinGame, WaitPeer, PeerJoined, WaitHostStart,
+    ConnectFail, StartBattle, IpLabel, PeerLeft, DesyncWarn, YourSide,
     COUNT
 };
 

@@ -193,6 +193,19 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"快速读档", "Quick Load"},
     {"游戏加速", "Speed Up"},
     {"游戏减速", "Speed Down"},
+    // LAN 联机（P8）
+    {"局域网联机", "LAN Multiplayer"},
+    {"主机开局", "Host Game"},
+    {"加入游戏", "Join Game"},
+    {"等待对手连接…", "Waiting for opponent..."},
+    {"对手已加入", "Opponent joined"},
+    {"已连接，等待主机开始…", "Connected. Waiting for host..."},
+    {"连接失败", "Connection failed"},
+    {"开始对战", "Start Battle"},
+    {"IP 地址", "IP Address"},
+    {"对手已断开连接", "Opponent disconnected"},
+    {"同步校验失败：游戏已不同步", "Desync detected"},
+    {"你指挥：%s", "You command: %s"},
 };
 
 const char* TR(S id) {

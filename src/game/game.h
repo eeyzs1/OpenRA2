@@ -3,16 +3,18 @@
 #include "game/ai.h"
 #include "game/lang.h"
 #include "game/campaign.h"
+#include "net/net.h"
 #include "raylib.h"
 #include <vector>
 #include <deque>
+#include <map>
 #include <unordered_set>
 
 constexpr int SCREEN_W = 1440;
 constexpr int SCREEN_H = 810;
 
 // 游戏阶段
-enum class Phase { MainMenu, Setup, MissionSelect, Settings, InGame };
+enum class Phase { MainMenu, Setup, MissionSelect, Settings, NetLobby, InGame };
 
 // 可重绑定按键动作（设置页修改，settings.ini 持久化，默认值为 RA2 原作键位）
 enum KeyAction : int {
@@ -31,6 +33,7 @@ public:
     void campaignSmokeTest(int mission, int frames); // 战役冒烟测试：开局跑 N 帧，校验手工地图/触发器
     int playTest();             // 自动化完整游玩测试：脚本注入输入，真实窗口跑全流程，返回失败数
     void debugMenuShot(const char* file, bool setup); // 菜单截图（验证用）
+    int netSelfTestDriver(int role, int frames); // P8 双进程自测：role 0=--net-host 1=--net-client（main 驱动）
 
     // 快速存档固定槽位（F5 保存 / F9 读取，游戏内菜单共用）
     static constexpr const char* QUICKSAVE_PATH = "saves/quicksave.sav";
@@ -88,6 +91,32 @@ private:
     std::vector<Trigger> missionTriggers;
     std::string objectiveText;
     void updateTriggers(); // 战役触发器求值与执行（logic 内每帧调用）
+
+    // ---- P8 LAN 联机（确定性 lockstep，1v1 遭遇战） ----
+    NetLink net;
+    bool netGame = false;          // 联机对局进行中
+    int netPlayer = 0;             // 本端槽位：0 主机 1 客户端
+    static constexpr int NET_PORT = 55555;
+    static constexpr int NET_DELAY = 3; // 输入延迟（tick，30/s）
+    uint64_t netSimTick = 0;       // 已推进的模拟 tick（= world.tick）
+    std::map<uint64_t, std::vector<World::Cmd>> localCmds, remoteCmds;
+    std::vector<World::Cmd> pendingCmds; // 本逻辑帧收集，netAdvance 分配发送
+    std::map<uint64_t, uint32_t> localSums; // 本端历史校验和（MsgChecksum 比对用）
+    bool netDesync = false;        // 校验和不一致（不同步）
+    bool netPeerLeft = false;      // 对手断线
+    // 大厅状态
+    int lobbyRole = 0;             // 0 主机 1 加入
+    std::string lobbyIp = "127.0.0.1";
+    int lobbyState = 0;            // 0 选角色 1 等待连接 2 已连接待开局 3 连接失败
+    bool lobbyEditingIp = false;
+    uint64_t netSeed = 0;
+    int peerCountry = -1, peerColor = -1; // 对手国家/颜色（握手交换）
+    void issueCmd(const World::Cmd& c);   // 单机立即执行；联机入队（NET_DELAY 后执行）
+    void netAdvance();                    // lockstep：收发命令帧，条件满足推进 1 tick
+    void netHandleMsgs();                 // 消费 NetLink 消息（大厅握手/局中命令帧）
+    void netBeginGame();                  // 双方同步 newGame（host 在 Welcome 内定配置）
+    void netLeave();                      // 结束联机状态回主菜单
+    void drawNetLobby();                  // 大厅 UI（game_net.cpp）
 
     // 摄像机（世界像素偏移）
     float camX = 0, camY = 0;

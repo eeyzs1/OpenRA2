@@ -435,7 +435,9 @@ void Game::run() {
     while (!WindowShouldClose()) {
         if (displayDirty) { displayDirty = false; applyDisplay(); } // 显示模式/分辨率热切换
         g_sfx.updateBgm();
+        if (phase == Phase::NetLobby) netHandleMsgs(); // 大厅：驱动握手状态机
         if (phase == Phase::InGame) {
+            if (netGame) netHandleMsgs(); // 联机：渲染帧收包，命令帧尽早入队减少等待
             handleInput();
             if (!paused && !gameOver) {
                 static const float muls[] = {0.5f, 1.0f, 2.0f}; // 慢/普通/快
@@ -851,8 +853,12 @@ void Game::campaignSmokeTest(int mission, int frames) {
 }
 
 void Game::logic() {
-    world.update();
-    for (auto& ai : ais) ai.update(world);
+    if (netGame) {
+        netAdvance(); // lockstep：远端命令就绪才 world.update()（本帧可能不推进）
+    } else {
+        world.update();
+        for (auto& ai : ais) ai.update(world);
+    }
 
     // 听者位置 = 视野中心瓦片
     {
@@ -888,7 +894,7 @@ void Game::logic() {
 
     // 胜负判定
     if (!gameOver) {
-        bool meDead = world.players[0].defeated;
+        bool meDead = world.players[localPlayer].defeated;
         if (campaignMission >= 0) {
             // 战役：先刷波次与触发器再判定
             const MissionDef& md = missionTable()[campaignMission];
@@ -920,6 +926,11 @@ void Game::logic() {
         }
     }
     if (msgTimer > 0) msgTimer -= 1.0f / LOGIC_FPS;
+    // 联机异常结算：对手断线判胜（弃权），不同步判负并提示
+    if (netGame && !gameOver) {
+        if (netPeerLeft) { gameOver = true; victory = true; message(TR(S::PeerLeft)); }
+        else if (netDesync) { gameOver = true; victory = false; message(TR(S::DesyncWarn)); }
+    }
 }
 
 // ===================== 输入 =====================
@@ -1018,7 +1029,8 @@ void Game::issueSmartOrder(int mx, int my) {
                 if (ok) fit.push_back(id);
             }
             if (!fit.empty()) {
-                world.orderGarrison(fit, eb);
+                World::Cmd c; c.type = World::Cmd::Garrison; c.ids = fit; c.a = eb;
+                issueCmd(c);
                 message(TR(S::MsgGarrison));
                 return;
             }
@@ -1032,7 +1044,8 @@ void Game::issueSmartOrder(int mx, int my) {
                 if (!ud.isInfantry() && !ud.isAir() && ud.pathDomain() == 0 && !ud.canHarvet()) veh.push_back(id);
             }
             if (!veh.empty()) {
-                world.orderService(veh, eb);
+                World::Cmd c; c.type = World::Cmd::Service; c.ids = veh; c.a = eb;
+                issueCmd(c);
                 message(TR(S::MsgService));
                 return;
             }
@@ -1043,10 +1056,12 @@ void Game::issueSmartOrder(int mx, int my) {
         if (hasEngineer && world.ents[enemy].isBuilding && bldDef(world.ents[enemy].btype).capturable) {
             std::vector<EID> engs;
             for (EID id : sel) if (world.valid(id) && world.ents[id].utype == UnitType::Engineer) engs.push_back(id);
-            world.orderCapture(engs, enemy);
+            World::Cmd c; c.type = World::Cmd::Capture; c.ids = engs; c.a = enemy;
+            issueCmd(c);
             message(TR(S::MsgEngCapture));
         } else {
-            world.orderAttack(sel, enemy);
+            World::Cmd c; c.type = World::Cmd::Attack; c.ids = sel; c.a = enemy;
+            issueCmd(c);
         }
         return;
     }
@@ -1058,7 +1073,8 @@ void Game::issueSmartOrder(int mx, int my) {
             if (world.valid(id) && !world.ents[id].isBuilding && unitDef(world.ents[id].utype).isInfantry())
                 inf.push_back(id);
         if (!inf.empty()) {
-            world.orderBoard(inf, eu);
+            World::Cmd c; c.type = World::Cmd::Board; c.ids = inf; c.a = eu;
+            issueCmd(c);
             message(TR(S::MsgBoarding));
             return;
         }
@@ -1068,7 +1084,8 @@ void Game::issueSmartOrder(int mx, int my) {
         if (hasEngineer && world.ents[eb].hp < bldDef(world.ents[eb].btype).hp) {
             std::vector<EID> engs;
             for (EID id : sel) if (world.valid(id) && world.ents[id].utype == UnitType::Engineer) engs.push_back(id);
-            world.orderRepair(engs, eb);
+            World::Cmd c; c.type = World::Cmd::Repair; c.ids = engs; c.a = eb;
+            issueCmd(c);
             message(TR(S::MsgEngRepair));
         }
         return;
@@ -1082,11 +1099,18 @@ void Game::issueSmartOrder(int mx, int my) {
             if (unitDef(world.ents[id].utype).canHarvet()) harv.push_back(id);
             else rest.push_back(id);
         }
-        world.orderHarvest(harv, tx, ty);
-        if (!rest.empty()) world.orderMove(rest, (float)tx, (float)ty, kDown(KEY_A));
+        World::Cmd c; c.type = World::Cmd::Harvest; c.ids = harv; c.a = tx; c.b = ty;
+        issueCmd(c);
+        if (!rest.empty()) {
+            World::Cmd mc; mc.type = World::Cmd::Move; mc.ids = rest;
+            mc.x = (float)tx; mc.y = (float)ty; mc.attackMove = kDown(KEY_A);
+            issueCmd(mc);
+        }
         return;
     }
-    world.orderMove(sel, (float)tx, (float)ty, kDown(KEY_A));
+    World::Cmd mc; mc.type = World::Cmd::Move; mc.ids = sel;
+    mc.x = (float)tx; mc.y = (float)ty; mc.attackMove = kDown(KEY_A);
+    issueCmd(mc);
 }
 
 void Game::message(const std::string& m) {
@@ -1116,7 +1140,11 @@ void Game::handleInput() {
             screenToTile(wx, wy, tx, ty);
             if (world.map.inBounds(tx, ty)) {
                 SWType t = targetingSW;
-                if (world.launchSW(localPlayer, t, tx + 0.5f, ty + 0.5f)) {
+                // 本地预检（就绪与可用），联机下命令延迟执行，消息按预检结果提示
+                if (world.swAvailable(localPlayer, t) && world.players[localPlayer].swReady[(int)t]) {
+                    World::Cmd c; c.type = World::Cmd::LaunchSW; c.a = (int)t;
+                    c.x = tx + 0.5f; c.y = ty + 0.5f;
+                    issueCmd(c);
                     message(TextFormat(TR(S::MsgSWLaunchedFmt), swName(t)));
                 }
                 targetingSW = SWType::COUNT;
@@ -1137,7 +1165,11 @@ void Game::handleInput() {
             int tx, ty;
             screenToTile(wx, wy, tx, ty);
             if (world.map.inBounds(tx, ty)) {
-                world.orderParadrop(localPlayer, tx + 0.5f, ty + 0.5f);
+                if (world.players[localPlayer].paradropReady) {
+                    World::Cmd c; c.type = World::Cmd::Paradrop;
+                    c.x = tx + 0.5f; c.y = ty + 0.5f;
+                    issueCmd(c);
+                }
                 targetingParadrop = false;
             }
         }
@@ -1151,10 +1183,21 @@ void Game::handleInput() {
             EID b = pickBuilding((int)mouse.x, (int)mouse.y);
             if (b != INVALID_EID && world.ents[b].player == localPlayer) {
                 if (sideMode == 2) {
-                    if (world.ents[b].btype != BldType::ConYard) { world.sellBuilding(b); message(TR(S::MsgSold)); }
+                    if (world.ents[b].btype != BldType::ConYard) {
+                        World::Cmd c; c.type = World::Cmd::SellBuilding; c.ids.push_back(b);
+                        issueCmd(c);
+                        message(TR(S::MsgSold));
+                    }
                     else message(TR(S::MsgConYardNoSell));
                 } else {
-                    if (world.repairBuilding(b)) message(TR(S::MsgRepaired));
+                    // 本地预检（受损+金钱足够），联机下命令延迟执行
+                    const BldDef& bd = bldDef(world.ents[b].btype);
+                    int repCost = (bd.hp - world.ents[b].hp) * bd.cost / bd.hp / 2;
+                    if (world.ents[b].hp < bd.hp && world.players[localPlayer].money >= repCost) {
+                        World::Cmd c; c.type = World::Cmd::RepairBuilding; c.ids.push_back(b);
+                        issueCmd(c);
+                        message(TR(S::MsgRepaired));
+                    }
                     else message(TR(S::MsgNoRepair));
                 }
             }
@@ -1178,7 +1221,10 @@ void Game::handleInput() {
             BldType t = world.players[localPlayer].placingBld;
             const BldDef& d = bldDef(t);
             int bx = tx - d.w / 2, by = ty - d.h / 2;
-            if (world.placeBuilding(localPlayer, t, bx, by)) {
+            if (world.canPlace(t, bx, by, localPlayer)) { // 本地预检；真正放置在命令执行时（联机延迟）
+                World::Cmd c; c.type = World::Cmd::PlaceBuilding; c.a = (int)t;
+                c.x = (float)bx; c.y = (float)by;
+                issueCmd(c);
                 placing = false;
                 if (!kDown(KEY_LEFT_SHIFT)) world.players[localPlayer].placingBld = BldType::COUNT;
                 else { world.players[localPlayer].placingBld = t; placing = true; }
@@ -1213,20 +1259,24 @@ void Game::handleInput() {
 
     // 快捷键（设置页可重绑；0=未绑定。A/Shift/Ctrl/方向键等修饰与镜头键固定）
     auto ka = [&](int a) { return keyBind[a] > 0 && kPressed(keyBind[a]); };
-    if (ka(KA_Stop)) world.orderStop(sel);
+    if (ka(KA_Stop)) { World::Cmd c; c.type = World::Cmd::Stop; c.ids = sel; issueCmd(c); }
     if (ka(KA_Unload)) {
-        if (!sel.empty()) world.orderUnload(sel); // 运输船卸载
+        if (!sel.empty()) { // 运输船卸载
+            World::Cmd c; c.type = World::Cmd::Unload; c.ids = sel; issueCmd(c);
+        }
         // 选中建筑有驻军：撤出全部驻军（RA2 原作同键）
         if (world.valid(selBuilding) && world.ents[selBuilding].isBuilding
             && !world.ents[selBuilding].garrison.empty()) {
-            world.orderUngarrison({selBuilding});
+            World::Cmd c; c.type = World::Cmd::Ungarrison; c.ids.push_back(selBuilding);
+            issueCmd(c);
             message(TR(S::MsgUngarrison));
         }
     }
     if (ka(KA_Deploy)) {
         for (EID id : sel)
             if (world.valid(id) && world.ents[id].utype == UnitType::MCV) {
-                world.orderDeploy(id);
+                World::Cmd c; c.type = World::Cmd::Deploy; c.ids.push_back(id);
+                issueCmd(c);
                 sel.erase(std::remove(sel.begin(), sel.end(), id), sel.end());
                 message(TR(S::MsgDeployed));
             }
@@ -1238,18 +1288,21 @@ void Game::handleInput() {
                     || world.ents[id].utype == UnitType::GI))
                 anyDeploy = true;
         if (anyDeploy) {
-            world.orderRadDeploy(sel);
+            World::Cmd c; c.type = World::Cmd::RadDeploy; c.ids = sel;
+            issueCmd(c);
             message(TR(S::MsgDeployToggled));
         }
     }
     // 散布（RA2 原作键位）
     if (ka(KA_Scatter) && !sel.empty()) {
-        world.orderScatter(sel);
+        World::Cmd c; c.type = World::Cmd::Scatter; c.ids = sel;
+        issueCmd(c);
         message(TR(S::MsgScatter));
     }
     // 警戒（RA2 原作键位）
     if (ka(KA_Guard) && !sel.empty()) {
-        world.orderGuard(sel);
+        World::Cmd c; c.type = World::Cmd::Guard; c.ids = sel;
+        issueCmd(c);
         message(TR(S::MsgGuard));
     }
     // 选择同类（RA2 原作键位）
@@ -1308,13 +1361,14 @@ void Game::handleInput() {
         g_sfx.toggleBgm();
         message(g_sfx.bgmEnabled() ? TR(S::MsgMusicOn) : TR(S::MsgMusicOff));
     }
-    // 快速存档 / 快速读档
-    if (ka(KA_QuickSave)) message(saveGameFile(QUICKSAVE_PATH) ? TR(S::MsgSaved) : TR(S::MsgSaveFail));
-    if (ka(KA_QuickLoad)) message(loadGameFile(QUICKSAVE_PATH) ? TR(S::MsgLoaded) : TR(S::MsgLoadFail));
+    // 快速存档 / 快速读档（联机禁用：lockstep 下存读档无法同步）
+    if (!netGame && ka(KA_QuickSave)) message(saveGameFile(QUICKSAVE_PATH) ? TR(S::MsgSaved) : TR(S::MsgSaveFail));
+    if (!netGame && ka(KA_QuickLoad)) message(loadGameFile(QUICKSAVE_PATH) ? TR(S::MsgLoaded) : TR(S::MsgLoadFail));
     // 出售选中建筑（默认 Del）
     if (ka(KA_Sell) && world.valid(selBuilding) && world.ents[selBuilding].player == localPlayer
         && world.ents[selBuilding].btype != BldType::ConYard) {
-        world.sellBuilding(selBuilding);
+        World::Cmd c; c.type = World::Cmd::SellBuilding; c.ids.push_back(selBuilding);
+        issueCmd(c);
         selBuilding = INVALID_EID;
         message(TR(S::MsgSold));
     }
@@ -1327,9 +1381,11 @@ void Game::handleInput() {
                 break;
             }
     }
-    if (ka(KA_Pause)) paused = !paused;
-    if (ka(KA_SpeedUp) || kPressed(KEY_KP_ADD)) gameSpeed = std::min(2, gameSpeed + 1);
-    if (ka(KA_SpeedDown) || kPressed(KEY_KP_SUBTRACT)) gameSpeed = std::max(0, gameSpeed - 1);
+    if (ka(KA_Pause) && !netGame) paused = !paused; // 联机不可单方暂停（lockstep 步进对齐）
+    if (!netGame) {
+        if (ka(KA_SpeedUp) || kPressed(KEY_KP_ADD)) gameSpeed = std::min(2, gameSpeed + 1);
+        if (ka(KA_SpeedDown) || kPressed(KEY_KP_SUBTRACT)) gameSpeed = std::max(0, gameSpeed - 1);
+    }
     if (kPressed(KEY_ESCAPE)) {
         if (!sel.empty() || world.valid(selBuilding)) { sel.clear(); selBuilding = INVALID_EID; }
         else showMenu = true;
@@ -1340,7 +1396,9 @@ void Game::handleInput() {
         screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
         int tx, ty;
         screenToTile(wx, wy, tx, ty);
-        world.setRally(selBuilding, tx, ty);
+        World::Cmd c; c.type = World::Cmd::SetRally; c.ids.push_back(selBuilding);
+        c.x = (float)tx; c.y = (float)ty;
+        issueCmd(c);
         message(TR(S::MsgRallySet));
     }
 
@@ -1378,6 +1436,7 @@ void Game::render() {
         if (phase == Phase::MainMenu) drawMainMenu();
         else if (phase == Phase::MissionSelect) drawMissionSelect();
         else if (phase == Phase::Settings) drawSettings();
+        else if (phase == Phase::NetLobby) drawNetLobby();
         else drawSetup();
         EndTextureMode();
         if (!shotFile.empty()) {
@@ -1994,7 +2053,7 @@ int Game::playTest() {
     shot("pt_01_mainmenu.png");
 
     // ---- 1b 设置页：语言热切换 / 显示模式 / 按键重绑 / 持久化 ----
-    clickL(285, 541); // “设置”按钮 {120,512,330,58}
+    clickL(285, 617); // “设置”按钮 {120,588,330,58}（主菜单第4按钮：遭遇战/局域网/战役/设置/退出）
     check(phase == Phase::Settings, "点击[设置]进设置页");
     frame(2);
     shot("pt_01b_settings.png");
@@ -2177,7 +2236,7 @@ int Game::playTest() {
     check(phase == Phase::MainMenu && !showMenu, "点击[返回主菜单]");
 
     // ---- 11 战役模式 ----
-    clickL(285, 465); // “战役模式” {120,436,330,58}
+    clickL(285, 541); // “战役模式” {120,512,330,58}（主菜单第3按钮：遭遇战/局域网/战役/设置/退出）
     check(phase == Phase::MissionSelect, "点击[战役模式]");
     shot("pt_07_missions.png");
     clickL(330, 300); // 第一张任务卡 {150,200,360,200}

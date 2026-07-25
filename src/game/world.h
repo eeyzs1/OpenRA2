@@ -252,6 +252,25 @@ public:
     void orderParadrop(int player, float x, float y);  // 伞兵空投（美国空指部/科技机场）
     void orderService(const std::vector<EID>& sel, EID depotId); // 车辆开往维修厂（维修+摘除寄生）
 
+    // ---- P8 联机：玩家命令抽象（lockstep 同步的最小单元） ----
+    // 双端确定性前提：同种子初始化 + 相同命令序列（同 tick 序、同内容）驱动 update
+    struct Cmd {
+        enum Type : uint8_t {
+            None = 0,
+            Move, Attack, Harvest, Stop, Deploy, Capture, Repair, Scatter, Guard,
+            Board, Unload, Garrison, Ungarrison, RadDeploy, Paradrop, Service,
+            StartUnitProd, CancelUnitProd, StartBldProd, CancelBldProd,
+            PlaceBuilding, SetRally, SellBuilding, RepairBuilding, LaunchSW,
+        };
+        Type type = None;
+        std::vector<EID> ids; // 选择集（可空）
+        float x = 0, y = 0;   // 目标点（地图格坐标）
+        int a = 0, b = 0;     // 参数：type 索引 / 目标 EID / (bx,by)
+        bool attackMove = false; // Move 用：A 键攻击移动
+    };
+    void applyCmd(int player, const Cmd& c); // 执行一条玩家命令（联机双端对称调用）
+    uint32_t checksum() const;               // 世界状态校验和（lockstep 反不同步检测）
+
     // EVA 播报事件（Game 层消费：字幕+提示音；player = 接收方）
     struct EvaEvent { int player; std::string text; };
     std::deque<EvaEvent> evaQueue;

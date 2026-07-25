@@ -337,18 +337,26 @@ void Game::drawHUD() {
                     message(TR(S::MsgPlaceBld));
                 } else if (!canBuild) { message(TR(S::MsgCannotBuild)); }
                 else if (isUnit || !activeThis) {
-                    // 单位允许重复点击排队（RA2 原作）
-                    bool ok = isUnit ? world.startUnitProd(localPlayer, (UnitType)typeIdx)
-                                     : world.startBldProd(localPlayer, (BldType)typeIdx);
-                    if (!ok) message(TR(S::MsgQueueBusy));
+                    // 单位允许重复点击排队（RA2 原作）；联机下命令延迟执行，本地预检队列容量
+                    bool ok = isUnit ? (world.unitQueuedCount(localPlayer, unitDef((UnitType)typeIdx).prodCat()) < 8)
+                                     : !me.bldProd.active;
+                    if (!ok) { message(TR(S::MsgQueueBusy)); }
+                    else {
+                        World::Cmd c;
+                        c.type = isUnit ? World::Cmd::StartUnitProd : World::Cmd::StartBldProd;
+                        c.a = typeIdx;
+                        issueCmd(c);
+                    }
                 }
             }
             if (mPressed(MOUSE_RIGHT_BUTTON)) {
                 if (isUnit && totalN > 0) {
-                    world.cancelUnitProd(localPlayer, (UnitType)typeIdx);
+                    World::Cmd c; c.type = World::Cmd::CancelUnitProd; c.a = typeIdx;
+                    issueCmd(c);
                     message(TR(S::MsgCanceledOne));
                 } else if (!isUnit && activeThis) {
-                    world.cancelProd(localPlayer, false);
+                    World::Cmd c; c.type = World::Cmd::CancelBldProd;
+                    issueCmd(c);
                     message(TR(S::MsgCanceledProd));
                 }
             }
@@ -449,24 +457,25 @@ void Game::drawHUD() {
         } else {
             drawTextF(font, TR(S::GameMenu), mx + mw / 2 - 40, my + 20, 22, WHITE);
         }
-        // 重开当前局：战役回当前任务，遭遇战重随机一张
+        // 重开当前局：战役回当前任务，遭遇战重随机一张（联机不支持单方重开）
         auto restart = [&]() {
             if (campaignMission >= 0) newCampaignGame(campaignMission);
             else newGame((uint64_t)time(nullptr));
             showMenu = false;
         };
-        if (uiButton({(float)mx + 60, (float)my + 72, 200, 32}, gameOver ? TR(S::PlayAgain) : TR(S::Continue), true)) {
+        if (uiButton({(float)mx + 60, (float)my + 72, 200, 32}, gameOver ? TR(S::PlayAgain) : TR(S::Continue),
+                     !(gameOver && netGame))) {
             if (gameOver) restart();
             else showMenu = false;
         }
-        // 存读档：仅对局中可用（结算画面无意义）；按钮标注当前绑定键位
+        // 存读档：仅对局中可用（结算画面无意义）；联机禁用（lockstep 无法同步）；按钮标注当前绑定键位
         if (uiButton({(float)mx + 60, (float)my + 114, 200, 32},
-                     TextFormat("%s (%s)", TR(S::SaveProgress), keyName(keyBind[KA_QuickSave])), !gameOver)) {
+                     TextFormat("%s (%s)", TR(S::SaveProgress), keyName(keyBind[KA_QuickSave])), !gameOver && !netGame)) {
             message(saveGameFile(QUICKSAVE_PATH) ? TR(S::MsgSaved) : TR(S::MsgSaveFail));
             showMenu = false;
         }
         if (uiButton({(float)mx + 60, (float)my + 156, 200, 32},
-                     TextFormat("%s (%s)", TR(S::LoadProgress), keyName(keyBind[KA_QuickLoad])), !gameOver)) {
+                     TextFormat("%s (%s)", TR(S::LoadProgress), keyName(keyBind[KA_QuickLoad])), !gameOver && !netGame)) {
             message(loadGameFile(QUICKSAVE_PATH) ? TR(S::MsgLoaded) : TR(S::MsgLoadFail));
             showMenu = false;
         }
@@ -476,9 +485,10 @@ void Game::drawHUD() {
             showMenu = false;
             phase = Phase::Settings;
         }
-        if (uiButton({(float)mx + 60, (float)my + 240, 200, 32}, TR(S::Restart), true)) restart();
+        if (uiButton({(float)mx + 60, (float)my + 240, 200, 32}, TR(S::Restart), !netGame)) restart();
         if (uiButton({(float)mx + 60, (float)my + 282, 200, 32}, TR(S::BackToMain), true)) {
-            phase = Phase::MainMenu;
+            if (netGame) netLeave(); // 联机：发 Bye 并复位联机状态
+            else phase = Phase::MainMenu;
             showMenu = false;
         }
         if (uiButton({(float)mx + 60, (float)my + 324, 200, 32}, TR(S::ExitGame), true)) {

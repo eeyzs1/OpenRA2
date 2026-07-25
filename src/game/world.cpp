@@ -3353,3 +3353,62 @@ void World::chronoShiftUnits(const std::vector<EID>& sel, float tx, float ty) {
     ef.kind = 8; ef.x = tx; ef.y = ty; ef.maxAge = 40;
     effects.push_back(ef);
 }
+
+// ===================== P8 联机：命令执行与校验和 =====================
+// 联机双端对称执行：命令内容决定一切，返回值与 UI 反馈由各端本地表现（不影响模拟）
+void World::applyCmd(int player, const Cmd& c) {
+    if (player < 0 || player >= numPlayers) return;
+    switch (c.type) {
+        case Cmd::Move:        orderMove(c.ids, c.x, c.y, c.attackMove); break;
+        case Cmd::Attack:      orderAttack(c.ids, c.a); break;
+        case Cmd::Harvest:     orderHarvest(c.ids, c.a, c.b); break;
+        case Cmd::Stop:        orderStop(c.ids); break;
+        case Cmd::Deploy:      if (!c.ids.empty()) orderDeploy(c.ids[0]); break;
+        case Cmd::Capture:     orderCapture(c.ids, c.a); break;
+        case Cmd::Repair:      orderRepair(c.ids, c.a); break;
+        case Cmd::Scatter:     orderScatter(c.ids); break;
+        case Cmd::Guard:       orderGuard(c.ids); break;
+        case Cmd::Board:       orderBoard(c.ids, c.a); break;
+        case Cmd::Unload:      orderUnload(c.ids); break;
+        case Cmd::Garrison:    orderGarrison(c.ids, c.a); break;
+        case Cmd::Ungarrison:  orderUngarrison(c.ids); break;
+        case Cmd::RadDeploy:   orderRadDeploy(c.ids); break;
+        case Cmd::Paradrop:    orderParadrop(player, c.x, c.y); break;
+        case Cmd::Service:     orderService(c.ids, c.a); break;
+        case Cmd::StartUnitProd:  startUnitProd(player, (UnitType)c.a); break;
+        case Cmd::CancelUnitProd: cancelUnitProd(player, (UnitType)c.a); break;
+        case Cmd::StartBldProd:   startBldProd(player, (BldType)c.a); break;
+        case Cmd::CancelBldProd:  cancelProd(player, false); break;
+        case Cmd::PlaceBuilding:  placeBuilding(player, (BldType)c.a, (int)c.x, (int)c.y); break;
+        case Cmd::SetRally:    setRally(c.ids.empty() ? INVALID_EID : c.ids[0], (int)c.x, (int)c.y); break;
+        case Cmd::SellBuilding:
+            if (!c.ids.empty() && valid(c.ids[0]) && ents[c.ids[0]].player == player
+                && ents[c.ids[0]].btype != BldType::ConYard) sellBuilding(c.ids[0]);
+            break;
+        case Cmd::RepairBuilding:
+            if (!c.ids.empty() && valid(c.ids[0]) && ents[c.ids[0]].player == player) repairBuilding(c.ids[0]);
+            break;
+        case Cmd::LaunchSW:    launchSW(player, (SWType)c.a, c.x, c.y); break;
+        default: break;
+    }
+}
+
+// FNV-1a 校验和：覆盖影响模拟的全部状态（联机双端定期比对，不一致即不同步）
+uint32_t World::checksum() const {
+    uint32_t h = 2166136261u;
+    auto mix = [&](uint32_t v) { h = (h ^ v) * 16777619u; };
+    mix((uint32_t)tick); mix((uint32_t)numPlayers);
+    mix((uint32_t)rng.s ^ (uint32_t)(rng.s >> 32));
+    mix(cratesEnabled ? 1u : 0u); mix(aiAlliance ? 1u : 0u);
+    for (const Player& p : players) {
+        mix((uint32_t)p.money); mix((uint32_t)p.powerMade); mix((uint32_t)p.powerUsed);
+        mix(p.defeated ? 1u : 0u);
+    }
+    for (const Ent& e : ents) {
+        if (!e.alive) continue;
+        mix((uint32_t)e.player); mix(e.hp);
+        mix((uint32_t)(e.x * 64.0f)); mix((uint32_t)(e.y * 64.0f)); // 1/64 格精度量化
+        mix((uint32_t)e.state); mix((uint32_t)e.target);
+    }
+    return h;
+}
