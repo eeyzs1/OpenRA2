@@ -105,6 +105,10 @@ inline const char* unitAssetName(UnitType t) {
         case UnitType::RobotTank: return "robottank";
         case UnitType::BattleFortress: return "battlefortress";
         case UnitType::Hornet: return "hornet";
+        case UnitType::NavySEAL: return "navyseal";
+        case UnitType::Yuri: return "yuri";
+        case UnitType::ChronoCommando: return "chronocommando";
+        case UnitType::PsiCommando: return "psicommando";
         default: return "unknown";
     }
 }
