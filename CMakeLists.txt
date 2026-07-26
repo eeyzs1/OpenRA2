@@ -22,3 +22,11 @@ target_link_libraries(ra2 PRIVATE raylib)
 if(MSVC)
     target_compile_options(ra2 PRIVATE /W3 /MP /utf-8)
 endif()
+
+# 内存错误检测：cmake -B build-asan -DRA2_ASAN=ON（仅 MSVC Debug 有效）
+option(RA2_ASAN "Enable AddressSanitizer" OFF)
+if(MSVC AND RA2_ASAN)
+    target_compile_options(ra2 PRIVATE /fsanitize=address /Zi)
+    target_link_options(ra2 PRIVATE /INFERASANLIBS /INCREMENTAL:NO)
+    target_compile_options(raylib PRIVATE /fsanitize=address)
+endif()

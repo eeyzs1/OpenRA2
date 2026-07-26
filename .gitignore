@@ -1,7 +1,10 @@
 build/
+build-asan/
 *.png
 .vs/
 .vscode/
 out/
 saves/
 settings.ini
+# 生成素材（--gen-assets 可再生成，本地覆盖用，不入库）
+assets/
