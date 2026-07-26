@@ -2594,11 +2594,14 @@ void World::spawnFromFactory(int player, const UnitDef& u) {
         Ent& b = ents[i];
         if (!b.alive || !b.isBuilding || b.player != player || !isFactoryFor(b.btype, u)) continue;
         const BldDef& bd = bldDef(b.btype);
+        // 缓存工厂标量：后续 spawnUnit 可能触发 ents 扩容，持有的 Ent& 会悬空
+        const float fx = b.x, fy = b.y;
+        const int rallyX = b.rallyX, rallyY = b.rallyY;
         // 限弹药战机：直接落在空指部停机位（基洛夫/火箭飞行兵无限弹药，走地面出厂流程后升空）
         if (u.isAir() && u.ammo > 0) {
             EID nu = spawnUnit(player, u.type, 0, 0);
+            Vec2f pad = airPadPos(ents[i], nu);
             Ent& ne = ents[nu];
-            Vec2f pad = airPadPos(b, nu);
             ne.x = pad.x; ne.y = pad.y;
             ne.goalX = pad.x; ne.goalY = pad.y;
             ne.airbase = (int)i;
@@ -2610,7 +2613,7 @@ void World::spawnFromFactory(int player, const UnitDef& u) {
         // 出生点：建筑下方最近空格（海军单位须落在水面）
         int dom = u.pathDomain();
         for (int r = 1; r < 8; r++) {
-            int sx = (int)b.x + bd.w / 2, sy = (int)b.y + bd.h + r - 1;
+            int sx = (int)fx + bd.w / 2, sy = (int)fy + bd.h + r - 1;
             if (passableFor(sx, sy, dom) && !bldBlocked(sx, sy) && unitAtCell(sx, sy) == INVALID_EID) {
                 EID nu = spawnUnit(player, u.type, sx + 0.5f, sy + 0.5f);
                 Ent& ne0 = ents[nu];
@@ -2632,19 +2635,19 @@ void World::spawnFromFactory(int player, const UnitDef& u) {
                         break; // 一座复制中心即可生效
                     }
                 }
-                // 走向集结点
-                if (b.rallyX >= 0) {
+                // 走向集结点（用缓存的 rally 值：spawnUnit 后 b 已悬空）
+                if (rallyX >= 0) {
                     Ent& ne = ents[nu];
                     if (u.isAir()) {
                         // 空中单位：直线飞往集结点，无需寻路
-                        ne.goalX = (float)b.rallyX; ne.goalY = (float)b.rallyY;
+                        ne.goalX = (float)rallyX; ne.goalY = (float)rallyY;
                         ne.state = UState::Moving;
                     } else {
                         std::vector<Vec2i> path;
-                        if (map.findPath(sx, sy, b.rallyX, b.rallyY, path, 20000, dom)) {
+                        if (map.findPath(sx, sy, rallyX, rallyY, path, 20000, dom)) {
                             ne.path = std::move(path); ne.pathIdx = 0;
                             ne.state = UState::Moving;
-                            ne.goalX = (float)b.rallyX; ne.goalY = (float)b.rallyY;
+                            ne.goalX = (float)rallyX; ne.goalY = (float)rallyY;
                         }
                     }
                 }
