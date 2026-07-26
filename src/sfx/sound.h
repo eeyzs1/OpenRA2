@@ -55,6 +55,9 @@ public:
     void setMasterVol(float v);
     float masterVolume() const { return masterVol; }
 
+    // 离线素材生成（--gen-assets）：全量导出 WAV 到 assets/sfx/ + BGM 到 assets/music/；无需音频设备
+    bool genSfxAssets(const char* dir);
+
 private:
     static constexpr int ALIAS = 3; // 同音并发数
     Sound snd[(int)Sfx::COUNT][ALIAS]{};

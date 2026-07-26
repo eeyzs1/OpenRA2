@@ -544,6 +544,32 @@ void SoundBank::toggleBgm() {
 }
 
 // ===================== 播放 =====================
+// 离线素材生成（--gen-assets）：合成波形导出 WAV，游戏运行时直接加载文件
+bool SoundBank::genSfxAssets(const char* dir) {
+    MakeDirectory("assets");
+    MakeDirectory(dir);
+    MakeDirectory("assets/music");
+    int n = 0, fail = 0;
+    auto saveBuf = [&](const Buf& b, const char* path) {
+        Wave w;
+        w.frameCount = (unsigned)b.frames();
+        w.sampleRate = RATE;
+        w.sampleSize = 16;
+        w.channels = 1;
+        w.data = (void*)b.d.data();
+        if (ExportWave(w, path)) n++; else fail++;
+    };
+    for (int i = 0; i < (int)Sfx::COUNT; i++) {
+        char path[192];
+        snprintf(path, sizeof(path), "%s/%s.wav", dir, sfxAssetName((Sfx)i));
+        saveBuf(genSfx((Sfx)i), path);
+    }
+    // 内置 BGM 也落盘（assets/music/ 非空时运行时优先播放文件，见 initBgm）
+    saveBuf(genIndustrial(), "assets/music/industrial_march.wav");
+    printf("gen-assets: %d sounds written to %s, %d failed\n", n, dir, fail);
+    return fail == 0;
+}
+
 void SoundBank::init() {
     if (!IsAudioDeviceReady()) {
         InitAudioDevice();

@@ -1,6 +1,9 @@
 #include "game/game.h"
+#include "gfx/sprites.h"
+#include "sfx/sound.h"
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
 #ifdef _DEBUG
 #include <crtdbg.h>
 #endif
@@ -13,6 +16,12 @@ int main(int argc, char** argv) {
     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
 #endif
+    // 离线素材生成：程序绘制/合成 → 落盘 PNG/WAV，不创建窗口与音频设备
+    if (argc > 1 && strcmp(argv[1], "--gen-assets") == 0) {
+        bool okS = g_sprites.genAssets("assets/sprites");
+        bool okA = g_sfx.genSfxAssets("assets/sfx");
+        return (okS && okA) ? 0 : 1;
+    }
     bool windowed = false;
     for (int i = 1; i < argc; i++)
         if (strcmp(argv[i], "--windowed") == 0) windowed = true;

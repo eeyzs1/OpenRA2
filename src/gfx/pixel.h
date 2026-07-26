@@ -68,6 +68,8 @@ struct PixBuf {
 
     // 从 PNG 文件加载（转为 RGBA8）；失败返回 false 且本对象不变
     bool loadFromFile(const char* path);
+    // 导出为 PNG（纯 CPU 操作，可在无窗口环境使用）
+    bool saveToFile(const char* path) const;
 };
 
 // 常用调色板

@@ -1,5 +1,6 @@
 #include "gfx/sprites.h"
 #include "gfx/assets.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
@@ -73,6 +74,42 @@ static PixBuf padCanvas(const PixBuf& src, int left, int top, int right, int bot
     r.blit(src, left, top);
     return r;
 }
+
+// ---------------- RA2 风格化后处理（还原度 pass） ----------------
+static bool solidPx(Color c) { return c.a > 120; }
+// 定向棱边光：RA2 光源在左上——上/左外露边提亮，下/右外露边压暗；细线条与内部像素不变
+static void ra2Bevel(PixBuf& p) {
+    PixBuf s = p;
+    for (int y = 0; y < p.h; y++)
+        for (int x = 0; x < p.w; x++) {
+            Color c = s.get(x, y);
+            if (!solidPx(c)) continue;
+            bool lite = !solidPx(s.get(x, y - 1)) || !solidPx(s.get(x - 1, y));
+            bool dark = !solidPx(s.get(x, y + 1)) || !solidPx(s.get(x + 1, y));
+            if (lite == dark) continue;
+            if (lite) p.set(x, y, Color{(uint8_t)(c.r + (255 - c.r) * 28 / 100),
+                                        (uint8_t)(c.g + (255 - c.g) * 28 / 100),
+                                        (uint8_t)(c.b + (255 - c.b) * 28 / 100), c.a});
+            else      p.set(x, y, Color{(uint8_t)(c.r * 76 / 100),
+                                        (uint8_t)(c.g * 76 / 100),
+                                        (uint8_t)(c.b * 76 / 100), c.a});
+        }
+}
+// 深色轮廓：实体像素八邻域的透明处补深色描边（RA2 单位/建筑辨识度核心）
+static void ra2Outline(PixBuf& p) {
+    PixBuf s = p;
+    for (int y = 0; y < p.h; y++)
+        for (int x = 0; x < p.w; x++) {
+            if (s.get(x, y).a != 0) continue;
+            bool near = false;
+            for (int dy = -1; dy <= 1 && !near; dy++)
+                for (int dx = -1; dx <= 1 && !near; dx++)
+                    if ((dx || dy) && solidPx(s.get(x + dx, y + dy))) near = true;
+            if (near) p.set(x, y, Color{14, 12, 14, 165});
+        }
+}
+// 单位/建筑内容图（成员函数，见下）：基础绘制 + 四边留白 + 棱边光 + 轮廓
+// 不含地面投影 —— 投影在运行时对外部文件与程序生成统一烘焙，保证两条路径视觉一致
 
 // ---------------- 地形 ----------------
 // 平滑值噪声：格点哈希 + 双线性插值（smoothstep），比白噪声更接近 RA2 地表斑块感
@@ -1752,6 +1789,26 @@ PixBuf SpriteBank::baseSmoke(int frame) {
     return p;
 }
 
+// ---------------- 内容图（基础绘制 + RA2 风格化后处理） ----------------
+PixBuf SpriteBank::unitContentPix(UnitType t, int dir, int fKey) {
+    PixBuf pb = padCanvas(baseUnitBody(t, dir, fKey), 2, 2, 2, 2); // 留白供轮廓外扩
+    ra2Bevel(pb);
+    ra2Outline(pb);
+    return pb;
+}
+PixBuf SpriteBank::turretContentPix(UnitType t, int dir) {
+    PixBuf pb = baseUnitTurret(t, dir);
+    ra2Bevel(pb);
+    ra2Outline(pb);
+    return pb;
+}
+PixBuf SpriteBank::bldContentPix(BldType t, bool constructing) {
+    PixBuf pb = padCanvas(baseBuilding(t, constructing), 2, 2, 2, 2);
+    ra2Bevel(pb);
+    ra2Outline(pb);
+    return pb;
+}
+
 // ---------------- 对外获取（带缓存） ----------------
 const Sprite& SpriteBank::tile(Terrain t, int variant) {
     uint64_t k = keyOf(1, (int)t, variant, 0, 0);
@@ -1787,24 +1844,22 @@ const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
     PixBuf pb;
-    // 外部素材：优先原始类型名，其次别名（如 unit_chronominer_d2.png → unit_harvester_d2.png）
+    // 素材文件优先（assets/sprites/ 由 --gen-assets 离线生成或用户自制），缺失回退程序生成
     bool ext = loadSpr(pb, "assets/sprites/unit_%s_d%d_f%d.png", unitAssetName(orig), dir, fKey)
             || loadSpr(pb, "assets/sprites/unit_%s_d%d.png", unitAssetName(orig), dir)
             || (orig != t && (loadSpr(pb, "assets/sprites/unit_%s_d%d_f%d.png", unitAssetName(t), dir, fKey)
                            || loadSpr(pb, "assets/sprites/unit_%s_d%d.png", unitAssetName(t), dir)));
-    if (!ext) {
-        pb = baseUnitBody(t, dir, fKey);
-        // RA2 风格地面投影：仅地面单位（空军/海军不烘投影）
-        const UnitDef& ud = unitDef(t);
-        if (!ud.isAir() && !ud.isNaval()) {
-            int ow = pb.w, oh = pb.h;
-            bool inf = ud.isInfantry();
-            PixBuf canvas(ow + 12, oh + 8);
-            bakeShadow(canvas, 6 + ow / 2 + 3, 4 + (inf ? oh - 2 : (int)(oh * 0.72f)),
-                       inf ? 7 : (int)(ow * 0.30f), inf ? 3 : (int)(oh * 0.10f));
-            canvas.blit(pb, 6, 4);
-            pb = std::move(canvas);
-        }
+    if (!ext) pb = unitContentPix(t, dir, fKey);
+    // RA2 风格地面投影：仅地面单位（空军/海军不烘投影）；文件素材与程序生成统一烘焙
+    const UnitDef& ud = unitDef(t);
+    if (!ud.isAir() && !ud.isNaval()) {
+        int ow = pb.w, oh = pb.h;
+        bool inf = ud.isInfantry();
+        PixBuf canvas(ow + 12, oh + 8);
+        bakeShadow(canvas, 6 + ow / 2 + 3, 4 + (inf ? oh - 2 : (int)(oh * 0.72f)),
+                   inf ? 7 : (int)(ow * 0.30f), inf ? 3 : (int)(oh * 0.10f));
+        canvas.blit(pb, 6, 4);
+        pb = std::move(canvas);
     }
     pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
     Sprite s = makeSprite(std::move(pb), 0, 0);
@@ -1822,7 +1877,7 @@ const Sprite& SpriteBank::unitTurret(UnitType t, int dir, int player) {
     PixBuf pb;
     bool ext = loadSpr(pb, "assets/sprites/turret_%s_d%d.png", unitAssetName(orig), dir)
             || (orig != t && loadSpr(pb, "assets/sprites/turret_%s_d%d.png", unitAssetName(t), dir));
-    if (!ext) pb = baseUnitTurret(t, dir);
+    if (!ext) pb = turretContentPix(t, dir);
     pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
     Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2; s.oy = s.tex.height / 2 + 4;
@@ -1838,20 +1893,18 @@ const Sprite& SpriteBank::building(BldType t, int player, bool constructing) {
     PixBuf pb;
     bool ext = loadSpr(pb, "assets/sprites/bld_%s%s.png", bldAssetName(orig), constructing ? "_scaffold" : "")
             || (orig != t && loadSpr(pb, "assets/sprites/bld_%s%s.png", bldAssetName(t), constructing ? "_scaffold" : ""));
-    if (!ext) {
-        pb = baseBuilding(t, constructing);
-        // RA2 风格地面投影（底部偏右椭圆，建筑视觉锚地感）
-        int ow = pb.w, oh = pb.h;
-        PixBuf canvas(ow + 14, oh + 10);
-        bakeShadow(canvas, 6 + ow / 2 + 5, 4 + oh - 6, (int)(ow * 0.40f), 6);
-        canvas.blit(pb, 6, 4);
-        pb = std::move(canvas);
-    }
+    if (!ext) pb = bldContentPix(t, constructing);
+    // RA2 风格地面投影（底部偏右椭圆）；文件素材与程序生成统一烘焙、统一锚点
+    int ow = pb.w, oh = pb.h;
+    PixBuf canvas(ow + 14, oh + 10);
+    bakeShadow(canvas, 6 + ow / 2 + 5, 4 + oh - 6, (int)(ow * 0.40f), 6);
+    canvas.blit(pb, 6, 4);
+    pb = std::move(canvas);
     pb.remap(Pal::REMAP, player >= 0 ? HOUSE_COLORS[player] : Color{150, 150, 155, 255}); // 中立=灰
     Sprite s = makeSprite(std::move(pb), 0, 0);
-    // 锚点 = 原画布底中点经填充后的坐标（左填 6 上填 4）
-    s.ox = ext ? s.tex.width / 2 : (s.tex.width - 14) / 2 + 6;
-    s.oy = ext ? s.tex.height - 4 : s.tex.height - 10;
+    // 锚点 = 内容画布底中点经填充后的坐标（左填 6 上填 4）
+    s.ox = (s.tex.width - 14) / 2 + 6;
+    s.oy = s.tex.height - 10;
     return cache.emplace(k, s).first->second;
 }
 
@@ -1932,10 +1985,10 @@ const Sprite& SpriteBank::iconUnit(UnitType t, int player) {
         return cache.emplace(k, s).first->second;
     }
     t = spriteAliasUnit(t);
-    PixBuf body = baseUnitBody(t, 2, 0);
+    PixBuf body = unitContentPix(t, 2, 0);
     if (hasTurret(t)) {
-        PixBuf tur = baseUnitTurret(t, 2);
-        body.blit(tur, 0, 0);
+        PixBuf tur = turretContentPix(t, 2); // 炮塔画布与车体同尺寸，对齐内容偏移 (2,2)
+        body.blit(tur, 2, 2);
     }
     body.remap(Pal::REMAP, HOUSE_COLORS[player]);
     Sprite s = makeSprite(makeIcon(body, 0, 0), 0, 0);
@@ -1953,7 +2006,7 @@ const Sprite& SpriteBank::iconBld(BldType t, int player) {
         return cache.emplace(k, s).first->second;
     }
     t = spriteAliasBld(t);
-    PixBuf pb = baseBuilding(t, false);
+    PixBuf pb = bldContentPix(t, false);
     pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
     Sprite s = makeSprite(makeIcon(pb, 0, 0), 0, 0);
     return cache.emplace(k, s).first->second;
@@ -1968,4 +2021,155 @@ void SpriteBank::init() {
     for (int f = 0; f < EXPLOSION_FRAMES; f++) explosion(f);
     for (int f = 0; f < SMOKE_FRAMES; f++) smoke(f);
     muzzle();
+}
+
+// ===================== 离线素材生成（--gen-assets） =====================
+// 管线：程序绘制 → PNG 文件（assets/sprites/）；游戏运行时直接加载文件，程序生成仅作缺失兜底
+
+// 单位帧键：与 unitBody() 的 fKey 规则一致（采矿车满载帧 / 步兵行走帧 / 其他仅 0）
+static std::vector<int> unitFrameKeys(UnitType t) {
+    bool isMiner = (t == UnitType::Harvester || t == UnitType::ChronoMiner || t == UnitType::WarMiner);
+    if (isMiner || unitDef(t).isInfantry()) return {0, 1};
+    return {0};
+}
+
+bool SpriteBank::genAssets(const char* outDir) {
+    MakeDirectory("assets");
+    MakeDirectory(outDir);
+    MakeDirectory("assets/preview");
+    int n = 0, fail = 0;
+    auto save = [&](const PixBuf& pb, const char* fmt, ...) {
+        char path[256];
+        va_list ap; va_start(ap, fmt);
+        vsnprintf(path, sizeof(path), fmt, ap);
+        va_end(ap);
+        if (pb.saveToFile(path)) n++; else fail++;
+    };
+    // 地形瓦片（6 类 × 4 变体）
+    for (int t = 0; t <= (int)Terrain::Bridge; t++)
+        for (int v = 0; v < 4; v++)
+            save(baseTile((Terrain)t, v), "%s/tile_%s_%d.png", outDir, terrainAssetName((Terrain)t), v);
+    // 地表装饰
+    for (int o = 1; o <= (int)Overlay::Rock2; o++)
+        save(baseOverlay((Overlay)o), "%s/overlay_%s.png", outDir, overlayAssetName((Overlay)o));
+    // 单位（全方向全帧）+ 炮塔
+    for (int i = 0; i < (int)UnitType::COUNT; i++) {
+        UnitType t = (UnitType)i;
+        const char* nm = unitAssetName(t);
+        for (int d = 0; d < 8; d++)
+            for (int f : unitFrameKeys(t))
+                save(unitContentPix(t, d, f), "%s/unit_%s_d%d_f%d.png", outDir, nm, d, f);
+        if (hasTurret(t))
+            for (int d = 0; d < 8; d++)
+                save(turretContentPix(t, d), "%s/turret_%s_d%d.png", outDir, nm, d);
+    }
+    // 建筑（成品 + 脚手架）
+    for (int i = 0; i < (int)BldType::COUNT; i++) {
+        BldType t = (BldType)i;
+        const char* nm = bldAssetName(t);
+        save(bldContentPix(t, false), "%s/bld_%s.png", outDir, nm);
+        save(bldContentPix(t, true), "%s/bld_%s_scaffold.png", outDir, nm);
+    }
+    // 特效
+    for (int f = 0; f < EXPLOSION_FRAMES; f++) save(baseExplosion(f), "%s/fx_explosion_%d.png", outDir, f);
+    for (int f = 0; f < SMOKE_FRAMES; f++) save(baseSmoke(f), "%s/fx_smoke_%d.png", outDir, f);
+    save(baseMuzzle(), "%s/fx_muzzle.png", outDir);
+    for (int kind = 0; kind < 2; kind++)
+        for (int d = 0; d < 8; d++)
+            save(baseProjectile(kind, d), "%s/fx_proj_%d_d%d.png", outDir, kind, d);
+    // 图标（与运行时 iconUnit/iconBld 的程序生成路径一致，保留红色占位供运行时换色）
+    for (int i = 0; i < (int)UnitType::COUNT; i++) {
+        UnitType t = (UnitType)i;
+        PixBuf body = unitContentPix(t, 2, 0);
+        if (hasTurret(t)) body.blit(turretContentPix(t, 2), 2, 2);
+        save(makeIcon(body, 0, 0), "%s/icon_unit_%s.png", outDir, unitAssetName(t));
+    }
+    for (int i = 0; i < (int)BldType::COUNT; i++)
+        save(makeIcon(bldContentPix((BldType)i, false), 0, 0), "%s/icon_bld_%s.png", outDir, bldAssetName((BldType)i));
+
+    // ---------- 审核预览图（assets/preview/，不参与游戏） ----------
+    // 通用网格拼版：rows 个条目 × cols 个方向/形态，单元格取最大内容尺寸
+    auto sheet = [&](const char* path, const std::vector<std::vector<PixBuf>>& rows, Color bg) {
+        int cw = 0, ch = 0;
+        for (auto& r : rows)
+            for (auto& c : r) { cw = std::max(cw, c.w); ch = std::max(ch, c.h); }
+        cw += 8; ch += 8;
+        int cols = 0;
+        for (auto& r : rows) cols = std::max(cols, (int)r.size());
+        PixBuf s(std::max(1, cols * cw), std::max(1, (int)rows.size() * ch));
+        s.clear(bg);
+        for (size_t y = 0; y < rows.size(); y++)
+            for (size_t x = 0; x < rows[y].size(); x++) {
+                const PixBuf& c = rows[y][x];
+                s.blit(c, (int)x * cw + (cw - c.w) / 2, (int)y * ch + (ch - c.h) / 2);
+            }
+        s.saveToFile(path);
+    };
+    Color sheetBg{40, 42, 46, 255};
+    {   // 单位：每单位一行（f0 × 8 方向），有第二帧的追加一行 f1；带炮塔的行尾叠加示意
+        std::vector<std::vector<PixBuf>> rows;
+        for (int i = 0; i < (int)UnitType::COUNT; i++) {
+            UnitType t = (UnitType)i;
+            for (int f : unitFrameKeys(t)) {
+                std::vector<PixBuf> row;
+                for (int d = 0; d < 8; d++) {
+                    PixBuf c = unitContentPix(t, d, f);
+                    if (hasTurret(t) && f == 0) c.blit(turretContentPix(t, d), 2, 2);
+                    row.push_back(std::move(c));
+                }
+                rows.push_back(std::move(row));
+            }
+        }
+        sheet("assets/preview/units.png", rows, sheetBg);
+    }
+    {   // 建筑：每个一行（成品 | 脚手架）
+        std::vector<std::vector<PixBuf>> rows;
+        for (int i = 0; i < (int)BldType::COUNT; i++)
+            rows.push_back({bldContentPix((BldType)i, false), bldContentPix((BldType)i, true)});
+        sheet("assets/preview/buildings.png", rows, sheetBg);
+    }
+    {   // 地形与装饰
+        std::vector<std::vector<PixBuf>> rows;
+        for (int t = 0; t <= (int)Terrain::Bridge; t++) {
+            std::vector<PixBuf> row;
+            for (int v = 0; v < 4; v++) row.push_back(baseTile((Terrain)t, v));
+            rows.push_back(std::move(row));
+        }
+        std::vector<PixBuf> ov;
+        for (int o = 1; o <= (int)Overlay::Rock2; o++) ov.push_back(baseOverlay((Overlay)o));
+        rows.push_back(std::move(ov));
+        sheet("assets/preview/terrain.png", rows, sheetBg);
+    }
+    {   // 特效：爆炸 12 帧 / 烟 6 帧 / 枪口 / 抛射体 2 类 × 8 方向
+        std::vector<std::vector<PixBuf>> rows;
+        std::vector<PixBuf> ex, sm, mu, p0, p1;
+        for (int f = 0; f < EXPLOSION_FRAMES; f++) ex.push_back(baseExplosion(f));
+        for (int f = 0; f < SMOKE_FRAMES; f++) sm.push_back(baseSmoke(f));
+        mu.push_back(baseMuzzle());
+        for (int d = 0; d < 8; d++) { p0.push_back(baseProjectile(0, d)); p1.push_back(baseProjectile(1, d)); }
+        rows = {std::move(ex), std::move(sm), std::move(mu), std::move(p0), std::move(p1)};
+        sheet("assets/preview/fx.png", rows, sheetBg);
+    }
+    {   // 图标墙：单位图标 + 建筑图标（8 列）
+        std::vector<std::vector<PixBuf>> rows;
+        std::vector<PixBuf> row;
+        auto flush = [&]() { if (!row.empty()) { rows.push_back(std::move(row)); row.clear(); } };
+        for (int i = 0; i < (int)UnitType::COUNT; i++) {
+            UnitType t = (UnitType)i;
+            PixBuf body = unitContentPix(t, 2, 0);
+            if (hasTurret(t)) body.blit(turretContentPix(t, 2), 2, 2);
+            row.push_back(makeIcon(body, 0, 0));
+            if (row.size() == 8) flush();
+        }
+        for (int i = 0; i < (int)BldType::COUNT; i++) {
+            row.push_back(makeIcon(bldContentPix((BldType)i, false), 0, 0));
+            if (row.size() == 8) flush();
+        }
+        flush();
+        sheet("assets/preview/icons.png", rows, sheetBg);
+    }
+
+    TraceLog(LOG_INFO, "gen-assets: %d sprites written to %s (%d failed)", n, outDir, fail);
+    printf("gen-assets: %d sprites written to %s, %d failed; previews in assets/preview/\n", n, outDir, fail);
+    return fail == 0;
 }

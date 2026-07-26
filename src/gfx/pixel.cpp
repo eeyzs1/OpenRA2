@@ -172,3 +172,15 @@ bool PixBuf::loadFromFile(const char* path) {
     UnloadImage(img);
     return true;
 }
+
+// 导出为 PNG（纯 CPU 操作，无需 InitWindow；供 --gen-assets 离线素材生成用）
+bool PixBuf::saveToFile(const char* path) const {
+    if (w <= 0 || h <= 0) return false;
+    Image img;
+    img.data = (void*)px.data();
+    img.width = w;
+    img.height = h;
+    img.mipmaps = 1;
+    img.format = PIXELFORMAT_UNCOMPRESSED_R8G8B8A8;
+    return ExportImage(img, path); // 注意：不能 UnloadImage（data 归本对象所有）
+}

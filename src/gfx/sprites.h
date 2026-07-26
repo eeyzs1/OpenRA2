@@ -52,6 +52,16 @@ private:
     PixBuf baseProjectile(int kind, int dir);
     PixBuf baseSmoke(int frame);
 
+    // 内容图（基础绘制 + RA2 风格化后处理：棱边光/轮廓，不含地面投影）
+    PixBuf unitContentPix(UnitType t, int dir, int fKey);
+    PixBuf turretContentPix(UnitType t, int dir);
+    PixBuf bldContentPix(BldType t, bool constructing);
+
+public:
+    // 离线素材生成（--gen-assets）：全量导出 PNG 到 assets/sprites/ + 审核预览图；无需 InitWindow
+    bool genAssets(const char* dir);
+private:
+
     // 通用缓存：key -> Sprite
     std::unordered_map<uint64_t, Sprite> cache;
     const Sprite& get(uint64_t key, PixBuf (SpriteBank::*gen)(), Color remapTo, bool doRemap);
