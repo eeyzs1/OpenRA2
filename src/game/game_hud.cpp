@@ -294,8 +294,11 @@ void Game::drawHUD() {
     int gx = sbX + 6, gy = 358, gw = 86, gh = 66, cols = 2;
     int maxRows = (SCREEN_H - 56 - gy) / (gh + 4);
     int idx = 0;
+    // 悬停提示缓存（网格绘制完成后统一绘制，保证浮于所有槽位之上）
+    std::string tipName, tipSub, tipReason;
+    bool tipSet = false;
     auto drawItem = [&](bool isUnit, int typeIdx, const Sprite& icon, const char* name, int cost,
-                        bool canBuild, ProdItem& prod, int queuedN) {
+                        bool canBuild, ProdItem& prod, int queuedN, const char* reason) {
         int ix = gx + (idx % cols) * (gw + 4);
         int iy = gy + (idx / cols) * (gh + 4);
         idx++;
@@ -303,14 +306,25 @@ void Game::drawHUD() {
         Rectangle r{(float)ix, (float)iy, (float)gw, (float)gh};
         bool activeThis = prod.active && prod.typeIdx == typeIdx && prod.isUnit == isUnit;
         bool readyThis = activeThis && prod.ready;
+        int time = isUnit ? unitDef((UnitType)typeIdx).buildTime : bldDef((BldType)typeIdx).buildTime;
         // 槽位：凹陷金属槽 + 就绪金色脉冲（RA2 式）
         guiSlot(r);
         DrawRectangleLinesEx(r, 1, readyThis ? (((world.tick / 12) % 2) ? GUI_GOLD_HI : GUI_GOLD)
                              : (activeThis ? Color{196, 180, 110, 255} : Color{56, 60, 68, 255}));
         DrawTexture(icon.tex, ix + (gw - icon.tex.width) / 2, iy + 2, canBuild ? WHITE : Color{90, 90, 90, 255});
+        // 悬停高亮 + 记录提示内容
+        bool hov = CheckCollisionPointRec(mousePos(), r);
+        if (hov) {
+            DrawRectangleLinesEx({r.x + 1, r.y + 1, r.width - 2, r.height - 2}, 1, Color{210, 190, 130, 130});
+            if (!tipSet) {
+                tipSet = true;
+                tipName = name;
+                tipSub = TextFormat(TR(S::TipCostTimeFmt), cost, time / LOGIC_FPS);
+                if (reason && reason[0]) tipReason = reason;
+            }
+        }
         // 进度遮罩
         if (activeThis && !prod.ready) {
-            int time = isUnit ? unitDef((UnitType)typeIdx).buildTime : bldDef((BldType)typeIdx).buildTime;
             float frac = (float)prod.progress / time;
             DrawRectangle(ix, iy + (int)(gh * (1 - frac)), gw, (int)(gh * frac), Color{0, 0, 0, 130});
             drawTextF(font, TextFormat("%d%%", (int)(frac * 100)), ix + 30, iy + 26, 14, WHITE);
@@ -327,7 +341,7 @@ void Game::drawHUD() {
         drawTextF(font, TextFormat("%d", cost), ix + 2, iy + gh - 12, 11,
                   me.money >= cost ? Color{255, 215, 80, 255} : RED);
         // 点击
-        if (CheckCollisionPointRec(mousePos(), r)) {
+        if (hov) {
             if (mPressed(MOUSE_LEFT_BUTTON)) {
                 // 就绪项优先：canBuild 为"能否开始新生产"（含队列空闲），不能阻塞就绪建筑的放置
                 if (readyThis) {
@@ -366,9 +380,20 @@ void Game::drawHUD() {
     if (uiTab <= 1) {
         for (BldType t : tabBuildings()) {
             const BldDef& d = bldDef(t);
-            bool can = world.hasBld(localPlayer, BldType::ConYard) && world.prereqMet(localPlayer, d)
-                       && me.money >= d.cost && !me.bldProd.active;
-            drawItem(false, (int)t, g_sprites.iconBld(t, me.colorId), bldName(t), d.cost, can, me.bldProd, 0);
+            bool hasCY = world.hasBld(localPlayer, BldType::ConYard);
+            bool preOk = world.prereqMet(localPlayer, d);
+            bool can = hasCY && preOk && me.money >= d.cost && !me.bldProd.active;
+            // 悬停提示的缺失原因（优先级：建造厂 > 前置/国家 > 资金；队列忙为瞬态不提示）
+            std::string reason;
+            if (!hasCY) reason = TextFormat(TR(S::TipRequireFmt), bldName(BldType::ConYard));
+            else if (!preOk) {
+                if (d.prereq != BldType::COUNT && !world.hasBld(localPlayer, d.prereq))
+                    reason = TextFormat(TR(S::TipRequireFmt), bldName(d.prereq));
+                else if (d.countryReq != Country::None)
+                    reason = TextFormat(TR(S::TipRequireFmt), countryName(d.countryReq));
+            } else if (me.money < d.cost) reason = TR(S::TipNoMoney);
+            drawItem(false, (int)t, g_sprites.iconBld(t, me.colorId), bldName(t), d.cost, can, me.bldProd, 0,
+                     reason.c_str());
         }
     } else {
         for (UnitType t : tabUnits()) {
@@ -377,9 +402,24 @@ void Game::drawHUD() {
             int qn = 0;
             for (int q : me.unitQueue[cat])
                 if (q == (int)t) qn++;
-            bool can = world.unitPrereqMet(localPlayer, u) && world.hasFactoryFor(localPlayer, u)
-                       && me.money >= u.cost;
-            drawItem(true, (int)t, g_sprites.iconUnit(t, me.colorId), unitName(t), u.cost, can, me.unitProd[cat], qn);
+            bool preOk = world.unitPrereqMet(localPlayer, u);
+            bool facOk = world.hasFactoryFor(localPlayer, u);
+            bool can = preOk && facOk && me.money >= u.cost;
+            // 悬停提示的缺失原因（优先级：前置/国家 > 生产工厂 > 资金）
+            std::string reason;
+            if (!preOk) {
+                if (u.prereq != BldType::COUNT && !world.hasBld(localPlayer, u.prereq))
+                    reason = TextFormat(TR(S::TipRequireFmt), bldName(u.prereq));
+                else if (u.countryReq != Country::None && me.country != u.countryReq
+                         && me.secretLabUnlock != (int)u.countryReq)
+                    reason = TextFormat(TR(S::TipRequireFmt), countryName(u.countryReq));
+            } else if (!facOk) {
+                for (int b = 0; b < (int)BldType::COUNT && reason.empty(); b++)
+                    if (isFactoryFor((BldType)b, u))
+                        reason = TextFormat(TR(S::TipRequireFmt), bldName((BldType)b));
+            } else if (me.money < u.cost) reason = TR(S::TipNoMoney);
+            drawItem(true, (int)t, g_sprites.iconUnit(t, me.colorId), unitName(t), u.cost, can, me.unitProd[cat], qn,
+                     reason.c_str());
         }
     }
 
@@ -398,6 +438,27 @@ void Game::drawHUD() {
             if (sideMode == 2) message(TR(S::MsgSellMode));
         }
         if (uiButton(mnuR, TR(S::Menu), true)) showMenu = true;
+    }
+
+    // 生产图标悬停提示框（RA2 式：黑底金框，名称 + 造价耗时 + 缺失条件；浮于侧边栏所有控件之上）
+    if (tipSet) {
+        Vector2 m = mousePos();
+        int w = 0;
+        w = std::max(w, (int)MeasureTextEx(font, tipName.c_str(), 14, 1).x);
+        w = std::max(w, (int)MeasureTextEx(font, tipSub.c_str(), 12, 1).x);
+        if (!tipReason.empty()) w = std::max(w, (int)MeasureTextEx(font, tipReason.c_str(), 12, 1).x);
+        w += 16;
+        int h = tipReason.empty() ? 44 : 60;
+        int tx = (int)m.x - w - 12; // 侧边栏在最右，提示框向左弹出
+        if (tx < 4) tx = 4;
+        int ty = clampi((int)m.y - h / 2, 4, SCREEN_H - h - 4);
+        Rectangle tr2{(float)tx, (float)ty, (float)w, (float)h};
+        guiSlot(tr2);
+        DrawRectangleLinesEx(tr2, 1, GUI_GOLD);
+        drawTextS(font, tipName.c_str(), tx + 8, ty + 5, 14, Color{255, 226, 140, 255});
+        drawTextS(font, tipSub.c_str(), tx + 8, ty + 24, 12, Color{200, 200, 210, 255});
+        if (!tipReason.empty())
+            drawTextS(font, tipReason.c_str(), tx + 8, ty + 40, 12, Color{255, 110, 90, 255});
     }
 
     // 提示消息
@@ -427,16 +488,68 @@ void Game::drawHUD() {
         drawTextF(font, obj.c_str(), 12, 34, 14, Color{230, 200, 130, 255});
     }
 
-    // 选择信息
+    // 选中信息面板（RA2 式左下角金属面板：单选=图标+名称+军衔+血条/载员，多选=构成统计）
     if (!sel.empty()) {
-        drawTextF(font, TextFormat(TR(S::SelNFmt), (int)sel.size()), 10, SCREEN_H - 24, 14, Color{180, 220, 180, 255});
-        // 单个运输载具选中：显示载员与卸载提示
-        if (sel.size() == 1 && world.valid(sel[0])) {
+        int px = 8, pw = 254;
+        if (sel.size() == 1 && world.valid(sel[0]) && !world.ents[sel[0]].isBuilding) {
             const World::Ent& e = world.ents[sel[0]];
-            if (!e.isBuilding && unitDef(e.utype).cargoCap > 0)
-                drawTextF(font, TextFormat(TR(S::CargoNFmt), (int)e.cargo.size(), unitDef(e.utype).cargoCap,
+            const UnitDef& ud = unitDef(e.utype);
+            int ph = 52, py = SCREEN_H - ph - 48;
+            guiPanel(px, py, pw, ph);
+            // 单位图标（等比缩放进 40x40 凹槽）
+            const Sprite& ic = g_sprites.iconUnit(e.utype, world.players[localPlayer].colorId);
+            if (ic.valid()) {
+                guiSlot({(float)px + 6, (float)py + 6, 40, 40});
+                float sc = std::min(38.0f / ic.tex.width, 38.0f / ic.tex.height);
+                float iw = ic.tex.width * sc, ih = ic.tex.height * sc;
+                DrawTexturePro(ic.tex, {0, 0, (float)ic.tex.width, (float)ic.tex.height},
+                               {(float)px + 7 + (38 - iw) / 2, (float)py + 7 + (38 - ih) / 2, iw, ih},
+                               {0, 0}, 0, WHITE);
+            }
+            // 名称 + 军衔章（RA2：老兵 1 道 V 形，精英 3 道金色）
+            const char* uname = unitName(e.utype);
+            drawTextS(font, uname, px + 54, py + 6, 15, Color{240, 230, 200, 255});
+            if (e.vetRank > 0) {
+                bool elite = e.vetRank >= 2;
+                Color rc = elite ? Color{255, 216, 90, 255} : Color{200, 220, 255, 255};
+                int nx = px + 54 + (int)MeasureTextEx(font, uname, 15, 1).x + 8;
+                for (int i = 0; i < (elite ? 3 : 1); i++)
+                    DrawTriangle({(float)nx + i * 8, (float)py + 8}, {(float)nx + 6 + i * 8, (float)py + 8},
+                                 {(float)nx + 3 + i * 8, (float)py + 15}, rc);
+                drawTextS(font, elite ? TR(S::RankElite) : TR(S::RankVet), nx + (elite ? 28 : 12), py + 7, 12, rc);
+            }
+            // 血条 + 数值
+            drawHealthBar(px + 54, py + 26, pw - 64, (float)e.hp / std::max(1, ud.hp), false);
+            drawTextS(font, TextFormat(TR(S::HpFmt), e.hp, ud.hp), px + 54, py + 35, 12, Color{170, 200, 170, 255});
+            // 运输载具：载员与卸载提示
+            if (ud.cargoCap > 0)
+                drawTextS(font, TextFormat(TR(S::CargoNFmt), (int)e.cargo.size(), ud.cargoCap,
                                            keyName(keyBind[KA_Unload])),
-                          130, SCREEN_H - 24, 14, Color{140, 200, 230, 255});
+                          px + 150, py + 35, 12, Color{140, 200, 230, 255});
+        } else {
+            // 多选：总数 + 数量最多的前 3 类构成
+            int cnt[256] = {};
+            int n = 0;
+            for (EID id : sel)
+                if (world.valid(id) && !world.ents[id].isBuilding) { cnt[(int)world.ents[id].utype]++; n++; }
+            int lines = 0;
+            int top[3] = {-1, -1, -1};
+            for (int i = 0; i < 256; i++)
+                if (cnt[i] > 0) {
+                    for (int k = 0; k < 3; k++)
+                        if (top[k] < 0 || cnt[i] > cnt[top[k]]) {
+                            for (int j = 2; j > k; j--) top[j] = top[j - 1];
+                            top[k] = i;
+                            break;
+                        }
+                }
+            for (int k = 0; k < 3; k++) if (top[k] >= 0) lines++;
+            int ph = 26 + lines * 15, py = SCREEN_H - ph - 48;
+            guiPanel(px, py, pw, ph);
+            drawTextS(font, TextFormat(TR(S::SelNFmt), n), px + 10, py + 6, 14, Color{180, 220, 180, 255});
+            for (int k = 0; k < lines; k++)
+                drawTextS(font, TextFormat("%s ×%d", unitName((UnitType)top[k]), cnt[top[k]]),
+                          px + 10, py + 22 + k * 15, 12, Color{200, 200, 210, 255});
         }
     }
     // 操作提示
@@ -535,6 +648,16 @@ void Game::updateMinimap() {
     EndTextureMode();
 }
 
+// RA2 原作：小地图（雷达）需雷达类建筑在线——雷达站/空指部/间谍卫星任一方块在线，
+// 且电力充足（低电力时雷达掉线黑屏）。返回是否有可用雷达信号。
+bool Game::radarOnline() const {
+    const Player& me = world.players[localPlayer];
+    if (me.lowPower()) return false;
+    return world.hasBld(localPlayer, BldType::Radar)
+        || world.hasBld(localPlayer, BldType::AirForceCmd)
+        || world.hasBld(localPlayer, BldType::SpySat);
+}
+
 void Game::drawMinimap() {
     int sbX = SCREEN_W - sidebarW;
     // RA2 布局：电力条占左侧 28px，小地图居右，缩放适配（旧版按原生 256px 绘制会越界遮挡电力表）
@@ -544,6 +667,23 @@ void Game::drawMinimap() {
     DrawRectangle(mmX - 2, mmY - 2, mmSize + 4, mmSize + 4, Color{15, 16, 20, 255});
     guiBevel({(float)mmX - 2, (float)mmY - 2, (float)mmSize + 4, (float)mmSize + 4}, true);
     DrawRectangleLinesEx({(float)mmX - 2, (float)mmY - 2, (float)mmSize + 4, (float)mmSize + 4}, 1, Color{74, 64, 42, 255});
+    // 雷达离线：黑屏 + 扫描噪点 + 红色闪烁提示（RA2 原作低电/无雷达表现）
+    if (!radarOnline()) {
+        DrawRectangle(mmX, mmY, mmSize, mmSize, Color{6, 8, 10, 255});
+        // 稀疏噪点（随 tick 微动，模拟无信号雪花）
+        for (int i = 0; i < mmSize; i += 4)
+            for (int j = 0; j < mmSize; j += 4) {
+                uint32_t v = ((uint32_t)(i * 31 + j * 17) ^ (uint32_t)(world.tick / 4)) * 0x5bd1e995u;
+                if ((v >> 13) % 23 == 0)
+                    DrawRectangle(mmX + i, mmY + j, 2, 2, Color{20, 30, 26, 255});
+            }
+        if ((world.tick / 16) % 2) {
+            const char* t = TR(S::RadarOffline);
+            int tw = (int)MeasureTextEx(font, t, 13, 1).x;
+            drawTextS(font, t, mmX + mmSize / 2 - tw / 2, mmY + mmSize / 2 - 7, 13, Color{220, 70, 56, 255});
+        }
+        return;
+    }
     // 绘制（256 渲染纹理 → mmSize 缩放）
     DrawTexturePro(minimap.texture,
                    {0, 0, (float)minimap.texture.width, -(float)minimap.texture.height},
