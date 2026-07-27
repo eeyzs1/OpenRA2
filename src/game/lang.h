@@ -25,6 +25,7 @@ enum class S : int {
     MsgPlaceBld, MsgCannotBuild, MsgQueueBusy, MsgCanceledOne, MsgCanceledProd,
     Repair, Sell, Menu, MsgRepairMode, MsgSellMode,
     ObjHoldFmt, ObjWaveFmt, ObjElimAll, SelNFmt, CargoNFmt, TipLine,
+    RadarOffline,
     Paused, Victory, Defeat, GameMenu, PlayAgain, Continue, SaveProgress, LoadProgress, Restart, BackToMain,
     // 局内消息（game.cpp）
     MsgFindMCVFmt, MsgLowPower, MsgEngCapture, MsgBoarding, MsgEngRepair, MsgCannotPlace,
@@ -49,10 +50,21 @@ enum class S : int {
     // LAN 联机（P8）
     LanGame, HostGame, JoinGame, WaitPeer, PeerJoined, WaitHostStart,
     ConnectFail, StartBattle, IpLabel, PeerLeft, DesyncWarn, YourSide,
+    // 生产图标悬停提示 / 选中信息面板
+    TipCostTimeFmt, TipRequireFmt, TipNoMoney, RankVet, RankElite, HpFmt,
     COUNT
 };
 
 const char* TR(S id); // 当前语言文本
+
+// 外部字符串加载（assets/strings/zh.ini / en.ini，lang: 0 中文 1 English）
+// 键名为 enum class S 的枚举名（如 "Back"、"GameTitle"）；缺失键回退内置文本。
+// 启动时双语均加载（字体字模需双语全量预载）。
+// en.ini 另有 [Unit]/[Bld]/[SW]/[Faction]/[Country] 英文名称节；zh.ini 另有 [Country] 节。
+void loadStrings(const char* path, int lang);
+
+// 字符串导出（--export-assets）：把内置文本写成 zh.ini / en.ini 模板
+void exportStrings(const char* dir);
 
 // 本地化名称（数据表 data.cpp 保留中文原名，英文由旁表提供）
 const char* unitName(UnitType t);

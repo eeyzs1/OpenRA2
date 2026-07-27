@@ -258,10 +258,10 @@ bool World::loadHandMap(const char* path, int numPlayers, std::vector<Vec2i>& sp
     }
     fclose(f);
     if (!ok || !sized || (int)spawns.size() < numPlayers) return false;
-    // 贴图变体：确定性散列（与 generate 的 rng.range(0,3) 同范围）
+    // 贴图变体：确定性散列（与 generate 的 rng.range(0,7) 同范围）
     for (int y = 0; y < map.h; y++)
         for (int x = 0; x < map.w; x++)
-            map.at(x, y).variant = (uint8_t)(hm::hash3((uint64_t)x, (uint64_t)y, 7) & 3);
+            map.at(x, y).variant = (uint8_t)(hm::hash3((uint64_t)x, (uint64_t)y, 7) & 7);
     return true;
 }
 

@@ -7,22 +7,31 @@
 #include <algorithm>
 
 // ===================== 初始化 =====================
-void Game::init(bool windowed) {
+void Game::init(bool windowed, bool hidden) {
     SetConfigFlags(FLAG_WINDOW_HIGHDPI); // DPI 感知：帧缓冲=物理像素，输入仍为逻辑坐标
+    if (hidden) SetConfigFlags(FLAG_WINDOW_HIDDEN); // 测试模式：不弹窗不抢焦点
     loadSettings(); // settings.ini：语言/显示模式/分辨率/音量/键位（文件缺失则全默认）
+    // 素材外置化：规则数值与字符串须在字体字模收集（appendAllFontText）与任何数据使用前加载；
+    // 文件缺失/键缺失均回退内置默认（见 assets/README.txt）
+    loadRules("assets/rules/rules.ini");
+    loadStrings("assets/strings/zh.ini", 0);
+    loadStrings("assets/strings/en.ini", 1);
     InitWindow(SCREEN_W, SCREEN_H, "OpenRA2 - 共和国之辉 复刻");
     if (windowed) cfgWindowMode = 1; // 调试参数：强制窗口模式
     // 显示模式：无边框全屏（窗口=桌面分辨率，逻辑画布 letterbox 缩放，
     // 任何显示器含低分屏/高DPI缩放都不会出现按钮落在屏幕外）或指定分辨率窗口
-    if (cfgWindowMode == 0) { ToggleBorderlessWindowed(); borderlessActive = true; }
+    if (hidden) { /* 隐藏窗口不做显示模式切换 */ }
+    else if (cfgWindowMode == 0) { ToggleBorderlessWindowed(); borderlessActive = true; }
     else SetWindowSize(RES_LIST[cfgResIdx][0], RES_LIST[cfgResIdx][1]);
     SetTargetFPS(60);
     loadFont();
     g_sprites.init();
-    g_sfx.init();
-    g_sfx.initBgm();
-    static const int vols[] = {0, 25, 50, 75, 100};
-    g_sfx.setMasterVol(vols[cfgVolume] / 100.0f); // 持久化音量生效
+    if (!hidden) { // 隐藏窗口=无头测试：不初始化音频设备，避免提示音/BGM 打扰用户
+        g_sfx.init();
+        g_sfx.initBgm();
+        static const int vols[] = {0, 25, 50, 75, 100};
+        g_sfx.setMasterVol(vols[cfgVolume] / 100.0f); // 持久化音量生效
+    }
 
     // 逻辑分辨率离屏缓冲：像素风点对点放大，高分屏不模糊
     canvas = LoadRenderTexture(SCREEN_W, SCREEN_H);
@@ -102,7 +111,7 @@ void Game::newCampaignGame(int mission) {
     for (Faction f : md.aiFactions) factions.push_back(f);
     // 固定种子：战役地图可复现；手工地图关卡从 maps/xxx.txt 加载地形与预置实体
     world.init(md.mapSize, md.mapSize, 20260723ull + mission * 977, 1, (int)md.aiFactions.size(), factions, md.mapType,
-               md.mapFile, md.noStartForce);
+               md.mapFile.empty() ? nullptr : md.mapFile.c_str(), md.noStartForce);
     // 战役国家：按阵营取默认国（盟=美国 苏=苏俄 中=中国），使国家特色单位/支援可用
     for (int i = 0; i < world.numPlayers; i++)
         world.players[i].country = countriesOf(world.players[i].faction).front();
@@ -217,7 +226,9 @@ void Game::updateTriggers() {
         }
         if (!cond) continue;
         t.fired = true;
-        const char* txt = (g_lang && t.msgEn) ? t.msgEn : t.msg; // 双语：英文缺省回退中文
+        // 双语：英文缺省回退中文（msg 可空，如 RevealMap）
+        const std::string& ts = (g_lang && !t.msgEn.empty()) ? t.msgEn : t.msg;
+        const char* txt = ts.empty() ? nullptr : ts.c_str();
         switch (t.act) {
             case TrigAct::SpawnAt: {
                 int p = t.a[0];
@@ -821,7 +832,7 @@ void Game::campaignSmokeTest(int mission, int frames) {
     newCampaignGame(mission);
     const MissionDef& md = missionTable()[mission];
     TraceLog(LOG_INFO, "campaign smoke: mission=%d map=%s size=%dx%d players=%d triggers=%zu",
-             mission, md.mapFile ? md.mapFile : "(generated)", world.map.w, world.map.h,
+             mission, md.mapFile.empty() ? "(generated)" : md.mapFile.c_str(), world.map.w, world.map.h,
              world.numPlayers, missionTriggers.size());
     // 开局实体快照
     for (int p = 0; p < world.numPlayers; p++) {
@@ -1508,7 +1519,7 @@ void Game::drawWorld() {
             tileToScreen(tx, ty, px, py);
             int sx = px - camX, sy = py - camY;
             if (sx < -TILE_W || sx > viewW + TILE_W || sy < -TILE_H || sy > SCREEN_H + TILE_H) continue;
-            const Sprite& s = g_sprites.tile(c.terrain, c.variant & 3);
+            const Sprite& s = g_sprites.tile(c.terrain, c.variant & 7);
             DrawTexture(s.tex, sx - TILE_W / 2, sy, WHITE);
             // 装饰物在实体层按深度画
         }
@@ -2103,6 +2114,8 @@ int Game::playTest() {
         Vector2 mp = unitScreenPos(world.ents[mcv]);
         clickL(mp.x, mp.y);
         check(sel.size() == 1 && sel[0] == mcv, "左键点选基地车");
+        frame(2);
+        shot("pt_03b_selpanel.png"); // 单选信息面板（图标/名称/血条）
     }
 
     // ---- 5 D 展开建造厂 ----
@@ -2114,6 +2127,8 @@ int Game::playTest() {
     // ---- 6 侧边栏生产电厂（建筑页签第1个图标 {1256,358,86,66}）----
     clickL(1299, 391);
     check(world.players[0].bldProd.active, "点击电厂图标开始生产");
+    frame(2);
+    shot("pt_03c_tooltip.png"); // 悬停生产图标：名称/造价/耗时提示框
     for (int i = 0; i < 6000 && !world.players[0].bldProd.ready; i++) logic(); // 快进至就绪
     check(world.players[0].bldProd.ready, "电厂生产就绪");
 
@@ -2186,6 +2201,11 @@ int Game::playTest() {
             check(false, "右键移动单位（无可走目标）");
         }
         shot("pt_05_move.png");
+        // ---- 9.1 大框选：多选构成统计面板 ----
+        dragL(100, 100, (float)(SCREEN_W - 260), (float)(SCREEN_H - 100));
+        check(sel.size() > 1, "大框选选中多单位");
+        frame(2);
+        shot("pt_05b_multisel.png");
     }
 
     // ---- 9.5 侧边栏出售模式（RA2 按钮）----

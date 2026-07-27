@@ -1,7 +1,9 @@
 #include "game/lang.h"
 #include "game/campaign.h"
+#include "core/ini.h"
 #include "raylib.h"
 #include <cstdio>
+#include <cstring>
 
 int g_lang = 0; // 0 中文 1 English
 
@@ -16,11 +18,11 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"随机", "Random"},
     // 主菜单
     {"共和国之辉", "OPENRA2"},
-    {"COMMAND & CONQUER · OPENRA2 像素复刻", "COMMAND & CONQUER · OPENRA2 PIXEL REMAKE"},
+    {"COMMAND & CONQUER · OPENRA2 复刻", "COMMAND & CONQUER · OPENRA2 REMAKE"},
     {"遭遇战", "Skirmish"},
     {"战役模式", "Campaign"},
     {"退出游戏", "Exit Game"},
-    {"程序生成像素素材 · 盟军 / 苏联 / 中国", "Procedural pixel assets · Allies / Soviet / China"},
+    {"程序生成 3D 预渲染素材 · 盟军 / 苏联 / 中国", "Procedural 3D pre-rendered assets · Allies / Soviet / China"},
     // 战役选择
     {"任务 %d", "Mission %d"},
     {"目标：坚守 %d 分钟", "Objective: Hold for %d minutes"},
@@ -82,6 +84,7 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"载员 %d/%d  %s 卸载", "Cargo %d/%d  %s to unload"},
     {"左键选择/框选 右键移动/攻击(点己方运输船=登船) A+右键攻击移动 ESC菜单 · 按键可在设置中修改",
      "LMB select/box  RMB move/attack (click own transport=board)  A+RMB attack-move  ESC menu · keys in Settings"},
+    {"雷达离线", "RADAR OFFLINE"},
     {"已暂停", "PAUSED"},
     {"胜 利", "VICTORY"},
     {"失 败", "DEFEAT"},
@@ -206,6 +209,13 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"对手已断开连接", "Opponent disconnected"},
     {"同步校验失败：游戏已不同步", "Desync detected"},
     {"你指挥：%s", "You command: %s"},
+    // 生产图标悬停提示 / 选中信息面板
+    {"造价 $%d · 耗时 %d 秒", "Cost $%d · %ds"},
+    {"需要：%s", "Requires: %s"},
+    {"资金不足", "Low funds"},
+    {"老兵", "Veteran"},
+    {"精英", "Elite"},
+    {"生命 %d/%d", "HP %d/%d"},
 };
 
 const char* TR(S id) {
@@ -213,6 +223,60 @@ const char* TR(S id) {
     if (i < 0 || i >= (int)S::COUNT) return "?";
     return TBL[i][g_lang ? 1 : 0];
 }
+
+// ===================== 外部字符串加载（assets/strings/） =====================
+// S 枚举规范名表（与 enum class S 一一对应，INI [Strings] 节的键名）
+static const char* kSKey[(int)S::COUNT] = {
+    "Back", "On", "Off", "Settings", "Random",
+    "GameTitle", "GameSub", "Skirmish", "Campaign", "ExitGame", "MainTip",
+    "MissionN", "ObjSurvive", "ObjEliminate", "ObjTrigger", "ClickEnter",
+    "ChangeMap", "MapSize", "SizeS", "SizeM", "SizeL", "MapType", "MapContinent", "MapIslands", "MapLake",
+    "Player", "Color", "Country", "CommanderYou", "ComputerN", "Remove", "AddComputer",
+    "StartMoney", "GameSpeed", "SpeedSlow", "SpeedNormal", "SpeedFast", "Volume", "Crates", "AIAlliance", "StartGame",
+    "Money", "Power", "LowPower", "NeedBld", "Ready", "ClickTarget",
+    "TabBld", "TabDef", "TabInf", "TabVeh", "TabNavy",
+    "MsgPlaceBld", "MsgCannotBuild", "MsgQueueBusy", "MsgCanceledOne", "MsgCanceledProd",
+    "Repair", "Sell", "Menu", "MsgRepairMode", "MsgSellMode",
+    "ObjHoldFmt", "ObjWaveFmt", "ObjElimAll", "SelNFmt", "CargoNFmt", "TipLine",
+    "RadarOffline",
+    "Paused", "Victory", "Defeat", "GameMenu", "PlayAgain", "Continue", "SaveProgress", "LoadProgress", "Restart", "BackToMain",
+    "MsgFindMCVFmt", "MsgLowPower", "MsgEngCapture", "MsgBoarding", "MsgEngRepair", "MsgCannotPlace",
+    "MsgSold", "MsgConYardNoSell", "MsgRepaired", "MsgNoRepair", "MsgDeployed", "MsgDeployToggled",
+    "MsgScatter", "MsgGuard", "MsgSelSameType", "MsgGroupSetFmt", "MsgMusicOn", "MsgMusicOff",
+    "MsgSaved", "MsgSaveFail", "MsgLoaded", "MsgLoadFail", "MsgRallySet", "MsgSWLaunchedFmt", "MsgSelectTargetSW",
+    "MsgGarrison", "MsgUngarrison", "MsgService",
+    "Paradrop", "MsgParadropTarget", "EvaParadropDrop", "EvaSecretLabFmt", "EvaAirportCaptured",
+    "EvaDetectEnemySWFmt", "EvaUnloadDone", "EvaUnloadFail", "EvaNukeLaunched", "EvaStormComing", "EvaChronoStart",
+    "EvaSWReadyFmt", "EvaUnitLost", "EvaBldCapturedFmt", "EvaCapturedFmt", "EvaEngRepairedFmt",
+    "EvaBaseAttack", "EvaHarvAttack", "EvaBldDestroyedFmt", "EvaPromoteVetFmt", "EvaPromoteEliteFmt",
+    "SpyStealMoneyFmt", "SpyMoneyVictim", "SpyPowerVictim", "SpyPowerOk", "SpyRadarOk", "SpyRadarVictim",
+    "SpyBarracks", "SpyFactory", "SpyNavy", "SpyLabVictim", "SpyLabOk", "SpyGenericFmt",
+    "CrateMoney", "CrateHeal", "CrateVet", "EvaInfNoChrono", "EvaWaveIncoming",
+    "SpyTechChrono", "SpyTechPsi", "SpySWVictim", "SpySWReset", "EvaMindGain", "EvaMindLost",
+    "Language", "DisplaySection", "WindowMode", "WMFullscreen", "WMWindowed", "Resolution", "ResDesktop",
+    "KeysSection", "ResetKeys", "PressKey", "KeysTip",
+    "KaStop", "KaUnload", "KaDeploy", "KaScatter", "KaGuard", "KaSameType", "KaMusic", "KaViewBase",
+    "KaPause", "KaRally", "KaSell", "KaQuickSave", "KaQuickLoad", "KaSpeedUp", "KaSpeedDown",
+    "LanGame", "HostGame", "JoinGame", "WaitPeer", "PeerJoined", "WaitHostStart",
+    "ConnectFail", "StartBattle", "IpLabel", "PeerLeft", "DesyncWarn", "YourSide",
+    "TipCostTimeFmt", "TipRequireFmt", "TipNoMoney", "RankVet", "RankElite", "HpFmt",
+};
+
+static int sKeyByName(const char* s) {
+    if (!s) return -1;
+    for (int i = 0; i < (int)S::COUNT; i++)
+        if (kSKey[i] && !strcmp(kSKey[i], s)) return i;
+    return -1;
+}
+
+// 覆盖串持久存储（c_str 在单次加载后稳定）
+static std::string g_strPool[(int)S::COUNT][2];
+static std::string g_unitEnPool[(int)UnitType::COUNT];
+static std::string g_bldEnPool[(int)BldType::COUNT];
+static std::string g_swEnPool[(int)SWType::COUNT];
+static std::string g_factEnPool[3];
+static std::string g_countryCnPool[(int)Country::COUNT];
+static std::string g_countryEnPool[(int)Country::COUNT];
 
 // ===================== 本地化名称 =====================
 static const char* UNIT_EN[(int)UnitType::COUNT] = {
@@ -278,47 +342,138 @@ const char* countryName(Country c) {
     return g_lang ? COUNTRY_EN[i] : COUNTRY_CN[i];
 }
 
-// 与 campaign.h 任务表一一对应（24 关：中国 8 + 盟军 8 + 苏军 8）
-static const char* MISSION_EN[][2] = {
-    {"Border Skirmish", "Soviet forces cross the border. Build your base, repel reinforcements, and eliminate all enemies."},
-    {"Coastal Defense", "An Allied fleet approaches from the sea. Build your navy and eliminate all enemies."},
-    {"Shield of the Republic", "Two Soviet armies close in. Hold the town for eight minutes until reinforcements arrive."},
-    {"Sword Unsheathed", "Expedition forces land on Allied-held islands. Win the seas and eliminate both Allied bases."},
-    {"Gobi Outpost", "An Allied outpost is found in the border Gobi. Capture tech structures and destroy it."},
-    {"Yangtze Rampart", "The enemy holds the far bank. Control the bridges, hold ten minutes, and destroy the invaders."},
-    {"Deep Sea Thunder", "An Allied carrier group blockades the strait. Mass the fleet and annihilate enemy ships and shore base."},
-    {"Glory of the Republic", "The final battle. Soviet and Allied remnants fight as one — strike on three fronts and liberate all."},
-    {"Light of Freedom", "Russian armored division approaches. Rally the Allied remnants and destroy the invaders."},
-    {"Deep Sea Hunt", "Typhoon subs blockade the strait. Break out with the fleet and destroy the Soviet coastal base."},
-    {"Chrono Storm", "Soviets march on the Chrono research center. Hold for ten minutes to keep the Chronosphere safe."},
-    {"Battle for Moscow", "Assault the heart of Soviet power. Crush the Kremlin guard and end the war."},
-    {"Behind Enemy Lines", "A small team infiltrates Soviet territory: Tanya, a spy and an engineer. Destroy the silo and get out."},
-    {"Normandy Echoes", "Amphibious assault: take the beachhead, build a forward base, and eliminate the defenders."},
-    {"Ark Guardian", "The Chronosphere prototype is exposed. Protect it at all costs for twelve minutes."},
-    {"Freedom's Finale", "Soviet remnants gather at their last arctic stronghold. Launch the final assault and end the war."},
-    {"Steel Torrent", "Allied outposts hold the border plains. Crush their line with armored waves and eliminate them all."},
-    {"Island Clash", "An Allied carrier group controls the resource islands. Win the seas and take the islands back."},
-    {"Red Alert", "Allied and vassal forces surround the nuclear facility. Hold for nine minutes to save our arsenal."},
-    {"Nuclear Dawn", "The final battle. Crush the Allied coalition and raise the red flag over the world."},
-    {"Ural Defense Line", "The Allied expedition drives at the Ural industry zone. Hold eleven minutes for strategic reserves."},
-    {"Black Sea Fleet", "An Allied fleet invades the Black Sea. Sortie the fleet, retake the sea, and destroy the shore bases."},
-    {"Psychic Conquest", "Yuri's psychic corps faces its combat trial. Break the Allied line with mind control and destroy them."},
-    {"World Revolution", "The last battle of the revolution. Three Allied armies fight cornered — attack on all fronts."},
-};
-
 const char* unitName(UnitType t) { return g_lang ? UNIT_EN[(int)t] : unitDef(t).name; }
 const char* bldName(BldType t) { return g_lang ? BLD_EN[(int)t] : bldDef(t).name; }
 const char* swName(SWType t) { return g_lang ? SW_EN[(int)t] : swDef(t).name; }
 const char* factName(Faction f) { return g_lang ? FACTION_EN[(int)f] : factionName(f); }
+// 任务名/简报：中英直接取 MissionDef（内置或 assets/campaigns 加载均含双语字段）
 const char* missionName(int i) {
-    int n = (int)missionTable().size();
-    if (g_lang && i >= 0 && i < n) return MISSION_EN[i][0];
-    return missionTable()[i].name;
+    const MissionDef& md = missionTable()[i];
+    return (g_lang && !md.nameEn.empty()) ? md.nameEn.c_str() : md.name.c_str();
 }
 const char* missionBrief(int i) {
-    int n = (int)missionTable().size();
-    if (g_lang && i >= 0 && i < n) return MISSION_EN[i][1];
-    return missionTable()[i].brief;
+    const MissionDef& md = missionTable()[i];
+    return (g_lang && !md.briefEn.empty()) ? md.briefEn.c_str() : md.brief.c_str();
+}
+
+// ===================== 外部字符串加载（assets/strings/） =====================
+void loadStrings(const char* path, int lang) {
+    Ini ini;
+    if (!ini.load(path)) {
+        TraceLog(LOG_INFO, "RA2 strings: %s not found, using built-in text", path);
+        return;
+    }
+    int col = lang ? 1 : 0;
+    int patched = 0;
+    if (const Ini::Section* s = ini.find("Strings")) {
+        for (const auto& p : s->kv) {
+            int id = sKeyByName(p.first.c_str());
+            if (id < 0) {
+                TraceLog(LOG_WARNING, "RA2 strings: %s [Strings] unknown key %s, skipped", path, p.first.c_str());
+                continue;
+            }
+            g_strPool[id][col] = p.second;
+            TBL[id][col] = g_strPool[id][col].c_str();
+            patched++;
+        }
+    }
+    // 名称表节：en.ini 覆盖英文旁表；zh.ini 仅 [Country]（中文单位/建筑/超武名由 rules.ini Name= 覆盖）
+    auto warnKey = [&](const char* sec, const char* key) {
+        TraceLog(LOG_WARNING, "RA2 strings: %s [%s] unknown key %s, skipped", path, sec, key);
+    };
+    if (lang) {
+        if (const Ini::Section* s = ini.find("Unit"))
+            for (const auto& p : s->kv) {
+                UnitType t;
+                if (!unitTypeByName(p.first.c_str(), t)) { warnKey("Unit", p.first.c_str()); continue; }
+                g_unitEnPool[(int)t] = p.second;
+                UNIT_EN[(int)t] = g_unitEnPool[(int)t].c_str();
+                patched++;
+            }
+        if (const Ini::Section* s = ini.find("Bld"))
+            for (const auto& p : s->kv) {
+                BldType t;
+                if (!bldTypeByName(p.first.c_str(), t)) { warnKey("Bld", p.first.c_str()); continue; }
+                g_bldEnPool[(int)t] = p.second;
+                BLD_EN[(int)t] = g_bldEnPool[(int)t].c_str();
+                patched++;
+            }
+        if (const Ini::Section* s = ini.find("SW"))
+            for (const auto& p : s->kv) {
+                SWType t;
+                if (!swTypeByName(p.first.c_str(), t)) { warnKey("SW", p.first.c_str()); continue; }
+                g_swEnPool[(int)t] = p.second;
+                SW_EN[(int)t] = g_swEnPool[(int)t].c_str();
+                patched++;
+            }
+        if (const Ini::Section* s = ini.find("Faction"))
+            for (const auto& p : s->kv) {
+                Faction f;
+                if (!factionByName(p.first.c_str(), f)) { warnKey("Faction", p.first.c_str()); continue; }
+                g_factEnPool[(int)f] = p.second;
+                FACTION_EN[(int)f] = g_factEnPool[(int)f].c_str();
+                patched++;
+            }
+        if (const Ini::Section* s = ini.find("Country"))
+            for (const auto& p : s->kv) {
+                Country c;
+                if (!countryByName(p.first.c_str(), c)) { warnKey("Country", p.first.c_str()); continue; }
+                g_countryEnPool[(int)c] = p.second;
+                COUNTRY_EN[(int)c] = g_countryEnPool[(int)c].c_str();
+                patched++;
+            }
+    } else {
+        if (const Ini::Section* s = ini.find("Country"))
+            for (const auto& p : s->kv) {
+                Country c;
+                if (!countryByName(p.first.c_str(), c)) { warnKey("Country", p.first.c_str()); continue; }
+                g_countryCnPool[(int)c] = p.second;
+                COUNTRY_CN[(int)c] = g_countryCnPool[(int)c].c_str();
+                patched++;
+            }
+    }
+    TraceLog(LOG_INFO, "RA2 strings: %s loaded, %d entries applied (lang=%d)", path, patched, lang);
+}
+
+// ===================== 字符串导出（--export-assets） =====================
+// 导出内置文本为 zh.ini / en.ini，作为用户改写的模板
+void exportStrings(const char* dir) {
+    MakeDirectory("assets");
+    MakeDirectory(dir);
+    char path[256];
+    for (int lang = 0; lang < 2; lang++) {
+        snprintf(path, sizeof(path), "%s/%s.ini", dir, lang ? "en" : "zh");
+        FILE* f = fopen(path, "wb");
+        if (!f) { TraceLog(LOG_WARNING, "RA2 export: cannot write %s", path); continue; }
+        fprintf(f, "; OpenRA2 %s strings - edit values to customize; delete keys to fall back to built-in\n",
+                lang ? "English" : "Chinese");
+        fprintf(f, "[Strings]\n");
+        for (int i = 0; i < (int)S::COUNT; i++)
+            fprintf(f, "%s=%s\n", kSKey[i], TBL[i][lang]);
+        if (lang) {
+            fprintf(f, "\n[Unit]\n");
+            for (int i = 0; i < (int)UnitType::COUNT; i++)
+                fprintf(f, "%s=%s\n", unitTypeKey((UnitType)i), UNIT_EN[i]);
+            fprintf(f, "\n[Bld]\n");
+            for (int i = 0; i < (int)BldType::COUNT; i++)
+                fprintf(f, "%s=%s\n", bldTypeKey((BldType)i), BLD_EN[i]);
+            fprintf(f, "\n[SW]\n");
+            for (int i = 0; i < (int)SWType::COUNT; i++)
+                fprintf(f, "%s=%s\n", swTypeKey((SWType)i), SW_EN[i]);
+            fprintf(f, "\n[Faction]\n");
+            for (int i = 0; i < 3; i++)
+                fprintf(f, "%s=%s\n", factionKey((Faction)i), FACTION_EN[i]);
+            fprintf(f, "\n[Country]\n");
+            for (int i = 0; i < (int)Country::COUNT; i++)
+                fprintf(f, "%s=%s\n", countryKey((Country)i), COUNTRY_EN[i]);
+        } else {
+            fprintf(f, "\n[Country]\n");
+            for (int i = 0; i < (int)Country::COUNT; i++)
+                fprintf(f, "%s=%s\n", countryKey((Country)i), COUNTRY_CN[i]);
+        }
+        fclose(f);
+        TraceLog(LOG_INFO, "RA2 export: %s written", path);
+    }
 }
 
 // ===================== 按键显示名 =====================
@@ -384,9 +539,10 @@ void appendAllFontText(std::string& out) {
     for (int i = 0; i < (int)BldType::COUNT; i++) { out += bldDef((BldType)i).name; out += BLD_EN[i]; }
     for (int i = 0; i < (int)SWType::COUNT; i++) { out += swDef((SWType)i).name; out += SW_EN[i]; }
     for (int i = 0; i < 3; i++) { out += factionName((Faction)i); out += FACTION_EN[i]; }
-    for (int i = 0; i < (int)missionTable().size(); i++) {
-        out += missionTable()[i].name; out += missionTable()[i].brief;
-        out += MISSION_EN[i][0]; out += MISSION_EN[i][1];
+    for (const MissionDef& md : missionTable()) {
+        out += md.name; out += md.brief;
+        out += md.nameEn; out += md.briefEn;
+        for (const Trigger& t : md.triggers) { out += t.msg; out += t.msgEn; }
     }
     // 窗口标题与杂项中文
     out += "OpenRA2 - 共和国之辉 复刻";

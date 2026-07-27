@@ -22,11 +22,29 @@ int main(int argc, char** argv) {
         bool okA = g_sfx.genSfxAssets("assets/sfx");
         return (okS && okA) ? 0 : 1;
     }
+    // 元数据模板导出：rules.ini / 24 关战役 INI / 双语字符串 / 音乐播放列表，不创建窗口
+    if (argc > 1 && strcmp(argv[1], "--export-assets") == 0) {
+        exportRules("assets/rules/rules.ini");
+        exportCampaigns("assets/campaigns");
+        exportStrings("assets/strings");
+        // 音乐播放列表（运行时 assets/music/ 全目录扫描，本文件仅定义轮换顺序）
+        MakeDirectory("assets/music");
+        if (FILE* f = fopen("assets/music/music.ini", "wb")) {
+            fprintf(f, "; OpenRA2 music playlist - Track=<file in assets/music>, order = rotation order.\n");
+            fprintf(f, "; Files not listed here are appended after the listed ones. Delete file to restore scan order.\n");
+            fprintf(f, "[Playlist]\nTrack=industrial_march.wav\nTrack=grind_heavy.wav\nTrack=overdrive_fast.wav\n");
+            fclose(f);
+        }
+        printf("export-assets: rules/campaigns/strings/music templates written to assets/\n");
+        return 0;
+    }
     bool windowed = false;
     for (int i = 1; i < argc; i++)
         if (strcmp(argv[i], "--windowed") == 0) windowed = true;
+    // 测试/截图等非交互模式：隐藏窗口运行，不打扰用户桌面
+    bool testMode = argc > 1 && strncmp(argv[1], "--", 2) == 0 && strcmp(argv[1], "--windowed") != 0;
     Game game;
-    game.init(windowed);
+    game.init(windowed, testMode);
     if (argc > 1 && strcmp(argv[1], "--smoke") == 0) {
         int frames = argc > 2 ? atoi(argv[2]) : 600;
         game.smokeTest(frames);

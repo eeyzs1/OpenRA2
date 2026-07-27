@@ -26,7 +26,7 @@ enum KeyAction : int {
 
 class Game {
 public:
-    void init(bool windowed = false); // 默认无边框全屏（自适应任意桌面分辨率）；windowed=true 调试用窗口
+    void init(bool windowed = false, bool hidden = false); // 默认无边框全屏；windowed 调试窗口；hidden 测试用隐藏窗口（不弹窗）
     void shutdown();
     void run(); // 主循环
     void smokeTest(int frames); // 无头冒烟测试
@@ -194,6 +194,7 @@ private:
     void drawHUD();
     void updateMinimap(); // 定时重绘小地图纹理（须在画布渲染通道外调用）
     void drawMinimap();
+    bool radarOnline() const; // 雷达类建筑在线且电力充足（RA2 小地图激活条件）
     void drawSidebar();
     void drawPlacement();
     void drawHealthBar(int px, int py, int w, float frac, bool selected);

@@ -77,7 +77,7 @@ void Map::generate(int w_, int h_, uint64_t seed, int numPlayers, std::vector<Ve
                 else if (v < 0.38f) c.terrain = Terrain::Rough;
                 else c.terrain = Terrain::Clear;
             }
-            c.variant = (uint8_t)rng.range(0, 3);
+            c.variant = (uint8_t)rng.range(0, 7);
         }
 
     // 2. 出生点周围整平

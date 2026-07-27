@@ -1,4 +1,8 @@
 #include "game/data.h"
+#include "core/ini.h"
+#include "raylib.h"
+#include <cstring>
+#include <string>
 
 // 阵营位掩码
 static constexpr uint8_t FA = 1 << (int)Faction::Allies;
@@ -67,20 +71,18 @@ static WeaponDef ewWarMiner() { return WeaponDef{16, 4, 16, false, true, "bullet
 template <WeaponDef (*F)()> const WeaponDef* eliteOf() { static const WeaponDef w = F(); return &w; }
 
 // 重装大兵部署后：反装甲炮（不可移动、不可被碾压）
-const WeaponDef& ggiDeployedWeapon() {
-    static const WeaponDef w{40, 6, 30, false, true, "missile", 0.3f, 1.6f, 0.4f};
-    return w;
-}
+// 部署武器为可写静态：rules.ini [DeployWeapon.*] 可覆盖
+static WeaponDef wGgiDeploy{40, 6, 30, false, true, "missile", 0.3f, 1.6f, 0.4f};
+static WeaponDef wGiDeploy{12, 5, 18, false, true, "bullet", 1.2f, 0.5f, 0.4f};
+const WeaponDef& ggiDeployedWeapon() { return wGgiDeploy; }
 
 // 美国大兵部署（沙袋工事）：射程与伤害提升，不可移动、不可被碾压
-const WeaponDef& giDeployedWeapon() {
-    static const WeaponDef w{12, 5, 18, false, true, "bullet", 1.2f, 0.5f, 0.4f};
-    return w;
-}
+const WeaponDef& giDeployedWeapon() { return wGiDeploy; }
 
 // ===================== 单位表 =====================
 // 注：尾部追加 ammo 字段（0=无限）
-static const UnitDef g_units[(int)UnitType::COUNT] = {
+// 表为可写静态：启动时 loadRules() 用 assets/rules/rules.ini 逐项覆盖
+static UnitDef g_units[(int)UnitType::COUNT] = {
     // type, name, cost, btime, hp, speed, sight, armor, move, weapon, factions, prereq, ammo
     {UnitType::MCV,        "基地车",    2500, 500, 600, 24, 5, Armor::Heavy, MoveType::Vehicle, wNone(), ALLF, BldType::WarFactory, 0},
     {UnitType::Harvester,  "采矿车",    1400, 280, 700, 20, 4, Armor::Heavy, MoveType::Vehicle, wNone(), FC, BldType::OreRefinery},
@@ -150,7 +152,7 @@ static const UnitDef g_units[(int)UnitType::COUNT] = {
 };
 
 // ===================== 建筑表 =====================
-static const BldDef g_blds[(int)BldType::COUNT] = {
+static BldDef g_blds[(int)BldType::COUNT] = {
     // type, name, cost, btime, hp, w,h, power, sight, weapon, factions, prereq, capturable
     {BldType::ConYard,      "建造厂",   3000, 600, 1500, 3,3, 0,    6, wNone(), ALLF, BldType::COUNT, false},
     {BldType::PowerPlant,   "发电厂",   800,  160, 600,  2,2, 200,  4, wNone(), FA, BldType::COUNT, true},
@@ -197,7 +199,7 @@ static const BldDef g_blds[(int)BldType::COUNT] = {
 };
 
 // ===================== 超武表 =====================
-static const SWDef g_sws[(int)SWType::COUNT] = {
+static SWDef g_sws[(int)SWType::COUNT] = {
     {SWType::Nuke,        "战术核弹",  30 * 60 * 3, BldType::NukeSilo},      // 3 分钟
     {SWType::Lightning,   "闪电风暴",  30 * 60 * 3, BldType::WeatherDevice},
     {SWType::IronCurtain, "铁幕",      30 * 60 * 2, BldType::IronCurtain},   // 2 分钟
@@ -242,4 +244,316 @@ std::vector<UnitType> trainableUnits(Faction f, bool naval) {
         if (nav == naval) v.push_back((UnitType)i);
     }
     return v;
+}
+
+// ===================== 枚举规范名表（INI/地图/战役文件共用） =====================
+static const char* kUnitKey[(int)UnitType::COUNT] = {
+    "MCV", "Harvester",
+    "GI", "Conscript", "PLA", "Engineer", "AttackDog", "Spy",
+    "FlakTrooper", "TeslaTrooper", "Sniper", "Tanya",
+    "Desolator", "Chrono", "GuardianGI", "CrazyIvan",
+    "Grizzly", "Rhino", "Type99", "FlakTrack", "IFV",
+    "PrismTank", "TeslaTank", "MirageTank", "V3Launcher", "Apocalypse", "TerrorDrone",
+    "Intruder", "MiG", "BlackEagle", "Kirov", "Rocketeer",
+    "Destroyer", "Typhoon", "Aegis", "SeaScorpion", "Dreadnought", "AircraftCarrier", "AmphTransport",
+    "ChronoMiner", "WarMiner",
+    "TankDestroyer", "Terrorist", "DemoTruck",
+    "Nighthawk", "Dolphin", "Squid", "RobotTank", "BattleFortress", "Hornet",
+    "NavySEAL", "Yuri", "ChronoCommando", "PsiCommando",
+};
+static const char* kBldKey[(int)BldType::COUNT] = {
+    "ConYard", "PowerPlant", "TeslaReactor", "NuclearReactor",
+    "Barracks", "WarFactory", "OreRefinery", "Radar", "BattleLab", "AirForceCmd", "NavalYard",
+    "Pillbox", "SentryGun", "PrismTower", "TeslaCoil", "FlakCannon", "GrandCannon", "PatriotMissile",
+    "Wall", "OrePurifier", "IndustrialPlant",
+    "NukeSilo", "WeatherDevice", "IronCurtain", "ChronoSphere",
+    "OilDerrick", "Hospital", "MachineShop",
+    "CloningVat", "ServiceDepot", "GapGenerator", "SpySat", "PsychicSensor", "BattleBunker", "TankBunker",
+    "TechAirport", "SecretLab", "CivHouse",
+};
+static const char* kCountryKey[(int)Country::COUNT] = {
+    "None", "America", "Korea", "France", "Germany", "UK",
+    "Russia", "Cuba", "Libya", "Iraq", "China",
+};
+static const char* kFactionKey[3] = {"Allies", "Soviet", "China"};
+static const char* kSWKey[(int)SWType::COUNT] = {"Nuke", "Lightning", "IronCurtain", "ChronoShift"};
+
+template <size_t N>
+static bool lookupKey(const char* const (&tbl)[N], int base, const char* s, int& out) {
+    if (!s) return false;
+    for (size_t i = 0; i < N; i++)
+        if (strcmp(tbl[i], s) == 0) { out = base + (int)i; return true; }
+    return false;
+}
+
+bool unitTypeByName(const char* s, UnitType& out) { int v; if (!lookupKey(kUnitKey, 0, s, v)) return false; out = (UnitType)v; return true; }
+bool bldTypeByName(const char* s, BldType& out) {
+    if (s && (!strcmp(s, "COUNT") || !strcmp(s, "None"))) { out = BldType::COUNT; return true; }
+    int v; if (!lookupKey(kBldKey, 0, s, v)) return false; out = (BldType)v; return true;
+}
+bool factionByName(const char* s, Faction& out) { int v; if (!lookupKey(kFactionKey, 0, s, v)) return false; out = (Faction)v; return true; }
+bool countryByName(const char* s, Country& out) { int v; if (!lookupKey(kCountryKey, 0, s, v)) return false; out = (Country)v; return true; }
+bool swTypeByName(const char* s, SWType& out) { int v; if (!lookupKey(kSWKey, 0, s, v)) return false; out = (SWType)v; return true; }
+const char* unitTypeKey(UnitType t) { int i = (int)t; return (i >= 0 && i < (int)UnitType::COUNT) ? kUnitKey[i] : "?"; }
+const char* bldTypeKey(BldType t) { int i = (int)t; return (i >= 0 && i < (int)BldType::COUNT) ? kBldKey[i] : "?"; }
+const char* countryKey(Country c) { int i = (int)c; return (i >= 0 && i < (int)Country::COUNT) ? kCountryKey[i] : "?"; }
+const char* factionKey(Faction f) { int i = (int)f; return (i >= 0 && i < 3) ? kFactionKey[i] : "?"; }
+const char* swTypeKey(SWType t) { int i = (int)t; return (i >= 0 && i < (int)SWType::COUNT) ? kSWKey[i] : "?"; }
+
+// ===================== 外部规则加载（assets/rules/rules.ini 覆盖内置数值） =====================
+// 覆盖名/贴图串的持久存储（std::string 对象静态常驻，c_str 在 loadRules 单次调用后稳定）
+static std::string g_unitNameStr[(int)UnitType::COUNT];
+static std::string g_unitProjStr[(int)UnitType::COUNT];
+static std::string g_unitEliteProjStr[(int)UnitType::COUNT];
+static std::string g_bldNameStr[(int)BldType::COUNT];
+static std::string g_bldProjStr[(int)BldType::COUNT];
+static std::string g_swNameStr[(int)SWType::COUNT];
+static std::string g_deployProjStr[2];
+// 精英武器可写池：首次 loadRules 时把内置精英武器复制入池并重指 UnitDef.elite
+static WeaponDef g_elitePool[(int)UnitType::COUNT];
+static bool g_elitePooled = false;
+
+static void poolEliteWeapons() {
+    if (g_elitePooled) return;
+    g_elitePooled = true;
+    for (int i = 0; i < (int)UnitType::COUNT; i++)
+        if (g_units[i].elite) { g_elitePool[i] = *g_units[i].elite; g_units[i].elite = &g_elitePool[i]; }
+}
+
+static bool parseArmor(const char* s, Armor& out) {
+    if (!s) return false;
+    if (!strcmp(s, "None")) { out = Armor::None; return true; }
+    if (!strcmp(s, "Light")) { out = Armor::Light; return true; }
+    if (!strcmp(s, "Heavy")) { out = Armor::Heavy; return true; }
+    if (!strcmp(s, "Building")) { out = Armor::Building; return true; }
+    return false;
+}
+static bool parseMove(const char* s, MoveType& out) {
+    if (!s) return false;
+    if (!strcmp(s, "Infantry")) { out = MoveType::Infantry; return true; }
+    if (!strcmp(s, "Vehicle")) { out = MoveType::Vehicle; return true; }
+    if (!strcmp(s, "Air")) { out = MoveType::Air; return true; }
+    if (!strcmp(s, "Naval")) { out = MoveType::Naval; return true; }
+    if (!strcmp(s, "Amphibious")) { out = MoveType::Amphibious; return true; }
+    return false;
+}
+// 阵营掩码："All"/"None" 或 "Allies|Soviet|China" 管道组合
+static bool parseFactionMask(const char* s, uint8_t& out) {
+    if (!s) return false;
+    if (!strcmp(s, "All")) { out = 0b111; return true; }
+    if (!strcmp(s, "None")) { out = 0; return true; }
+    uint8_t m = 0;
+    char buf[64];
+    snprintf(buf, sizeof(buf), "%s", s);
+    bool any = false;
+    for (char* tok = strtok(buf, "|"); tok; tok = strtok(nullptr, "|")) {
+        Faction f;
+        if (!factionByName(tok, f)) return false;
+        m |= (uint8_t)(1 << (int)f);
+        any = true;
+    }
+    if (any) out = m;
+    return any;
+}
+
+// 武器键覆盖：prefix 为 "Weapon" / "Elite" / nullptr（直接键，部署武器用）
+static void loadWeaponKeys(const Ini::Section& sec, const char* prefix, WeaponDef& w, std::string& projSlot) {
+    char key[32];
+    auto kb = [&](const char* k) -> const char* {
+        if (!prefix) return k;
+        snprintf(key, sizeof(key), "%s.%s", prefix, k);
+        return key;
+    };
+    const char* v;
+    if ((v = sec.get(kb("Damage")))) w.damage = Ini::toInt(v, w.damage);
+    if ((v = sec.get(kb("Range")))) w.range = Ini::toInt(v, w.range);
+    if ((v = sec.get(kb("Cooldown")))) w.cooldown = Ini::toInt(v, w.cooldown);
+    if ((v = sec.get(kb("AntiAir")))) w.antiAir = Ini::toBool(v, w.antiAir);
+    if ((v = sec.get(kb("AntiGround")))) w.antiGround = Ini::toBool(v, w.antiGround);
+    if ((v = sec.get(kb("Proj")))) { projSlot = v; w.projSprite = projSlot.c_str(); }
+    if ((v = sec.get(kb("VsInf")))) w.vsInfantry = Ini::toFloat(v, w.vsInfantry);
+    if ((v = sec.get(kb("VsVeh")))) w.vsVehicle = Ini::toFloat(v, w.vsVehicle);
+    if ((v = sec.get(kb("VsBld")))) w.vsBuilding = Ini::toFloat(v, w.vsBuilding);
+    if ((v = sec.get(kb("NavalOnly")))) w.navalOnly = Ini::toBool(v, w.navalOnly);
+    if ((v = sec.get(kb("Splash")))) w.splash = Ini::toFloat(v, w.splash);
+}
+
+void loadRules(const char* path) {
+    Ini ini;
+    if (!ini.load(path)) {
+        TraceLog(LOG_INFO, "RA2 rules: %s not found, using built-in defaults", path);
+        return;
+    }
+    poolEliteWeapons();
+    int patched = 0;
+    for (const Ini::Section& sec : ini.sections) {
+        const std::string& sn = sec.name;
+        auto warn = [&](const char* what) {
+            TraceLog(LOG_WARNING, "RA2 rules: [%s] unknown %s, skipped", sn.c_str(), what);
+        };
+        if (sn.rfind("Unit.", 0) == 0) {
+            UnitType ut;
+            if (!unitTypeByName(sn.c_str() + 5, ut)) { warn("unit"); continue; }
+            UnitDef& d = g_units[(int)ut];
+            const char* v;
+            if ((v = sec.get("Name"))) { g_unitNameStr[(int)ut] = v; d.name = g_unitNameStr[(int)ut].c_str(); }
+            if ((v = sec.get("Cost"))) d.cost = Ini::toInt(v, d.cost);
+            if ((v = sec.get("BuildTime"))) d.buildTime = Ini::toInt(v, d.buildTime);
+            if ((v = sec.get("HP"))) d.hp = Ini::toInt(v, d.hp);
+            if ((v = sec.get("Speed"))) d.speed = Ini::toInt(v, d.speed);
+            if ((v = sec.get("Sight"))) d.sight = Ini::toInt(v, d.sight);
+            if ((v = sec.get("Armor"))) { if (!parseArmor(v, d.armor)) warn("Armor"); }
+            if ((v = sec.get("Move"))) { if (!parseMove(v, d.move)) warn("Move"); }
+            if ((v = sec.get("Factions"))) { if (!parseFactionMask(v, d.factionMask)) warn("Factions"); }
+            if ((v = sec.get("Prereq"))) { if (!bldTypeByName(v, d.prereq)) warn("Prereq"); }
+            if ((v = sec.get("Ammo"))) d.ammo = Ini::toInt(v, d.ammo);
+            if ((v = sec.get("Cargo"))) d.cargoCap = Ini::toInt(v, d.cargoCap);
+            if ((v = sec.get("Country"))) { if (!countryByName(v, d.countryReq)) warn("Country"); }
+            loadWeaponKeys(sec, "Weapon", d.weapon, g_unitProjStr[(int)ut]);
+            // 精英武器：有任何 Elite.* 键即启用（原本无精英武器时以基础武器为底）
+            bool hasEliteKey = false;
+            for (const auto& p : sec.kv)
+                if (p.first.rfind("Elite.", 0) == 0) { hasEliteKey = true; break; }
+            if (hasEliteKey) {
+                if (!d.elite) { g_elitePool[(int)ut] = d.weapon; d.elite = &g_elitePool[(int)ut]; }
+                loadWeaponKeys(sec, "Elite", g_elitePool[(int)ut], g_unitEliteProjStr[(int)ut]);
+            }
+            patched++;
+        } else if (sn.rfind("Bld.", 0) == 0) {
+            BldType bt;
+            if (!bldTypeByName(sn.c_str() + 4, bt) || bt == BldType::COUNT) { warn("building"); continue; }
+            BldDef& d = g_blds[(int)bt];
+            const char* v;
+            if ((v = sec.get("Name"))) { g_bldNameStr[(int)bt] = v; d.name = g_bldNameStr[(int)bt].c_str(); }
+            if ((v = sec.get("Cost"))) d.cost = Ini::toInt(v, d.cost);
+            if ((v = sec.get("BuildTime"))) d.buildTime = Ini::toInt(v, d.buildTime);
+            if ((v = sec.get("HP"))) d.hp = Ini::toInt(v, d.hp);
+            if ((v = sec.get("W"))) d.w = Ini::toInt(v, d.w);
+            if ((v = sec.get("H"))) d.h = Ini::toInt(v, d.h);
+            if ((v = sec.get("Power"))) d.power = Ini::toInt(v, d.power);
+            if ((v = sec.get("Sight"))) d.sight = Ini::toInt(v, d.sight);
+            if ((v = sec.get("Factions"))) { if (!parseFactionMask(v, d.factionMask)) warn("Factions"); }
+            if ((v = sec.get("Prereq"))) { if (!bldTypeByName(v, d.prereq)) warn("Prereq"); }
+            if ((v = sec.get("Capturable"))) d.capturable = Ini::toBool(v, d.capturable);
+            if ((v = sec.get("Garrison"))) d.garrisonCap = Ini::toInt(v, d.garrisonCap);
+            if ((v = sec.get("Country"))) { if (!countryByName(v, d.countryReq)) warn("Country"); }
+            loadWeaponKeys(sec, "Weapon", d.weapon, g_bldProjStr[(int)bt]);
+            patched++;
+        } else if (sn.rfind("SW.", 0) == 0) {
+            SWType st;
+            if (!swTypeByName(sn.c_str() + 3, st)) { warn("superweapon"); continue; }
+            SWDef& d = g_sws[(int)st];
+            const char* v;
+            if ((v = sec.get("Name"))) { g_swNameStr[(int)st] = v; d.name = g_swNameStr[(int)st].c_str(); }
+            if ((v = sec.get("ChargeTime"))) d.chargeTime = Ini::toInt(v, d.chargeTime);
+            if ((v = sec.get("FromBld"))) { if (!bldTypeByName(v, d.fromBld)) warn("FromBld"); }
+            patched++;
+        } else if (sn.rfind("DeployWeapon.", 0) == 0) {
+            const char* who = sn.c_str() + 13;
+            if (!strcmp(who, "GuardianGI")) loadWeaponKeys(sec, nullptr, wGgiDeploy, g_deployProjStr[0]);
+            else if (!strcmp(who, "GI")) loadWeaponKeys(sec, nullptr, wGiDeploy, g_deployProjStr[1]);
+            else { warn("deploy weapon"); continue; }
+            patched++;
+        } else {
+            warn("section");
+        }
+    }
+    TraceLog(LOG_INFO, "RA2 rules: %s loaded, %d sections applied", path, patched);
+}
+
+// ===================== 规则导出（--export-assets）：全量数值写成 rules.ini 模板 =====================
+static const char* armorKey(Armor a) {
+    switch (a) {
+        case Armor::None: return "None";
+        case Armor::Light: return "Light";
+        case Armor::Heavy: return "Heavy";
+        case Armor::Building: return "Building";
+    }
+    return "?";
+}
+static const char* moveKey(MoveType m) {
+    switch (m) {
+        case MoveType::Infantry: return "Infantry";
+        case MoveType::Vehicle: return "Vehicle";
+        case MoveType::Air: return "Air";
+        case MoveType::Naval: return "Naval";
+        case MoveType::Amphibious: return "Amphibious";
+    }
+    return "?";
+}
+static std::string factionMaskStr(uint8_t m) {
+    if (m == 0) return "None";
+    if (m == ALLF) return "All";
+    std::string s;
+    for (int i = 0; i < 3; i++)
+        if (m & (1 << i)) { if (!s.empty()) s += '|'; s += kFactionKey[i]; }
+    return s;
+}
+// 武器键写出：prefix 非空时键名为 "<prefix>.<Key>"（Weapon/Elite），否则直接键名（DeployWeapon）
+static void writeWeaponKeys(FILE* f, const char* prefix, const WeaponDef& w) {
+    auto key = [&](const char* k, std::string& buf) -> const char* {
+        if (!prefix) return k;
+        buf = prefix;
+        buf += '.';
+        buf += k;
+        return buf.c_str();
+    };
+    std::string b;
+    fprintf(f, "%s=%d\n", key("Damage", b), w.damage);
+    fprintf(f, "%s=%d\n", key("Range", b), w.range);
+    fprintf(f, "%s=%d\n", key("Cooldown", b), w.cooldown);
+    fprintf(f, "%s=%s\n", key("AntiAir", b), w.antiAir ? "yes" : "no");
+    fprintf(f, "%s=%s\n", key("AntiGround", b), w.antiGround ? "yes" : "no");
+    fprintf(f, "%s=%s\n", key("Proj", b), w.projSprite);
+    fprintf(f, "%s=%g\n", key("VsInf", b), w.vsInfantry);
+    fprintf(f, "%s=%g\n", key("VsVeh", b), w.vsVehicle);
+    fprintf(f, "%s=%g\n", key("VsBld", b), w.vsBuilding);
+    fprintf(f, "%s=%s\n", key("NavalOnly", b), w.navalOnly ? "yes" : "no");
+    fprintf(f, "%s=%g\n", key("Splash", b), w.splash);
+}
+
+void exportRules(const char* path) {
+    MakeDirectory("assets");
+    MakeDirectory("assets/rules");
+    FILE* f = fopen(path, "wb");
+    if (!f) { TraceLog(LOG_WARNING, "RA2 export: cannot write %s", path); return; }
+    fprintf(f, "; OpenRA2 rules - unit/building/superweapon stats. Edit values to customize;\n");
+    fprintf(f, "; delete keys or sections to fall back to built-in defaults. See assets/README.txt.\n\n");
+    for (int i = 0; i < (int)UnitType::COUNT; i++) {
+        const UnitDef& d = g_units[i];
+        fprintf(f, "[Unit.%s]\n", kUnitKey[i]);
+        fprintf(f, "Name=%s\n", d.name);
+        fprintf(f, "Cost=%d\nBuildTime=%d\nHP=%d\nSpeed=%d\nSight=%d\n", d.cost, d.buildTime, d.hp, d.speed, d.sight);
+        fprintf(f, "Armor=%s\nMove=%s\n", armorKey(d.armor), moveKey(d.move));
+        fprintf(f, "Factions=%s\n", factionMaskStr(d.factionMask).c_str());
+        fprintf(f, "Prereq=%s\n", d.prereq == BldType::COUNT ? "None" : bldTypeKey(d.prereq));
+        fprintf(f, "Ammo=%d\nCargo=%d\nCountry=%s\n", d.ammo, d.cargoCap, countryKey(d.countryReq));
+        writeWeaponKeys(f, "Weapon", d.weapon);
+        if (d.elite) writeWeaponKeys(f, "Elite", *d.elite);
+        fprintf(f, "\n");
+    }
+    for (int i = 0; i < (int)BldType::COUNT; i++) {
+        const BldDef& d = g_blds[i];
+        fprintf(f, "[Bld.%s]\n", kBldKey[i]);
+        fprintf(f, "Name=%s\n", d.name);
+        fprintf(f, "Cost=%d\nBuildTime=%d\nHP=%d\nW=%d\nH=%d\nPower=%d\nSight=%d\n",
+                d.cost, d.buildTime, d.hp, d.w, d.h, d.power, d.sight);
+        fprintf(f, "Factions=%s\n", factionMaskStr(d.factionMask).c_str());
+        fprintf(f, "Prereq=%s\n", d.prereq == BldType::COUNT ? "None" : bldTypeKey(d.prereq));
+        fprintf(f, "Capturable=%s\nGarrison=%d\nCountry=%s\n",
+                d.capturable ? "yes" : "no", d.garrisonCap, countryKey(d.countryReq));
+        writeWeaponKeys(f, "Weapon", d.weapon);
+        fprintf(f, "\n");
+    }
+    for (int i = 0; i < (int)SWType::COUNT; i++) {
+        const SWDef& d = g_sws[i];
+        fprintf(f, "[SW.%s]\n", kSWKey[i]);
+        fprintf(f, "Name=%s\nChargeTime=%d\nFromBld=%s\n\n", d.name, d.chargeTime, bldTypeKey(d.fromBld));
+    }
+    fprintf(f, "[DeployWeapon.GuardianGI]\n");
+    writeWeaponKeys(f, nullptr, wGgiDeploy);
+    fprintf(f, "\n[DeployWeapon.GI]\n");
+    writeWeaponKeys(f, nullptr, wGiDeploy);
+    fclose(f);
+    TraceLog(LOG_INFO, "RA2 export: %s written", path);
 }

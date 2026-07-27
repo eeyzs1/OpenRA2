@@ -6,5 +6,8 @@ build-asan/
 out/
 saves/
 settings.ini
-# 生成素材（--gen-assets 可再生成，本地覆盖用，不入库）
-assets/
+# 生成的图像/音频素材（--gen-assets 可再生成，本地覆盖用，不入库）；
+# 元数据 INI/TXT（rules/campaigns/strings/music.ini/README）是游戏内容定义，入库
+assets/sprites/
+assets/sfx/
+assets/music/*.wav

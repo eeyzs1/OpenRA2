@@ -234,6 +234,26 @@ struct BldDef {
 const UnitDef& unitDef(UnitType t);
 const BldDef& bldDef(BldType t);
 
+// ===================== 外部规则加载（素材外置化） =====================
+// 启动时读取 assets/rules/rules.ini，逐项覆盖内置数值；文件/键缺失保持内置默认。
+// INI 节格式：[Unit.Grizzly] [Bld.ConYard] [SW.Nuke] [DeployWeapon.GI]，键见 assets/README.txt。
+void loadRules(const char* path);
+
+// 规则导出（--export-assets）：把内置数值全量写成 rules.ini 模板
+void exportRules(const char* path);
+
+// 枚举名 ↔ 枚举值（INI/地图/战役文件共用一套规范名，如 "Grizzly"、"PrismTower"）
+bool unitTypeByName(const char* s, UnitType& out);
+bool bldTypeByName(const char* s, BldType& out);
+bool factionByName(const char* s, Faction& out);
+bool countryByName(const char* s, Country& out);
+bool swTypeByName(const char* s, SWType& out);
+const char* unitTypeKey(UnitType t); // 规范枚举名（未知返回 "?"）
+const char* bldTypeKey(BldType t);
+const char* countryKey(Country c);
+const char* factionKey(Faction f);
+const char* swTypeKey(SWType t);
+
 // 生产建筑判断
 bool isFactoryFor(BldType b, const UnitDef& u); // 兵营产步兵，重工产车辆
 // 某阵营可建造的列表
