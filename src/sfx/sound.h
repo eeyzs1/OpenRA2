@@ -70,6 +70,8 @@ private:
     Music bgm{};
     bool bgmOk = false;
     bool bgmOn = true;
+    // 内置合成 BGM 的 WAV 字节：drwav 流式解码只引用不复制该内存，必须与流同生命周期（常驻成员）
+    std::vector<unsigned char> bgmMem;
     // 外部音乐播放列表（assets/music/）；空时使用内置合成进行曲
     std::vector<std::string> bgmFiles;
     int bgmIdx = -1;
