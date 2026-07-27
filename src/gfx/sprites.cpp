@@ -1,5 +1,8 @@
 #include "gfx/sprites.h"
 #include "gfx/assets.h"
+#include "gfx/model3d.h"
+#include "gfx/unitmodels.h"
+#include "gfx/bldmodels.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -195,8 +198,8 @@ PixBuf SpriteBank::baseTile(Terrain t, int variant) {
             c.r = (uint8_t)clampi(c.r + (int)g, 0, 255);
             c.g = (uint8_t)clampi(c.g + (int)g, 0, 255);
             c.b = (uint8_t)clampi(c.b + (int)g, 0, 255);
-            // 边缘暗化
-            if (dx + dy > 0.92f) { c.r = (uint8_t)(c.r * 0.7f); c.g = (uint8_t)(c.g * 0.7f); c.b = (uint8_t)(c.b * 0.7f); }
+            // 边缘轻微暗化（弱网格感：过强的菱形描边会让地表呈现棋盘格）
+            if (dx + dy > 0.96f) { c.r = (uint8_t)(c.r * 0.88f); c.g = (uint8_t)(c.g * 0.88f); c.b = (uint8_t)(c.b * 0.88f); }
             p.set(x, y, c);
         }
     return p;
@@ -326,6 +329,19 @@ PixBuf SpriteBank::baseUnitBody(UnitType t, int dir, int frame) {
             p.fillRect(cx - 4, by - 9, 3, 8 - legOff, Color{60, 62, 66, 255});
             p.fillRect(cx + 1, by - 9, 3, 8 - (frame ? 0 : 2), Color{60, 62, 66, 255});
         }
+        // ---- RA2 体积感明暗：制服上沿受光提亮、下摆压暗、腿端深色军靴（装备层在其后绘制不受影响）----
+        auto shade = [&](int x, int y, int dr, int dg, int db) {
+            Color c = p.get(x, y);
+            if (c.a < 200) return;
+            p.set(x, y, Color{(uint8_t)clampi(c.r + dr, 0, 255), (uint8_t)clampi(c.g + dg, 0, 255), (uint8_t)clampi(c.b + db, 0, 255), c.a});
+        };
+        for (int y = by - 19; y <= by - 10; y++)
+            for (int x = cx - 6; x <= cx + 6; x++) {
+                if (y <= by - 18) shade(x, y, 22, 22, 20);          // 上沿受光
+                else if (y >= by - 11) shade(x, y, -26, -26, -24);  // 下摆背光
+            }
+        for (int y = by - 3; y <= by - 1; y++)                      // 军靴
+            for (int x = cx - 5; x <= cx + 5; x++) shade(x, y, -34, -34, -32);
         // ---- 特殊兵种装备（在基础身体之上叠加）----
         if (d.type == UnitType::Sniper) {
             // 狙击手：超长狙击枪 + 瞄准镜 + 伪装草冠
@@ -1791,19 +1807,56 @@ PixBuf SpriteBank::baseSmoke(int frame) {
 
 // ---------------- 内容图（基础绘制 + RA2 风格化后处理） ----------------
 PixBuf SpriteBank::unitContentPix(UnitType t, int dir, int fKey) {
-    PixBuf pb = padCanvas(baseUnitBody(t, dir, fKey), 2, 2, 2, 2); // 留白供轮廓外扩
+    PixBuf pb;
+    M3Builder mb;
+    if (buildUnitModel3D(t, mb, fKey != 0)) { // 载具/舰船/飞行器：3D 预渲染
+        int cs = unitCanvasSize3D(t);
+        PixBuf r = m3Render(mb.quads, dir, cs, cs, unitGroundY3D(t),
+                            hasTurret(t) ? M3P_BODY : (uint8_t)0xFF, 0, 0, unitScale3D(t));
+        pb = padCanvas(r, 2, 2, 2, 2);
+    } else { // 步兵/军犬等：2D 绘制
+        pb = padCanvas(baseUnitBody(t, dir, fKey), 2, 2, 2, 2); // 留白供轮廓外扩
+    }
     ra2Bevel(pb);
     ra2Outline(pb);
     return pb;
 }
 PixBuf SpriteBank::turretContentPix(UnitType t, int dir) {
-    PixBuf pb = baseUnitTurret(t, dir);
+    PixBuf pb;
+    M3Builder mb;
+    float pvx = 0, pvy = 0;
+    if (buildUnitModel3D(t, mb, false, &pvx, &pvy)) {
+        int cs = unitCanvasSize3D(t);
+        pb = m3Render(mb.quads, dir, cs, cs, unitGroundY3D(t), M3P_TURRET, pvx, pvy, unitScale3D(t));
+    } else {
+        pb = baseUnitTurret(t, dir);
+    }
     ra2Bevel(pb);
     ra2Outline(pb);
     return pb;
 }
 PixBuf SpriteBank::bldContentPix(BldType t, bool constructing) {
-    PixBuf pb = padCanvas(baseBuilding(t, constructing), 2, 2, 2, 2);
+    PixBuf pb;
+    M3Builder mb;
+    if (!constructing && buildBldModel3D(t, mb)) {
+        // 3D 预渲染建筑：模型在瓦片坐标系拼装（占地 0..w × 0..h，原点在 (0,0) 角），
+        // 需平移使占地中心对准渲染原点（锚点契约：内容画布底中点 = 占地中心地面）
+        const BldDef& d = bldDef(t);
+        float halfH = (d.w + d.h) * TILE_H / 4.0f;             // 底面菱形半高（屏幕像素）
+        float tx = -(d.w - d.h) * (TILE_W / 4.0f);             // 占地中心模型 x → 0
+        float ty = (d.w + d.h) * (TILE_W / 4.0f);              // 占地中心模型 y → 0
+        for (M3Quad& q : mb.quads)
+            for (int k = 0; k < 4; k++) { q.v[k][0] += tx; q.v[k][1] += ty; }
+        float maxZ = 0.0f; // 实际最高点 → 顶部余量（塔吊/天线/超武差异大）
+        for (const M3Quad& q : mb.quads)
+            for (int k = 0; k < 4; k++) maxZ = std::max(maxZ, q.v[k][2]);
+        int outW = (d.w + d.h) * TILE_W / 2 + 24;              // 与旧 2D 画布同宽
+        int gy = (int)ceilf(halfH + maxZ * 0.866f + 8.0f);
+        int outH = gy + (int)ceilf(halfH * 2.0f) + 4;          // 底部 4px 留白
+        pb = padCanvas(m3Render(mb.quads, 0, outW, outH, (float)gy), 2, 2, 2, 2);
+    } else {
+        pb = padCanvas(baseBuilding(t, constructing), 2, 2, 2, 2); // 脚手架/未建模：2D 兜底
+    }
     ra2Bevel(pb);
     ra2Outline(pb);
     return pb;
@@ -2016,7 +2069,7 @@ void SpriteBank::init() {
     inited = true;
     // 预生成地形瓦片（常用）
     for (int t = 0; t <= (int)Terrain::Bridge; t++)
-        for (int v = 0; v < 4; v++) tile((Terrain)t, v);
+        for (int v = 0; v < 8; v++) tile((Terrain)t, v);
     for (int o = 1; o <= (int)Overlay::Rock2; o++) overlaySpr((Overlay)o);
     for (int f = 0; f < EXPLOSION_FRAMES; f++) explosion(f);
     for (int f = 0; f < SMOKE_FRAMES; f++) smoke(f);
@@ -2045,9 +2098,9 @@ bool SpriteBank::genAssets(const char* outDir) {
         va_end(ap);
         if (pb.saveToFile(path)) n++; else fail++;
     };
-    // 地形瓦片（6 类 × 4 变体）
+    // 地形瓦片（6 类 × 8 变体）
     for (int t = 0; t <= (int)Terrain::Bridge; t++)
-        for (int v = 0; v < 4; v++)
+        for (int v = 0; v < 8; v++)
             save(baseTile((Terrain)t, v), "%s/tile_%s_%d.png", outDir, terrainAssetName((Terrain)t), v);
     // 地表装饰
     for (int o = 1; o <= (int)Overlay::Rock2; o++)
@@ -2132,7 +2185,7 @@ bool SpriteBank::genAssets(const char* outDir) {
         std::vector<std::vector<PixBuf>> rows;
         for (int t = 0; t <= (int)Terrain::Bridge; t++) {
             std::vector<PixBuf> row;
-            for (int v = 0; v < 4; v++) row.push_back(baseTile((Terrain)t, v));
+            for (int v = 0; v < 8; v++) row.push_back(baseTile((Terrain)t, v));
             rows.push_back(std::move(row));
         }
         std::vector<PixBuf> ov;

@@ -5,7 +5,7 @@
 //
 // 目录与命名约定（所有 PNG 均为 RGBA，阵营色区域用纯红 (255,0,0) 表示，运行时替换为玩家颜色）：
 //   assets/sprites/
-//     tile_<terrain>_<variant>.png   地形瓦片 64x32，terrain: clear|rough|water|ore|gems|bridge，variant: 0..3
+//     tile_<terrain>_<variant>.png   地形瓦片 64x32，terrain: clear|rough|water|ore|gems|bridge，variant: 0..7
 //     overlay_<name>.png             装饰物，name: tree1|tree2|tree3|rock1|rock2
 //     unit_<name>_d<0..7>.png        载具/舰船/飞行器，8 方向（0=东 顺时针）
 //     unit_<name>_d<0..7>_f<0..1>.png 步兵（含行走帧）；载具采矿车满载为 f1
