@@ -5,13 +5,14 @@
 #include "core/util.h"
 
 // ===================== 阵营 =====================
-enum class Faction : uint8_t { Allies = 0, Soviet = 1, China = 2 };
+enum class Faction : uint8_t { Allies = 0, Soviet = 1, China = 2, Yuri = 3 };
 
 inline const char* factionName(Faction f) {
     switch (f) {
         case Faction::Allies: return "盟军";
         case Faction::Soviet: return "苏联";
         case Faction::China:  return "中国";
+        case Faction::Yuri:   return "尤里";
     }
     return "?";
 }
@@ -22,6 +23,7 @@ enum class Country : uint8_t {
     America, Korea, France, Germany, UK,     // 盟军系
     Russia, Cuba, Libya, Iraq,               // 苏联系
     China,                                   // 中国（无细分）
+    Yuri,                                    // 尤里（无细分）
     COUNT
 };
 
@@ -32,15 +34,17 @@ inline Faction countryFaction(Country c) {
         case Country::Germany: case Country::UK: return Faction::Allies;
         case Country::Russia: case Country::Cuba:
         case Country::Libya:  case Country::Iraq: return Faction::Soviet;
+        case Country::Yuri:   return Faction::Yuri;
         default: return Faction::China;
     }
 }
 
-// 阵营可选国家列表（盟军 5 国 / 苏联 4 国 / 中国 1 国）
+// 阵营可选国家列表（盟军 5 国 / 苏联 4 国 / 中国 1 国 / 尤里 1 国）
 inline std::vector<Country> countriesOf(Faction f) {
     switch (f) {
         case Faction::Allies: return {Country::America, Country::Korea, Country::France, Country::Germany, Country::UK};
         case Faction::Soviet: return {Country::Russia, Country::Cuba, Country::Libya, Country::Iraq};
+        case Faction::Yuri:   return {Country::Yuri};
         default: return {Country::China};
     }
 }
@@ -93,6 +97,16 @@ enum class UnitType : uint8_t {
     Yuri,                        // 尤里（苏，心灵控制敌方地面单位）
     ChronoCommando,              // 超时空突击队（偷盟高科解锁：传送+C4+冲锋枪）
     PsiCommando,                 // 心灵突击队（偷苏/中高科解锁：心灵控制+C4）
+    // ---- 尤复阵营：尤里专属单位 ----
+    Initiate,                    // 尤里新兵（心灵火焰反步兵）
+    Brute,                       // 狂兽人（近战重甲步兵）
+    Virus,                       // 病毒狙击手（远程反步兵）
+    LasherTank,                  // 狂风坦克（尤里主战坦克）
+    GatlingTank,                 // 盖特坦克（防空对地速射）
+    Magnetron,                   // 磁电坦克（吊起敌方车辆）
+    MasterMind,                  // 主脑坦克（多重心灵控制）
+    FloatingDisc,                // 飞碟（空中，吸电/瘫痪建筑）
+    Boomer,                      // 雷鸣潜艇（尤里海军，导弹+鱼雷）
     COUNT
 };
 
@@ -130,6 +144,12 @@ enum class BldType : uint8_t {
     TechAirport,                                // 科技机场（中立，占领后获得伞兵技能）
     SecretLab,                                  // 秘密实验室（中立，占领后解锁特色单位）
     CivHouse,                                   // 民房（中立，可进驻 8 名步兵，可被摧毁）
+    // ---- 尤复阵营：尤里专属建筑 ----
+    BioReactor,                                 // 生化反应堆（尤里电厂，步兵进驻增电）
+    GatlingCannon,                              // 盖特机炮（尤里防御，防空对地速射）
+    Grinder,                                    // 回收炉（尤里支持，回收单位换钱）
+    GeneticMutator,                             // 基因突变器（尤里超武1：把步兵变狂兽人）
+    PsychicDominator,                           // 心灵控制仪（尤里超武2：范围心灵控制+伤害）
     COUNT
 };
 
@@ -242,6 +262,46 @@ void loadRules(const char* path);
 // 规则导出（--export-assets）：把内置数值全量写成 rules.ini 模板
 void exportRules(const char* path);
 
+// ===================== 全局游戏规则（rules.ini [GameRules] 节） =====================
+struct GameRules {
+    int maxMoney = 999999;       // 资金上限
+    int startingMoneyCap = 50000; // 遭遇战初始资金上限
+    float lowPowerSpeedFactor = 0.5f; // 低电时生产速度系数
+    float veteranismDmgBonus[3] = {1.0f, 1.1f, 1.3f}; // 新兵/老兵/精英伤害加成
+    int crateInterval = 1800;    // 补给箱生成间隔（帧）
+    int oreRegrowRate = 1;       // 矿脉再生速率
+};
+extern GameRules g_gameRules;
+
+// ===================== AI 建造序列定制（rules.ini [AIBuild.*] 节） =====================
+// 用户可定制各阵营 AI 的建造顺序与生产偏好，覆盖内置默认
+struct AIBuildConfig {
+    bool enabled = false;        // 是否使用自定义序列（rules.ini 中定义则 true）
+    std::vector<std::string> buildOrder; // 建筑枚举名顺序（如 PowerPlant,OreRefinery,...）
+    int harvesterTarget = 3;     // 维持采矿车数量
+    int attackWaveSize = 8;      // 进攻波次最小单位数
+    bool saveForSuperWeapon = true; // 攒钱建超武
+};
+extern AIBuildConfig g_aiBuild[4]; // 索引 = (int)Faction
+
+// 自定义单位变体（rules.ini [Unit.XXX] 带 Base= 键）
+// 变体复用基础类型的全部游戏逻辑，仅覆盖数值；可通过 Lua ra2.spawnUnit("变体名") 调用
+struct UnitVariant {
+    std::string name;            // 变体名（如 "HeavyGrizzly"）
+    UnitType base = UnitType::COUNT; // 基础类型
+    int cost = -1;               // -1=不覆盖
+    int hp = -1;
+    int speed = -1;
+    int sight = -1;
+    std::string weaponProj;      // 覆盖武器贴图
+    int weaponDmg = -1;
+    int weaponRange = -1;
+    int weaponCooldown = -1;
+    float vsInf = -1, vsVeh = -1, vsBld = -1;
+};
+extern std::vector<UnitVariant> g_variants;
+const UnitVariant* findVariant(const std::string& name);
+
 // 枚举名 ↔ 枚举值（INI/地图/战役文件共用一套规范名，如 "Grizzly"、"PrismTower"）
 bool unitTypeByName(const char* s, UnitType& out);
 bool bldTypeByName(const char* s, BldType& out);
@@ -261,11 +321,12 @@ std::vector<BldType> buildableBlds(Faction f);
 std::vector<UnitType> trainableUnits(Faction f, bool naval = false);
 // 国家特色判定：该国家是否有伞兵技能（美国/占领科技机场）
 inline bool countryHasParadrop(Country c) { return c == Country::America; }
-// 阵营对应的采矿车类型（RA2 原作：盟军超时空矿车 / 苏军武装矿车）
+// 阵营对应的采矿车类型（RA2 原作：盟军超时空矿车 / 苏军武装矿车 / 尤里奴隶矿车）
 inline UnitType harvesterType(Faction f) {
     switch (f) {
         case Faction::Allies: return UnitType::ChronoMiner;
         case Faction::Soviet: return UnitType::WarMiner;
+        case Faction::Yuri:   return UnitType::Harvester;
         default: return UnitType::Harvester;
     }
 }

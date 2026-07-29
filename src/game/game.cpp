@@ -1,5 +1,6 @@
 #include "game/game.h"
 #include "game/campaign.h"
+#include "game/script.h"
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
 #include <cmath>
@@ -48,6 +49,11 @@ void Game::init(bool windowed, bool hidden) {
     }
     minimap = LoadRenderTexture(256, 256);
     phase = Phase::MainMenu;
+
+    // 脚本引擎回调注册（setObjective/win/lose 需要 Game 状态）
+    scriptSetObjectiveCb([this](const std::string& t) { objectiveText = t; });
+    scriptSetWinCb([this] { gameOver = true; victory = true; });
+    scriptSetLoseCb([this] { gameOver = true; victory = false; });
 }
 
 void Game::newGame(uint64_t seed) {
@@ -97,6 +103,9 @@ void Game::newGame(uint64_t seed) {
         }
     message(TextFormat(TR(S::MsgFindMCVFmt), keyName(keyBind[KA_Deploy])));
     phase = Phase::InGame;
+    // 脚本引擎：加载 assets/scripts/*.lua 并触发 OnGameStart
+    // g_script.init(&world, 0, -1);
+    // g_script.onGameStart();
 }
 
 // ===================== 战役 =====================
@@ -139,6 +148,9 @@ void Game::newCampaignGame(int mission) {
         }
     message(missionBrief(mission));
     phase = Phase::InGame;
+    // 脚本引擎：加载 assets/scripts/*.lua 并触发 OnGameStart
+    g_script.init(&world, 1, mission);
+    g_script.onGameStart();
 }
 
 // 战役波次：为敌方玩家1刷出脚本部队，攻击移动至玩家基地
@@ -223,6 +235,9 @@ void Game::updateTriggers() {
                 cond = p >= 0 && p < world.numPlayers && world.players[p].money < t.c[1];
                 break;
             }
+            case TrigCond::Script:
+                cond = g_script.onTriggerCond(t.tag);
+                break;
         }
         if (!cond) continue;
         t.fired = true;
@@ -272,6 +287,9 @@ void Game::updateTriggers() {
             case TrigAct::Lose: gameOver = true; victory = false; break;
             case TrigAct::Objective:
                 if (txt) { objectiveText = txt; message(txt); }
+                break;
+            case TrigAct::Script:
+                g_script.onTrigger(t.tag);
                 break;
         }
     }
@@ -406,6 +424,7 @@ void Game::loadFont() {
 }
 
 void Game::shutdown() {
+    g_script.shutdown();
     g_sfx.shutdown();
     UnloadRenderTexture(canvas);
     UnloadRenderTexture(minimap);
@@ -870,6 +889,8 @@ void Game::logic() {
         world.update();
         for (auto& ai : ais) ai.update(world);
     }
+    // 脚本引擎：每逻辑帧触发 OnTick（联机模式下跳过，避免非确定性）
+    if (!netGame) g_script.onTick(world.tick);
 
     // 听者位置 = 视野中心瓦片
     {
@@ -1448,6 +1469,7 @@ void Game::render() {
         else if (phase == Phase::MissionSelect) drawMissionSelect();
         else if (phase == Phase::Settings) drawSettings();
         else if (phase == Phase::NetLobby) drawNetLobby();
+        else if (phase == Phase::MapEditor) drawMapEditor();
         else drawSetup();
         EndTextureMode();
         if (!shotFile.empty()) {

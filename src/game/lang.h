@@ -12,7 +12,7 @@ enum class S : int {
     // 通用
     Back, On, Off, Settings, Random,
     // 主菜单
-    GameTitle, GameSub, Skirmish, Campaign, ExitGame, MainTip,
+    GameTitle, GameSub, Skirmish, Campaign, ExitGame, MainTip, MapEditor,
     // 战役选择
     MissionN, ObjSurvive, ObjEliminate, ObjTrigger, ClickEnter,
     // 遭遇战设置

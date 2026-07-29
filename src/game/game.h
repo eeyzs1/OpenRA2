@@ -14,7 +14,7 @@ constexpr int SCREEN_W = 1440;
 constexpr int SCREEN_H = 810;
 
 // 游戏阶段
-enum class Phase { MainMenu, Setup, MissionSelect, Settings, NetLobby, InGame };
+enum class Phase { MainMenu, Setup, MissionSelect, Settings, NetLobby, InGame, MapEditor };
 
 // 可重绑定按键动作（设置页修改，settings.ini 持久化，默认值为 RA2 原作键位）
 enum KeyAction : int {
@@ -206,6 +206,21 @@ private:
     void drawSettings();     // 设置页（语言/显示/音量/按键）
     int pollAnyKey();        // 重绑定捕获：真实 GetKeyPressed 或脚本注入
     void refreshMapPreview(); // 设置界面地图缩略图重生成
+
+    // 地图编辑器（game_editor.cpp）
+    int edTool = 0;          // 0 地形 1 装饰 2 单位 3 建筑 4 出生点 5 擦除
+    int edTerrain = 0;       // 当前地形类型（0=clear 1=rough 2=water 3=ore 4=gems 5=bridge）
+    int edOverlay = 0;       // 当前装饰类型
+    int edUnitIdx = 0;       // 当前单位类型索引
+    int edBldIdx = 0;        // 当前建筑类型索引
+    int edPlayer = 0;        // 当前玩家（-1=中立）
+    int edMapSize = 96;      // 编辑器地图大小
+    int edSpawnIdx = 0;      // 出生点编辑索引
+    std::string edMapName = "custom_1";
+    void drawMapEditor();
+    void editorPlace(int mx, int my);
+    void editorSave();
+    void editorNewMap();
 
     // 坐标
     void worldToScreen(float wx, float wy, int& sx, int& sy) const;

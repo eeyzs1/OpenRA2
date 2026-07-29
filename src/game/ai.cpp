@@ -1,8 +1,11 @@
 #include "game/ai.h"
+#include "game/script.h"
 
 void SkirmishAI::update(World& w) {
     Player& p = w.players[player];
     if (!p.active || p.defeated) return;
+    // Lua AI hook：脚本返回 true 则跳过内置 AI（用户可完全接管 AI 决策）
+    if (g_script.onAiThink(player)) return;
     // 思考间隔按难度分级：简单 25 / 普通 15 / 困难 10 逻辑帧
     int interval = difficulty == 0 ? 25 : difficulty == 2 ? 10 : 15;
     if (++thinkTimer < interval) return;
@@ -85,6 +88,7 @@ void SkirmishAI::doBuildOrder(World& w) {
         BldType::TeslaCoil,
         BldType::BattleLab,
         BldType::ServiceDepot,   // 维修厂（通用，前置=重工，自动修理车辆）
+        BldType::Grinder,        // 回收炉（尤里专属，前置=重工，回收单位换钱；其他阵营自动跳过）
         BldType::CloningVat,     // 复制中心（苏，盟军 factionMask 自动跳过）
         BldType::GapGenerator,   // 裂缝产生器（盟，苏军自动跳过）
         BldType::SpySat,         // 间谍卫星（盟）
@@ -92,15 +96,30 @@ void SkirmishAI::doBuildOrder(World& w) {
         BldType::BattleBunker,   // 战斗碉堡（苏）
         BldType::TankBunker,     // 坦克碉堡（苏）
         BldType::NuclearReactor,
-        BldType::NukeSilo,      // 超武1：核弹井（盟替换为天气控制器）
+        BldType::NukeSilo,      // 超武1：核弹井（盟替换为天气控制器，尤里替换为心灵控制仪）
         BldType::TeslaCoil,
-        BldType::IronCurtain,   // 超武2：铁幕（盟军无，自动跳过）
+        BldType::IronCurtain,   // 超武2：铁幕（盟军无；尤里替换为基因突变器）
     };
-    BldType powerT = p.faction == Faction::Allies ? BldType::PowerPlant : BldType::TeslaReactor;
-    BldType defT = p.faction == Faction::Allies ? BldType::Pillbox : BldType::SentryGun;
-    BldType advDefT = p.faction == Faction::Allies ? BldType::PrismTower : BldType::TeslaCoil;
-    BldType bigPowerT = p.faction == Faction::Allies ? BldType::PowerPlant : BldType::NuclearReactor;
-    BldType swT = p.faction == Faction::Allies ? BldType::WeatherDevice : BldType::NukeSilo;
+    // 超武2 阵营替换：尤里基因突变器（映射到 IronCurtain SW）
+    BldType sw2T = p.faction == Faction::Yuri ? BldType::GeneticMutator : BldType::IronCurtain;
+    // 阵营差异化建筑：尤里使用生化反应堆/盖特机炮/心灵控制仪等专属建筑
+    BldType powerT = p.faction == Faction::Allies ? BldType::PowerPlant
+                   : p.faction == Faction::Yuri ? BldType::BioReactor
+                   : BldType::TeslaReactor;
+    BldType defT = p.faction == Faction::Allies ? BldType::Pillbox
+                 : p.faction == Faction::Yuri ? BldType::GatlingCannon
+                 : BldType::SentryGun;
+    BldType advDefT = p.faction == Faction::Allies ? BldType::PrismTower
+                    : p.faction == Faction::Yuri ? BldType::GatlingCannon
+                    : BldType::TeslaCoil;
+    BldType bigPowerT = p.faction == Faction::Allies ? BldType::PowerPlant
+                      : p.faction == Faction::Yuri ? BldType::BioReactor
+                      : BldType::NuclearReactor;
+    // 尤里超武1：心灵控制仪（范围心灵控制+伤害，映射到 Nuke SW）
+    // 尤里超武2：基因突变器（步兵变狂兽人，映射到 IronCurtain SW）
+    BldType swT = p.faction == Faction::Allies ? BldType::WeatherDevice
+                : p.faction == Faction::Yuri ? BldType::PsychicDominator
+                : BldType::NukeSilo;
 
     // 电力不足优先补电
     if (p.powerMade - p.powerUsed < 30 && w.hasBld(player, BldType::ConYard)) {
@@ -111,6 +130,25 @@ void SkirmishAI::doBuildOrder(World& w) {
         }
     }
 
+    // 用户自定义建造序列（rules.ini [AIBuild.<Faction>] BuildOrder=...）
+    const AIBuildConfig& aiCfg = g_aiBuild[(int)p.faction];
+    if (aiCfg.enabled && !aiCfg.buildOrder.empty()) {
+        for (const std::string& name : aiCfg.buildOrder) {
+            BldType t;
+            if (!bldTypeByName(name.c_str(), t)) continue;
+            const BldDef& d = bldDef(t);
+            if (!(d.factionMask & (1 << (int)p.faction))) continue;
+            if (t == BldType::NavalYard && (!naval || !navalSiteAvailable(w))) continue;
+            int want = (t == BldType::OreRefinery) ? 2 : 1;
+            if (w.countBlds(player, t) >= want) continue;
+            if (!w.prereqMet(player, d)) continue;
+            if (p.money < d.cost + 300) continue;
+            w.startBldProd(player, t);
+            return;
+        }
+        return; // 自定义序列遍历完毕，不回退到内置序列
+    }
+
     for (BldType t : order) {
         BldType rt = t;
         if (t == BldType::TeslaReactor) rt = powerT;
@@ -118,6 +156,7 @@ void SkirmishAI::doBuildOrder(World& w) {
         if (t == BldType::TeslaCoil) rt = advDefT;
         if (t == BldType::NuclearReactor) rt = bigPowerT;
         if (t == BldType::NukeSilo) rt = swT;
+        if (t == BldType::IronCurtain) rt = sw2T;
         if (rt == BldType::NavalYard && (!naval || !navalSiteAvailable(w))) continue; // 无可建水域跳过船厂
         const BldDef& d = bldDef(rt);
         if (!(d.factionMask & (1 << (int)p.faction))) continue;
@@ -136,9 +175,13 @@ void SkirmishAI::doProduction(World& w) {
     Player& p = w.players[player];
 
     // 攒钱建关键建筑：高科/超武造价高，建造序列未完成前暂停暴兵
-    BldType swT = p.faction == Faction::Allies ? BldType::WeatherDevice : BldType::NukeSilo;
+    const AIBuildConfig& aiCfg = g_aiBuild[(int)p.faction];
+    // 尤里超武1：心灵控制仪（替代盟军天气控制器/苏军核弹井）
+    BldType swT = p.faction == Faction::Allies ? BldType::WeatherDevice
+                : p.faction == Faction::Yuri ? BldType::PsychicDominator
+                : BldType::NukeSilo;
     bool saveMoney = false;
-    if (w.hasBld(player, BldType::WarFactory) && !p.bldProd.active) {
+    if (aiCfg.saveForSuperWeapon && w.hasBld(player, BldType::WarFactory) && !p.bldProd.active) {
         if (!w.hasBld(player, BldType::BattleLab) && w.prereqMet(player, bldDef(BldType::BattleLab))
             && p.money < bldDef(BldType::BattleLab).cost + 300) saveMoney = true;
         if (w.hasBld(player, BldType::BattleLab) && !w.hasBld(player, swT)
@@ -153,19 +196,22 @@ void SkirmishAI::doProduction(World& w) {
             return;
         }
         int harvesters = w.countUnits(player, harvesterType(p.faction));
-        if (w.hasBld(player, BldType::OreRefinery) && harvesters < 3) {
+        int harvTarget = aiCfg.enabled ? aiCfg.harvesterTarget : 3;
+        if (w.hasBld(player, BldType::OreRefinery) && harvesters < harvTarget) {
             w.startUnitProd(player, harvesterType(p.faction));
         } else if (!saveMoney) {
             bool late = w.hasBld(player, BldType::BattleLab);
             UnitType want;
             if (late) {
-                // 困难 AI 掺入特殊重单位（基洛夫/特殊坦克）
+                // 困难 AI 掺入特殊重单位（盟军光棱/苏军基洛夫/尤里主脑）
                 if (difficulty == 2 && attackWave % 3 == 2) {
                     UnitType sp = p.faction == Faction::Allies ? UnitType::PrismTank
-                                : p.faction == Faction::Soviet ? UnitType::Kirov : UnitType::Kirov;
+                                : p.faction == Faction::Soviet ? UnitType::Kirov
+                                : p.faction == Faction::Yuri ? UnitType::MasterMind
+                                : UnitType::Kirov;
                     if (w.unitPrereqMet(player, unitDef(sp))) { w.startUnitProd(player, sp); return; }
                 }
-                // 国家特色战车（RA2 原作：德国坦克杀手/苏俄磁能/利比亚自爆卡车）
+                // 国家特色战车（RA2 原作：德国坦克杀手/苏俄磁能/利比亚自爆卡车；尤里无国家特色）
                 UnitType csp = UnitType::COUNT;
                 switch (p.country) {
                     case Country::Germany: csp = UnitType::TankDestroyer; break;
@@ -175,12 +221,24 @@ void SkirmishAI::doProduction(World& w) {
                 }
                 if (csp != UnitType::COUNT && attackWave % 2 == 1 && w.countUnits(player, csp) < 6
                     && w.unitPrereqMet(player, unitDef(csp))) { w.startUnitProd(player, csp); return; }
-                want = p.faction == Faction::Allies ? UnitType::PrismTank
-                     : p.faction == Faction::Soviet ? (attackWave % 2 ? UnitType::Apocalypse : UnitType::TeslaTank)
-                     : UnitType::Type99;
-                if (!w.unitPrereqMet(player, unitDef(want)))
-                    want = p.faction == Faction::Allies ? UnitType::Grizzly
-                         : p.faction == Faction::Soviet ? UnitType::Rhino : UnitType::Type99;
+                // 阵营主战坦克：盟军光棱/苏军天启·磁能/中国99式/尤里狂风·磁电
+                if (p.faction == Faction::Allies) {
+                    want = UnitType::PrismTank;
+                } else if (p.faction == Faction::Soviet) {
+                    want = attackWave % 2 ? UnitType::Apocalypse : UnitType::TeslaTank;
+                } else if (p.faction == Faction::Yuri) {
+                    // 尤里后期混编：磁电坦克（吊车辆）+ 狂风（输出）；高科后磁电优先
+                    want = attackWave % 2 ? UnitType::Magnetron : UnitType::LasherTank;
+                } else {
+                    want = UnitType::Type99;
+                }
+                // 前置不满足回退到基础主战坦克
+                if (!w.unitPrereqMet(player, unitDef(want))) {
+                    if (p.faction == Faction::Allies) want = UnitType::Grizzly;
+                    else if (p.faction == Faction::Soviet) want = UnitType::Rhino;
+                    else if (p.faction == Faction::Yuri) want = UnitType::LasherTank;
+                    else want = UnitType::Type99;
+                }
             } else {
                 // 中期国家特色（德国坦克杀手前置=雷达即可）
                 if (p.country == Country::Germany && attackWave % 2 == 1
@@ -189,16 +247,23 @@ void SkirmishAI::doProduction(World& w) {
                     w.startUnitProd(player, UnitType::TankDestroyer);
                     return;
                 }
-                want = p.faction == Faction::Allies ? UnitType::Grizzly
-                     : p.faction == Faction::Soviet ? UnitType::Rhino : UnitType::Type99;
+                // 阵营基础主战坦克
+                if (p.faction == Faction::Allies) want = UnitType::Grizzly;
+                else if (p.faction == Faction::Soviet) want = UnitType::Rhino;
+                else if (p.faction == Faction::Yuri) want = UnitType::LasherTank;
+                else want = UnitType::Type99;
             }
             w.startUnitProd(player, want);
         }
     }
     // ---- 海军队列（类别3）：有船厂后维持舰队规模（战斗舰 4 + 运输船 1）----
     if (w.hasBld(player, BldType::NavalYard) && w.unitQueuedCount(player, 3) < 2) {
-        UnitType shipT = p.faction == Faction::Allies ? UnitType::Destroyer
-                       : p.faction == Faction::Soviet ? UnitType::Typhoon : UnitType::Aegis;
+        // 阵营主战舰艇：盟军驱逐舰/苏军台风潜艇/中华神盾舰/尤里雷鸣潜艇
+        UnitType shipT = UnitType::Destroyer;
+        if (p.faction == Faction::Allies) shipT = UnitType::Destroyer;
+        else if (p.faction == Faction::Soviet) shipT = UnitType::Typhoon;
+        else if (p.faction == Faction::Yuri) shipT = UnitType::Boomer;
+        else shipT = UnitType::Aegis;
         int trans = w.countUnits(player, UnitType::AmphTransport);
         if (trans < 1 && w.unitPrereqMet(player, unitDef(UnitType::AmphTransport))) {
             w.startUnitProd(player, UnitType::AmphTransport);
@@ -206,11 +271,14 @@ void SkirmishAI::doProduction(World& w) {
             w.startUnitProd(player, shipT);
         }
     }
-    // ---- 空军队列（类别2）：有空指部后维持 2 架（韩国黑鹰/中国无轻航改后期基洛夫）----
+    // ---- 空军队列（类别2）：有空指部后维持 2 架（韩国黑鹰/盟军入侵者/苏军米格/中国基洛夫/尤里飞碟）----
     if (w.hasBld(player, BldType::AirForceCmd) && w.unitQueuedCount(player, 2) < 2) {
-        UnitType airT = p.country == Country::Korea ? UnitType::BlackEagle
-                      : p.faction == Faction::Allies ? UnitType::Intruder
-                      : p.faction == Faction::Soviet ? UnitType::MiG : UnitType::Kirov;
+        UnitType airT;
+        if (p.country == Country::Korea) airT = UnitType::BlackEagle;
+        else if (p.faction == Faction::Allies) airT = UnitType::Intruder;
+        else if (p.faction == Faction::Soviet) airT = UnitType::MiG;
+        else if (p.faction == Faction::Yuri) airT = UnitType::FloatingDisc;
+        else airT = UnitType::Kirov;
         if (w.countUnits(player, airT) < 2 && w.unitPrereqMet(player, unitDef(airT)))
             w.startUnitProd(player, airT);
     }
@@ -221,11 +289,15 @@ void SkirmishAI::doProduction(World& w) {
         if (engs < 1 && p.money > 1200) {
             w.startUnitProd(player, UnitType::Engineer);
         } else if (!saveMoney) {
-            UnitType inf = p.faction == Faction::Allies ? UnitType::GI
-                         : p.faction == Faction::Soviet ? UnitType::Conscript : UnitType::PLA;
+            // 阵营基础步兵：盟军美国大兵/苏军动员兵/中国解放军/尤里新兵
+            UnitType inf;
+            if (p.faction == Faction::Allies) inf = UnitType::GI;
+            else if (p.faction == Faction::Soviet) inf = UnitType::Conscript;
+            else if (p.faction == Faction::Yuri) inf = UnitType::Initiate;
+            else inf = UnitType::PLA;
             if (w.countUnits(player, inf) < 10) w.startUnitProd(player, inf);
         }
-        // 特殊步兵（高科后，困难 AI 更积极；国家特色步兵优先：英狙击/古巴恐怖分子/伊辐射工兵）
+        // 特殊步兵（高科后，困难 AI 更积极；国家特色步兵优先：英狙击/古巴恐怖分子/伊辐射工兵；尤里无国家特色）
         if (p.money > 1500 && w.unitQueuedCount(player, 0) < 1) {
             UnitType csp = UnitType::COUNT;
             switch (p.country) {
@@ -241,14 +313,21 @@ void SkirmishAI::doProduction(World& w) {
                 int roll = (attackWave + (int)(w.tick / 900)) % (difficulty == 2 ? 3 : 5);
                 UnitType sp = UnitType::COUNT;
                 if (roll == 0) {
-                    sp = p.faction == Faction::Allies ? UnitType::Tanya
-                       : p.faction == Faction::Soviet ? UnitType::Yuri : UnitType::Desolator;
+                    // 阵营英雄/特种步兵：盟军谭雅/苏军尤里/中国辐射工兵/尤里狂兽人
+                    if (p.faction == Faction::Allies) sp = UnitType::Tanya;
+                    else if (p.faction == Faction::Soviet) sp = UnitType::Yuri;
+                    else if (p.faction == Faction::Yuri) sp = UnitType::Brute;
+                    else sp = UnitType::Desolator;
                 } else if (roll == 1 && p.faction == Faction::Allies) {
                     sp = UnitType::Spy; // 盟军间谍：渗透偷钱/断电
+                } else if (roll == 1 && p.faction == Faction::Yuri) {
+                    sp = UnitType::Virus; // 尤里病毒狙击手：远程反步兵
                 } else if (roll == 2 && p.faction == Faction::Allies) {
                     sp = UnitType::NavySEAL; // 海豹部队：两栖 C4 突击
-                } else if (roll == 2 && p.faction != Faction::Allies) {
+                } else if (roll == 2 && p.faction == Faction::Soviet) {
                     sp = UnitType::CrazyIvan;
+                } else if (roll == 2 && p.faction == Faction::Yuri) {
+                    sp = UnitType::Brute; // 狂兽人：近战重甲反车辆
                 }
                 if (sp != UnitType::COUNT && w.unitPrereqMet(player, unitDef(sp))
                     && w.countUnits(player, sp) < 2)

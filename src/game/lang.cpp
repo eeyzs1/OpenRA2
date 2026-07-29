@@ -23,6 +23,7 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"战役模式", "Campaign"},
     {"退出游戏", "Exit Game"},
     {"程序生成 3D 预渲染素材 · 盟军 / 苏联 / 中国", "Procedural 3D pre-rendered assets · Allies / Soviet / China"},
+    {"地图编辑器", "Map Editor"},
     // 战役选择
     {"任务 %d", "Mission %d"},
     {"目标：坚守 %d 分钟", "Objective: Hold for %d minutes"},
@@ -221,14 +222,17 @@ static const char* TBL[(int)S::COUNT][2] = {
 const char* TR(S id) {
     int i = (int)id;
     if (i < 0 || i >= (int)S::COUNT) return "?";
-    return TBL[i][g_lang ? 1 : 0];
+    const char* p = TBL[i][g_lang ? 1 : 0];
+    // 防御：检测被破坏的指针（空或落入零页的低地址），回退问号避免 TextFormat 崩溃
+    if (!p || (uintptr_t)p < 0x10000) return "?";
+    return p;
 }
 
 // ===================== 外部字符串加载（assets/strings/） =====================
 // S 枚举规范名表（与 enum class S 一一对应，INI [Strings] 节的键名）
 static const char* kSKey[(int)S::COUNT] = {
     "Back", "On", "Off", "Settings", "Random",
-    "GameTitle", "GameSub", "Skirmish", "Campaign", "ExitGame", "MainTip",
+    "GameTitle", "GameSub", "Skirmish", "Campaign", "ExitGame", "MainTip", "MapEditor",
     "MissionN", "ObjSurvive", "ObjEliminate", "ObjTrigger", "ClickEnter",
     "ChangeMap", "MapSize", "SizeS", "SizeM", "SizeL", "MapType", "MapContinent", "MapIslands", "MapLake",
     "Player", "Color", "Country", "CommanderYou", "ComputerN", "Remove", "AddComputer",
@@ -274,7 +278,7 @@ static std::string g_strPool[(int)S::COUNT][2];
 static std::string g_unitEnPool[(int)UnitType::COUNT];
 static std::string g_bldEnPool[(int)BldType::COUNT];
 static std::string g_swEnPool[(int)SWType::COUNT];
-static std::string g_factEnPool[3];
+static std::string g_factEnPool[4];
 static std::string g_countryCnPool[(int)Country::COUNT];
 static std::string g_countryEnPool[(int)Country::COUNT];
 
@@ -299,6 +303,8 @@ static const char* UNIT_EN[(int)UnitType::COUNT] = {
     "Nighthawk", "Dolphin", "Giant Squid",
     "Robot Tank", "Battle Fortress", "Hornet",
     "Navy SEAL", "Yuri", "Chrono Commando", "Psi Commando",
+    "Initiate", "Brute", "Virus", "Lasher Tank", "Gatling Tank",
+    "Magnetron", "Master Mind", "Floating Disc", "Boomer",
 };
 
 static const char* BLD_EN[(int)BldType::COUNT] = {
@@ -320,21 +326,22 @@ static const char* BLD_EN[(int)BldType::COUNT] = {
     "Spy Satellite", "Psychic Sensor",
     "Battle Bunker", "Tank Bunker",
     "Tech Airport", "Secret Lab", "Civilian House",
+    "Bio Reactor", "Gatling Cannon", "Grinder", "Genetic Mutator", "Psychic Dominator",
 };
 
 static const char* SW_EN[(int)SWType::COUNT] = {
     "Nuclear Missile", "Lightning Storm", "Iron Curtain", "Chrono Shift",
 };
 
-static const char* FACTION_EN[3] = {"Allies", "Soviet", "China"};
+static const char* FACTION_EN[4] = {"Allies", "Soviet", "China", "Yuri"};
 
 static const char* COUNTRY_CN[(int)Country::COUNT] = {
     "", "美国", "韩国", "法国", "德国", "英国",
-    "苏俄", "古巴", "利比亚", "伊拉克", "中国",
+    "苏俄", "古巴", "利比亚", "伊拉克", "中国", "尤里",
 };
 static const char* COUNTRY_EN[(int)Country::COUNT] = {
     "", "America", "Korea", "France", "Germany", "Great Britain",
-    "Russia", "Cuba", "Libya", "Iraq", "China",
+    "Russia", "Cuba", "Libya", "Iraq", "China", "Yuri",
 };
 const char* countryName(Country c) {
     int i = (int)c;
@@ -342,10 +349,30 @@ const char* countryName(Country c) {
     return g_lang ? COUNTRY_EN[i] : COUNTRY_CN[i];
 }
 
-const char* unitName(UnitType t) { return g_lang ? UNIT_EN[(int)t] : unitDef(t).name; }
-const char* bldName(BldType t) { return g_lang ? BLD_EN[(int)t] : bldDef(t).name; }
-const char* swName(SWType t) { return g_lang ? SW_EN[(int)t] : swDef(t).name; }
-const char* factName(Faction f) { return g_lang ? FACTION_EN[(int)f] : factionName(f); }
+const char* unitName(UnitType t) {
+    int i = (int)t;
+    if (i < 0 || i >= (int)UnitType::COUNT) return "?";
+    const char* p = g_lang ? UNIT_EN[i] : unitDef(t).name;
+    return (!p || (uintptr_t)p < 0x10000) ? "?" : p;
+}
+const char* bldName(BldType t) {
+    int i = (int)t;
+    if (i < 0 || i >= (int)BldType::COUNT) return "?";
+    const char* p = g_lang ? BLD_EN[i] : bldDef(t).name;
+    return (!p || (uintptr_t)p < 0x10000) ? "?" : p;
+}
+const char* swName(SWType t) {
+    int i = (int)t;
+    if (i < 0 || i >= (int)SWType::COUNT) return "?";
+    const char* p = g_lang ? SW_EN[i] : swDef(t).name;
+    return (!p || (uintptr_t)p < 0x10000) ? "?" : p;
+}
+const char* factName(Faction f) {
+    int i = (int)f;
+    if (i < 0 || i >= 4) return "?";
+    const char* p = g_lang ? FACTION_EN[i] : factionName(f);
+    return (!p || (uintptr_t)p < 0x10000) ? "?" : p;
+}
 // 任务名/简报：中英直接取 MissionDef（内置或 assets/campaigns 加载均含双语字段）
 const char* missionName(int i) {
     const MissionDef& md = missionTable()[i];
@@ -461,7 +488,7 @@ void exportStrings(const char* dir) {
             for (int i = 0; i < (int)SWType::COUNT; i++)
                 fprintf(f, "%s=%s\n", swTypeKey((SWType)i), SW_EN[i]);
             fprintf(f, "\n[Faction]\n");
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < 4; i++)
                 fprintf(f, "%s=%s\n", factionKey((Faction)i), FACTION_EN[i]);
             fprintf(f, "\n[Country]\n");
             for (int i = 0; i < (int)Country::COUNT; i++)
@@ -538,7 +565,7 @@ void appendAllFontText(std::string& out) {
     for (int i = 0; i < (int)UnitType::COUNT; i++) { out += unitDef((UnitType)i).name; out += UNIT_EN[i]; }
     for (int i = 0; i < (int)BldType::COUNT; i++) { out += bldDef((BldType)i).name; out += BLD_EN[i]; }
     for (int i = 0; i < (int)SWType::COUNT; i++) { out += swDef((SWType)i).name; out += SW_EN[i]; }
-    for (int i = 0; i < 3; i++) { out += factionName((Faction)i); out += FACTION_EN[i]; }
+    for (int i = 0; i < 4; i++) { out += factionName((Faction)i); out += FACTION_EN[i]; }
     for (const MissionDef& md : missionTable()) {
         out += md.name; out += md.brief;
         out += md.nameEn; out += md.briefEn;

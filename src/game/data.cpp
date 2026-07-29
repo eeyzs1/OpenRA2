@@ -8,7 +8,8 @@
 static constexpr uint8_t FA = 1 << (int)Faction::Allies;
 static constexpr uint8_t FS = 1 << (int)Faction::Soviet;
 static constexpr uint8_t FC = 1 << (int)Faction::China;
-static constexpr uint8_t ALLF = FA | FS | FC;
+static constexpr uint8_t FY = 1 << (int)Faction::Yuri;
+static constexpr uint8_t ALLF = FA | FS | FC | FY;
 
 // 武器预设
 static WeaponDef wNone() { return WeaponDef{0, 0, 0, false, false, "shell", 1, 1, 1}; }
@@ -52,6 +53,18 @@ static WeaponDef wHornetBomb() { return WeaponDef{80, 3, 40, false, true, "shell
 static WeaponDef wSMG() { return WeaponDef{25, 4, 12, false, true, "bullet", 1.6f, 0.15f, 0.05f}; }      // 海豹冲锋枪：反步兵专精
 static WeaponDef wPsychic() { return WeaponDef{1, 7, 90, false, true, "psi", 1.0f, 1.0f, 0.0f}; }         // 心灵波：不造成伤害，命中夺取控制权（特殊处理）
 
+// ---- 尤复阵营：尤里单位武器 ----
+static WeaponDef wPsychicFire() { return WeaponDef{25, 5, 25, false, true, "psi", 2.0f, 0.3f, 0.2f}; }    // 尤里新兵：心灵火焰，反步兵
+static WeaponDef wBruteFist() { return WeaponDef{45, 1, 20, false, true, "bullet", 2.5f, 0.8f, 0.3f}; }   // 狂兽人：近战重击，反车辆
+static WeaponDef wVirusRifle() { return WeaponDef{80, 9, 60, false, true, "bullet", 2.0f, 0.1f, 0.05f}; } // 病毒狙击手：超远程反步兵
+static WeaponDef wLasherGun() { return WeaponDef{35, 5, 35, false, true, "shell", 0.7f, 1.0f, 0.7f}; }    // 狂风坦克：主炮
+static WeaponDef wGatling(int dmg, int cd) { return WeaponDef{dmg, 6, cd, true, true, "bullet", 1.0f, 0.8f, 0.4f}; } // 盖特：防空对地速射
+static WeaponDef wMagnetron() { return WeaponDef{1, 7, 80, false, true, "shell", 0, 0.5f, 0}; }           // 磁电坦克：吊起车辆（特殊处理）
+static WeaponDef wMasterMind() { return WeaponDef{1, 8, 70, false, true, "psi", 1.0f, 1.0f, 0.0f}; }      // 主脑：多重心灵控制
+static WeaponDef wDiscBeam() { return WeaponDef{40, 5, 30, false, true, "shell", 1.0f, 1.2f, 1.5f}; }     // 飞碟：吸电/瘫痪建筑
+static WeaponDef wBoomerMissile() { return WeaponDef{180, 14, 200, false, true, "missile", 0.5f, 1.0f, 1.4f, false, 1.5f}; } // 雷鸣潜艇导弹
+static WeaponDef wGatlingCannonGun() { return WeaponDef{30, 7, 15, true, true, "bullet", 1.0f, 0.7f, 0.3f}; } // 盖特机炮：防空对地
+
 // ---- RA2 补全：精英武器（RA2 原作：精英军衔武器质变） ----
 static WeaponDef ewGrizzly() { return WeaponDef{45, 5, 24, false, true, "shell", 0.7f, 1.1f, 0.9f}; }
 static WeaponDef ewRhino() { return WeaponDef{55, 5, 26, false, true, "shell", 0.7f, 1.1f, 0.9f}; }
@@ -85,7 +98,7 @@ const WeaponDef& giDeployedWeapon() { return wGiDeploy; }
 static UnitDef g_units[(int)UnitType::COUNT] = {
     // type, name, cost, btime, hp, speed, sight, armor, move, weapon, factions, prereq, ammo
     {UnitType::MCV,        "基地车",    2500, 500, 600, 24, 5, Armor::Heavy, MoveType::Vehicle, wNone(), ALLF, BldType::WarFactory, 0},
-    {UnitType::Harvester,  "采矿车",    1400, 280, 700, 20, 4, Armor::Heavy, MoveType::Vehicle, wNone(), FC, BldType::OreRefinery},
+    {UnitType::Harvester,  "采矿车",    1400, 280, 700, 20, 4, Armor::Heavy, MoveType::Vehicle, wNone(), FC | FY, BldType::OreRefinery},
     {UnitType::GI,         "美国大兵",   200, 60,  100, 14, 5, Armor::None, MoveType::Infantry, wRifle(), FA, BldType::COUNT},
     {UnitType::Conscript,  "动员兵",    100, 45,  90,  14, 5, Armor::None, MoveType::Infantry, wRifle(), FS, BldType::COUNT},
     {UnitType::PLA,        "解放军",    150, 50,  120, 13, 5, Armor::None, MoveType::Infantry, wHeavyRifle(), FC, BldType::COUNT},
@@ -149,6 +162,16 @@ static UnitDef g_units[(int)UnitType::COUNT] = {
     {UnitType::ChronoCommando,"超时空突击队",2000,300, 150, 12, 8, Armor::None, MoveType::Infantry, wSMG(), ALLF, BldType::BattleLab},
     // 心灵突击队：渗透苏军/中国作战实验室解锁；心灵控制 + C4
     {UnitType::PsiCommando,"心灵突击队", 1500,280, 125, 13, 8, Armor::None, MoveType::Infantry, wPsychic(), ALLF, BldType::BattleLab},
+    // ---- 尤复阵营：尤里专属单位 ----
+    {UnitType::Initiate,   "尤里新兵",   200, 60,  100, 14, 5, Armor::None, MoveType::Infantry, wPsychicFire(), FY, BldType::COUNT},
+    {UnitType::Brute,      "狂兽人",     500, 110, 250, 12, 5, Armor::Heavy, MoveType::Infantry, wBruteFist(), FY, BldType::Barracks},
+    {UnitType::Virus,      "病毒狙击手", 600, 110, 90,  16, 8, Armor::None, MoveType::Infantry, wVirusRifle(), FY, BldType::Radar},
+    {UnitType::LasherTank, "狂风坦克",   700, 150, 300, 12, 6, Armor::Heavy, MoveType::Vehicle, wLasherGun(), FY, BldType::COUNT},
+    {UnitType::GatlingTank,"盖特坦克",   600, 130, 250, 10, 6, Armor::Light, MoveType::Vehicle, wGatling(25, 20), FY, BldType::COUNT},
+    {UnitType::Magnetron,  "磁电坦克",   1200,240, 200, 14, 7, Armor::Light, MoveType::Vehicle, wMagnetron(), FY, BldType::Radar},
+    {UnitType::MasterMind, "主脑坦克",   1750,350, 500, 14, 7, Armor::Heavy, MoveType::Vehicle, wMasterMind(), FY, BldType::BattleLab},
+    {UnitType::FloatingDisc,"飞碟",      1750,350, 400, 5,  7, Armor::Heavy, MoveType::Air, wDiscBeam(), FY, BldType::BattleLab, 0},
+    {UnitType::Boomer,     "雷鸣潜艇",   2000,400, 800, 16, 8, Armor::Heavy, MoveType::Naval, wBoomerMissile(), FY, BldType::BattleLab},
 };
 
 // ===================== 建筑表 =====================
@@ -196,6 +219,12 @@ static BldDef g_blds[(int)BldType::COUNT] = {
     {BldType::TechAirport,  "科技机场",  0,   0,   1000, 3,2, 0,   6, wNone(), 0, BldType::COUNT, true},
     {BldType::SecretLab,    "秘密实验室",0,   0,   800,  2,2, 0,   5, wNone(), 0, BldType::COUNT, true},
     {BldType::CivHouse,     "民房",      0,   0,   600,  2,2, 0,   3, wNone(), 0, BldType::COUNT, false, 8},
+    // ---- 尤复阵营：尤里专属建筑 ----
+    {BldType::BioReactor,   "生化反应堆", 600,  130, 500,  2,2, 150,  4, wNone(), FY, BldType::COUNT, true},
+    {BldType::GatlingCannon,"盖特机炮",  1000, 200, 500,  1,1, -50,  8, wGatlingCannonGun(), FY, BldType::Radar, false},
+    {BldType::Grinder,      "回收炉",    1000, 200, 800,  2,2, -50,  5, wNone(), FY, BldType::WarFactory, false},
+    {BldType::GeneticMutator,"基因突变器",2500, 500, 900,  2,2, -150, 5, wNone(), FY, BldType::BattleLab, true},
+    {BldType::PsychicDominator,"心灵控制仪",3000,600,1000, 3,2, -150, 5, wNone(), FY, BldType::BattleLab, true},
 };
 
 // ===================== 超武表 =====================
@@ -211,6 +240,9 @@ const SWDef& swDef(SWType t) { return g_sws[(int)t]; }
 SWType bldProvidesSW(BldType t) {
     for (int i = 0; i < (int)SWType::COUNT; i++)
         if (g_sws[i].fromBld == t) return (SWType)i;
+    // 尤里超武建筑映射到现有 SW 类型（基因突变器→铁幕效果，心灵控制仪→核弹范围伤害）
+    if (t == BldType::GeneticMutator) return SWType::IronCurtain;
+    if (t == BldType::PsychicDominator) return SWType::Nuke;
     return SWType::COUNT;
 }
 
@@ -260,6 +292,7 @@ static const char* kUnitKey[(int)UnitType::COUNT] = {
     "TankDestroyer", "Terrorist", "DemoTruck",
     "Nighthawk", "Dolphin", "Squid", "RobotTank", "BattleFortress", "Hornet",
     "NavySEAL", "Yuri", "ChronoCommando", "PsiCommando",
+    "Initiate", "Brute", "Virus", "LasherTank", "GatlingTank", "Magnetron", "MasterMind", "FloatingDisc", "Boomer",
 };
 static const char* kBldKey[(int)BldType::COUNT] = {
     "ConYard", "PowerPlant", "TeslaReactor", "NuclearReactor",
@@ -270,12 +303,13 @@ static const char* kBldKey[(int)BldType::COUNT] = {
     "OilDerrick", "Hospital", "MachineShop",
     "CloningVat", "ServiceDepot", "GapGenerator", "SpySat", "PsychicSensor", "BattleBunker", "TankBunker",
     "TechAirport", "SecretLab", "CivHouse",
+    "BioReactor", "GatlingCannon", "Grinder", "GeneticMutator", "PsychicDominator",
 };
 static const char* kCountryKey[(int)Country::COUNT] = {
     "None", "America", "Korea", "France", "Germany", "UK",
-    "Russia", "Cuba", "Libya", "Iraq", "China",
+    "Russia", "Cuba", "Libya", "Iraq", "China", "Yuri",
 };
-static const char* kFactionKey[3] = {"Allies", "Soviet", "China"};
+static const char* kFactionKey[4] = {"Allies", "Soviet", "China", "Yuri"};
 static const char* kSWKey[(int)SWType::COUNT] = {"Nuke", "Lightning", "IronCurtain", "ChronoShift"};
 
 template <size_t N>
@@ -297,11 +331,20 @@ bool swTypeByName(const char* s, SWType& out) { int v; if (!lookupKey(kSWKey, 0,
 const char* unitTypeKey(UnitType t) { int i = (int)t; return (i >= 0 && i < (int)UnitType::COUNT) ? kUnitKey[i] : "?"; }
 const char* bldTypeKey(BldType t) { int i = (int)t; return (i >= 0 && i < (int)BldType::COUNT) ? kBldKey[i] : "?"; }
 const char* countryKey(Country c) { int i = (int)c; return (i >= 0 && i < (int)Country::COUNT) ? kCountryKey[i] : "?"; }
-const char* factionKey(Faction f) { int i = (int)f; return (i >= 0 && i < 3) ? kFactionKey[i] : "?"; }
+const char* factionKey(Faction f) { int i = (int)f; return (i >= 0 && i < 4) ? kFactionKey[i] : "?"; }
 const char* swTypeKey(SWType t) { int i = (int)t; return (i >= 0 && i < (int)SWType::COUNT) ? kSWKey[i] : "?"; }
 
 // ===================== 外部规则加载（assets/rules/rules.ini 覆盖内置数值） =====================
 // 覆盖名/贴图串的持久存储（std::string 对象静态常驻，c_str 在 loadRules 单次调用后稳定）
+// 全局游戏规则 + AI 建造配置 + 单位变体（rules.ini 可选节）
+GameRules g_gameRules;
+AIBuildConfig g_aiBuild[4];
+std::vector<UnitVariant> g_variants;
+const UnitVariant* findVariant(const std::string& name) {
+    for (const auto& v : g_variants) if (v.name == name) return &v;
+    return nullptr;
+}
+
 static std::string g_unitNameStr[(int)UnitType::COUNT];
 static std::string g_unitProjStr[(int)UnitType::COUNT];
 static std::string g_unitEliteProjStr[(int)UnitType::COUNT];
@@ -393,7 +436,33 @@ void loadRules(const char* path) {
         };
         if (sn.rfind("Unit.", 0) == 0) {
             UnitType ut;
-            if (!unitTypeByName(sn.c_str() + 5, ut)) { warn("unit"); continue; }
+            const char* unitName = sn.c_str() + 5;
+            if (!unitTypeByName(unitName, ut)) {
+                // 自定义单位变体：[Unit.MyCustomTank] Base=Grizzly ...
+                const char* baseStr = sec.get("Base");
+                if (baseStr && unitTypeByName(baseStr, ut)) {
+                    UnitVariant var;
+                    var.name = unitName;
+                    var.base = ut;
+                    const char* v;
+                    if ((v = sec.get("Cost"))) var.cost = Ini::toInt(v, -1);
+                    if ((v = sec.get("HP"))) var.hp = Ini::toInt(v, -1);
+                    if ((v = sec.get("Speed"))) var.speed = Ini::toInt(v, -1);
+                    if ((v = sec.get("Sight"))) var.sight = Ini::toInt(v, -1);
+                    if ((v = sec.get("Weapon.Proj"))) var.weaponProj = v;
+                    if ((v = sec.get("Weapon.Damage"))) var.weaponDmg = Ini::toInt(v, -1);
+                    if ((v = sec.get("Weapon.Range"))) var.weaponRange = Ini::toInt(v, -1);
+                    if ((v = sec.get("Weapon.Cooldown"))) var.weaponCooldown = Ini::toInt(v, -1);
+                    if ((v = sec.get("Weapon.VsInf"))) var.vsInf = Ini::toFloat(v, -1);
+                    if ((v = sec.get("Weapon.VsVeh"))) var.vsVeh = Ini::toFloat(v, -1);
+                    if ((v = sec.get("Weapon.VsBld"))) var.vsBld = Ini::toFloat(v, -1);
+                    g_variants.push_back(std::move(var));
+                    TraceLog(LOG_INFO, "RA2 rules: variant '%s' registered (base=%s)", unitName, baseStr);
+                } else {
+                    warn("unit (use Base=<existing> to define a variant)");
+                }
+                continue;
+            }
             UnitDef& d = g_units[(int)ut];
             const char* v;
             if ((v = sec.get("Name"))) { g_unitNameStr[(int)ut] = v; d.name = g_unitNameStr[(int)ut].c_str(); }
@@ -454,6 +523,40 @@ void loadRules(const char* path) {
             else if (!strcmp(who, "GI")) loadWeaponKeys(sec, nullptr, wGiDeploy, g_deployProjStr[1]);
             else { warn("deploy weapon"); continue; }
             patched++;
+        } else if (sn == "GameRules") {
+            const char* v;
+            if ((v = sec.get("MaxMoney"))) g_gameRules.maxMoney = Ini::toInt(v, g_gameRules.maxMoney);
+            if ((v = sec.get("StartingMoneyCap"))) g_gameRules.startingMoneyCap = Ini::toInt(v, g_gameRules.startingMoneyCap);
+            if ((v = sec.get("LowPowerSpeedFactor"))) g_gameRules.lowPowerSpeedFactor = Ini::toFloat(v, g_gameRules.lowPowerSpeedFactor);
+            if ((v = sec.get("CrateInterval"))) g_gameRules.crateInterval = Ini::toInt(v, g_gameRules.crateInterval);
+            if ((v = sec.get("OreRegrowRate"))) g_gameRules.oreRegrowRate = Ini::toInt(v, g_gameRules.oreRegrowRate);
+            if ((v = sec.get("VeteranDmgBonus"))) { // 逗号分隔 3 个值
+                int a = 0, b = 0, c = 0;
+                if (sscanf(v, "%d,%d,%d", &a, &b, &c) == 3) {
+                    g_gameRules.veteranismDmgBonus[0] = a / 100.0f;
+                    g_gameRules.veteranismDmgBonus[1] = b / 100.0f;
+                    g_gameRules.veteranismDmgBonus[2] = c / 100.0f;
+                }
+            }
+            patched++;
+        } else if (sn.rfind("AIBuild.", 0) == 0) {
+            const char* facStr = sn.c_str() + 8;
+            Faction f;
+            if (!factionByName(facStr, f)) { warn("AI faction"); continue; }
+            AIBuildConfig& cfg = g_aiBuild[(int)f];
+            cfg.enabled = true;
+            const char* v;
+            if ((v = sec.get("BuildOrder"))) {
+                cfg.buildOrder.clear();
+                char buf[1024];
+                snprintf(buf, sizeof(buf), "%s", v);
+                for (char* tok = strtok(buf, ","); tok; tok = strtok(nullptr, ","))
+                    cfg.buildOrder.push_back(tok);
+            }
+            if ((v = sec.get("HarvesterTarget"))) cfg.harvesterTarget = Ini::toInt(v, cfg.harvesterTarget);
+            if ((v = sec.get("AttackWaveSize"))) cfg.attackWaveSize = Ini::toInt(v, cfg.attackWaveSize);
+            if ((v = sec.get("SaveForSuperWeapon"))) cfg.saveForSuperWeapon = Ini::toBool(v, cfg.saveForSuperWeapon);
+            patched++;
         } else {
             warn("section");
         }
@@ -485,7 +588,7 @@ static std::string factionMaskStr(uint8_t m) {
     if (m == 0) return "None";
     if (m == ALLF) return "All";
     std::string s;
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 4; i++)
         if (m & (1 << i)) { if (!s.empty()) s += '|'; s += kFactionKey[i]; }
     return s;
 }

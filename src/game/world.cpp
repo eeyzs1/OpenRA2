@@ -1,5 +1,6 @@
 #include "game/world.h"
 #include "game/lang.h"
+#include "game/script.h"
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
 #include <cmath>
@@ -362,12 +363,18 @@ EID World::spawnBuilding(int player, BldType t, int bx, int by, bool free_) {
         for (int p = 0; p < numPlayers; p++)
             if (p != player) eva(p, TextFormat(TR(S::EvaDetectEnemySWFmt), bldName(t)));
     }
+    g_script.onBuildingComplete(id, player, t);
     return id;
 }
 
 void World::kill(EID id) {
     if (!valid(id)) return;
     Ent& e = ents[id];
+    // 脚本 hook：死亡事件（在 alive 置 false 前捕获类型/玩家）
+    bool wasBld = e.isBuilding;
+    int deadPlayer = e.player;
+    UnitType deadUtype = e.utype;
+    BldType deadBtype = e.btype;
     e.alive = false;
     freeList.push_back(id);
     if (e.isBuilding) {
@@ -415,6 +422,9 @@ void World::kill(EID id) {
         // 控制者阵亡 → 被控单位恢复原属（RA2 原作）
         if (e.mindTarget != INVALID_EID) mindControlRelease(e);
     }
+    // 脚本 hook：死亡/被毁事件
+    if (wasBld) g_script.onBuildingDestroyed(id, deadPlayer, deadBtype);
+    else g_script.onUnitKilled(id, deadPlayer, deadUtype);
     checkDefeat();
 }
 
@@ -1293,6 +1303,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
         }
         default: break;
     }
+    g_script.onSuperWeapon(player, t, tx, ty);
     return true;
 }
 
@@ -2674,7 +2685,10 @@ void World::checkDefeat() {
         bool hasAny = false;
         for (const Ent& e : ents)
             if (e.alive && e.player == pi) { hasAny = true; break; }
-        if (!hasAny) p.defeated = true;
+        if (!hasAny) {
+            p.defeated = true;
+            g_script.onPlayerDefeated(pi);
+        }
     }
 }
 

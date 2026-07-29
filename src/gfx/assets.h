@@ -109,6 +109,16 @@ inline const char* unitAssetName(UnitType t) {
         case UnitType::Yuri: return "yuri";
         case UnitType::ChronoCommando: return "chronocommando";
         case UnitType::PsiCommando: return "psicommando";
+        // ---- 尤复阵营：尤里专属单位 ----
+        case UnitType::Initiate: return "initiate";
+        case UnitType::Brute: return "brute";
+        case UnitType::Virus: return "virus";
+        case UnitType::LasherTank: return "lashertank";
+        case UnitType::GatlingTank: return "gatlingtank";
+        case UnitType::Magnetron: return "magnetron";
+        case UnitType::MasterMind: return "mastermind";
+        case UnitType::FloatingDisc: return "floatingdisc";
+        case UnitType::Boomer: return "boomer";
         default: return "unknown";
     }
 }
@@ -154,6 +164,12 @@ inline const char* bldAssetName(BldType t) {
         case BldType::TechAirport: return "techairport";
         case BldType::SecretLab: return "secretlab";
         case BldType::CivHouse: return "civhouse";
+        // ---- 尤复阵营：尤里专属建筑 ----
+        case BldType::BioReactor: return "bioreactor";
+        case BldType::GatlingCannon: return "gatlingcannon";
+        case BldType::Grinder: return "grinder";
+        case BldType::GeneticMutator: return "geneticmutator";
+        case BldType::PsychicDominator: return "psychicdominator";
         default: return "unknown";
     }
 }

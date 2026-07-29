@@ -18,6 +18,7 @@ enum class TrigCond : uint8_t {
     PlayerAllDead,  // 玩家 c0 已被歼灭（defeated）
     UnitInRect,     // 玩家 c0 的任一单位进入矩形 (c1,c2)-(c3,c4)
     MoneyBelow,     // 玩家 c0 资金 < c1
+    Script,         // 调用 Lua OnTriggerCond(tag) 返回 bool；tag 见 c 字符串
 };
 
 // 动作类型
@@ -29,6 +30,7 @@ enum class TrigAct : uint8_t {
     Win,            // 玩家 0 立即胜利
     Lose,           // 玩家 0 立即失败
     Objective,      // 更新 HUD 目标文本为 msg
+    Script,         // 调用 Lua OnTrigger(tag)；tag 见 a 字符串
 };
 
 struct Trigger {
@@ -39,6 +41,7 @@ struct Trigger {
     std::vector<UnitType> units;      // SpawnAt 用
     std::string msg;                  // Eva/Objective 用（中文）
     std::string msgEn;                // 英文（空则回退 msg）
+    std::string tag;                  // Script 条件/动作的 Lua 标识
     bool once = true;                 // 仅触发一次
     bool fired = false;               // 运行时状态（Game 副本上修改）
     bool armed = false;               // PlayerBldLost 用：目标建筑曾存在过才允许触发（防开局即误判）

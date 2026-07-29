@@ -463,6 +463,7 @@ static bool trigCondByName(const char* s, TrigCond& out) {
     if (!strcmp(s, "PlayerAllDead")) { out = TrigCond::PlayerAllDead; return true; }
     if (!strcmp(s, "UnitInRect")) { out = TrigCond::UnitInRect; return true; }
     if (!strcmp(s, "MoneyBelow")) { out = TrigCond::MoneyBelow; return true; }
+    if (!strcmp(s, "Script")) { out = TrigCond::Script; return true; }
     return false;
 }
 static bool trigActByName(const char* s, TrigAct& out) {
@@ -474,6 +475,7 @@ static bool trigActByName(const char* s, TrigAct& out) {
     if (!strcmp(s, "Win")) { out = TrigAct::Win; return true; }
     if (!strcmp(s, "Lose")) { out = TrigAct::Lose; return true; }
     if (!strcmp(s, "Objective")) { out = TrigAct::Objective; return true; }
+    if (!strcmp(s, "Script")) { out = TrigAct::Script; return true; }
     return false;
 }
 
@@ -557,6 +559,7 @@ static bool loadMissionFile(const char* path, MissionDef& md) {
             if ((v = sec.get("Units"))) parseUnitList(v, t.units);
             if ((v = sec.get("Msg"))) t.msg = v;
             if ((v = sec.get("MsgEn"))) t.msgEn = v;
+            if ((v = sec.get("Tag"))) t.tag = v;
             t.once = Ini::toBool(sec.get("Once"), true);
             md.triggers.push_back(std::move(t));
         }
@@ -600,6 +603,7 @@ static const char* trigCondKey(TrigCond c) {
         case TrigCond::PlayerAllDead: return "PlayerAllDead";
         case TrigCond::UnitInRect: return "UnitInRect";
         case TrigCond::MoneyBelow: return "MoneyBelow";
+        case TrigCond::Script: return "Script";
     }
     return "?";
 }
@@ -612,6 +616,7 @@ static const char* trigActKey(TrigAct a) {
         case TrigAct::Win: return "Win";
         case TrigAct::Lose: return "Lose";
         case TrigAct::Objective: return "Objective";
+        case TrigAct::Script: return "Script";
     }
     return "?";
 }
@@ -670,6 +675,7 @@ void exportCampaigns(const char* dir) {
             if (!t.units.empty()) writeUnitList(f, "Units", t.units);
             if (!t.msg.empty()) fprintf(f, "Msg=%s\n", t.msg.c_str());
             if (!t.msgEn.empty()) fprintf(f, "MsgEn=%s\n", t.msgEn.c_str());
+            if (!t.tag.empty()) fprintf(f, "Tag=%s\n", t.tag.c_str());
             if (!t.once) fprintf(f, "Once=no\n");
         }
         fclose(f);

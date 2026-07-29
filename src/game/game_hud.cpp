@@ -318,7 +318,7 @@ void Game::drawHUD() {
             DrawRectangleLinesEx({r.x + 1, r.y + 1, r.width - 2, r.height - 2}, 1, Color{210, 190, 130, 130});
             if (!tipSet) {
                 tipSet = true;
-                tipName = name;
+                tipName = name ? name : "?";
                 tipSub = TextFormat(TR(S::TipCostTimeFmt), cost, time / LOGIC_FPS);
                 if (reason && reason[0]) tipReason = reason;
             }

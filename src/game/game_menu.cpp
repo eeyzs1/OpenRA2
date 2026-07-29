@@ -88,9 +88,14 @@ void Game::drawMainMenu() {
         CloseWindow();
         exit(0);
     }
+    // 地图编辑器（紧凑按钮，置于退出下方）
+    if (ra2Button(font, m, pr, {(float)bx, (float)(by + 5 * (bh + gap) - 10), (float)bw, 44}, TR(S::MapEditor), 20)) {
+        editorNewMap();
+        phase = Phase::MapEditor;
+    }
 
     const char* tip = TR(S::MainTip);
-    drawTextM(font, tip, cx - textW(font, tip, 14) / 2, SCREEN_H - 46, 14, Color{110, 112, 120, 255});
+    drawTextM(font, tip, cx - textW(font, tip, 14) / 2, SCREEN_H - 22, 14, Color{110, 112, 120, 255});
 }
 
 void Game::debugMenuShot(const char* file, bool setup) {
