@@ -1301,6 +1301,46 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
             eva(player, TR(S::EvaChronoStart));
             break;
         }
+        case SWType::GeneticMutator: {
+            // 基因突变：目标点 5 格内所有步兵变为狂兽人（尤里玩家控制）
+            std::vector<std::pair<float, float>> positions;
+            for (size_t i = 0; i < ents.size(); i++) {
+                Ent& e = ents[i];
+                if (!e.alive || e.isBuilding) continue;
+                if (!unitDef(e.utype).isInfantry()) continue;
+                if (distf(e.x, e.y, tx, ty) > 5.0f) continue;
+                positions.push_back({e.x, e.y});
+                kill((int)i);
+            }
+            for (auto& pos : positions)
+                spawnUnit(player, UnitType::Brute, pos.first, pos.second);
+            evaAll(TextFormat(TR(S::EvaMindGain)));
+            g_sfx.playAt(Sfx::Tesla, tx, ty);
+            Effect ef; ef.kind = 8; ef.x = tx; ef.y = ty; ef.maxAge = 40;
+            effects.push_back(ef);
+            break;
+        }
+        case SWType::PsychicDominator: {
+            // 心灵控制仪：目标点 5 格内所有敌方单位永久心灵控制 + 范围伤害
+            for (size_t i = 0; i < ents.size(); i++) {
+                Ent& e = ents[i];
+                if (!e.alive) continue;
+                float ex = e.x, ey = e.y;
+                if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
+                if (distf(ex, ey, tx, ty) > 5.0f) continue;
+                if (e.player != player && e.player >= 0 && isEnemy(player, e.player)
+                    && !e.isBuilding && !psychicImmune(e.utype) && e.mindBy == INVALID_EID) {
+                    e.player = player;
+                    e.state = UState::Idle; e.target = INVALID_EID; e.path.clear();
+                }
+                damage((int)i, 200, player);
+            }
+            evaAll(TextFormat(TR(S::EvaMindGain)));
+            g_sfx.playAt(Sfx::Tesla, tx, ty);
+            Effect ef; ef.kind = 8; ef.x = tx; ef.y = ty; ef.maxAge = 50;
+            effects.push_back(ef);
+            break;
+        }
         default: break;
     }
     g_script.onSuperWeapon(player, t, tx, ty);

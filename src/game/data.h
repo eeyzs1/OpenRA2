@@ -154,7 +154,7 @@ enum class BldType : uint8_t {
 };
 
 // ===================== 超级武器 =====================
-enum class SWType : uint8_t { Nuke = 0, Lightning, IronCurtain, ChronoShift, COUNT };
+enum class SWType : uint8_t { Nuke = 0, Lightning, IronCurtain, ChronoShift, GeneticMutator, PsychicDominator, COUNT };
 
 struct SWDef {
     SWType type;

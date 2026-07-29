@@ -331,6 +331,7 @@ static const char* BLD_EN[(int)BldType::COUNT] = {
 
 static const char* SW_EN[(int)SWType::COUNT] = {
     "Nuclear Missile", "Lightning Storm", "Iron Curtain", "Chrono Shift",
+    "Genetic Mutator", "Psychic Dominator",
 };
 
 static const char* FACTION_EN[4] = {"Allies", "Soviet", "China", "Yuri"};

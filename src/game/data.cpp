@@ -229,10 +229,12 @@ static BldDef g_blds[(int)BldType::COUNT] = {
 
 // ===================== 超武表 =====================
 static SWDef g_sws[(int)SWType::COUNT] = {
-    {SWType::Nuke,        "战术核弹",  30 * 60 * 3, BldType::NukeSilo},      // 3 分钟
-    {SWType::Lightning,   "闪电风暴",  30 * 60 * 3, BldType::WeatherDevice},
-    {SWType::IronCurtain, "铁幕",      30 * 60 * 2, BldType::IronCurtain},   // 2 分钟
-    {SWType::ChronoShift, "超时空传送",30 * 60 * 3, BldType::ChronoSphere},
+    {SWType::Nuke,             "战术核弹",  30 * 60 * 3, BldType::NukeSilo},      // 3 分钟
+    {SWType::Lightning,        "闪电风暴",  30 * 60 * 3, BldType::WeatherDevice},
+    {SWType::IronCurtain,      "铁幕",      30 * 60 * 2, BldType::IronCurtain},   // 2 分钟
+    {SWType::ChronoShift,      "超时空传送",30 * 60 * 3, BldType::ChronoSphere},
+    {SWType::GeneticMutator,   "基因突变",  30 * 60 * 2, BldType::GeneticMutator}, // 尤里：区域内步兵变狂兽人
+    {SWType::PsychicDominator, "心灵控制",  30 * 60 * 3, BldType::PsychicDominator}, // 尤里：区域心灵控制+伤害
 };
 
 const SWDef& swDef(SWType t) { return g_sws[(int)t]; }
@@ -240,9 +242,6 @@ const SWDef& swDef(SWType t) { return g_sws[(int)t]; }
 SWType bldProvidesSW(BldType t) {
     for (int i = 0; i < (int)SWType::COUNT; i++)
         if (g_sws[i].fromBld == t) return (SWType)i;
-    // 尤里超武建筑映射到现有 SW 类型（基因突变器→铁幕效果，心灵控制仪→核弹范围伤害）
-    if (t == BldType::GeneticMutator) return SWType::IronCurtain;
-    if (t == BldType::PsychicDominator) return SWType::Nuke;
     return SWType::COUNT;
 }
 
@@ -310,7 +309,7 @@ static const char* kCountryKey[(int)Country::COUNT] = {
     "Russia", "Cuba", "Libya", "Iraq", "China", "Yuri",
 };
 static const char* kFactionKey[4] = {"Allies", "Soviet", "China", "Yuri"};
-static const char* kSWKey[(int)SWType::COUNT] = {"Nuke", "Lightning", "IronCurtain", "ChronoShift"};
+static const char* kSWKey[(int)SWType::COUNT] = {"Nuke", "Lightning", "IronCurtain", "ChronoShift", "GeneticMutator", "PsychicDominator"};
 
 template <size_t N>
 static bool lookupKey(const char* const (&tbl)[N], int base, const char* s, int& out) {
