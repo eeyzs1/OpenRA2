@@ -774,6 +774,43 @@ void Game::smokeTest(int frames) {
             TraceLog(LOG_INFO, "special verify: radDeploy=%d radDmg=%d chronoTp=%d mirageCamo=%d v3Splash=%d (expect 1/1/1/1/1)",
                      (int)deployOk, (int)radOk, (int)tpOk, (int)camoOk, (int)splashOk);
         }
+        // ---- 尤复补全验证：鲍里斯空袭 / 攻城直升机部署炮击 / 混乱无人机毒气 ----
+        {
+            int bx = cx, by = cy + 14; // 与上方测试区错开
+            // 1) 鲍里斯：对建筑呼叫米格空袭（airstrikeCd 被设置 + 建筑掉血）
+            EID boris = world.spawnUnit(1, UnitType::Boris, bx + 0.5f, by + 0.5f);
+            EID bld = world.spawnBuilding(0, BldType::PowerPlant, bx + 4, by, true);
+            int bhp0 = world.ents[bld].hp;
+            world.orderAttack({boris}, bld);
+            for (int i = 0; i < 150 && world.valid(bld); i++) world.update();
+            bool borisAir = world.valid(boris) && world.ents[boris].airstrikeCd > 0;
+            bool borisDmg = !world.valid(bld) || world.ents[bld].hp < bhp0;
+            if (world.valid(boris)) world.ents[boris].alive = false;
+            if (world.valid(bld)) world.ents[bld].alive = false;
+            // 2) 攻城直升机：部署后转为固定炮台，射程内敌军掉血
+            EID sc = world.spawnUnit(1, UnitType::SiegeChopper, bx + 8.5f, by + 0.5f);
+            world.orderRadDeploy({sc});
+            bool scDeploy = world.valid(sc) && world.ents[sc].deployed;
+            EID scTgt = world.spawnUnit(0, UnitType::Conscript, bx + 14.5f, by + 0.5f); // 6 格外，在部署射程 12 内
+            int scTgtHp0 = world.ents[scTgt].hp;
+            for (int i = 0; i < 240 && world.valid(scTgt); i++) world.update();
+            bool scFire = !world.valid(scTgt) || world.ents[scTgt].hp < scTgtHp0;
+            if (world.valid(sc)) world.ents[sc].alive = false;
+            if (world.valid(scTgt)) world.ents[scTgt].alive = false;
+            // 3) 混乱无人机：毒气命中后敌军陷入混乱（confused > 0）
+            EID cd = world.spawnUnit(1, UnitType::ChaosDrone, bx + 20.5f, by + 0.5f);
+            EID cdTgt = world.spawnUnit(0, UnitType::Conscript, bx + 23.5f, by + 0.5f); // 3 格外，在射程 5 内
+            world.orderAttack({cd}, cdTgt);
+            bool chaosHit = false;
+            for (int i = 0; i < 180 && world.valid(cdTgt); i++) {
+                world.update();
+                if (world.valid(cdTgt) && world.ents[cdTgt].confused > 0) { chaosHit = true; break; }
+            }
+            if (world.valid(cd)) world.ents[cd].alive = false;
+            if (world.valid(cdTgt)) world.ents[cdTgt].alive = false;
+            TraceLog(LOG_INFO, "yr verify: borisAir=%d borisDmg=%d siegeDeploy=%d siegeFire=%d chaosHit=%d (expect 1/1/1/1/1)",
+                     (int)borisAir, (int)borisDmg, (int)scDeploy, (int)scFire, (int)chaosHit);
+        }
         // ---- 中立科技建筑：生成 + 工程师占领 + 油井收益 ----
         {
             int neutralCnt = 0;
@@ -831,7 +868,7 @@ void Game::smokeTest(int frames) {
     }
     // ---- 战役验证：任务表 + 首波增援刷出 ----
     {
-        bool tblOk = missionTable().size() == 24;
+        bool tblOk = missionTable().size() == 32;
         newCampaignGame(0);
         int before = 0;
         for (auto& e : world.ents) if (e.alive && e.player == 1 && !e.isBuilding) before++;
@@ -1312,12 +1349,12 @@ void Game::handleInput() {
                 sel.erase(std::remove(sel.begin(), sel.end(), id), sel.end());
                 message(TR(S::MsgDeployed));
             }
-        // 辐射工兵/重装大兵/美国大兵：部署/收起（RA2 原作同键）
+        // 辐射工兵/重装大兵/美国大兵/攻城直升机：部署/收起（RA2 原作同键）
         bool anyDeploy = false;
         for (EID id : sel)
             if (world.valid(id) && !world.ents[id].isBuilding
                 && (world.ents[id].utype == UnitType::Desolator || world.ents[id].utype == UnitType::GuardianGI
-                    || world.ents[id].utype == UnitType::GI))
+                    || world.ents[id].utype == UnitType::GI || world.ents[id].utype == UnitType::SiegeChopper))
                 anyDeploy = true;
         if (anyDeploy) {
             World::Cmd c; c.type = World::Cmd::RadDeploy; c.ids = sel;

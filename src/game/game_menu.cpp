@@ -143,14 +143,14 @@ void Game::drawMissionSelect() {
     int cx = SCREEN_W / 2;
     Vector2 m = mousePos();
 
-    // 阵营页签（24 关 = 中国/盟军/苏军 各 8 关，单页 2x4 网格避免超出屏幕）
-    static int campTab = 0; // 0 中国 1 盟军 2 苏军（与任务表分段一致）
+    // 阵营页签（32 关 = 中国/盟军/苏军/尤里 各 8 关，单页 2x4 网格避免超出屏幕）
+    static int campTab = 0; // 0 中国 1 盟军 2 苏军 3 尤里（与任务表分段一致）
     const auto& tbl = missionTable();
     const int perCamp = 8;
-    const Faction campFac[3] = {Faction::China, Faction::Allies, Faction::Soviet};
-    int tabW = 150, tabH = 40, tabGap = 12;
-    int tabsX = cx - (3 * tabW + 2 * tabGap) / 2, tabsY = 108;
-    for (int t = 0; t < 3; t++) {
+    const Faction campFac[4] = {Faction::China, Faction::Allies, Faction::Soviet, Faction::Yuri};
+    int tabW = 130, tabH = 40, tabGap = 10;
+    int tabsX = cx - (4 * tabW + 3 * tabGap) / 2, tabsY = 108;
+    for (int t = 0; t < 4; t++) {
         Rectangle r{(float)(tabsX + t * (tabW + tabGap)), (float)tabsY, (float)tabW, (float)tabH};
         bool sel = campTab == t;
         bool hover = CheckCollisionPointRec(m, r);

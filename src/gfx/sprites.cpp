@@ -292,6 +292,10 @@ PixBuf SpriteBank::baseUnitBody(UnitType t, int dir, int frame) {
                       : d.type == UnitType::Yuri ? Color{96, 84, 110, 255}         // 尤里：暗紫长袍
                       : d.type == UnitType::ChronoCommando ? Color{60, 84, 116, 255} // 超时空突击队：蓝黑
                       : d.type == UnitType::PsiCommando ? Color{84, 76, 108, 255}  // 心灵突击队：紫黑
+                      : d.type == UnitType::Initiate ? Color{150, 50, 50, 255}    // 尤里新兵：暗红长袍（心灵火焰）
+                      : d.type == UnitType::Brute ? Color{120, 90, 70, 255}       // 狂兽人：棕色肌肉皮甲
+                      : d.type == UnitType::Virus ? Color{60, 100, 60, 255}       // 病毒狙击手：绿色生化服
+                      : d.type == UnitType::Boris ? Color{90, 70, 50, 255}        // 鲍里斯：苏军棕色作战服
                       : Color{88, 96, 104, 255};
         int cx = 10, by = 25;
         if (d.type == UnitType::AttackDog) {
@@ -462,6 +466,52 @@ PixBuf SpriteBank::baseUnitBody(UnitType t, int dir, int frame) {
             p.set(hx, by - 23, Color{200, 120, 255, 255});
             p.line(cx - 4, by - 18, cx + 3, by - 12, Color{50, 44, 60, 255}); // 斜背带
             if (facing == 0) p.fillRect(cx + 2, by - 14, 5, 2, Pal::GUN);
+        } else if (d.type == UnitType::Initiate) {
+            // 尤里新兵：兜帽（无头盔）+ 双手心灵火焰
+            int hx = cx + (facing == 0 ? 1 : 0);
+            p.fillEllipse(hx, by - 23, 3, 2, uniform);                   // 兜帽盖头盔
+            p.set(hx, by - 21, Pal::SKIN);                               // 露脸
+            if (facing == 0) {
+                p.fillEllipse(cx + 4, by - 13, 2, 2, Color{255, 120, 40, 255}); // 火焰球
+                p.set(cx + 5, by - 14, Color{255, 200, 80, 255});
+            } else if (facing == 1) {
+                p.fillEllipse(cx + 3, by - 13, 2, 2, Color{255, 120, 40, 255});
+            }
+        } else if (d.type == UnitType::Brute) {
+            // 狂兽人：光头 + 巨拳 + 肩刺
+            int hx = cx + (facing == 0 ? 1 : 0);
+            p.fillEllipse(hx, by - 23, 3, 2, Pal::SKIN);                 // 光头
+            p.fillRect(cx - 5, by - 19, 10, 2, Color{90, 66, 50, 255});  // 肩甲皮带
+            if (facing == 0) {
+                p.fillRect(cx + 4, by - 14, 4, 4, Pal::SKIN);            // 巨拳
+                p.set(cx + 6, by - 16, Color{200, 180, 140, 255});
+            } else if (facing == 1) {
+                p.fillRect(cx - 8, by - 14, 4, 4, Pal::SKIN);
+                p.fillRect(cx + 4, by - 14, 4, 4, Pal::SKIN);
+            }
+        } else if (d.type == UnitType::Virus) {
+            // 病毒狙击手：防毒面具 + 长狙击步枪 + 绿色生化罐
+            p.fillEllipse(cx + (facing == 0 ? 2 : 0), by - 20, 2, 2, Color{40, 60, 40, 255}); // 面具
+            p.fillRect(cx - 3, by - 17, 3, 4, Color{50, 90, 50, 255});   // 生化罐
+            p.set(cx - 2, by - 16, Color{120, 255, 120, 255});
+            if (facing == 0) {
+                p.fillRect(cx + 2, by - 16, 13, 1, Pal::GUN);            // 长狙击枪
+                p.set(cx + 14, by - 17, Pal::GUN);
+            } else if (facing == 1) {
+                p.fillRect(cx + 4, by - 16, 10, 1, Pal::GUN);
+            }
+        } else if (d.type == UnitType::Boris) {
+            // 鲍里斯：苏军军帽 + AK47 + 通话耳机
+            p.fillRect(cx - 3, by - 24, 7, 2, Color{70, 50, 40, 255});   // 军帽
+            p.set(cx, by - 25, Color{180, 150, 60, 255});                // 帽徽
+            p.set(cx - 4, by - 20, Color{60, 60, 60, 255});              // 耳机
+            p.set(cx + 4, by - 20, Color{60, 60, 60, 255});
+            if (facing == 0) {
+                p.fillRect(cx + 2, by - 15, 9, 2, Pal::GUN);             // AK47
+                p.fillRect(cx + 8, by - 15, 2, 3, Color{80, 60, 40, 255}); // 弹匣
+            } else if (facing == 1) {
+                p.fillRect(cx + 4, by - 15, 7, 2, Pal::GUN);
+            }
         }
         if (flip) p = p.flipH();
         return p;
@@ -1017,6 +1067,8 @@ bool SpriteBank::hasTurret(UnitType t) const {
         case UnitType::Apocalypse: case UnitType::PrismTank: case UnitType::TeslaTank:
         case UnitType::IFV: case UnitType::FlakTrack: case UnitType::MirageTank:
         case UnitType::RobotTank:
+        case UnitType::LasherTank: case UnitType::GatlingTank:
+        case UnitType::Magnetron: case UnitType::MasterMind: case UnitType::Boomer:
             return true;
         default: return false;
     }

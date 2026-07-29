@@ -65,6 +65,12 @@ static WeaponDef wDiscBeam() { return WeaponDef{40, 5, 30, false, true, "shell",
 static WeaponDef wBoomerMissile() { return WeaponDef{180, 14, 200, false, true, "missile", 0.5f, 1.0f, 1.4f, false, 1.5f}; } // 雷鸣潜艇导弹
 static WeaponDef wGatlingCannonGun() { return WeaponDef{30, 7, 15, true, true, "bullet", 1.0f, 0.7f, 0.3f}; } // 盖特机炮：防空对地
 
+// ---- 尤复补全：YR 新增单位武器 ----
+static WeaponDef wBorisAK() { return WeaponDef{60, 5, 10, false, true, "bullet", 1.8f, 0.3f, 0.15f}; }     // 鲍里斯 AK-47：反步兵专精
+static WeaponDef wSiegeChopperMG() { return WeaponDef{15, 5, 20, true, true, "bullet", 1.0f, 0.5f, 0.3f}; } // 攻城直升机飞行机枪
+static WeaponDef wChaosGas() { return WeaponDef{5, 3, 60, false, true, "shell", 0.5f, 0.5f, 0.1f, false, 2.0f}; } // 混乱毒气：范围伤害+混乱
+static WeaponDef wPsychicTowerMC() { return WeaponDef{1, 7, 80, false, true, "psi", 1.0f, 1.0f, 0.0f}; }    // 心灵控制塔：自动心灵控制
+
 // ---- RA2 补全：精英武器（RA2 原作：精英军衔武器质变） ----
 static WeaponDef ewGrizzly() { return WeaponDef{45, 5, 24, false, true, "shell", 0.7f, 1.1f, 0.9f}; }
 static WeaponDef ewRhino() { return WeaponDef{55, 5, 26, false, true, "shell", 0.7f, 1.1f, 0.9f}; }
@@ -91,6 +97,11 @@ const WeaponDef& ggiDeployedWeapon() { return wGgiDeploy; }
 
 // 美国大兵部署（沙袋工事）：射程与伤害提升，不可移动、不可被碾压
 const WeaponDef& giDeployedWeapon() { return wGiDeploy; }
+
+// 攻城直升机部署后：远程重炮（不可移动，对建筑/车辆强力，小范围溅射）
+// 部署武器为可写静态：rules.ini [DeployWeapon.SiegeChopper] 可覆盖
+static WeaponDef wSiegeDeploy{120, 12, 110, false, true, "shell", 0.4f, 1.6f, 1.8f, false, 1.5f};
+const WeaponDef& siegeChopperDeployedWeapon() { return wSiegeDeploy; }
 
 // ===================== 单位表 =====================
 // 注：尾部追加 ammo 字段（0=无限）
@@ -172,6 +183,13 @@ static UnitDef g_units[(int)UnitType::COUNT] = {
     {UnitType::MasterMind, "主脑坦克",   1750,350, 500, 14, 7, Armor::Heavy, MoveType::Vehicle, wMasterMind(), FY, BldType::BattleLab},
     {UnitType::FloatingDisc,"飞碟",      1750,350, 400, 5,  7, Armor::Heavy, MoveType::Air, wDiscBeam(), FY, BldType::BattleLab, 0},
     {UnitType::Boomer,     "雷鸣潜艇",   2000,400, 800, 16, 8, Armor::Heavy, MoveType::Naval, wBoomerMissile(), FY, BldType::BattleLab},
+    // ---- 尤复补全：YR 新增单位 ----
+    // 鲍里斯：苏军英雄（YR 替代尤里），AK-47 反步兵，可呼叫米格空袭建筑
+    {UnitType::Boris,      "鲍里斯",     2000,300, 200, 12, 8, Armor::None, MoveType::Infantry, wBorisAK(), FS, BldType::BattleLab},
+    // 攻城直升机：飞行机枪 / 部署后远程炮击（战车工厂生产）
+    {UnitType::SiegeChopper,"攻城直升机", 1200,240, 200, 4, 7, Armor::Light, MoveType::Air, wSiegeChopperMG(), FS, BldType::Radar, 0},
+    // 混乱无人机：尤里空军，释放毒气使敌军自相残杀（战车工厂生产）
+    {UnitType::ChaosDrone, "混乱无人机",  800, 160, 150, 5, 6, Armor::Light, MoveType::Air, wChaosGas(), FY, BldType::BattleLab, 0},
 };
 
 // ===================== 建筑表 =====================
@@ -225,6 +243,10 @@ static BldDef g_blds[(int)BldType::COUNT] = {
     {BldType::Grinder,      "回收炉",    1000, 200, 800,  2,2, -50,  5, wNone(), FY, BldType::WarFactory, false},
     {BldType::GeneticMutator,"基因突变器",2500, 500, 900,  2,2, -150, 5, wNone(), FY, BldType::BattleLab, true},
     {BldType::PsychicDominator,"心灵控制仪",3000,600,1000, 3,2, -150, 5, wNone(), FY, BldType::BattleLab, true},
+    // ---- 尤复补全：YR 新增建筑 ----
+    {BldType::PsychicTower, "心灵控制塔",  1500, 280, 900, 1,1, -75, 8, wPsychicTowerMC(), FY, BldType::Radar, false},
+    {BldType::TechPowerPlant,"科技电厂",    0,   0,   600, 2,2, 200,  4, wNone(), 0, BldType::COUNT, true},
+    {BldType::TechOutpost,  "科技前哨站",   0,   0,   800, 3,2, 50,   6, wNone(), 0, BldType::COUNT, true},
 };
 
 // ===================== 超武表 =====================
@@ -253,6 +275,8 @@ bool isFactoryFor(BldType b, const UnitDef& u) {
     if (u.type == UnitType::Kirov) return b == BldType::WarFactory;      // 基洛夫出自战车工厂（RA2 原作）
     if (u.type == UnitType::RobotTank) return b == BldType::WarFactory;  // 遥控坦克：两栖但属战车
     if (u.type == UnitType::Nighthawk) return b == BldType::WarFactory;  // 夜鹰直升机出自战车工厂（RA2 原作）
+    if (u.type == UnitType::SiegeChopper) return b == BldType::WarFactory; // 攻城直升机出自战车工厂（YR）
+    if (u.type == UnitType::ChaosDrone) return b == BldType::WarFactory;  // 混乱无人机出自战车工厂（YR）
     if (u.isNaval() || u.isAmphib()) return b == BldType::NavalYard;
     if (u.isInfantry()) return b == BldType::Barracks;
     if (u.isAir()) return b == BldType::AirForceCmd;
@@ -292,6 +316,7 @@ static const char* kUnitKey[(int)UnitType::COUNT] = {
     "Nighthawk", "Dolphin", "Squid", "RobotTank", "BattleFortress", "Hornet",
     "NavySEAL", "Yuri", "ChronoCommando", "PsiCommando",
     "Initiate", "Brute", "Virus", "LasherTank", "GatlingTank", "Magnetron", "MasterMind", "FloatingDisc", "Boomer",
+    "Boris", "SiegeChopper", "ChaosDrone",
 };
 static const char* kBldKey[(int)BldType::COUNT] = {
     "ConYard", "PowerPlant", "TeslaReactor", "NuclearReactor",
@@ -303,6 +328,7 @@ static const char* kBldKey[(int)BldType::COUNT] = {
     "CloningVat", "ServiceDepot", "GapGenerator", "SpySat", "PsychicSensor", "BattleBunker", "TankBunker",
     "TechAirport", "SecretLab", "CivHouse",
     "BioReactor", "GatlingCannon", "Grinder", "GeneticMutator", "PsychicDominator",
+    "PsychicTower", "TechPowerPlant", "TechOutpost",
 };
 static const char* kCountryKey[(int)Country::COUNT] = {
     "None", "America", "Korea", "France", "Germany", "UK",

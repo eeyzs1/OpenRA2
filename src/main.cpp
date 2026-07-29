@@ -22,7 +22,7 @@ int main(int argc, char** argv) {
         bool okA = g_sfx.genSfxAssets("assets/sfx");
         return (okS && okA) ? 0 : 1;
     }
-    // 元数据模板导出：rules.ini / 24 关战役 INI / 双语字符串 / 音乐播放列表，不创建窗口
+    // 元数据模板导出：rules.ini / 32 关战役 INI（中/盟/苏/尤里 各 8）/ 双语字符串 / 音乐播放列表，不创建窗口
     if (argc > 1 && strcmp(argv[1], "--export-assets") == 0) {
         exportRules("assets/rules/rules.ini");
         exportCampaigns("assets/campaigns");

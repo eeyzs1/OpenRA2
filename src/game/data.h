@@ -107,6 +107,10 @@ enum class UnitType : uint8_t {
     MasterMind,                  // 主脑坦克（多重心灵控制）
     FloatingDisc,                // 飞碟（空中，吸电/瘫痪建筑）
     Boomer,                      // 雷鸣潜艇（尤里海军，导弹+鱼雷）
+    // ---- 尤复补全：YR 新增单位 ----
+    Boris,                       // 鲍里斯（苏英雄，AK47+呼叫米格空袭建筑）
+    SiegeChopper,                // 攻城直升机（苏，飞行机枪/部署远程炮击）
+    ChaosDrone,                  // 混乱无人机（尤里，释放毒气使敌军自相残杀）
     COUNT
 };
 
@@ -150,6 +154,10 @@ enum class BldType : uint8_t {
     Grinder,                                    // 回收炉（尤里支持，回收单位换钱）
     GeneticMutator,                             // 基因突变器（尤里超武1：把步兵变狂兽人）
     PsychicDominator,                           // 心灵控制仪（尤里超武2：范围心灵控制+伤害）
+    // ---- 尤复补全：YR 新增建筑 ----
+    PsychicTower,                               // 心灵控制塔（尤里防御，自动控制接近的敌方单位）
+    TechPowerPlant,                             // 科技电厂（中立，占领后提供 200 电力）
+    TechOutpost,                                // 科技前哨站（中立，占领后维修/治疗周边单位）
     COUNT
 };
 
@@ -232,6 +240,8 @@ struct UnitDef {
 const WeaponDef& ggiDeployedWeapon();
 // 美国大兵部署（沙袋工事）：射程与伤害提升
 const WeaponDef& giDeployedWeapon();
+// 攻城直升机部署后：远程重炮（对建筑/车辆强力，溅射）
+const WeaponDef& siegeChopperDeployedWeapon();
 
 // ===================== 建筑定义 =====================
 struct BldDef {
@@ -356,6 +366,7 @@ inline bool psychicImmune(UnitType t) {
         case UnitType::TerrorDrone: case UnitType::RobotTank:
         case UnitType::Harvester: case UnitType::ChronoMiner: case UnitType::WarMiner:
         case UnitType::Tanya: case UnitType::BattleFortress:
+        case UnitType::Boris: case UnitType::ChaosDrone:
             return true;
         default: return false;
     }

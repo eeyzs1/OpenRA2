@@ -128,6 +128,11 @@ const std::pair<const char*, UnitType> kUnit[] = {
     {"RobotTank", UnitType::RobotTank}, {"BattleFortress", UnitType::BattleFortress}, {"Hornet", UnitType::Hornet},
     {"NavySEAL", UnitType::NavySEAL}, {"Yuri", UnitType::Yuri},
     {"ChronoCommando", UnitType::ChronoCommando}, {"PsiCommando", UnitType::PsiCommando},
+    {"Initiate", UnitType::Initiate}, {"Brute", UnitType::Brute}, {"Virus", UnitType::Virus},
+    {"LasherTank", UnitType::LasherTank}, {"GatlingTank", UnitType::GatlingTank},
+    {"Magnetron", UnitType::Magnetron}, {"MasterMind", UnitType::MasterMind},
+    {"FloatingDisc", UnitType::FloatingDisc}, {"Boomer", UnitType::Boomer},
+    {"Boris", UnitType::Boris}, {"SiegeChopper", UnitType::SiegeChopper}, {"ChaosDrone", UnitType::ChaosDrone},
 };
 const std::pair<const char*, BldType> kBld[] = {
     {"ConYard", BldType::ConYard}, {"PowerPlant", BldType::PowerPlant}, {"TeslaReactor", BldType::TeslaReactor},
@@ -275,10 +280,13 @@ void World::placeNeutralTechs() {
     int nAirport = area >= 90 * 90 ? 1 : 0;             // 大图保证至少 1 座科技机场
     int nLab = 1;                                       // 秘密实验室（解锁国家特色科技）
     int nHouse = std::max(4, area / 900);               // 民房集群散布（驻军掩体）
+    int nTechPP = area >= 96 * 96 ? 2 : 1;              // 科技电厂（占领后 +200 电力）
+    int nTechOut = area >= 96 * 96 ? 1 : 0;             // 科技前哨站（占领后全单位维修+回血）
     struct Want { BldType t; int n; };
     const Want wants[] = {
         {BldType::OilDerrick, nOil}, {BldType::Hospital, nHosp}, {BldType::MachineShop, nShop},
         {BldType::TechAirport, nAirport}, {BldType::SecretLab, nLab}, {BldType::CivHouse, nHouse},
+        {BldType::TechPowerPlant, nTechPP}, {BldType::TechOutpost, nTechOut},
     };
     std::vector<Vec2i> placed;
     for (const Want& wnt : wants) {
@@ -587,6 +595,8 @@ WeaponDef World::effWeapon(const Ent& e) const {
     const UnitDef& ud = unitDef(e.utype);
     if (e.deployed && e.utype == UnitType::GuardianGI) return ggiDeployedWeapon();
     if (e.deployed && e.utype == UnitType::GI) return giDeployedWeapon();
+    // 攻城直升机部署后：远程重炮（不可移动，对建筑/车辆强力，溅射）
+    if (e.deployed && e.utype == UnitType::SiegeChopper) return siegeChopperDeployedWeapon();
     if (e.utype == UnitType::IFV && !e.cargo.empty()) return ifvWeapon(e.cargo[0]);
     if (e.vetRank >= 2 && ud.elite) return *ud.elite;
     WeaponDef w = ud.weapon;
@@ -993,6 +1003,17 @@ void World::orderRadDeploy(const std::vector<EID>& sel) {
                 e.path.clear();
                 e.target = INVALID_EID;
                 e.guard = false;
+                e.state = UState::Idle;
+                g_sfx.playAt(Sfx::Deploy, e.x, e.y);
+            }
+        } else if (e.utype == UnitType::SiegeChopper) {
+            // 攻城直升机：部署=降落转入远程炮击模式 / 收起=重新升空（YR 原作设定）
+            e.deployed = !e.deployed;
+            if (e.deployed) {
+                e.path.clear();
+                e.target = INVALID_EID;
+                e.guard = false;
+                e.goalX = e.x; e.goalY = e.y;
                 e.state = UState::Idle;
                 g_sfx.playAt(Sfx::Deploy, e.x, e.y);
             }
@@ -1537,12 +1558,21 @@ void World::update() {
         float spd = pr.kind == ProjKind::Missile ? 0.25f : 0.6f;
         if (d < spd + 0.1f) {
             // 命中
+            // 混乱无人机毒气：来源为 ChaosDrone，命中后施加混乱（自相残杀）
+            bool isChaosGas = valid(pr.src) && !ents[pr.src].isBuilding
+                              && ents[pr.src].utype == UnitType::ChaosDrone;
             if (valid(pr.target)) {
-                const Ent& t = ents[pr.target];
+                Ent& t = ents[pr.target];
                 float mult = 1.0f;
                 if (t.isBuilding) mult = pr.w.vsBuilding;
                 else mult = unitDef(t.utype).isInfantry() ? pr.w.vsInfantry : pr.w.vsVehicle;
                 damage(pr.target, (int)(pr.w.damage * mult), pr.player, pr.src);
+                // 直接受击的地面单位同样陷入混乱（毒气主目标也受影响）
+                if (isChaosGas && !t.isBuilding && !unitDef(t.utype).isAir()
+                    && !psychicImmune(t.utype) && t.invuln == 0) {
+                    t.confused = 180;
+                    t.target = INVALID_EID;
+                }
             }
             // 溅射伤害（V3 火箭等）：命中点范围内所有实体按距离衰减
             if (pr.w.splash > 0) {
@@ -1558,6 +1588,12 @@ void World::update() {
                                  : (unitDef(o.utype).isInfantry() ? pr.w.vsInfantry : pr.w.vsVehicle);
                     float falloff = 1.0f - od / (pr.w.splash + 0.5f) * 0.6f; // 中心 100%，边缘 40%
                     damage((int)i, (int)(pr.w.damage * mult * falloff), pr.player, pr.src);
+                    // 混乱毒气：地面单位（非建筑/非空中）陷入自相残杀 6 秒
+                    if (isChaosGas && !o.isBuilding && !unitDef(o.utype).isAir()
+                        && !psychicImmune(o.utype) && o.invuln == 0) {
+                        o.confused = 180;
+                        o.target = INVALID_EID; // 清除原目标，强制重选
+                    }
                 }
             }
             if (pr.kind != ProjKind::Bullet) explodeAt(tx, ty, pr.kind == ProjKind::Missile ? 1 : 0);
@@ -1707,6 +1743,10 @@ void World::updateUnit(Ent& e, EID id) {
     }
     // 台风潜艇：开火暴露计时衰减
     if (e.subReveal > 0) e.subReveal--;
+    // 鲍里斯：米格空袭冷却衰减
+    if (e.airstrikeCd > 0) e.airstrikeCd--;
+    // 混乱无人机毒气：混乱计时衰减
+    if (e.confused > 0) e.confused--;
     // 重装大兵/美国大兵已部署：不能移动，以强化武器迎战（RA2 原作设定）
     if ((e.utype == UnitType::GuardianGI || e.utype == UnitType::GI) && e.deployed) {
         const WeaponDef& dw = e.utype == UnitType::GuardianGI ? ggiDeployedWeapon() : giDeployedWeapon();
@@ -1721,6 +1761,41 @@ void World::updateUnit(Ent& e, EID id) {
         e.dir = dirFromVec(tx - e.x, ty - e.y);
         e.turretDir = e.dir;
         if (e.atkCd <= 0) { fireWeapon(e, id, e.target); e.atkCd = dw.cooldown; }
+        return;
+    }
+    // 混乱毒气：被影响的单位强制攻击最近单位（含己方，自相残杀），持续至 confused 归零
+    if (e.confused > 0 && !e.isBuilding) {
+        const WeaponDef& cw = effWeapon(e);
+        // 失去目标或目标无效/超出射程：重新索敌（任意阵营，含己方）
+        if (!valid(e.target) || ents[e.target].player == e.player
+            || distf(e.x, e.y, ents[e.target].x, ents[e.target].y) > cw.range + 1) {
+            EID best = INVALID_EID; float bd = cw.range + 1;
+            for (size_t i = 0; i < ents.size(); i++) {
+                if ((int)i == id) continue;
+                const Ent& o = ents[i];
+                if (!o.alive || o.isBuilding) continue;
+                if (o.invuln > 0) continue; // 铁幕无敌不攻击
+                if (unitDef(o.utype).isAir()) continue; // 毒气仅影响地面单位
+                float ox = o.x, oy = o.y;
+                float d = distf(e.x, e.y, ox, oy);
+                if (d < bd) { bd = d; best = (int)i; }
+            }
+            e.target = best;
+        }
+        if (valid(e.target)) {
+            const Ent& t = ents[e.target];
+            float tx = t.x, ty = t.y;
+            float d = distf(e.x, e.y, tx, ty);
+            if (d > cw.range) { e.state = UState::Chasing; } // 追击至射程内
+            else {
+                e.state = UState::Attacking;
+                e.turretDir = dirFromVec(tx - e.x, ty - e.y);
+                if (!g_sprites.hasTurret(e.utype)) e.dir = e.turretDir;
+                if (e.atkCd <= 0) { fireWeapon(e, id, e.target); e.atkCd = cw.cooldown; }
+            }
+        } else {
+            e.state = UState::Idle;
+        }
         return;
     }
     // 重伤冒烟
@@ -1930,6 +2005,27 @@ void World::updateUnit(Ent& e, EID id) {
                 }
                 break;
             }
+            // 鲍里斯：对建筑呼叫米格空袭（YR 原作：激光照射→2 架米格投弹，建筑目标专用）
+            if (e.utype == UnitType::Boris && t.isBuilding && e.airstrikeCd <= 0 && e.atkCd <= 0) {
+                // 米格投弹：2 枚延迟炸弹依次落地（复用 TimedBomb 机制，附着建筑中心）
+                for (int i = 0; i < 2; i++) {
+                    TimedBomb b;
+                    b.x = tx; b.y = ty; b.player = e.player;
+                    b.attachedTo = e.target; b.dmg = 300; b.radius = 1.8f;
+                    b.timer = 50 + i * 15; // 第二枚稍后落地
+                    timedBombs.push_back(b);
+                }
+                // 照射光束特效（指向建筑）
+                Effect beam; beam.kind = 3; beam.x = e.x; beam.y = e.y;
+                beam.x2 = tx; beam.y2 = ty; beam.maxAge = 12;
+                effects.push_back(beam);
+                g_sfx.playAt(Sfx::Missile, tx, ty);
+                e.airstrikeCd = 600; // 20 秒后再呼叫
+                e.atkCd = 90;
+                break;
+            }
+            // 鲍里斯对建筑仅用空袭：不发射 AK（AK 反步兵，对建筑几乎无效）
+            if (e.utype == UnitType::Boris && t.isBuilding) break;
             // C4 爆破手（谭雅/海豹/超时空突击队/心灵突击队）：近身建筑安放 C4；会游泳的还可炸舰船
             if (ud.hasC4() && e.atkCd <= 0) {
                 bool navalTgt = !t.isBuilding && (unitDef(t.utype).isNaval() || unitDef(t.utype).isAmphib());
@@ -2053,6 +2149,21 @@ void World::updateAircraft(Ent& e, EID id) {
         Effect sm;
         sm.kind = 1; sm.x = e.x; sm.y = e.y; sm.maxAge = 30;
         effects.push_back(sm);
+    }
+
+    // 攻城直升机部署后：降落转为固定远程炮台（不可移动，对地/对建筑强力，溅射）
+    if (e.utype == UnitType::SiegeChopper && e.deployed) {
+        const WeaponDef& dw = siegeChopperDeployedWeapon();
+        if (!valid(e.target) || distf(e.x, e.y, ents[e.target].x, ents[e.target].y) > dw.range + 1) {
+            e.target = findNearestEnemy(e.player, e.x, e.y, (float)dw.range, true, &dw, e.utype);
+            if (e.target == INVALID_EID) { e.state = UState::Idle; return; }
+        }
+        const Ent& t = ents[e.target];
+        float tx = t.x, ty = t.y;
+        if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
+        e.turretDir = dirFromVec(tx - e.x, ty - e.y);
+        if (e.atkCd <= 0) { fireWeapon(e, id, e.target); e.atkCd = dw.cooldown; }
+        return;
     }
 
     switch (e.state) {
@@ -2383,6 +2494,11 @@ void World::updateBuilding(Ent& e, EID id) {
             for (Ent& o : ents)
                 if (o.alive && !o.isBuilding && o.player == e.player && !unitDef(o.utype).isInfantry())
                     o.hp = std::min(unitDef(o.utype).hp, o.hp + 4);
+        } else if (e.btype == BldType::TechOutpost && e.bldAnim % 60 == 0) {
+            // 科技前哨站：全体己方单位持续维修+回血（医院+机械商店合体）
+            for (Ent& o : ents)
+                if (o.alive && !o.isBuilding && o.player == e.player)
+                    o.hp = std::min(unitDef(o.utype).hp, o.hp + 3);
         }
     }
     // 磁暴线圈：附近磁暴步兵为其充电（RA2 原作：充电后伤害+50%，低电仍可开火）
@@ -2410,8 +2526,18 @@ void World::updateBuilding(Ent& e, EID id) {
             if (e.target == INVALID_EID) e.target = findNearestEnemy(e.player, cx, cy, (float)bd.weapon.range, true, &bd.weapon);
         }
         if (valid(e.target) && e.atkCd <= 0) {
-            // 光棱塔串联（RA2 原作签名机制）：8 格内友军光棱塔汇聚光束，每座 +75% 伤害
-            if (e.btype == BldType::PrismTower) {
+            // 心灵控制塔：直接心灵控制目标（不发射弹道，与尤里步兵同机制）
+            if (e.btype == BldType::PsychicTower) {
+                Ent& t = ents[e.target];
+                if (!t.isBuilding && !psychicImmune(t.utype) && t.mindBy == INVALID_EID
+                    && t.player >= 0 && isEnemy(e.player, t.player)) {
+                    mindControlTake(e, id, e.target);
+                    Effect ef; ef.kind = 2; ef.x = t.x; ef.y = t.y; ef.x2 = cx; ef.y2 = cy; ef.maxAge = 15;
+                    effects.push_back(ef);
+                    g_sfx.playAt(Sfx::Tesla, cx, cy);
+                }
+                e.atkCd = bd.weapon.cooldown;
+            } else if (e.btype == BldType::PrismTower) {
                 int sup = 0;
                 float supPos[8][2];
                 for (size_t i = 0; i < ents.size() && sup < 8; i++) {
@@ -2979,6 +3105,8 @@ bool World::saveGame(FILE* f) const {
             s.w(e.parasite); s.w(e.parasiteHost); s.w(e.parasiting); s.w(e.teslaCharge);
             // P6 心灵控制
             s.w(e.mindBy); s.w(e.mindTarget); s.w(e.origPlayer);
+            // 尤复补全：YR 新单位特殊机制
+            s.w(e.airstrikeCd); s.w(e.confused);
         }
         uint32_t fn = (uint32_t)freeList.size();
         s.w(fn);
@@ -3122,6 +3250,8 @@ bool World::loadGame(FILE* f) {
             s.r(e.parasite); s.r(e.parasiteHost); s.r(e.parasiting); s.r(e.teslaCharge);
             // P6 心灵控制
             s.r(e.mindBy); s.r(e.mindTarget); s.r(e.origPlayer);
+            // 尤复补全：YR 新单位特殊机制
+            s.r(e.airstrikeCd); s.r(e.confused);
         }
         uint32_t fn = 0;
         s.r(fn);

@@ -119,6 +119,9 @@ inline const char* unitAssetName(UnitType t) {
         case UnitType::MasterMind: return "mastermind";
         case UnitType::FloatingDisc: return "floatingdisc";
         case UnitType::Boomer: return "boomer";
+        case UnitType::Boris: return "boris";
+        case UnitType::SiegeChopper: return "siegechopper";
+        case UnitType::ChaosDrone: return "chaosdrone";
         default: return "unknown";
     }
 }
@@ -170,6 +173,9 @@ inline const char* bldAssetName(BldType t) {
         case BldType::Grinder: return "grinder";
         case BldType::GeneticMutator: return "geneticmutator";
         case BldType::PsychicDominator: return "psychicdominator";
+        case BldType::PsychicTower: return "psychictower";
+        case BldType::TechPowerPlant: return "techpowerplant";
+        case BldType::TechOutpost: return "techoutpost";
         default: return "unknown";
     }
 }

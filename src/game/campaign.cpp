@@ -5,7 +5,7 @@
 #include <cstdio>
 
 // ===================== 内置任务表（assets/campaigns 缺失时的回退） =====================
-// 24 关：中国 8 + 盟军 8 + 苏军 8，难度递进；含手工地图/触发器脚本关。
+// 32 关：中国 8 + 盟军 8 + 苏军 8 + 尤里 8，难度递进；含手工地图/触发器脚本关。
 // 该表与 assets/campaigns/*.ini 内容一致，外部文件优先。
 static std::vector<MissionDef> buildBuiltinMissions() {
     return {
@@ -382,6 +382,9 @@ static std::vector<MissionDef> buildBuiltinMissions() {
                  "再坚持一半时间，战略预备队即将抵达。", "Hold half as long again — strategic reserves are coming."},
                 {TrigCond::Time, {5400,0,0,0,0}, TrigAct::GiveMoney, {0,2500,0,0,-1}, {},
                  "后方工厂全力支援：资金 +2500。", "Rear factories at full capacity: +2500 credits."},
+                {TrigCond::Time, {12600,0,0,0,0}, TrigAct::SpawnAt, {0,8,8,-1,0},
+                 {UnitType::Boris, UnitType::SiegeChopper, UnitType::SiegeChopper},
+                 "鲍里斯与攻城直升机编队增援抵达！", "Boris and Siege Chopper squadron have arrived!"},
             }
         },
         {
@@ -445,10 +448,185 @@ static std::vector<MissionDef> buildBuiltinMissions() {
             {
                 {TrigCond::Always, {0,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
                  "全世界无产者，联合起来！这是最后的斗争。", "Workers of the world, unite! This is the final struggle."},
+                {TrigCond::Time, {7200,0,0,0,0}, TrigAct::SpawnAt, {0,8,8,-1,0},
+                 {UnitType::Boris, UnitType::SiegeChopper, UnitType::SiegeChopper, UnitType::Apocalypse},
+                 "鲍里斯率领攻城直升机与天启编队增援！", "Boris leads a Siege Chopper and Apocalypse reinforcement!"},
                 {TrigCond::PlayerAllDead, {1,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
                  "第一路敌军已覆灭！", "The first enemy army has fallen!"},
                 {TrigCond::PlayerAllDead, {3,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
                  "最后一路敌军摇摇欲坠，胜利在望！", "The last enemy army is crumbling. Victory is near!"},
+            }
+        },
+        // ==================== 尤里战役（24-31，尤复阵营） ====================
+        {
+            "心灵觉醒", "Psychic Awakening",
+            "尤里脱离苏军独立。建立心灵部队基地，用心灵控制瓦解盟军前哨。",
+            "Yuri breaks from the Soviets. Establish a psychic corps base and crush the Allied outpost with mind control.",
+            Faction::Yuri, {Faction::Allies},
+            64, 0, 10000,
+            {
+                {2700,  {UnitType::GI, UnitType::GI, UnitType::Grizzly}},
+                {6300,  {UnitType::GuardianGI, UnitType::Grizzly, UnitType::Grizzly}},
+                {10800, {UnitType::PrismTank, UnitType::Grizzly, UnitType::GI, UnitType::GI}},
+            },
+            0, 0, "", false,
+            {
+                {TrigCond::Always, {0,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
+                 "尤里已独立：尤里新兵的心灵火焰可焚烧敌兵。", "Yuri is free: Initiates burn foes with psychic fire."},
+                {TrigCond::Time, {2700,0,0,0,0}, TrigAct::SpawnAt, {0,8,8,-1,0},
+                 {UnitType::MasterMind},
+                 "主脑坦克增援抵达：可多重心灵控制敌方单位。", "Master Mind reinforcement: mind-control multiple enemies."},
+                {TrigCond::Always, {0,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
+                 "区域内的科技电厂与前哨站可由工程师占领，强化电力与维修。", "Tech power plants and outposts in the area can be captured for power and repairs."},
+            }
+        },
+        {
+            "狂兽横行", "Brute Rampage",
+            "苏军反扑。以狂兽人近战重击配合狂风坦克，歼灭苏军基地。",
+            "The Soviets counterattack. Crush their base with Brutes and Lasher Tanks.",
+            Faction::Yuri, {Faction::Soviet},
+            96, 0, 12000,
+            {
+                {3600,  {UnitType::Conscript, UnitType::Rhino, UnitType::Rhino}},
+                {7200,  {UnitType::TeslaTrooper, UnitType::TeslaTrooper, UnitType::Rhino, UnitType::FlakTrack}},
+                {10800, {UnitType::TeslaTank, UnitType::Rhino, UnitType::Rhino, UnitType::Conscript, UnitType::Conscript}},
+                {14400, {UnitType::Boris, UnitType::SiegeChopper, UnitType::TeslaTank, UnitType::Rhino}},
+            },
+            0, 0, "", false,
+            {
+                {TrigCond::Always, {0,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
+                 "狂兽人近战重甲，可撕碎车辆。", "Brutes tear through vehicles with heavy melee."},
+                {TrigCond::Time, {3600,0,0,0,0}, TrigAct::SpawnAt, {0,6,6,-1,0},
+                 {UnitType::Brute, UnitType::Brute, UnitType::Brute},
+                 "狂兽人小队已空降。", "Brute squad has arrived."},
+                {TrigCond::Time, {14400,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
+                 "警告：苏军派出英雄鲍里斯与攻城直升机！", "Warning: Soviet hero Boris and Siege Choppers incoming!"},
+            }
+        },
+        {
+            "雷鸣深海", "Boomer Depths",
+            "盟军舰队封锁海域。建造船厂，以雷鸣潜艇的导弹鱼雷双武器歼灭敌舰。",
+            "The Allied fleet blockades the seas. Build a naval yard and sink them with Boomer dual weapons.",
+            Faction::Yuri, {Faction::Allies},
+            96, 1, 14000,
+            {
+                {3600,  {UnitType::Destroyer, UnitType::Destroyer}},
+                {7200,  {UnitType::Destroyer, UnitType::Aegis, UnitType::Intruder}},
+                {12600, {UnitType::Destroyer, UnitType::Destroyer, UnitType::AircraftCarrier}},
+            },
+            0, 0, "", false,
+            {
+                {TrigCond::Always, {0,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
+                 "雷鸣潜艇：潜射导弹对地、鱼雷对舰，尤里海军主力。", "Boomer: missiles for land, torpedoes for ships."},
+            }
+        },
+        {
+            "磁电狩猎", "Magnetron Hunt",
+            "盟军两路围剿。用磁电坦克吊起敌方车辆，配合盖特坦克防空。",
+            "Two Allied armies hunt you. Lift their vehicles with Magnetrons and screen with Gatling Tanks.",
+            Faction::Yuri, {Faction::Allies, Faction::Allies},
+            96, 0, 15000,
+            {
+                {3600,  {UnitType::Grizzly, UnitType::GI, UnitType::GI}},
+                {7200,  {UnitType::MirageTank, UnitType::Grizzly, UnitType::Rocketeer, UnitType::Rocketeer}},
+                {10800, {UnitType::PrismTank, UnitType::MirageTank, UnitType::Grizzly, UnitType::Intruder}},
+                {14400, {UnitType::PrismTank, UnitType::PrismTank, UnitType::MirageTank, UnitType::BlackEagle}},
+            },
+            0, 0, "", false,
+            {
+                {TrigCond::Always, {0,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
+                 "磁电坦克可吊起敌方车辆使其无法行动。", "Magnetrons lift enemy vehicles, immobilizing them."},
+                {TrigCond::Time, {5400,0,0,0,0}, TrigAct::SpawnAt, {0,7,7,-1,0},
+                 {UnitType::Magnetron, UnitType::Magnetron, UnitType::GatlingTank},
+                 "磁电/盖特小队增援抵达。", "Magnetron/Gatling reinforcement arrived."},
+            }
+        },
+        {
+            "飞碟降临", "Disc Descent",
+            "苏军重兵集结。飞碟可吸电瘫痪其建筑，配合雷鸣潜艇两面夹击。",
+            "Soviet masses their forces. Floating Discs drain their power while Boomers strike from the sea.",
+            Faction::Yuri, {Faction::Soviet, Faction::Soviet},
+            128, 0, 17000,
+            {
+                {3600,  {UnitType::Rhino, UnitType::Rhino, UnitType::FlakTrooper, UnitType::FlakTrooper}},
+                {7200,  {UnitType::TeslaTank, UnitType::Rhino, UnitType::FlakTrack, UnitType::FlakTrack}},
+                {10800, {UnitType::Apocalypse, UnitType::Rhino, UnitType::Rhino, UnitType::Kirov}},
+                {14400, {UnitType::Apocalypse, UnitType::Apocalypse, UnitType::TeslaTank, UnitType::MiG, UnitType::MiG}},
+            },
+            0, 0, "", false,
+            {
+                {TrigCond::Always, {0,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
+                 "飞碟吸电可使敌方建筑瘫痪，注意防空。", "Discs drain power to paralyze enemy bases; mind the AA."},
+                {TrigCond::Time, {5400,0,0,0,0}, TrigAct::SpawnAt, {0,9,9,-1,0},
+                 {UnitType::FloatingDisc, UnitType::FloatingDisc},
+                 "飞碟编队已就位。", "Floating Disc squadron is ready."},
+            }
+        },
+        {
+            "混乱之雨", "Chaos Rain",
+            "盟军大举进攻。坚守十分钟，混乱无人机的毒气将使敌军自相残杀。",
+            "The Allies attack in force. Hold for ten minutes — Chaos Drone gas turns their ranks against each other.",
+            Faction::Yuri, {Faction::Allies},
+            96, 0, 16000,
+            {
+                {1800,  {UnitType::Grizzly, UnitType::GI, UnitType::GI}},
+                {5400,  {UnitType::PrismTank, UnitType::Grizzly, UnitType::Grizzly, UnitType::GuardianGI}},
+                {9000,  {UnitType::MirageTank, UnitType::PrismTank, UnitType::Grizzly, UnitType::Rocketeer, UnitType::Rocketeer}},
+                {12600, {UnitType::PrismTank, UnitType::MirageTank, UnitType::MirageTank, UnitType::BlackEagle}},
+                {16200, {UnitType::PrismTank, UnitType::PrismTank, UnitType::MirageTank, UnitType::Grizzly, UnitType::Grizzly}},
+            },
+            1, 18000, "", false,
+            {
+                {TrigCond::Always, {0,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
+                 "混乱无人机毒气使敌军陷入自相残杀。", "Chaos Drone gas drives enemies to attack each other."},
+                {TrigCond::Time, {3600,0,0,0,0}, TrigAct::SpawnAt, {0,8,8,-1,0},
+                 {UnitType::ChaosDrone, UnitType::ChaosDrone},
+                 "混乱无人机增援抵达。", "Chaos Drone reinforcement arrived."},
+            }
+        },
+        {
+            "基因计划", "Genetic Plan",
+            "盟苏联军试图摧毁基因突变器。守护超武，待充能完毕发动基因突变。",
+            "Allied-Soviet joint forces target your Genetic Mutator. Defend it until charged, then unleash mutation.",
+            Faction::Yuri, {Faction::Allies, Faction::Soviet},
+            128, 0, 20000,
+            {
+                {3600,  {UnitType::Grizzly, UnitType::Rhino, UnitType::GI, UnitType::Conscript}},
+                {7200,  {UnitType::PrismTank, UnitType::TeslaTank, UnitType::Grizzly, UnitType::Rhino}},
+                {10800, {UnitType::MirageTank, UnitType::Apocalypse, UnitType::PrismTank, UnitType::TeslaTank}},
+                {14400, {UnitType::PrismTank, UnitType::Apocalypse, UnitType::Apocalypse, UnitType::BlackEagle, UnitType::MiG}},
+            },
+            0, 0, "", false,
+            {
+                {TrigCond::Always, {0,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
+                 "基因突变器：把敌方步兵变为狂兽人。", "Genetic Mutator: turn enemy infantry into Brutes."},
+                {TrigCond::PlayerBldLost, {0,(int)BldType::GeneticMutator,0,0,0}, TrigAct::Lose, {0,0,0,0,-1}, {},
+                 "基因突变器被毁，计划失败。", "Genetic Mutator destroyed. The plan fails."},
+            }
+        },
+        {
+            "世界支配", "World Dominion",
+            "最终之战。三方联军围攻心灵控制仪。充能完毕，发动心灵支配统御世界。",
+            "The final battle. Three armies besiege your Psychic Dominator. Charge it and dominate the world.",
+            Faction::Yuri, {Faction::Allies, Faction::Soviet, Faction::China},
+            128, 0, 22000,
+            {
+                {3600,  {UnitType::Grizzly, UnitType::Rhino, UnitType::Type99, UnitType::GI, UnitType::Conscript}},
+                {7200,  {UnitType::PrismTank, UnitType::TeslaTank, UnitType::Type99, UnitType::Apocalypse}},
+                {10800, {UnitType::MirageTank, UnitType::Apocalypse, UnitType::Type99, UnitType::PrismTank, UnitType::Kirov}},
+                {14400, {UnitType::PrismTank, UnitType::Apocalypse, UnitType::Type99, UnitType::BlackEagle, UnitType::MiG, UnitType::Kirov}},
+                {18000, {UnitType::PrismTank, UnitType::MirageTank, UnitType::Apocalypse, UnitType::Apocalypse, UnitType::Type99, UnitType::BlackEagle}},
+            },
+            0, 0, "", false,
+            {
+                {TrigCond::Always, {0,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
+                 "心灵控制仪充能完毕后，可范围控制敌方单位。", "Charge the Psychic Dominator to mind-control all enemies in range."},
+                {TrigCond::PlayerAllDead, {1,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
+                 "盟军已溃散！", "The Allies have collapsed!"},
+                {TrigCond::PlayerAllDead, {2,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
+                 "苏军已覆灭！", "The Soviets have fallen!"},
+                {TrigCond::PlayerAllDead, {3,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
+                 "最后一路敌军摇摇欲坠，世界即将臣服！", "The last army crumbles. The world is yours!"},
             }
         },
     };
@@ -632,11 +810,11 @@ void exportCampaigns(const char* dir) {
     MakeDirectory(dir);
     std::vector<MissionDef> v = buildBuiltinMissions(); // 导出内置模板（与外部文件无关）
     char path[256];
-    // 列表文件：战役顺序 = Mission 键顺序；前 8 关中国 / 中 8 关盟军 / 后 8 关苏军（选关页分页）
+    // 列表文件：战役顺序 = Mission 键顺序；中 8 / 盟 8 / 苏 8 / 尤里 8（选关页四阵营分页）
     snprintf(path, sizeof(path), "%s/campaign.ini", dir);
     if (FILE* f = fopen(path, "wb")) {
         fprintf(f, "; OpenRA2 campaign list - one Mission=<file> per line, order = campaign order.\n");
-        fprintf(f, "; First 8 = China tab, next 8 = Allies tab, last 8 = Soviet tab.\n[Missions]\n");
+        fprintf(f, "; First 8 = China tab, next 8 = Allies tab, next 8 = Soviet tab, last 8 = Yuri tab.\n[Missions]\n");
         for (size_t i = 0; i < v.size(); i++) fprintf(f, "Mission=mission%02d.ini\n", (int)i + 1);
         fclose(f);
         TraceLog(LOG_INFO, "RA2 export: %s written", path);

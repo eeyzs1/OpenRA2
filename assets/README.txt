@@ -31,7 +31,7 @@ assets/
 节类型：
   [Unit.<单位名>]        例：[Unit.Grizzly]
   [Bld.<建筑名>]         例：[Bld.PrismTower]
-  [SW.<超武名>]          Nuke / Lightning / IronCurtain / ChronoShift
+  [SW.<超武名>]          Nuke / Lightning / IronCurtain / ChronoShift / GeneticMutator / PsychicDominator
   [DeployWeapon.GI|GuardianGI]  美国大兵/重装大兵部署后的武器
 
 单位键：
@@ -40,7 +40,7 @@ assets/
   Speed       每逻辑帧移动 1/Speed 格，【越大越慢】
   Armor       None / Light / Heavy / Building
   Move        Infantry / Vehicle / Air / Naval / Amphibious
-  Factions    All / None，或管道组合：Allies|Soviet|China
+  Factions    All / None，或管道组合：Allies|Soviet|China|Yuri
   Prereq      前置建筑名（None = 仅需生产建筑本身）
   Ammo        弹药数（0=无限；战机打空返航装填）
   Cargo       运载容量（0=非运输）
@@ -76,6 +76,8 @@ assets/
        AmphTransport ChronoMiner WarMiner TankDestroyer Terrorist
        DemoTruck Nighthawk Dolphin Squid RobotTank BattleFortress Hornet
        NavySEAL Yuri ChronoCommando PsiCommando
+       Initiate Brute Virus LasherTank GatlingTank Magnetron MasterMind
+       FloatingDisc Boomer Boris SiegeChopper ChaosDrone
   建筑：ConYard PowerPlant TeslaReactor NuclearReactor Barracks WarFactory
        OreRefinery Radar BattleLab AirForceCmd NavalYard Pillbox SentryGun
        PrismTower TeslaCoil FlakCannon GrandCannon PatriotMissile Wall
@@ -83,6 +85,10 @@ assets/
        ChronoSphere OilDerrick Hospital MachineShop CloningVat ServiceDepot
        GapGenerator SpySat PsychicSensor BattleBunker TankBunker
        TechAirport SecretLab CivHouse
+       BioReactor GatlingCannon Grinder GeneticMutator PsychicDominator
+       PsychicTower TechPowerPlant TechOutpost
+  超武：Nuke Lightning IronCurtain ChronoShift GeneticMutator PsychicDominator
+  阵营：Allies Soviet China Yuri
 
 注意：本表只改【数值与名称】。单位/建筑种类本身由程序定义，
 不能通过 INI 新增全新种类；但可以通过改 Factions/Prereq/Country/
@@ -93,14 +99,14 @@ assets/
 campaign.ini：
   [Missions]
   Mission=mission01.ini     每行一个，顺序即战役顺序
-  Mission=mission02.ini     前 8 关=中国页签，中 8=盟军，后 8=苏军
+  Mission=mission02.ini     前 8 关=中国页签，9-16=盟军，17-24=苏军，25-32=尤里
   ...                       增删关卡只需增删行与对应文件
 
 每关文件（例 mission01.ini）：
   [General]
   Name=中文名      NameEn=英文名
   Brief=中文简报   BriefEn=英文简报
-  Faction=China             玩家阵营：Allies/Soviet/China
+  Faction=China             玩家阵营：Allies/Soviet/China/Yuri
   AI=Soviet,Soviet          敌方阵营列表（逗号分隔，个数=AI数）
   MapSize=96                32..256；有 MapFile 时以地图文件为准
   MapType=0                 0 大陆 1 岛屿 2 湖泊（程序生成图）

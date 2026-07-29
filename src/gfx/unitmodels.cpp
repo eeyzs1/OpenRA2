@@ -14,6 +14,8 @@ const Color SOVIET{118, 108, 80};    // 苏联装甲：橄榄棕
 const Color SOVIET_DT{86, 78, 58};
 const Color CHINA{110, 120, 88};     // 中国装甲：松绿
 const Color CHINA_DT{80, 88, 64};
+const Color YURI{120, 60, 130};      // 尤里装甲：暗紫
+const Color YURI_DT{90, 40, 100};
 const Color DECK{70, 74, 82};        // 甲板/车顶
 const Color WOOD{110, 96, 70};
 
@@ -137,10 +139,10 @@ int unitCanvasSize3D(UnitType t) {
         case UnitType::Apocalypse: case UnitType::MCV: case UnitType::BattleFortress: return 56;
         case UnitType::Harvester: case UnitType::ChronoMiner: case UnitType::WarMiner: return 52;
         case UnitType::Destroyer: case UnitType::Typhoon: case UnitType::Aegis:
-        case UnitType::AmphTransport: return 56;
-        case UnitType::SeaScorpion: case UnitType::Squid: return 48;
+        case UnitType::AmphTransport: case UnitType::Boomer: return 56;
+        case UnitType::SeaScorpion: case UnitType::Squid: case UnitType::MasterMind: return 48;
         case UnitType::Dreadnought: case UnitType::AircraftCarrier: case UnitType::Kirov: return 64;
-        case UnitType::Nighthawk: return 52;
+        case UnitType::Nighthawk: case UnitType::FloatingDisc: case UnitType::SiegeChopper: return 52;
         default: return 44;
     }
 }
@@ -603,6 +605,144 @@ bool buildUnitModel3D(UnitType t, M3Builder& b, bool full, float* turretPivotX, 
             }
             b.box(2, 0, 4.2f, 12, 1.0f, 0.7f, Pal::REMAP, M3FACE_ALL);                  // 顶阵营条
             b.cylXY(6, 3.5f, -1.0f, 0.5f, 6, 0, Pal::GUN, 6);                           // 舱门机枪
+            break;
+        }
+        // ===================== 尤复阵营：尤里载具 =====================
+        case UnitType::LasherTank: { // 狂风坦克（尤里）：轻巧有机曲线 + 单炮塔
+            tracks(b, 11, 6.4f, 3.6f);
+            tankHull(b, 10, 5.6f, 3.2f, 4.2f, YURI, YURI_DT);
+            tankTurret(b, -0.5f, 8.0f, 7.5f, 9, 3.4f, 11, YURI, YURI_DT);
+            pvx = -0.5f;
+            break;
+        }
+        case UnitType::GatlingTank: { // 盖特坦克（尤里）：四联加特林炮塔
+            tracks(b, 10.5f, 6.2f, 3.4f);
+            tankHull(b, 9.5f, 5.6f, 3.0f, 3.8f, YURI, YURI_DT);
+            b.setPart(M3P_TURRET);
+            b.cylZ(-1, 0, 6.8f, 3.6f, 1.4f, YURI_DT, 10);
+            b.box(-1, 0, 8.2f, 6, 6, 2.0f, YURI);                          // 回转体
+            for (int sy = -1; sy <= 1; sy += 2)                            // 四联加特林炮管
+                for (int sz = 0; sz < 2; sz++)
+                    b.cylXY(1.0f, sy * 1.3f, 9.0f + sz * 1.4f, 0.5f, 8, 0, Pal::GUN, 6);
+            b.box(1.0f, 0, 9.6f, 2.2f, 3.6f, 2.6f, Pal::GUN);             // 炮架
+            b.box(-1, 0, 10.6f, 4, 0.8f, 0.6f, Pal::REMAP, M3FACE_ALL);   // 顶阵营条
+            b.setPart(M3P_BODY);
+            pvx = -1;
+            break;
+        }
+        case UnitType::Magnetron: { // 磁电坦克（尤里）：悬浮反重力底盘 + 磁力吊臂
+            // 悬浮底盘（无履带）
+            b.ellipsoid(0, 0, 2.4f, 11, 5.6f, 2.2f, Color{40, 36, 46, 255});     // 反重力裙
+            b.box(0, 0, 5.0f, 18, 9.5f, 3.6f, YURI);                            // 悬浮车体
+            b.wedge(7.5f, 11.5f, 4.75f, 3.4f, 7.0f, 4.6f, YURI);                // 首上
+            b.box(-1, 0, 7.2f, 12, 1.6f, 0.7f, Pal::REMAP, M3FACE_ALL);         // 顶阵营条
+            // 磁力吊臂（炮塔）
+            b.setPart(M3P_TURRET);
+            b.cylZ(0, 0, 7.0f, 3.0f, 1.6f, YURI_DT, 10);                        // 底座
+            b.box(0, 0, 8.4f, 5, 5, 2.0f, YURI);                                // 回转体
+            b.cylZ(2, 0, 9.0f, 1.2f, 6.0f, Pal::GUN, 8);                        // 立柱吊臂
+            b.ellipsoid(2, 0, 15.6f, 2.8f, 2.8f, 2.0f, Color{140, 110, 180, 255}, 10, 5); // 磁极头
+            b.box(2, 0, 15.6f, 1.0f, 1.0f, 1.0f, Color{200, 160, 255, 255}, 0, M3FACE_ALL); // 磁极发光点
+            b.setPart(M3P_BODY);
+            break;
+        }
+        case UnitType::MasterMind: { // 主脑坦克（尤里）：脑穹顶 + 履带底盘
+            tracks(b, 12, 7.0f, 3.8f);
+            tankHull(b, 11, 6.2f, 3.4f, 4.2f, YURI, YURI_DT);
+            // 巨型脑穹顶（炮塔）
+            b.setPart(M3P_TURRET);
+            b.cylZ(0, 0, 7.6f, 5.2f, 1.6f, YURI_DT, 12);                        // 底座
+            b.ellipsoid(0, 0, 11.0f, 6.5f, 6.5f, 5.5f, Color{150, 90, 170, 255}, 14, 8); // 透明脑穹顶
+            b.ellipsoid(-1.5f, -1.5f, 10.5f, 3.0f, 3.0f, 2.5f, Color{190, 140, 210, 255}, 10, 5); // 受光面
+            // 脑沟纹（环形条纹）
+            for (int i = 0; i < 3; i++)
+                b.cylZ(0, 0, 9.0f + i * 1.6f, 6.0f - i * 0.6f, 0.4f, Color{110, 60, 130, 255}, 12);
+            // 顶心灵宝石（自发光）
+            b.cylZ(0, 0, 16.0f, 1.2f, 1.4f, Color{220, 160, 255, 255}, 8, false, true);
+            b.setPart(M3P_BODY);
+            break;
+        }
+        case UnitType::FloatingDisc: { // 飞碟（尤里）：碟形 UFO + 中央节点（空军）
+            // 碟身（扁椭球）
+            b.ellipsoid(0, 0, 0, 14, 14, 3.5f, YURI, 16, 6);
+            b.ellipsoid(0, 0, 1.5f, 12, 12, 2.5f, Color{150, 90, 160, 255}, 14, 5); // 上盘受光
+            // 中央穹顶（玻璃罩）
+            b.ellipsoid(0, 0, 4.5f, 5.0f, 5.0f, 3.5f, Pal::GLASS, 12, 6);
+            b.ellipsoid(-1, -1, 4.0f, 2.5f, 2.5f, 1.8f, Color{180, 230, 240, 255}, 10, 5);
+            // 碟缘阵营色环
+            b.cylZ(0, 0, 0.5f, 14.2f, 0.5f, Pal::REMAP, 16);
+            // 底部绿光（自发光）
+            b.cylZ(0, 0, -2.5f, 4.0f, 0.8f, Color{120, 255, 140, 255}, 10, false, true);
+            // 底部电极（三根下伸）
+            for (int i = 0; i < 3; i++) {
+                float a = i * 2.0943951f;
+                b.box(cosf(a) * 8, sinf(a) * 8, -3.5f, 1.0f, 1.0f, 3.0f, Pal::GUN);
+            }
+            break;
+        }
+        case UnitType::Boomer: { // 雷鸣潜艇（尤里）：低舷艇体 + 指挥塔 + 导弹舱（海军）
+            b.ellipsoid(0, 0, 2.6f, 17, 5.4f, 3.4f, Color{50, 48, 64, 255});         // 艇体（比台风大）
+            b.ellipsoid(17, 0, 2.4f, 4.5f, 2.8f, 2.4f, Color{50, 48, 64, 255}, 8, 4); // 艏
+            b.box(0, 0, 4.8f, 26, 6.4f, 1.4f, Color{40, 38, 52, 255});               // 甲板
+            // 指挥塔围壳（炮塔）
+            b.setPart(M3P_TURRET);
+            b.box(-2, 0, 6.6f, 8, 4.0f, 3.6f, Color{74, 70, 92, 255});               // 围壳
+            b.box(-0.5f, 0, 8.6f, 3.5f, 2.2f, 1.0f, Pal::GLASS, 0, M3FACE_ALL);      // 舷窗
+            b.cylZ(-2.5f, 0, 8.3f, 0.5f, 4.0f, Pal::GUN, 6);                         // 潜望镜桅
+            b.box(-2.5f, 0, 12.5f, 1.4f, 0.9f, 0.9f, Color{200, 220, 240, 255}, 0, M3FACE_ALL);
+            b.setPart(M3P_BODY);
+            // 导弹发射舱（前部双联）
+            for (int i = 0; i < 2; i++) {
+                b.box(6 + i * 4, 0, 5.4f, 3.0f, 4.0f, 1.2f, Color{44, 42, 56, 255}); // 导弹舱口
+                b.box(6 + i * 4, 0, 6.2f, 2.0f, 3.0f, 0.4f, Pal::GUN);               // 舱盖缝
+            }
+            for (int s = -1; s <= 1; s += 2) {                                       // 尾舵
+                float v0[3] = {-15, 0, 2.6f}, v1[3] = {-20, s * 3.8f, 2.6f}, v2[3] = {-20, 0, 2.6f};
+                b.fin(v0, v1, v2, 0.8f, Color{42, 40, 54, 255});
+            }
+            b.box(4, 0, 5.8f, 12, 0.9f, 0.7f, Pal::REMAP, M3FACE_ALL);               // 舷侧阵营标
+            pvx = -2;
+            break;
+        }
+        case UnitType::SiegeChopper: { // 攻城直升机（苏）：机身 + 旋翼 + 尾梁 + 攻城炮（部署态）
+            Color scBody{70, 80, 56, 255}, scDark{48, 56, 38, 255}; // 苏联暗绿
+            b.ellipsoid(2, 0, 0.5f, 10.5f, 5.0f, 4.6f, scBody, 14, 7);
+            b.ellipsoid(9.5f, 0, 1.2f, 4, 3.6f, 3.2f, Pal::GLASS, 10, 5);            // 座舱
+            b.cylXY(-10, 0, 1.5f, 1.6f, -13, 0, scDark, 8);                          // 尾梁
+            b.box(-23.5f, 0, 2.5f, 1.0f, 0.9f, 5.0f, scDark);                        // 垂尾
+            b.rbox(-23, 0, 3.0f, 0.7f, 6.5f, 0.9f, 0, Pal::GUN);                     // 尾桨
+            b.cylZ(1, 0, 5.0f, 1.1f, 2.0f, Pal::GUN, 8);                             // 旋翼桅杆
+            b.rbox(1, 0, 7.4f, 36, 1.6f, 0.7f, 0.35f, Color{44, 46, 42, 255});      // 主旋翼（X 交叉）
+            b.rbox(1, 0, 7.4f, 36, 1.6f, 0.7f, 0.35f + 1.5707963f, Color{44, 46, 42, 255});
+            b.box(1, 0, 7.4f, 2.0f, 2.0f, 1.2f, Pal::GUN);
+            for (int s = -1; s <= 1; s += 2) {                                       // 起落橇
+                b.box(2, s * 4.6f, -4.6f, 14, 1.0f, 0.9f, Pal::GUN);
+                b.box(-1, s * 4.6f, -3.0f, 0.9f, 0.9f, 3.0f, Pal::GUN);
+                b.box(6, s * 4.6f, -3.0f, 0.9f, 0.9f, 3.0f, Pal::GUN);
+            }
+            b.box(2, 0, 4.2f, 12, 1.0f, 0.7f, Pal::REMAP, M3FACE_ALL);               // 顶阵营条
+            if (full) { // 部署态：攻城长炮展开
+                b.cylXY(8, 0, -1.0f, 1.2f, 14, 0, Pal::GUN, 8);                      // 攻城长炮管
+                b.box(15, 0, -1.0f, 2.6f, 2.4f, 2.4f, Pal::GUN);                     // 制退器
+                b.box(6, 0, 0.5f, 4, 4, 2.0f, scDark);                               // 炮架
+            }
+            break;
+        }
+        case UnitType::ChaosDrone: { // 混乱无人机（尤里）：紧凑飞行器 + 毒气罐（空军）
+            b.ellipsoid(0, 0, 0, 7.0f, 5.5f, 3.5f, YURI, 12, 6);                    // 主体
+            b.ellipsoid(5.5f, 0, 0.5f, 3.0f, 2.6f, 2.4f, Color{100, 50, 110, 255}, 10, 5); // 机头
+            b.box(5.5f, 0, 1.0f, 0.8f, 0.8f, 0.8f, Color{255, 110, 70, 255}, 0, M3FACE_ALL); // 红眼
+            // 旋翼
+            b.cylZ(0, 0, 3.5f, 0.6f, 1.4f, Pal::GUN, 6);                            // 旋翼桅杆
+            b.rbox(0, 0, 5.2f, 16, 1.2f, 0.5f, 0.35f, Color{44, 46, 42, 255});     // 主旋翼（X 交叉）
+            b.rbox(0, 0, 5.2f, 16, 1.2f, 0.5f, 0.35f + 1.5707963f, Color{44, 46, 42, 255});
+            // 毒气罐（两侧）
+            for (int s = -1; s <= 1; s += 2) {
+                b.cylZ(-3, s * 4.5f, 1.0f, 1.4f, 3.5f, Color{90, 110, 70, 255}, 8); // 绿色毒气罐
+                b.box(-3, s * 4.5f, 3.2f, 1.0f, 1.0f, 0.8f, Pal::GUN);              // 罐盖
+                b.box(-3, s * 5.8f, 1.0f, 0.6f, 0.6f, 0.6f, Color{160, 255, 120, 255}, 0, M3FACE_ALL); // 喷气孔
+            }
+            b.box(-1, 0, 2.5f, 6, 0.8f, 0.5f, Pal::REMAP, M3FACE_ALL);             // 阵营条
             break;
         }
         default:

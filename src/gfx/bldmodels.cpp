@@ -32,6 +32,11 @@ const Color E_RED{255, 70, 55};       // 发光：红
 const Color E_GREEN{120, 255, 140};   // 发光：绿
 const Color E_PURPLE{200, 120, 255};  // 发光：紫
 const Color E_WHITE{235, 240, 245};   // 发光：白
+// 尤里阵营生物机械调色
+const Color YURI_WALL{110, 60, 120};   // 尤里墙：紫
+const Color YURI_WALL_D{80, 40, 90};   // 尤里暗：深紫
+const Color YURI_ROOF{56, 30, 66};     // 尤里顶：极暗紫
+const Color YURI_GLOW{200, 120, 220};  // 尤里心灵辉光：粉紫
 
 struct B3 {
     M3Builder& b;
@@ -557,6 +562,132 @@ bool buildBldModel3D(BldType t, M3Builder& mb) {
             b.doorX(1.15f, 1.61f, 2.0f, 0.35f, 5.5f);
             b.winRowX(0.6f, 1.61f, 5.5f, 2, 0.3f, E_WHITE);
             b.winRowY(0.37f, 0.7f, 5.5f, 2, 0.4f, E_WHITE);
+            break;
+        }
+        // ---------- 尤复阵营：尤里专属建筑 ----------
+        case BldType::BioReactor: { // 生化反应堆（尤）：罐体反应堆 + 发光有机荚舱（驻军增能）
+            b.slab(2, 2);
+            b.box(0.9f, 1.0f, 2.0f, 1.2f, 1.5f, 9.0f, YURI_WALL);       // 主罐座
+            b.box(0.9f, 1.0f, 11.0f, 1.3f, 1.6f, 1.6f, YURI_ROOF);
+            b.doorX(0.9f, 1.76f, 2.0f, 0.45f, 5.0f);
+            // 中央生化罐 + 辉光顶
+            b.cyl(0.9f, 1.0f, 12.6f, 0.34f, 7.0f, YURI_WALL_D, 12);
+            b.ellip(0.9f, 1.0f, 20.5f, 0.34f, 0.34f, 4.0f, YURI_GLOW);
+            b.ellip(0.9f, 1.0f, 20.5f, 0.16f, 0.16f, 5.5f, E_WHITE);
+            // 双侧有机荚舱（绿光，象征驻军生化增能）
+            b.cyl(0.35f, 0.6f, 2.0f, 0.20f, 11.0f, YURI_WALL_D, 10);
+            b.cyl(0.35f, 0.6f, 13.0f, 0.22f, 1.0f, E_GREEN, 10, false, true);
+            b.cyl(0.35f, 1.45f, 2.0f, 0.20f, 11.0f, YURI_WALL_D, 10);
+            b.cyl(0.35f, 1.45f, 13.0f, 0.22f, 1.0f, E_GREEN, 10, false, true);
+            b.winRowX(0.6f, 0.27f, 7.0f, 2, 0.4f, YURI_GLOW);
+            b.flag(0.4f, 0.5f, 13.6f);
+            break;
+        }
+        case BldType::GatlingCannon: { // 盖特机炮（尤）：基座 + 双联盖特炮管（防空对地）
+            b.slab(1, 1, 0.08f);
+            b.cyl(0.5f, 0.5f, 2.0f, 0.36f, 3.0f, YURI_WALL_D, 8);
+            b.box(0.5f, 0.5f, 5.0f, 0.55f, 0.5f, 3.5f, YURI_WALL);
+            b.box(0.5f, 0.5f, 8.5f, 0.30f, 0.52f, 1.0f, Pal::REMAP, M3FACE_ALL);
+            { // 双联盖特炮管（上下并列，模型空间朝东南）
+                float c[3]; b.map(0.72f, 0.5f, 8.0f, c);
+                mb.cylXY(c[0], c[1], c[2] - 2.0f, 1.8f, 14.0f, 0, Pal::GUN, 8);
+                mb.cylXY(c[0], c[1], c[2] + 2.0f, 1.8f, 14.0f, 0, Pal::GUN, 8);
+            }
+            break;
+        }
+        case BldType::Grinder: { // 回收炉（尤）：粉碎厂房 + 进料口 + 齿轮传动
+            b.slab(2, 2);
+            b.box(1.0f, 1.0f, 2.0f, 1.5f, 1.5f, 10.0f, YURI_WALL);       // 厂房
+            b.box(1.0f, 1.0f, 12.0f, 1.6f, 1.6f, 1.8f, YURI_ROOF);
+            b.doorX(1.0f, 1.76f, 2.0f, 0.9f, 7.0f);                      // 进料大门
+            // 顶部粉碎料斗（向上收缩的粉碎锥）
+            for (int i = 0; i < 3; i++)
+                b.box(1.0f, 1.0f, 13.8f + i * 1.4f, 1.2f - i * 0.24f, 1.2f - i * 0.24f, 1.4f, YURI_WALL_D);
+            // 粉碎口紫光（内部辉光）
+            b.box(1.0f, 1.0f, 18.0f, 0.5f, 0.5f, 1.2f, YURI_GLOW, 0, M3FACE_ALL);
+            b.ellip(1.0f, 1.0f, 18.8f, 0.22f, 0.22f, 2.5f, E_WHITE);
+            // 两侧齿轮传动柱 + 辉光
+            b.cyl(0.30f, 0.5f, 2.0f, 0.20f, 13.0f, PIPE, 10);
+            b.cyl(1.70f, 0.5f, 2.0f, 0.20f, 13.0f, PIPE, 10);
+            b.cyl(0.30f, 0.5f, 15.0f, 0.22f, 1.0f, YURI_GLOW, 10, false, true);
+            b.cyl(1.70f, 0.5f, 15.0f, 0.22f, 1.0f, YURI_GLOW, 10, false, true);
+            b.winRowX(0.55f, 0.27f, 7.0f, 3, 0.4f, YURI_GLOW);
+            b.flag(0.4f, 0.5f, 13.8f);
+            break;
+        }
+        case BldType::GeneticMutator: { // 基因突变器（尤超武）：生化塔 + 中央培养穹顶 + 四角荚舱
+            b.slab(2, 2);
+            b.box(1.0f, 1.0f, 2.0f, 1.4f, 1.4f, 9.0f, YURI_WALL);        // 基座厂房
+            b.box(1.0f, 1.0f, 11.0f, 1.5f, 1.5f, 1.6f, YURI_ROOF);
+            b.doorX(1.0f, 1.76f, 2.0f, 0.5f, 6.0f);
+            // 中央有机培养柱 + 穹顶辉光
+            b.cyl(1.0f, 1.0f, 12.6f, 0.34f, 10.0f, YURI_WALL_D, 12);
+            b.ellip(1.0f, 1.0f, 23.5f, 0.40f, 0.40f, 5.5f, YURI_GLOW);   // 穹顶辉光
+            b.ellip(1.0f, 1.0f, 23.5f, 0.20f, 0.20f, 7.0f, E_GREEN);     // 内核绿光（生化）
+            // 四角基因样本荚舱（绿光）
+            for (int i = 0; i < 4; i++) {
+                float a = i * 1.5708f + 0.785f;
+                float gx = 1.0f + cosf(a) * 0.7f, gy = 1.0f + sinf(a) * 0.7f;
+                b.cyl(gx, gy, 2.0f, 0.12f, 8.0f, YURI_WALL_D, 8);
+                b.cyl(gx, gy, 10.0f, 0.14f, 1.0f, E_GREEN, 8, false, true);
+            }
+            b.flag(0.4f, 0.5f, 23.0f);
+            break;
+        }
+        case BldType::PsychicDominator: { // 心灵控制仪（尤超武）：基座 + 巨型心灵穹顶
+            b.slab(3, 2);
+            b.box(1.5f, 1.0f, 2.0f, 2.2f, 1.3f, 8.0f, YURI_WALL);        // 基座
+            b.box(1.5f, 1.0f, 10.0f, 2.3f, 1.4f, 1.6f, YURI_ROOF);
+            b.doorX(1.5f, 1.66f, 2.0f, 0.6f, 5.0f);
+            // 两侧支柱（支撑穹顶）
+            b.box(0.55f, 1.0f, 2.0f, 0.30f, 0.9f, 14.0f, YURI_WALL_D);
+            b.box(2.45f, 1.0f, 2.0f, 0.30f, 0.9f, 14.0f, YURI_WALL_D);
+            // 中央巨型心灵穹顶（球状，象征脑/心灵放大器）
+            b.cyl(1.5f, 1.0f, 11.6f, 0.45f, 4.0f, YURI_WALL_D, 14);      // 穹顶基座环
+            b.ellip(1.5f, 1.0f, 16.5f, 0.70f, 0.70f, 7.0f, YURI_GLOW);   // 巨型穹顶
+            b.ellip(1.5f, 1.0f, 16.5f, 0.35f, 0.35f, 9.0f, E_WHITE);     // 内核亮芯
+            b.winRowX(0.8f, 0.37f, 6.0f, 4, 0.4f, YURI_GLOW);
+            b.flag(0.5f, 0.5f, 23.5f);
+            break;
+        }
+        case BldType::PsychicTower: { // 心灵控制塔（尤）：塔身 + 顶部心灵穹顶（自动心控）
+            b.slab(1, 1, 0.08f);
+            b.box(0.5f, 0.5f, 2.0f, 0.5f, 0.5f, 6.0f, YURI_WALL);        // 基座
+            b.box(0.5f, 0.5f, 8.0f, 0.40f, 0.40f, 10.0f, YURI_WALL_D);   // 塔柱
+            b.box(0.5f, 0.5f, 18.0f, 0.46f, 0.46f, 1.2f, Pal::REMAP, M3FACE_ALL);
+            // 顶部心灵穹顶（半球辉光）
+            b.ellip(0.5f, 0.5f, 22.0f, 0.30f, 0.30f, 5.5f, YURI_GLOW);
+            b.ellip(0.5f, 0.5f, 22.0f, 0.14f, 0.14f, 7.0f, E_WHITE);
+            break;
+        }
+        case BldType::TechPowerPlant: { // 科技电厂（中立）：厂房 + 双烟囱
+            b.slab(2, 2);
+            b.box(0.8f, 1.0f, 2.0f, 1.1f, 1.5f, 13.0f, N_WALL);
+            b.box(0.8f, 1.0f, 15.0f, 1.2f, 1.6f, 1.8f, N_ROOF);
+            b.winRowX(0.45f, 0.27f, 9.0f, 3, 0.35f);
+            b.doorY(0.27f, 1.3f, 2.0f, 0.4f, 6.0f);
+            b.stack(1.55f, 0.6f, 2.0f, 0.24f, 22.0f, N_WALL_D);          // 双烟囱
+            b.stack(1.55f, 1.5f, 2.0f, 0.24f, 18.0f, N_WALL_D);
+            b.box(1.55f, 1.05f, 16.8f, 0.4f, 0.3f, 1.0f, E_ORANGE, 0, M3FACE_ALL); // 顶标识
+            break;
+        }
+        case BldType::TechOutpost: { // 科技前哨站（中立）：堡垒 + 四角堡 + 维修吊臂
+            b.slab(3, 2);
+            b.box(1.2f, 1.0f, 2.0f, 1.6f, 1.4f, 10.0f, N_WALL);          // 主堡
+            b.box(1.2f, 1.0f, 12.0f, 1.7f, 1.5f, 1.6f, N_ROOF);
+            b.doorX(1.2f, 1.71f, 2.0f, 0.6f, 6.0f);
+            b.winRowX(0.6f, 0.32f, 6.0f, 3, 0.4f);
+            // 四角堡
+            b.box(0.35f, 0.35f, 2.0f, 0.3f, 0.3f, 7.0f, N_WALL_D);
+            b.box(2.65f, 0.35f, 2.0f, 0.3f, 0.3f, 7.0f, N_WALL_D);
+            b.box(0.35f, 1.65f, 2.0f, 0.3f, 0.3f, 7.0f, N_WALL_D);
+            b.box(2.65f, 1.65f, 2.0f, 0.3f, 0.3f, 7.0f, N_WALL_D);
+            // 维修吊臂（立柱 + 横臂 + 吊钩）
+            b.box(2.5f, 1.0f, 2.0f, 0.18f, 0.18f, 18.0f, PIPE);
+            b.box(1.9f, 1.0f, 20.0f, 1.3f, 0.14f, 1.6f, PIPE);
+            b.box(1.45f, 1.0f, 16.5f, 0.05f, 0.05f, 4.0f, Pal::GUN);
+            b.box(1.45f, 1.0f, 15.0f, 0.14f, 0.14f, 1.4f, CONC);
+            b.box(1.2f, 1.0f, 13.6f, 0.4f, 0.3f, 0.8f, Pal::REMAP, M3FACE_ALL);
             break;
         }
         default:

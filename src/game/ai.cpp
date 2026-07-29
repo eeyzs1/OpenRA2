@@ -110,7 +110,7 @@ void SkirmishAI::doBuildOrder(World& w) {
                  : p.faction == Faction::Yuri ? BldType::GatlingCannon
                  : BldType::SentryGun;
     BldType advDefT = p.faction == Faction::Allies ? BldType::PrismTower
-                    : p.faction == Faction::Yuri ? BldType::GatlingCannon
+                    : p.faction == Faction::Yuri ? BldType::PsychicTower
                     : BldType::TeslaCoil;
     BldType bigPowerT = p.faction == Faction::Allies ? BldType::PowerPlant
                       : p.faction == Faction::Yuri ? BldType::BioReactor

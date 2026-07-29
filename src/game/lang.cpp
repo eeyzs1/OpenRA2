@@ -305,6 +305,7 @@ static const char* UNIT_EN[(int)UnitType::COUNT] = {
     "Navy SEAL", "Yuri", "Chrono Commando", "Psi Commando",
     "Initiate", "Brute", "Virus", "Lasher Tank", "Gatling Tank",
     "Magnetron", "Master Mind", "Floating Disc", "Boomer",
+    "Boris", "Siege Chopper", "Chaos Drone",
 };
 
 static const char* BLD_EN[(int)BldType::COUNT] = {
@@ -327,6 +328,7 @@ static const char* BLD_EN[(int)BldType::COUNT] = {
     "Battle Bunker", "Tank Bunker",
     "Tech Airport", "Secret Lab", "Civilian House",
     "Bio Reactor", "Gatling Cannon", "Grinder", "Genetic Mutator", "Psychic Dominator",
+    "Psychic Tower", "Tech Power Plant", "Tech Outpost",
 };
 
 static const char* SW_EN[(int)SWType::COUNT] = {

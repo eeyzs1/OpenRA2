@@ -166,6 +166,9 @@ public:
         EID mindBy = INVALID_EID;       // 被控单位：控制者（尤里/心灵突击队）实体
         EID mindTarget = INVALID_EID;   // 控制者：当前被控单位（同一时刻仅一个，RA2 原作）
         int origPlayer = -1;            // 被控单位：被控制前的原属玩家（控制解除时恢复）
+        // ---- 尤复补全：YR 新单位特殊机制 ----
+        int airstrikeCd = 0;            // 鲍里斯：米格空袭冷却（>0 期间不可再次呼叫）
+        int confused = 0;               // 混乱无人机毒气：混乱剩余帧（>0 自相残杀）
     };
 
     // 补给箱（RA2 随机箱子）：地面单位驶入拾取
