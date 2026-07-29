@@ -299,7 +299,7 @@ void Game::drawSetup() {
     drawTextM(font, TR(S::Country), factX, sy + 12, 17, Color{150, 142, 130, 255});
     int slotY = sy + 40;
     // 槽位行绘制：返回是否发生变更（需要刷新预览的出生点颜色）
-    auto slotRow = [&](int idx, const char* name, int& color, int& country, bool isLocal) {
+    auto slotRow = [&](int idx, const char* name, int& color, int& country, int& diff, int& pers, bool isLocal) {
         int y = slotY + idx * rowH;
         bool even = idx % 2 == 0;
         DrawRectangle(sx + 8, y, sw - 16, rowH - 4, even ? Color{30, 30, 38, 255} : Color{24, 24, 30, 255});
@@ -322,25 +322,55 @@ void Game::drawSetup() {
             country = country >= (int)Country::COUNT ? 1 : country + 1; // 跳过 None(0)，COUNT=随机
             g_sfx.play(Sfx::Click, 0.5f);
         }
+        // AI 难度 + 人格选择器（仅 AI 槽位显示）
+        if (!isLocal) {
+            int diffX = factX + 182;
+            static const char* diffNames[] = {"简单", "普通", "困难", "残酷"};
+            static const char* diffNamesEn[] = {"Easy", "Normal", "Hard", "Brutal"};
+            Rectangle dr2{(float)diffX, (float)y + 6, 80, rowH - 16};
+            bool dhover = CheckCollisionPointRec(m, dr2);
+            DrawRectangleRec(dr2, dhover ? Color{56, 50, 44, 255} : Color{38, 36, 42, 255});
+            DrawRectangleLinesEx(dr2, 1, dhover ? Color{255, 200, 90, 255} : Color{96, 88, 70, 255});
+            const char* dn = g_lang ? diffNamesEn[diff] : diffNames[diff];
+            drawTextM(font, dn, (int)dr2.x + 40 - textW(font, dn, 15) / 2, y + 13, 15,
+                      diff >= 2 ? Color{255, 120, 90, 255} : diff == 0 ? Color{130, 200, 130, 255} : Color{220, 210, 170, 255});
+            if (dhover && pr) { diff = (diff + 1) % 4; g_sfx.play(Sfx::Click, 0.5f); }
+            // 人格选择器
+            int persX = diffX + 88;
+            static const char* persNames[] = {"均衡", "速攻", "龟缩", "轰压", "科技"};
+            static const char* persNamesEn[] = {"Balanced", "Rusher", "Turtler", "Steamroller", "Tech"};
+            Rectangle pr2{(float)persX, (float)y + 6, 100, rowH - 16};
+            bool phover = CheckCollisionPointRec(m, pr2);
+            DrawRectangleRec(pr2, phover ? Color{56, 50, 44, 255} : Color{38, 36, 42, 255});
+            DrawRectangleLinesEx(pr2, 1, phover ? Color{255, 200, 90, 255} : Color{96, 88, 70, 255});
+            const char* pn = g_lang ? persNamesEn[pers] : persNames[pers];
+            drawTextM(font, pn, (int)pr2.x + 50 - textW(font, pn, 15) / 2, y + 13, 15, Color{200, 190, 220, 255});
+            if (phover && pr) { pers = (pers + 1) % 5; g_sfx.play(Sfx::Click, 0.5f); }
+        }
         // AI 移除按钮
         if (!isLocal) {
             Rectangle dr{(float)delX, (float)y + 8, 72, rowH - 20};
             if (ra2Button(font, m, pr, dr, TR(S::Remove), 15, true, true)) {
-                for (int i = idx - 1; i < cfgAI - 1; i++) { aiColor[i] = aiColor[i + 1]; aiCountry[i] = aiCountry[i + 1]; }
+                for (int i = idx - 1; i < cfgAI - 1; i++) {
+                    aiColor[i] = aiColor[i + 1]; aiCountry[i] = aiCountry[i + 1];
+                    aiDiff[i] = aiDiff[i + 1]; aiPersonality[i] = aiPersonality[i + 1];
+                }
                 cfgAI--;
                 previewDirty = true;
             }
         }
     };
-    slotRow(0, TR(S::CommanderYou), cfgColor, cfgCountry, true);
+    slotRow(0, TR(S::CommanderYou), cfgColor, cfgCountry, aiDiff[0], aiPersonality[0], true);
     for (int i = 0; i < cfgAI; i++)
-        slotRow(i + 1, TextFormat(TR(S::ComputerN), i + 1), aiColor[i], aiCountry[i], false);
+        slotRow(i + 1, TextFormat(TR(S::ComputerN), i + 1), aiColor[i], aiCountry[i], aiDiff[i], aiPersonality[i], false);
     // 添加电脑
     if (cfgAI < maxAI) {
         int y = slotY + (cfgAI + 1) * rowH + 6;
         if (ra2Button(font, m, pr, {(float)nameX, (float)y, 200, 40}, TR(S::AddComputer), 18)) {
             aiColor[cfgAI] = (cfgAI + 1) % MAX_PLAYERS;
             aiCountry[cfgAI] = (int)Country::COUNT;
+            aiDiff[cfgAI] = 1;       // 默认普通难度
+            aiPersonality[cfgAI] = 0; // 默认均衡人格
             cfgAI++;
             previewDirty = true;
         }

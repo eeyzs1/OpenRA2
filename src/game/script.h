@@ -20,6 +20,16 @@
 //   ra2.tick()                    当前逻辑帧
 //   ra2.money(player)             玩家资金
 //   ra2.giveMoney(player, amount) 增减资金
+//   ra2.power(player)             返回 powerMade, powerUsed
+//   ra2.lowPower(player)          是否电力不足
+//   ra2.numPlayers()              总玩家数
+//   ra2.isEnemy(a, b)             a 和 b 是否敌对
+//   ra2.playerDefeated(player)    玩家是否被歼灭
+//   ra2.playerFaction(player)     玩家阵营（0盟 1苏 2中 3尤）
+//   ra2.playerCountry(player)     玩家国家
+//   ra2.mapSize()                 返回 w, h
+//   ra2.terrainAt(x, y)           地形类型（-1 越界）
+//   ra2.dist(x1, y1, x2, y2)      两点距离
 //   ra2.spawnUnit(player, name, x, y)        返回 eid(失败 -1)
 //   ra2.spawnBuilding(player, name, x, y)    返回 eid(失败 -1)
 //   ra2.killEntity(eid)
@@ -27,6 +37,15 @@
 //   ra2.countUnits(player, name)
 //   ra2.countBlds(player, name)
 //   ra2.hasBld(player, name)     返回 bool
+//   ra2.prereqMet(player, name)  前置条件是否满足（建筑或单位名）
+//   ra2.startBldProd(player, name)    开始建造建筑
+//   ra2.startUnitProd(player, name)   开始生产单位
+//   ra2.bldProdActive(player)    建筑生产队列是否活跃
+//   ra2.bldProdReady(player)     建筑是否就绪可放置
+//   ra2.tryPlaceBld(player, name, x, y) 尝试放置建筑
+//   ra2.findBldPos(player, name)  返回 x, y（-1 = 无可放位置）
+//   ra2.cancelProd(player, isUnit) 取消生产
+//   ra2.unitQueued(player, cat)  类别排队数（0步 1车 2空 3海）
 //   ra2.eva(player, text)
 //   ra2.evaAll(text)
 //   ra2.setObjective(text)
@@ -38,9 +57,30 @@
 //   ra2.entityPlayer(eid)
 //   ra2.entityType(eid)           返回 "unit:Grizzly"/"bld:WarFactory"/nil
 //   ra2.findEnemy(player, x, y, maxR)  返回 eid(无 -1)
-//   ra2.moveTo(eid, x, y)        指令移动
-//   ra2.attack(eid, targetEid)   指令攻击
-//   ra2.stop(eid)
+//   ra2.findNearestBld(player, name, x, y)  最近建筑 eid（player=-1=任意玩家）
+//   ra2.findUnits(player, name, x, y, r)   返回 eid 数组（name="*"=全部，player=-1=任意）
+//   ra2.findBlds(player, name, x, y, r)    返回 eid 数组（同上）
+//   ra2.findIdleUnits(player, name)        返回空闲单位 eid 数组
+//   ra2.moveTo(eid, x, y)        指令移动（单单位）
+//   ra2.attack(eid, targetEid)   指令攻击（单单位）
+//   ra2.stop(eid)                停止（单单位）
+//   ra2.orderMove(ids, x, y, attackMove)  批量移动（ids=table of eid）
+//   ra2.orderAttack(ids, targetEid)       批量攻击
+//   ra2.orderStop(ids)           批量停止
+//   ra2.orderScatter(ids)        批量散布
+//   ra2.orderGuard(ids)          批量警戒
+//   ra2.orderUnload(ids)         批量卸载
+//   ra2.orderDeploy(eid)         展开（MCV/部署单位）
+//   ra2.orderCapture(ids, bldEid) 工程师占领
+//   ra2.orderRepair(ids, bldEid)  工程师修复
+//   ra2.orderService(ids, depotEid) 车辆送维修厂
+//   ra2.orderGarrison(ids, bldEid)  进驻建筑
+//   ra2.orderUngarrison(ids)     撤出驻军
+//   ra2.setRally(bldEid, x, y)   设集结点
+//   ra2.launchSW(player, name, x, y)  释放超武
+//   ra2.swReady(player, name)    超武是否就绪
+//   ra2.paradropReady(player)    伞兵是否就绪
+//   ra2.orderParadrop(player, x, y)    空降伞兵
 //   ra2.gameMode()               0 遭遇战 1 战役
 //   ra2.missionId()              当前战役关卡序号（0-based，遭遇战返回 -1）
 

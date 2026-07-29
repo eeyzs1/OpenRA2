@@ -55,6 +55,8 @@ private:
     int aiColor[7] = {1, 2, 3, 4, 5, 6, 7};
     int aiCountry[7] = {(int)Country::COUNT, (int)Country::COUNT, (int)Country::COUNT, (int)Country::COUNT,
                         (int)Country::COUNT, (int)Country::COUNT, (int)Country::COUNT};
+    int aiDiff[7] = {1, 1, 1, 1, 1, 1, 1};           // AI 难度：0简单 1普通 2困难 3残酷
+    int aiPersonality[7] = {0, 0, 0, 0, 0, 0, 0};     // AI 人格：0均衡 1速攻 2龟缩 3轰压 4科技
 
     // 遭遇战选项（设置界面可改，开局应用；音量热更新）
     bool cfgCrates = true;   // 随机补给箱

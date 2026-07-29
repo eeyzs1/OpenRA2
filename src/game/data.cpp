@@ -682,6 +682,11 @@ void exportRules(const char* path) {
     writeWeaponKeys(f, nullptr, wGgiDeploy);
     fprintf(f, "\n[DeployWeapon.GI]\n");
     writeWeaponKeys(f, nullptr, wGiDeploy);
+    // AI 人格配置模板（遭遇战 UI 中选择；此节仅作文档参考，实际参数由代码内置）
+    fprintf(f, "\n; ==================== AI 人格配置（文档参考） ====================\n");
+    fprintf(f, "; 难度：0=简单(思考30帧/阈值15+/无超武) 1=普通(15帧/8+) 2=困难(10帧/6+/集火/撤退) 3=残酷(7帧/5+/资源加成35%%)\n");
+    fprintf(f, "; 人格：0=均衡 1=速攻(早期暴兵/轻科技) 2=龟缩(重防御/超武优先) 3=轰压(大规模集结/扩张) 4=科技(极速高科/精锐)\n");
+    fprintf(f, "; 在遭遇战设置中为每个 AI 槽位选择难度和人格\n");
     fclose(f);
     TraceLog(LOG_INFO, "RA2 export: %s written", path);
 }

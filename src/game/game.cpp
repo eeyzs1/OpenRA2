@@ -87,7 +87,12 @@ void Game::newGame(uint64_t seed) {
     world.cratesEnabled = cfgCrates;
     world.aiAlliance = cfgAlliance;
     ais.assign(cfgAI, SkirmishAI{});
-    for (int i = 0; i < cfgAI; i++) ais[i].reset(i + 1);
+    for (int i = 0; i < cfgAI; i++) {
+        ais[i].reset(i + 1);
+        ais[i].difficulty = (AIDiff)aiDiff[i];
+        ais[i].personality = (AIPersonality)aiPersonality[i];
+        ais[i].initPersonality();
+    }
     sel.clear();
     selBuilding = INVALID_EID;
     placing = false;
@@ -133,7 +138,14 @@ void Game::newCampaignGame(int mission) {
     world.cratesEnabled = cfgCrates;
     world.aiAlliance = cfgAlliance;
     ais.assign((int)md.aiFactions.size(), SkirmishAI{});
-    for (int i = 0; i < (int)ais.size(); i++) ais[i].reset(i + 1);
+    for (int i = 0; i < (int)ais.size(); i++) {
+        ais[i].reset(i + 1);
+        // 战役 AI 难度：固定普通；人格按任务类型自动选择
+        // objective=1（坚守关）敌方为进攻型（Rusher），objective=0（歼灭关）敌方为龟缩型（Turtler）
+        ais[i].difficulty = AIDiff::Normal;
+        ais[i].personality = (md.objective == 1) ? AIPersonality::Rusher : AIPersonality::Turtler;
+        ais[i].initPersonality();
+    }
     sel.clear();
     selBuilding = INVALID_EID;
     placing = false;
@@ -315,6 +327,7 @@ bool Game::saveGameFile(const char* path) {
     for (const SkirmishAI& a : ais) {
         w(a.player); w(a.thinkTimer); w(a.attackWave); w(a.attackTimer); w(a.difficulty);
         w(a.hasWater); w(a.navalPlaceable); w(a.navalCheckCd); w(a.navalFail);
+        w(a.personality); w(a.rallyPoint.x); w(a.rallyPoint.y);
     }
     // P7 触发器运行时状态（fired/armed）与 HUD 目标文本
     uint32_t tn = (uint32_t)missionTriggers.size();
@@ -352,6 +365,8 @@ bool Game::loadGameFile(const char* path) {
         for (SkirmishAI& a : ais) {
             r(a.player); r(a.thinkTimer); r(a.attackWave); r(a.attackTimer); r(a.difficulty);
             r(a.hasWater); r(a.navalPlaceable); r(a.navalCheckCd); r(a.navalFail);
+            r(a.personality); r(a.rallyPoint.x); r(a.rallyPoint.y);
+            a.initPersonality(); // 从存档恢复后重建人格参数
         }
     }
     // P7 触发器状态：从任务表重建脚本，再覆盖 fired/armed

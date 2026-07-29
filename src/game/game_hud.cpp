@@ -170,17 +170,24 @@ void Game::drawHUD() {
     DrawLine(sbX + 2, 0, sbX + 2, SCREEN_H, Color{60, 52, 34, 255});
 
     Player& me = world.players[localPlayer];
+    // 阵营色装饰条（RA2 原作侧边栏有玩家色镶边）
+    Color facCol = HOUSE_COLORS[me.colorId];
+    DrawRectangle(sbX + 3, 0, 2, SCREEN_H, facCol);
 
     // 资金牌：凹陷槽 + 金条堆图标 + 金色数字（RA2 顶部资金显示）
     {
-        Rectangle mp{(float)sbX + 6, 4, (float)sidebarW - 12, 30};
+        Rectangle mp{(float)sbX + 8, 4, (float)sidebarW - 14, 30};
         guiSlot(mp);
         DrawRectangleLinesEx(mp, 1, Color{74, 64, 42, 255});
-        DrawRectangle(sbX + 12, 22, 15, 5, Color{140, 112, 44, 255}); // 金条堆
-        DrawRectangle(sbX + 15, 16, 15, 5, GUI_GOLD);
-        DrawRectangle(sbX + 18, 10, 15, 5, GUI_GOLD_HI);
-        drawTextS(font, TextFormat("%d", me.money), sbX + 46, 9, 20,
+        DrawRectangle(sbX + 14, 22, 15, 5, Color{140, 112, 44, 255}); // 金条堆
+        DrawRectangle(sbX + 17, 16, 15, 5, GUI_GOLD);
+        DrawRectangle(sbX + 20, 10, 15, 5, GUI_GOLD_HI);
+        drawTextS(font, TextFormat("%d", me.money), sbX + 50, 9, 20,
                   me.money > 0 ? Color{255, 216, 90, 255} : Color{255, 92, 72, 255});
+        // 游戏计时器（RA2 原作侧边栏顶部时间显示）
+        int secs = (int)(world.tick / LOGIC_FPS);
+        drawTextS(font, TextFormat("%d:%02d", secs / 60, secs % 60),
+                  sbX + sidebarW - 42, 12, 14, Color{180, 180, 190, 255});
     }
 
     // 电力表：左侧竖条（RA2 标志仪表）——凹陷金属框 + 绿→黄→红渐变 + 分段刻度
@@ -283,12 +290,14 @@ void Game::drawHUD() {
         }
     }
 
-    // 选项卡
+    // 选项卡（RA2 式：金属凸起小标签 + 文字）
     static const S tabIds[] = {S::TabBld, S::TabDef, S::TabInf, S::TabVeh, S::TabNavy};
     for (int i = 0; i < 5; i++) {
         Rectangle tr{(float)sbX + 6 + i * 37, 330, 35, 22};
         if (uiButton(tr, TR(tabIds[i]), true, uiTab == i)) uiTab = i;
     }
+    // 阵营色装饰条在选项卡下方
+    DrawLine(sbX + 6, 353, sbX + sidebarW - 6, 353, facCol);
 
     // 生产图标网格（行数封顶，避免画出屏幕；底部留给维修/出售/菜单按钮）
     int gx = sbX + 6, gy = 358, gw = 86, gh = 66, cols = 2;
@@ -459,6 +468,106 @@ void Game::drawHUD() {
         drawTextS(font, tipSub.c_str(), tx + 8, ty + 24, 12, Color{200, 200, 210, 255});
         if (!tipReason.empty())
             drawTextS(font, tipReason.c_str(), tx + 8, ty + 40, 12, Color{255, 110, 90, 255});
+    }
+
+    // ---- 命令栏（RA2 标志性左下角命令按钮：选中单位/建筑时显示对应操作）----
+    {
+        int cbW = 44, cbH = 34, cbGap = 4;
+        int cbY = SCREEN_H - cbH - 48;
+        int cbX = 266; // 紧跟选中信息面板右侧
+        auto cmdBtn = [&](int idx, const char* label, const char* key, bool enabled, auto&& action) {
+            int bx = cbX + idx * (cbW + cbGap);
+            Rectangle r{(float)bx, (float)cbY, (float)cbW, (float)cbH};
+            bool hover = CheckCollisionPointRec(mousePos(), r) && enabled;
+            // 槽位底
+            Color top = enabled ? (hover ? Color{72, 52, 36, 255} : Color{44, 44, 50, 255}) : Color{24, 24, 28, 255};
+            Color bot = enabled ? (hover ? Color{40, 28, 20, 255} : Color{26, 26, 30, 255}) : Color{18, 18, 22, 255};
+            DrawRectangleGradientV((int)r.x, (int)r.y, (int)r.width, (int)r.height, top, bot);
+            guiBevel(r, hover && mDown(MOUSE_LEFT_BUTTON));
+            DrawRectangleLinesEx(r, 1, enabled ? (hover ? GUI_GOLD : Color{92, 84, 62, 255}) : Color{50, 50, 54, 255});
+            // 标签
+            int tw = (int)MeasureTextEx(font, label, 12, 1).x;
+            drawTextS(font, label, bx + (cbW - tw) / 2, cbY + 4, 12,
+                      enabled ? (hover ? Color{255, 228, 150, 255} : Color{216, 202, 160, 255})
+                              : Color{90, 90, 90, 255});
+            // 快捷键提示
+            if (key && key[0]) {
+                int kw = (int)MeasureTextEx(font, key, 9, 1).x;
+                drawTextF(font, key, bx + (cbW - kw) / 2, cbY + 20, 9,
+                          enabled ? Color{160, 150, 110, 255} : Color{70, 70, 70, 255});
+            }
+            // 点击执行
+            if (hover && mPressed(MOUSE_LEFT_BUTTON)) { action(); g_sfx.play(Sfx::Click, 0.5f); }
+        };
+        bool hasSel = !sel.empty();
+        bool hasBldSel = world.valid(selBuilding) && world.ents[selBuilding].isBuilding;
+        // 选中单位：停止/部署/散布/警戒/同类/卸载
+        if (hasSel) {
+            cmdBtn(0, TR(S::KaStop), keyName(keyBind[KA_Stop]), true, [&]{
+                World::Cmd c; c.type = World::Cmd::Stop; c.ids = sel; issueCmd(c);
+            });
+            cmdBtn(1, TR(S::KaDeploy), keyName(keyBind[KA_Deploy]), true, [&]{
+                for (EID id : sel)
+                    if (world.valid(id) && world.ents[id].utype == UnitType::MCV) {
+                        World::Cmd c; c.type = World::Cmd::Deploy; c.ids.push_back(id); issueCmd(c);
+                        sel.erase(std::remove(sel.begin(), sel.end(), id), sel.end());
+                        message(TR(S::MsgDeployed));
+                    }
+                bool anyDep = false;
+                for (EID id : sel)
+                    if (world.valid(id) && !world.ents[id].isBuilding
+                        && (world.ents[id].utype == UnitType::Desolator || world.ents[id].utype == UnitType::GuardianGI
+                            || world.ents[id].utype == UnitType::GI || world.ents[id].utype == UnitType::SiegeChopper))
+                        anyDep = true;
+                if (anyDep) { World::Cmd c; c.type = World::Cmd::RadDeploy; c.ids = sel; issueCmd(c); message(TR(S::MsgDeployToggled)); }
+            });
+            cmdBtn(2, TR(S::KaScatter), keyName(keyBind[KA_Scatter]), true, [&]{
+                World::Cmd c; c.type = World::Cmd::Scatter; c.ids = sel; issueCmd(c); message(TR(S::MsgScatter));
+            });
+            cmdBtn(3, TR(S::KaGuard), keyName(keyBind[KA_Guard]), true, [&]{
+                World::Cmd c; c.type = World::Cmd::Guard; c.ids = sel; issueCmd(c); message(TR(S::MsgGuard));
+            });
+            cmdBtn(4, TR(S::KaSameType), keyName(keyBind[KA_SameType]), true, [&]{
+                bool types[(int)UnitType::COUNT] = {};
+                for (EID id : sel)
+                    if (world.valid(id) && !world.ents[id].isBuilding) types[(int)world.ents[id].utype] = true;
+                sel.clear();
+                for (size_t i = 0; i < world.ents.size(); i++) {
+                    const World::Ent& e = world.ents[i];
+                    if (e.alive && !e.isBuilding && e.player == localPlayer && types[(int)e.utype])
+                        sel.push_back((int)i);
+                }
+                message(TR(S::MsgSelSameType));
+            });
+            // 卸载：仅运输单位/驻军建筑可用
+            bool canUnload = false;
+            for (EID id : sel)
+                if (world.valid(id) && unitDef(world.ents[id].utype).cargoCap > 0 && !world.ents[id].cargo.empty())
+                    canUnload = true;
+            cmdBtn(5, TR(S::KaUnload), keyName(keyBind[KA_Unload]), canUnload, [&]{
+                World::Cmd c; c.type = World::Cmd::Unload; c.ids = sel; issueCmd(c);
+            });
+        }
+        // 选中建筑：集结点 / 撤出驻军
+        if (hasBldSel) {
+            const World::Ent& b = world.ents[selBuilding];
+            bool isFac = b.btype == BldType::WarFactory || b.btype == BldType::NavalYard
+                         || b.btype == BldType::Barracks || b.btype == BldType::AirForceCmd;
+            cmdBtn(0, TR(S::KaRally), keyName(keyBind[KA_Rally]), isFac && b.player == localPlayer, [&]{
+                float wx, wy;
+                screenToWorld((int)mousePos().x, (int)mousePos().y, wx, wy);
+                int tx, ty;
+                screenToTile(wx, wy, tx, ty);
+                World::Cmd c; c.type = World::Cmd::SetRally; c.ids.push_back(selBuilding);
+                c.x = (float)tx; c.y = (float)ty;
+                issueCmd(c);
+                message(TR(S::MsgRallySet));
+            });
+            cmdBtn(1, TR(S::KaUnload), keyName(keyBind[KA_Unload]), !b.garrison.empty(), [&]{
+                World::Cmd c; c.type = World::Cmd::Ungarrison; c.ids.push_back(selBuilding); issueCmd(c);
+                message(TR(S::MsgUngarrison));
+            });
+        }
     }
 
     // 提示消息
@@ -663,10 +772,17 @@ void Game::drawMinimap() {
     // RA2 布局：电力条占左侧 28px，小地图居右，缩放适配（旧版按原生 256px 绘制会越界遮挡电力表）
     int mmSize = sidebarW - 34;
     int mmX = sbX + 28, mmY = 42;
-    // 凹陷金属框
+    // 凹陷金属框 + 阵营色边框（RA2 雷达有阵营色镶边）
     DrawRectangle(mmX - 2, mmY - 2, mmSize + 4, mmSize + 4, Color{15, 16, 20, 255});
     guiBevel({(float)mmX - 2, (float)mmY - 2, (float)mmSize + 4, (float)mmSize + 4}, true);
-    DrawRectangleLinesEx({(float)mmX - 2, (float)mmY - 2, (float)mmSize + 4, (float)mmSize + 4}, 1, Color{74, 64, 42, 255});
+    DrawRectangleLinesEx({(float)mmX - 2, (float)mmY - 2, (float)mmSize + 4, (float)mmSize + 4}, 1,
+                         radarOnline() ? HOUSE_COLORS[world.players[localPlayer].colorId] : Color{74, 64, 42, 255});
+    // 雷达标签（RA2 原作雷达框下方有阵营名/雷达字样）
+    {
+        Color fc = HOUSE_COLORS[world.players[localPlayer].colorId];
+        const char* lbl = radarOnline() ? factionName(world.players[localPlayer].faction) : TR(S::RadarOffline);
+        drawTextS(font, lbl, mmX, mmY + mmSize + 3, 10, radarOnline() ? fc : Color{120, 90, 70, 255});
+    }
     // 雷达离线：黑屏 + 扫描噪点 + 红色闪烁提示（RA2 原作低电/无雷达表现）
     if (!radarOnline()) {
         DrawRectangle(mmX, mmY, mmSize, mmSize, Color{6, 8, 10, 255});
