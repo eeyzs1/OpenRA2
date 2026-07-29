@@ -627,9 +627,10 @@ void Game::drawHUD() {
                                  {(float)nx + 3 + i * 8, (float)py + 15}, rc);
                 drawTextS(font, elite ? TR(S::RankElite) : TR(S::RankVet), nx + (elite ? 28 : 12), py + 7, 12, rc);
             }
-            // 血条 + 数值
-            drawHealthBar(px + 54, py + 26, pw - 64, (float)e.hp / std::max(1, ud.hp), false);
-            drawTextS(font, TextFormat(TR(S::HpFmt), e.hp, ud.hp), px + 54, py + 35, 12, Color{170, 200, 170, 255});
+            // 血条 + 数值（军衔 HP 加成：老兵+50% 精英+100%）
+            int mhp = (int)(ud.hp * (1.0f + 0.5f * e.vetRank));
+            drawHealthBar(px + 54, py + 26, pw - 64, (float)e.hp / std::max(1, mhp), false);
+            drawTextS(font, TextFormat(TR(S::HpFmt), e.hp, mhp), px + 54, py + 35, 12, Color{170, 200, 170, 255});
             // 运输载具：载员与卸载提示
             if (ud.cargoCap > 0)
                 drawTextS(font, TextFormat(TR(S::CargoNFmt), (int)e.cargo.size(), ud.cargoCap,

@@ -7,6 +7,11 @@
 #include <cstring>
 #include <algorithm>
 
+// 军衔 HP 上限加成（RA2 原作：老兵 +50% 精英 +100%）
+static inline int maxHpFor(const World::Ent& e, const UnitDef& ud) {
+    return (int)(ud.hp * (1.0f + 0.5f * e.vetRank));
+}
+
 // ===================== 初始化 =====================
 void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const std::vector<Faction>& factions, int mapType,
                  const char* mapFile, bool noStartForce) {
@@ -600,7 +605,10 @@ WeaponDef World::effWeapon(const Ent& e) const {
     if (e.utype == UnitType::IFV && !e.cargo.empty()) return ifvWeapon(e.cargo[0]);
     if (e.vetRank >= 2 && ud.elite) return *ud.elite;
     WeaponDef w = ud.weapon;
-    if (e.vetRank > 0) w.damage = (int)(w.damage * (1.0f + 0.15f * e.vetRank));
+    if (e.vetRank > 0) {
+        w.damage = (int)(w.damage * (1.0f + 0.25f * e.vetRank));  // 老兵+25% 精英+50%
+        w.cooldown = (int)(w.cooldown * (1.0f - 0.25f * e.vetRank)); // 老兵-25% 精英-50% 射速间隔
+    }
     return w;
 }
 
@@ -619,10 +627,10 @@ void World::orderMove(const std::vector<EID>& sel, float x, float y, bool attack
         e.radDeployed = false; // 移动命令自动收起辐射部署
         e.deployed = false;    // 移动命令自动收起重装大兵部署
         e.goalX = x; e.goalY = y;
-        // 目标点按单位散开（方阵）
+        // 目标点按单位散开（方阵）—— RA2 标准间距 1.5 格
         int cols = (int)ceilf(sqrtf((float)sel.size()));
-        float ox = x + (n % cols - cols / 2) * 1.0f;
-        float oy = y + (n / cols) * 1.0f;
+        float ox = x + (n % cols - cols / 2) * 1.5f;
+        float oy = y + (n / cols) * 1.5f;
         n++;
         if (ud.isAir()) {
             // 战机：直线飞行，无视地形
@@ -946,7 +954,7 @@ void World::orderService(const std::vector<EID>& sel, EID depotId) {
         const UnitDef& ud = unitDef(e.utype);
         if (ud.isInfantry() || ud.isAir() || ud.pathDomain() != 0 || ud.canHarvet()) continue; // 仅地面战斗车辆
         if (e.player != d.player) continue;
-        if (e.hp >= ud.hp && e.parasite == INVALID_EID) continue; // 满血且无寄生
+        if (e.hp >= maxHpFor(e, ud) && e.parasite == INVALID_EID) continue; // 满血且无寄生
         e.target = depotId;
         e.guard = false;
         std::vector<Vec2i> path;
@@ -1703,7 +1711,7 @@ void World::updateUnit(Ent& e, EID id) {
         if (++e.camoTick >= 90) e.camouflaged = true;
     }
     // 精英军衔：缓慢自愈（RA2 原作设定）
-    if (e.vetRank >= 2 && e.hp < ud.hp && tick % 45 == (uint64_t)(id % 45)) e.hp++;
+    if (e.vetRank >= 2 && e.hp < maxHpFor(e, ud) && tick % 45 == (uint64_t)(id % 45)) e.hp++;
     // 航空母舰：舰载机整备补充（RA2 原作：损失后缓慢再造，上限 3 架）
     if (e.utype == UnitType::AircraftCarrier && (int)e.cargo.size() < ud.cargoCap
         && tick % 240 == (uint64_t)(id % 240))
@@ -1799,7 +1807,7 @@ void World::updateUnit(Ent& e, EID id) {
         return;
     }
     // 重伤冒烟
-    if (e.hp < ud.hp / 2 && !ud.isInfantry() && tick % 25 == (uint64_t)(id % 25)) {
+    if (e.hp < maxHpFor(e, ud) / 2 && !ud.isInfantry() && tick % 25 == (uint64_t)(id % 25)) {
         Effect sm;
         sm.kind = 1; sm.x = e.x; sm.y = e.y; sm.maxAge = 30;
         effects.push_back(sm);
@@ -1817,11 +1825,11 @@ void World::updateUnit(Ent& e, EID id) {
                     if (valid(e.parasite)) kill(e.parasite);
                     e.parasite = INVALID_EID;
                 }
-                if (e.hp >= ud.hp) {
+                if (e.hp >= maxHpFor(e, ud)) {
                     e.target = INVALID_EID; // 修满离开
                 } else if (tick % 5 == 0) {
                     Player& p = players[e.player];
-                    if (p.money >= 6) { p.money -= 6; e.hp = std::min(ud.hp, e.hp + 12); }
+                    if (p.money >= 6) { p.money -= 6; e.hp = std::min(maxHpFor(e, ud), e.hp + 12); }
                 }
                 if (e.state == UState::Moving && e.pathIdx >= (int)e.path.size()) e.state = UState::Idle;
                 return; // 维修期间不索敌不移动
@@ -2145,7 +2153,7 @@ bool World::flyToward(Ent& e, float tx, float ty) {
 void World::updateAircraft(Ent& e, EID id) {
     const UnitDef& ud = unitDef(e.utype);
     // 重伤冒烟
-    if (e.hp < ud.hp / 2 && e.state != UState::Landed && tick % 25 == (uint64_t)(id % 25)) {
+    if (e.hp < maxHpFor(e, ud) / 2 && e.state != UState::Landed && tick % 25 == (uint64_t)(id % 25)) {
         Effect sm;
         sm.kind = 1; sm.x = e.x; sm.y = e.y; sm.maxAge = 30;
         effects.push_back(sm);
@@ -2748,7 +2756,14 @@ void World::creditKill(EID byEnt, EID victim) {
     a.kills++;
     int need = a.vetRank == 0 ? 3 : 9;
     if (a.vetRank < 2 && a.kills >= need) {
+        int oldRank = a.vetRank;
         a.vetRank++;
+        // 晋升时提升 HP 上限（RA2 原作：老兵 +50% 精英 +100%）
+        const UnitDef& ud = unitDef(a.utype);
+        float hpBonus = 0.5f * a.vetRank; // vetRank=1 → +50%, vetRank=2 → +100%
+        int newMaxHp = (int)(ud.hp * (1.0f + hpBonus));
+        int oldMaxHp = (int)(ud.hp * (1.0f + 0.5f * oldRank));
+        a.hp = a.hp + (newMaxHp - oldMaxHp); // 补满差值
         if (a.player == 0) {
             eva(0, TextFormat(TR(a.vetRank == 1 ? S::EvaPromoteVetFmt : S::EvaPromoteEliteFmt), unitName(a.utype)));
             g_sfx.play(Sfx::Ready, 0.6f);

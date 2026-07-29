@@ -220,14 +220,32 @@ bool SkirmishAI::tryPlaceBld(World& w, BldType t) {
             ccx = (int)e.x; ccy = (int)e.y; break;
         }
     if (ccx < 0) return false;
-    for (int r = 1; r <= 14; r++)
+    // 超武反制：敌方有超武充能中/就绪时，建筑分散放置（跳过紧贴已有建筑的位置）
+    bool enemySW = false;
+    for (int i = 0; i < w.numPlayers; i++) {
+        if (i == player || w.players[i].defeated) continue;
+        if (!w.isEnemy(player, i)) continue;
+        for (int s = 0; s < (int)SWType::COUNT; s++)
+            if (w.players[i].swReady[s] || w.players[i].swCharge[s] > 0) { enemySW = true; break; }
+        if (enemySW) break;
+    }
+    int startR = enemySW ? 3 : 1; // 超武威胁时从更远处开始放置
+    for (int r = startR; r <= 14; r++)
         for (int dy = -r; dy <= r; dy++)
             for (int dx = -r; dx <= r; dx++) {
                 if (std::max(abs(dx), abs(dy)) != r) continue;
                 int bx = ccx + dx, by = ccy + dy;
-                if (w.canPlace(t, bx, by, player)) {
-                    return w.placeBuilding(player, t, bx, by);
+                if (!w.canPlace(t, bx, by, player)) continue;
+                if (enemySW) {
+                    // 检查是否紧贴已有建筑（间距 <2 格则跳过，保持分散）
+                    bool tooClose = false;
+                    for (const World::Ent& e : w.ents) {
+                        if (!e.alive || !e.isBuilding || e.player != player) continue;
+                        if (std::max(abs((int)e.x - bx), abs((int)e.y - by)) < 2) { tooClose = true; break; }
+                    }
+                    if (tooClose) continue;
                 }
+                return w.placeBuilding(player, t, bx, by);
             }
     return false;
 }
