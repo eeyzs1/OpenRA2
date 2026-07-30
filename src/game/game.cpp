@@ -17,13 +17,22 @@ void Game::init(bool windowed, bool hidden) {
     loadRules("assets/rules/rules.ini");
     loadStrings("assets/strings/zh.ini", 0);
     loadStrings("assets/strings/en.ini", 1);
-    InitWindow(SCREEN_W, SCREEN_H, "OpenRA2 - 共和国之辉 复刻");
+    // 初始窗口用小尺寸创建（确保任何屏幕都能完整显示），随后 applyDisplay 切换到目标模式
+    InitWindow(960, 600, "OpenRA2 - 共和国之辉 复刻");
     if (windowed) cfgWindowMode = 1; // 调试参数：强制窗口模式
     // 显示模式：无边框全屏（窗口=桌面分辨率，逻辑画布 letterbox 缩放，
     // 任何显示器含低分屏/高DPI缩放都不会出现按钮落在屏幕外）或指定分辨率窗口
     if (hidden) { /* 隐藏窗口不做显示模式切换 */ }
-    else if (cfgWindowMode == 0) { ToggleBorderlessWindowed(); borderlessActive = true; }
-    else SetWindowSize(RES_LIST[cfgResIdx][0], RES_LIST[cfgResIdx][1]);
+    else {
+        // 首次启动若窗口分辨率大于显示器，自动选最大适配档位（避免窗口超出屏幕）
+        if (cfgWindowMode != 0) {
+            int mw = GetMonitorWidth(GetCurrentMonitor());
+            int mh = GetMonitorHeight(GetCurrentMonitor());
+            while (cfgResIdx > 0 && (RES_LIST[cfgResIdx][0] > mw - 40 || RES_LIST[cfgResIdx][1] > mh - 80))
+                cfgResIdx--;
+        }
+        applyDisplay();
+    }
     SetTargetFPS(60);
     loadFont();
     g_sprites.init();
@@ -1532,7 +1541,7 @@ void Game::render() {
             shotFile.clear();
         }
         BeginDrawing();
-        ClearBackground(BLACK);
+        ClearBackground(Color{6, 8, 12, 255}); // letterbox 用深蓝灰填充，非纯黑（与 GUI 底色融合）
         float rw = (float)GetRenderWidth(), rh = (float)GetRenderHeight();
         Rectangle src{0, 0, (float)SCREEN_W, -(float)SCREEN_H};
         Rectangle dst{(rw - rh * SCREEN_W / SCREEN_H) / 2, 0, rh * SCREEN_W / SCREEN_H, rh};
@@ -1562,7 +1571,7 @@ void Game::render() {
     }
     // 2. 点对点放大到物理帧缓冲
     BeginDrawing();
-    ClearBackground(BLACK);
+    ClearBackground(Color{6, 8, 12, 255}); // letterbox 用深蓝灰填充，非纯黑
     float rw = (float)GetRenderWidth(), rh = (float)GetRenderHeight();
     Rectangle src{0, 0, (float)SCREEN_W, -(float)SCREEN_H};
     Rectangle dst{(rw - rh * SCREEN_W / SCREEN_H) / 2, 0, rh * SCREEN_W / SCREEN_H, rh};
