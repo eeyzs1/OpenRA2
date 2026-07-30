@@ -66,7 +66,7 @@ private:
     // ---- 应用设置（settings.ini 持久化，改动即保存即时生效，无需重启）----
     int cfgLang = 0;        // 界面语言：0 中文 1 English
     int cfgWindowMode = 0;  // 显示模式：0 无边框全屏 1 窗口
-    int cfgResIdx = 1;      // 窗口分辨率档位（RES_LIST 下标，默认 1440x810）
+    int cfgResIdx = 3;      // 窗口分辨率档位（RES_LIST 下标，默认 1440x810）
     bool borderlessActive = false; // 当前窗口实际状态（applyDisplay 幂等判断）
     bool displayDirty = false;     // 显示模式/分辨率待应用（帧首执行，避免帧中改窗口）
     int keyBind[KA_COUNT] = {};    // 动作 → raylib 键码
@@ -74,7 +74,7 @@ private:
     void saveSettings() const; // 任何设置变更后落盘
     void applyDisplay();      // 应用显示模式与窗口分辨率（热切换）
     void resetKeyBinds();     // 恢复 RA2 默认键位
-    static const int RES_LIST[4][2]; // 可选窗口分辨率（16:9）
+    static const int RES_LIST[8][2]; // 可选窗口分辨率（16:9 / 16:10 / 4:3）
 
     // 设置页状态
     bool settingsFromGame = false; // 入口：false 主菜单 / true 局内菜单（返回时恢复 showMenu）

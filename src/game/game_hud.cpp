@@ -13,13 +13,13 @@ static void drawTextF(Font f, const char* s, int x, int y, int size, Color c) {
 }
 
 // ===================== RA2 风格金属 GUI 素材 =====================
-// 调色：深蓝灰拉丝金属 + 金色描边（与主菜单 ra2Button 同系）
+// 调色：RA2 原作深棕铁灰金属 + 暖金色描边（偏暖色调，非蓝灰）
 static const Color GUI_GOLD{196, 162, 74, 255};
 static const Color GUI_GOLD_HI{255, 216, 120, 255};
-static const Color GUI_EDGE_HI{120, 128, 144, 255};
-static const Color GUI_EDGE_LO{6, 7, 10, 255};
+static const Color GUI_EDGE_HI{100, 92, 78, 255};   // 暖灰高光
+static const Color GUI_EDGE_LO{4, 4, 6, 255};
 
-// 拉丝金属纹理（懒生成一次，96x96 平铺）
+// 拉丝金属纹理（懒生成一次，96x96 平铺）—— RA2 风格：深棕铁灰
 static Texture2D guiMetalTex() {
     static Texture2D t{};
     if (t.id == 0) {
@@ -35,9 +35,10 @@ static Texture2D guiMetalTex() {
                 float streak = hsh(x / 9, y) * 0.62f + hsh(x / 3, y + 40) * 0.38f;
                 float v = 0.88f + (streak - 0.5f) * 0.34f + (hsh(x, y) - 0.5f) * 0.10f;
                 v *= 1.10f - 0.20f * (y / 95.0f); // 上亮下暗
-                p.set(x, y, Color{(uint8_t)clampi((int)(42 * v), 0, 255),
-                                  (uint8_t)clampi((int)(46 * v), 0, 255),
-                                  (uint8_t)clampi((int)(58 * v), 0, 255), 255});
+                // RA2 暖色金属：R > G > B（偏棕色调，非蓝灰）
+                p.set(x, y, Color{(uint8_t)clampi((int)(38 * v), 0, 255),
+                                  (uint8_t)clampi((int)(34 * v), 0, 255),
+                                  (uint8_t)clampi((int)(28 * v), 0, 255), 255});
             }
         t = p.toTexture();
     }
@@ -98,19 +99,20 @@ bool Game::uiButton(Rectangle r, const char* text, bool enabled, bool active) {
     Vector2 m = mousePos();
     bool hover = CheckCollisionPointRec(m, r) && enabled;
     bool press = hover && mDown(MOUSE_LEFT_BUTTON);
-    Color top = enabled ? (hover ? Color{82, 62, 44, 255} : Color{54, 54, 60, 255}) : Color{30, 30, 34, 255};
-    Color bot = enabled ? (hover ? Color{48, 34, 26, 255} : Color{30, 30, 36, 255}) : Color{20, 20, 24, 255};
-    if (active) { top = Color{74, 58, 34, 255}; bot = Color{42, 30, 18, 255}; }
+    // RA2 暖色调：深棕铁灰 → 悬停加亮为暖棕金
+    Color top = enabled ? (hover ? Color{72, 58, 40, 255} : Color{44, 40, 34, 255}) : Color{26, 24, 22, 255};
+    Color bot = enabled ? (hover ? Color{44, 34, 24, 255} : Color{26, 24, 20, 255}) : Color{18, 16, 14, 255};
+    if (active) { top = Color{68, 52, 30, 255}; bot = Color{38, 28, 16, 255}; }
     DrawRectangleGradientV((int)r.x, (int)r.y, (int)r.width, (int)r.height, top, bot);
     guiBevel(r, press);
-    Color frame = !enabled ? Color{64, 64, 70, 255}
-                : active ? GUI_GOLD_HI : (hover ? GUI_GOLD : Color{92, 84, 62, 255});
+    Color frame = !enabled ? Color{56, 52, 44, 255}
+                : active ? GUI_GOLD_HI : (hover ? GUI_GOLD : Color{84, 74, 50, 255});
     DrawRectangleLinesEx(r, 1, frame);
     if (text && text[0]) {
         int tw = (int)MeasureTextEx(font, text, 14, 1).x;
         drawTextS(font, text, (int)(r.x + r.width / 2 - tw / 2), (int)(r.y + r.height / 2 - 7), 14,
                   enabled ? (active || hover ? Color{255, 228, 150, 255} : Color{226, 212, 170, 255})
-                          : Color{110, 110, 110, 255});
+                          : Color{110, 104, 96, 255});
     }
     bool clicked = hover && mPressed(MOUSE_LEFT_BUTTON);
     if (clicked) g_sfx.play(Sfx::Click, 0.6f);

@@ -18,7 +18,7 @@ void Game::drawSettings() {
 
     // ---------- 左面板：显示与声音 ----------
     int px = 48, py = 92, pw = 620;
-    DrawRectangle(px, py, pw, 400, Color{20, 20, 26, 255});
+    DrawRectangle(px, py, pw, 400, Color{22, 20, 16, 255});
     DrawRectangleLinesEx({(float)px, (float)py, (float)pw, 400}, 1, Color{80, 74, 66, 255});
     drawTextM(font, TR(S::DisplaySection), px + 24, py + 14, 19, Color{150, 142, 130, 255});
     // 行：标签 + 值按钮（点击循环切换）
@@ -27,7 +27,7 @@ void Game::drawSettings() {
                   enabled ? Color{190, 188, 196, 255} : Color{110, 108, 112, 255});
         Rectangle r{(float)px + 292, (float)y, 300, 36};
         bool hover = CheckCollisionPointRec(m, r) && enabled;
-        DrawRectangleRec(r, hover ? Color{56, 50, 44, 255} : Color{34, 32, 38, 255});
+        DrawRectangleRec(r, hover ? Color{58, 48, 36, 255} : Color{36, 32, 26, 255});
         DrawRectangleLinesEx(r, 1, hover ? Color{255, 200, 90, 255} : Color{120, 104, 66, 255});
         drawTextM(font, value, (int)r.x + 150 - textW(font, value, 17) / 2, y + 9, 17,
                   enabled ? Color{255, 220, 120, 255} : Color{120, 116, 108, 255});
@@ -40,7 +40,8 @@ void Game::drawSettings() {
         g_sfx.play(Sfx::Click, 0.5f);
         saveSettings();
     }
-    if (optRow(ry + 50, TR(S::WindowMode), TR(cfgWindowMode ? S::WMWindowed : S::WMFullscreen), true)) {
+    if (optRow(ry + 50, TR(S::WindowMode),
+               cfgWindowMode == 0 ? TR(S::WMFullscreen) : TR(S::WMWindowed), true)) {
         cfgWindowMode = cfgWindowMode ? 0 : 1;
         displayDirty = true; // 渲染帧首应用，避免帧中改窗口
         g_sfx.play(Sfx::Click, 0.5f);
@@ -51,7 +52,7 @@ void Game::drawSettings() {
                cfgWindowMode ? TextFormat("%d × %d", RES_LIST[cfgResIdx][0], RES_LIST[cfgResIdx][1])
                              : TR(S::ResDesktop),
                cfgWindowMode != 0)) {
-        cfgResIdx = (cfgResIdx + 1) % 4;
+        cfgResIdx = (cfgResIdx + 1) % 8;
         displayDirty = true;
         g_sfx.play(Sfx::Click, 0.5f);
         saveSettings();
@@ -66,7 +67,7 @@ void Game::drawSettings() {
 
     // ---------- 右面板：按键设置 ----------
     int kx = 692, ky = 92, kw = SCREEN_W - kx - 48;
-    DrawRectangle(kx, ky, kw, 608, Color{20, 20, 26, 255});
+    DrawRectangle(kx, ky, kw, 608, Color{22, 20, 16, 255});
     DrawRectangleLinesEx({(float)kx, (float)ky, (float)kw, 608}, 1, Color{80, 74, 66, 255});
     drawTextM(font, TR(S::KeysSection), kx + 24, ky + 14, 19, Color{150, 142, 130, 255});
     drawTextM(font, TR(S::KeysTip), kx + 200, ky + 16, 15, Color{110, 108, 116, 255});
@@ -78,12 +79,12 @@ void Game::drawSettings() {
     for (int i = 0; i < KA_COUNT; i++) {
         int y = ky + 48 + i * 34;
         bool armed = rebinding == i;
-        DrawRectangle(kx + 8, y - 2, kw - 16, 34, armed ? Color{52, 40, 36, 255} : (i % 2 ? Color{24, 24, 30, 255} : Color{30, 30, 38, 255}));
+        DrawRectangle(kx + 8, y - 2, kw - 16, 34, armed ? Color{52, 40, 36, 255} : (i % 2 ? Color{26, 22, 18, 255} : Color{32, 28, 22, 255}));
         drawTextM(font, TR(names[i]), kx + 24, y + 6, 17,
                   armed ? Color{255, 220, 150, 255} : Color{200, 200, 210, 255});
         Rectangle kr{(float)kx + 458, (float)y, 200, 30};
         bool hover = CheckCollisionPointRec(m, kr);
-        DrawRectangleRec(kr, armed ? Color{90, 50, 40, 255} : (hover ? Color{56, 50, 44, 255} : Color{34, 32, 38, 255}));
+        DrawRectangleRec(kr, armed ? Color{90, 50, 40, 255} : (hover ? Color{58, 48, 36, 255} : Color{36, 32, 26, 255}));
         DrawRectangleLinesEx(kr, 1, armed ? Color{255, 120, 90, 255} : (hover ? Color{255, 200, 90, 255} : Color{120, 104, 66, 255}));
         const char* kn = armed ? "…" : keyName(keyBind[i]);
         drawTextM(font, kn, (int)kr.x + 100 - textW(font, kn, 16) / 2, y + 7, 16, Color{255, 220, 120, 255});

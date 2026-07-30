@@ -5,8 +5,17 @@
 #include <cstring>
 #include <cstdlib>
 
-// 可选窗口分辨率（16:9；无边框全屏时忽略，跟随桌面）
-const int Game::RES_LIST[4][2] = {{1280, 720}, {1440, 810}, {1600, 900}, {1920, 1080}};
+// 可选窗口分辨率（含 16:9 / 16:10 / 4:3 常见档位；无边框全屏时忽略，跟随桌面）
+const int Game::RES_LIST[8][2] = {
+    {1024, 576},   // 0: 16:9 小屏（笔记本低分辨率）
+    {1280, 720},   // 1: 16:9 HD
+    {1366, 768},   // 2: 16:9 笔记本常见
+    {1440, 810},   // 3: 16:9 默认
+    {1600, 900},   // 4: 16:9
+    {1920, 1080},  // 5: 16:9 Full HD
+    {1280, 800},   // 6: 16:10
+    {1024, 768},   // 7: 4:3
+};
 
 static constexpr const char* SETTINGS_PATH = "settings.ini";
 
@@ -45,7 +54,7 @@ void Game::loadSettings() {
         int v = atoi(eq + 1);
         if (strcmp(line, "lang") == 0) cfgLang = v ? 1 : 0;
         else if (strcmp(line, "window_mode") == 0) cfgWindowMode = v ? 1 : 0;
-        else if (strcmp(line, "resolution") == 0) { if (v >= 0 && v < 4) cfgResIdx = v; }
+        else if (strcmp(line, "resolution") == 0) { if (v >= 0 && v < 8) cfgResIdx = v; }
         else if (strcmp(line, "volume") == 0) { if (v >= 0 && v <= 4) cfgVolume = v; }
         else if (strncmp(line, "key_", 4) == 0) {
             int a = atoi(line + 4);

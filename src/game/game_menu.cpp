@@ -15,36 +15,37 @@ int textW(Font f, const char* s, int size) {
     return (int)MeasureTextEx(f, s, (float)size, 1).x;
 }
 
-// RA2 式金属按钮：渐变底 + 顶部高光 + 金框，悬停泛红
+// RA2 式金属按钮：渐变底 + 顶部高光 + 金框，悬停泛红（暖色调）
 bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size,
                bool enabled, bool danger) {
     bool hover = CheckCollisionPointRec(m, r) && enabled;
-    Color top = enabled ? (hover ? Color{96, 44, 40, 255} : Color{58, 56, 60, 255}) : Color{34, 34, 38, 255};
-    Color bot = enabled ? (hover ? Color{64, 24, 22, 255} : Color{34, 32, 36, 255}) : Color{22, 22, 26, 255};
+    // RA2 暖色调：深棕铁灰 → 悬停加亮为暖棕红
+    Color top = enabled ? (hover ? Color{88, 44, 36, 255} : Color{48, 42, 36, 255}) : Color{28, 26, 24, 255};
+    Color bot = enabled ? (hover ? Color{58, 26, 20, 255} : Color{28, 24, 20, 255}) : Color{20, 18, 16, 255};
     DrawRectangleGradientV((int)r.x, (int)r.y, (int)r.width, (int)r.height, top, bot);
-    DrawLine((int)r.x, (int)r.y, (int)(r.x + r.width), (int)r.y, Color{140, 138, 146, 200});
-    Color frame = danger ? Color{200, 60, 40, 255} : (hover ? Color{255, 200, 90, 255} : Color{150, 130, 80, 255});
-    if (!enabled) frame = Color{70, 70, 76, 255};
+    DrawLine((int)r.x, (int)r.y, (int)(r.x + r.width), (int)r.y, Color{110, 100, 84, 200});
+    Color frame = danger ? Color{200, 60, 40, 255} : (hover ? Color{255, 200, 90, 255} : Color{140, 120, 70, 255});
+    if (!enabled) frame = Color{60, 56, 48, 255};
     DrawRectangleLinesEx(r, 2, frame);
     if (text && text[0]) {
         int tw = textW(font, text, size);
         drawTextM(font, text, (int)(r.x + r.width / 2 - tw / 2) + 1, (int)(r.y + r.height / 2 - size / 2) + 1, size,
                   Color{0, 0, 0, 255});
         drawTextM(font, text, (int)(r.x + r.width / 2 - tw / 2), (int)(r.y + r.height / 2 - size / 2), size,
-                  enabled ? (hover ? Color{255, 226, 150, 255} : Color{230, 216, 170, 255})
-                          : Color{110, 110, 110, 255});
+                  enabled ? (hover ? Color{255, 226, 150, 255} : Color{226, 212, 170, 255})
+                          : Color{100, 96, 88, 255});
     }
     bool clicked = hover && pressed;
     if (clicked) g_sfx.play(Sfx::Click, 0.6f);
     return clicked;
 }
 
-// 菜单通用底板：深色 + 红色顶栏 + 网格暗纹
+// 菜单通用底板：深色 + 红色顶栏 + 网格暗纹（暖色调）
 void drawMenuBackdrop(Font font, const char* title) {
-    ClearBackground(Color{12, 13, 17, 255});
+    ClearBackground(Color{14, 12, 10, 255});
     for (int i = 0; i < 30; i++)
-        DrawLine(0, i * 30, SCREEN_W, i * 30 - 220, Color{18, 19, 25, 255});
-    DrawRectangle(0, 0, SCREEN_W, 64, Color{26, 10, 10, 255});
+        DrawLine(0, i * 30, SCREEN_W, i * 30 - 220, Color{20, 18, 14, 255});
+    DrawRectangle(0, 0, SCREEN_W, 64, Color{28, 12, 8, 255});
     DrawRectangle(0, 62, SCREEN_W, 2, Color{168, 40, 32, 255});
     drawTextM(font, title, 42, 18, 30, Color{232, 206, 140, 255});
     drawTextM(font, "OPENRA2", SCREEN_W - 40 - textW(font, "OPENRA2", 20), 22, 20, Color{120, 60, 54, 255});
@@ -52,11 +53,11 @@ void drawMenuBackdrop(Font font, const char* title) {
 
 // ===================== 主菜单 =====================
 void Game::drawMainMenu() {
-    ClearBackground(Color{10, 11, 15, 255});
-    // 背景斜纹 + 底部红色光带
+    ClearBackground(Color{12, 10, 8, 255});
+    // 背景斜纹 + 底部红色光带（暖色调）
     for (int i = 0; i < 34; i++)
-        DrawLine(0, i * 28, SCREEN_W, i * 28 - 300, Color{17, 18, 24, 255});
-    DrawRectangleGradientV(0, SCREEN_H - 220, SCREEN_W, 220, Color{10, 11, 15, 0}, Color{70, 16, 12, 120});
+        DrawLine(0, i * 28, SCREEN_W, i * 28 - 300, Color{18, 16, 12, 255});
+    DrawRectangleGradientV(0, SCREEN_H - 220, SCREEN_W, 220, Color{12, 10, 8, 0}, Color{70, 16, 12, 120});
 
     // 标题（RA2 式：黑色投影 + 红色主体 + 金色副标）
     const char* title = TR(S::GameTitle);
@@ -178,7 +179,7 @@ void Game::drawMissionSelect() {
         bool hover = CheckCollisionPointRec(m, r);
         DrawRectangleGradientV((int)r.x, (int)r.y, (int)r.width, (int)r.height,
                                hover ? Color{52, 42, 34, 255} : Color{30, 30, 36, 255},
-                               hover ? Color{34, 24, 20, 255} : Color{20, 20, 26, 255});
+                               hover ? Color{34, 24, 20, 255} : Color{22, 20, 16, 255});
         DrawRectangleLinesEx(r, 2, hover ? Color{255, 200, 90, 255} : Color{120, 100, 60, 255});
         int rx = (int)r.x, ry = (int)r.y;
         drawTextM(font, TextFormat(TR(S::MissionN), i + 1), rx + 14, ry + 10, 13, Color{150, 142, 130, 255});
@@ -251,7 +252,7 @@ void Game::drawSetup() {
 
     // ---------- 左面板：地图预览与地图参数 ----------
     int px = 48, py = 92, pw = 380;
-    DrawRectangle(px, py, pw, 494, Color{20, 20, 26, 255});
+    DrawRectangle(px, py, pw, 494, Color{22, 20, 16, 255});
     DrawRectangleLinesEx({(float)px, (float)py, (float)pw, 494}, 1, Color{80, 74, 66, 255});
     // 预览图 340x340
     int ix = px + 20, iy = py + 18;
@@ -267,7 +268,7 @@ void Game::drawSetup() {
         drawTextM(font, label, ix, y + 8, 18, Color{190, 188, 196, 255});
         Rectangle r{(float)ix + 150, (float)y, 190, 36};
         bool hover = CheckCollisionPointRec(m, r);
-        DrawRectangleRec(r, hover ? Color{56, 50, 44, 255} : Color{34, 32, 38, 255});
+        DrawRectangleRec(r, hover ? Color{58, 48, 36, 255} : Color{36, 32, 26, 255});
         DrawRectangleLinesEx(r, 1, hover ? Color{255, 200, 90, 255} : Color{120, 104, 66, 255});
         drawTextM(font, value, (int)r.x + 95 - textW(font, value, 17) / 2, y + 9, 17, Color{255, 220, 120, 255});
         return hover && pr;
@@ -289,7 +290,7 @@ void Game::drawSetup() {
 
     // ---------- 右面板：玩家槽位 ----------
     int sx = 452, sy = 92, sw = SCREEN_W - sx - 48;
-    DrawRectangle(sx, sy, sw, 494, Color{20, 20, 26, 255});
+    DrawRectangle(sx, sy, sw, 494, Color{22, 20, 16, 255});
     DrawRectangleLinesEx({(float)sx, (float)sy, (float)sw, 494}, 1, Color{80, 74, 66, 255});
     // 表头
     int rowH = 48;
@@ -302,7 +303,7 @@ void Game::drawSetup() {
     auto slotRow = [&](int idx, const char* name, int& color, int& country, int& diff, int& pers, bool isLocal) {
         int y = slotY + idx * rowH;
         bool even = idx % 2 == 0;
-        DrawRectangle(sx + 8, y, sw - 16, rowH - 4, even ? Color{30, 30, 38, 255} : Color{24, 24, 30, 255});
+        DrawRectangle(sx + 8, y, sw - 16, rowH - 4, even ? Color{32, 28, 22, 255} : Color{26, 22, 18, 255});
         // 名字（本地玩家金色，AI 灰色）
         drawTextM(font, name, nameX, y + 12, 19, isLocal ? Color{255, 220, 120, 255} : Color{200, 200, 210, 255});
         // 颜色块按钮
@@ -314,7 +315,7 @@ void Game::drawSetup() {
         // 国家按钮（RA2 原作：选国家即定阵营；循环 10 国 + 随机）
         Rectangle fr{(float)factX, (float)y + 6, 170, rowH - 16};
         bool fhover = CheckCollisionPointRec(m, fr);
-        DrawRectangleRec(fr, fhover ? Color{56, 50, 44, 255} : Color{38, 36, 42, 255});
+        DrawRectangleRec(fr, fhover ? Color{58, 48, 36, 255} : Color{40, 34, 26, 255});
         DrawRectangleLinesEx(fr, 1, fhover ? Color{255, 200, 90, 255} : Color{96, 88, 70, 255});
         const char* fn = country >= (int)Country::COUNT ? TR(S::Random) : countryName((Country)country);
         drawTextM(font, fn, (int)fr.x + 85 - textW(font, fn, 17) / 2, y + 13, 17, Color{230, 216, 170, 255});
@@ -329,7 +330,7 @@ void Game::drawSetup() {
             static const char* diffNamesEn[] = {"Easy", "Normal", "Hard", "Brutal"};
             Rectangle dr2{(float)diffX, (float)y + 6, 80, rowH - 16};
             bool dhover = CheckCollisionPointRec(m, dr2);
-            DrawRectangleRec(dr2, dhover ? Color{56, 50, 44, 255} : Color{38, 36, 42, 255});
+            DrawRectangleRec(dr2, dhover ? Color{58, 48, 36, 255} : Color{40, 34, 26, 255});
             DrawRectangleLinesEx(dr2, 1, dhover ? Color{255, 200, 90, 255} : Color{96, 88, 70, 255});
             const char* dn = g_lang ? diffNamesEn[diff] : diffNames[diff];
             drawTextM(font, dn, (int)dr2.x + 40 - textW(font, dn, 15) / 2, y + 13, 15,
@@ -341,7 +342,7 @@ void Game::drawSetup() {
             static const char* persNamesEn[] = {"Balanced", "Rusher", "Turtler", "Steamroller", "Tech"};
             Rectangle pr2{(float)persX, (float)y + 6, 100, rowH - 16};
             bool phover = CheckCollisionPointRec(m, pr2);
-            DrawRectangleRec(pr2, phover ? Color{56, 50, 44, 255} : Color{38, 36, 42, 255});
+            DrawRectangleRec(pr2, phover ? Color{58, 48, 36, 255} : Color{40, 34, 26, 255});
             DrawRectangleLinesEx(pr2, 1, phover ? Color{255, 200, 90, 255} : Color{96, 88, 70, 255});
             const char* pn = g_lang ? persNamesEn[pers] : persNames[pers];
             drawTextM(font, pn, (int)pr2.x + 50 - textW(font, pn, 15) / 2, y + 13, 15, Color{200, 190, 220, 255});
@@ -378,14 +379,14 @@ void Game::drawSetup() {
 
     // ---------- 底部选项条 ----------
     int oy = 600;
-    DrawRectangle(48, oy, SCREEN_W - 96, 64, Color{20, 20, 26, 255});
+    DrawRectangle(48, oy, SCREEN_W - 96, 64, Color{22, 20, 16, 255});
     DrawRectangleLinesEx({48, (float)oy, (float)SCREEN_W - 96, 64}, 1, Color{80, 74, 66, 255});
     auto optBtn = [&](int x, const char* label, const char* value, int w) {
         drawTextM(font, label, x, oy + 20, 18, Color{190, 188, 196, 255});
         int lx = x + textW(font, label, 18) + 16;
         Rectangle r{(float)lx, (float)oy + 10, (float)w, 44};
         bool hover = CheckCollisionPointRec(m, r);
-        DrawRectangleRec(r, hover ? Color{56, 50, 44, 255} : Color{34, 32, 38, 255});
+        DrawRectangleRec(r, hover ? Color{58, 48, 36, 255} : Color{36, 32, 26, 255});
         DrawRectangleLinesEx(r, 1, hover ? Color{255, 200, 90, 255} : Color{120, 104, 66, 255});
         drawTextM(font, value, lx + w / 2 - textW(font, value, 18) / 2, oy + 22, 18, Color{255, 220, 120, 255});
         return hover && pr;
