@@ -512,6 +512,16 @@ Buf genSfx(Sfx id) {
             masterize(b, 0.70f);
             break;
         }
+        case Sfx::Dig: { // 矿车挖掘：钻头研磨低鸣 + 碎石崩落 + 机械金属嗡
+            b.alloc((int)(0.55f * RATE));
+            toneSweep(b, 0, 95, 58, 0.48f, 5.5f, 0.85f);
+            noiseBurst(b, 0, 0.40f, 6.5f, 640, 0.70f, rng);
+            crackle(b, (int)(0.05f * RATE), 0.35f, 0.10f, 1500, 0.40f, rng);
+            metalPing(b, 0, 210, 0.18f, 22, 0.18f);
+            applyReverb(b, 0.12f);
+            masterize(b, 0.72f);
+            break;
+        }
         default: break;
     }
     return b;

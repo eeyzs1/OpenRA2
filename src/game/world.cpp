@@ -11,6 +11,17 @@
 static inline int maxHpFor(const World::Ent& e, const UnitDef& ud) {
     return (int)(ud.hp * (1.0f + 0.5f * e.vetRank));
 }
+// 8 方向环上向目标方向步进一格（RA2 炮塔 ROT 平滑转向）
+static inline int rotStepDir(int cur, int want) {
+    int d = (want - cur + 8) & 7;
+    if (d == 0) return cur;
+    return (cur + (d <= 4 ? 1 : 7)) & 7;
+}
+// 两方向在 8 环上的最短步距
+static inline int rotDistDir(int a, int b) {
+    int d = std::abs(a - b) & 7;
+    return std::min(d, 8 - d);
+}
 
 // ===================== 初始化 =====================
 void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const std::vector<Faction>& factions, int mapType,
@@ -343,6 +354,7 @@ EID World::spawnUnit(int player, UnitType t, float x, float y) {
     e.player = player;
     e.utype = t;
     e.x = x; e.y = y;
+    e.px = x; e.py = y; // 渲染插值起点（避免从 (0,0) 拉花）
     e.hp = unitDef(t).hp;
     e.dir = rng.range(0, 7);
     e.turretDir = e.dir;
@@ -370,6 +382,11 @@ EID World::spawnBuilding(int player, BldType t, int bx, int by, bool free_) {
         for (int dx = 0; dx < d.w; dx++)
             bldOcc[cellIdx(bx + dx, by + dy)] = id + 1;
     if (!free_ && player >= 0) players[player].money -= d.cost;
+    // 建造动画（mk 关键帧序列）：播放期间渲染逐帧起楼效果
+    {
+        int mkf = g_sprites.bldMkFrames(t);
+        if (mkf > 1) e.constructAnim = mkf * 5; // 每帧 5 tick
+    }
     recomputePower();
     // 超武建筑落成：向其他玩家发出侦测警告（RA2 原作设定）
     if (bldProvidesSW(t) != SWType::COUNT && tick > 10) {
@@ -402,7 +419,17 @@ void World::kill(EID id) {
         // 驻军随建筑一同阵亡（RA2 原作设定）
         e.garrison.clear();
     } else {
-        explodeAt(e.x, e.y, unitDef(e.utype).isInfantry() ? 0 : 1);
+        // 步兵有序列死亡动画（art.ini Die1）：播放倒地序列；车辆/无素材单位保持爆炸
+        const UnitAnimInfo& ai = g_sprites.animInfo(e.utype);
+        if (unitDef(e.utype).isInfantry() && ai.die > 0) {
+            Effect da; da.kind = 10; da.x = e.x; da.y = e.y;
+            da.maxAge = ai.die * 2; // 每相位 2 tick
+            da.aux = (int)e.utype; da.aux2 = e.dir;
+            da.aux3 = e.player >= 0 ? players[e.player].colorId : -1;
+            effects.push_back(da);
+        } else {
+            explodeAt(e.x, e.y, unitDef(e.utype).isInfantry() ? 0 : 1);
+        }
         // 基洛夫空艇被击落：坠毁冲击波（RA2 原作签名机制）
         if (e.utype == UnitType::Kirov) {
             explodeAt(e.x, e.y, 2);
@@ -613,7 +640,7 @@ WeaponDef World::effWeapon(const Ent& e) const {
 }
 
 // ===================== 指令 =====================
-void World::orderMove(const std::vector<EID>& sel, float x, float y, bool attackMove) {
+void World::orderMove(const std::vector<EID>& sel, float x, float y, bool attackMove, bool append) {
     int n = 0;
     for (EID id : sel) {
         if (!valid(id)) continue;
@@ -622,15 +649,24 @@ void World::orderMove(const std::vector<EID>& sel, float x, float y, bool attack
             continue;
         }
         const UnitDef& ud = unitDef(e.utype);
+        float lx = x, ly = y; // 本单元目标点（append 时可能被队首替换，不能污染共享参数）
+        if (append) { // 路径点追加：入队；移动中则到位自动接续，空闲立即启程
+            e.wps.push_back({lx, ly});
+            if (e.state == UState::Moving || e.state == UState::AttackMoving) continue;
+            lx = e.wps.front().first; ly = e.wps.front().second;
+            e.wps.pop_front();
+        } else {
+            e.wps.clear();
+        }
         e.target = INVALID_EID;
         e.guard = false;
         e.radDeployed = false; // 移动命令自动收起辐射部署
         e.deployed = false;    // 移动命令自动收起重装大兵部署
-        e.goalX = x; e.goalY = y;
+        e.goalX = lx; e.goalY = ly;
         // 目标点按单位散开（方阵）—— RA2 标准间距 1.5 格
         int cols = (int)ceilf(sqrtf((float)sel.size()));
-        float ox = x + (n % cols - cols / 2) * 1.5f;
-        float oy = y + (n / cols) * 1.5f;
+        float ox = lx + (n % cols - cols / 2) * 1.5f;
+        float oy = ly + (n / cols) * 1.5f;
         n++;
         if (ud.isAir()) {
             // 战机：直线飞行，无视地形
@@ -673,6 +709,7 @@ void World::orderAttack(const std::vector<EID>& sel, EID target) {
         if (!valid(id) || ents[id].isBuilding) continue;
         Ent& e = ents[id];
         const UnitDef& ud = unitDef(e.utype);
+        e.wps.clear(); // 直接攻击指令取消路径点队列
         if (ud.weapon.damage == 0) {
             // 间谍渗透（RA2 原作）：无武器但可指定敌方建筑为渗透目标
             if (e.utype == UnitType::Spy && t.isBuilding && isEnemy(e.player, t.player)) {
@@ -716,6 +753,7 @@ void World::orderHarvest(const std::vector<EID>& sel, int x, int y) {
         if (!valid(id) || ents[id].isBuilding) continue;
         Ent& e = ents[id];
         if (!unitDef(e.utype).canHarvet()) continue;
+        e.wps.clear();
         e.oreCell = {x, y};
         e.target = INVALID_EID;
         e.guard = false;
@@ -738,6 +776,7 @@ void World::orderStop(const std::vector<EID>& sel) {
             e.parasiteHost = INVALID_EID;
         }
         e.path.clear();
+        e.wps.clear(); // 停止清空路径点队列
         e.target = INVALID_EID;
         e.guard = false;
         if (unitDef(e.utype).isAir()) {
@@ -760,6 +799,7 @@ void World::orderScatter(const std::vector<EID>& sel) {
         const UnitDef& ud = unitDef(e.utype);
         if (ud.isAir()) continue; // 战机不散布
         int dom = ud.pathDomain();
+        e.wps.clear();
         e.target = INVALID_EID;
         e.guard = false;
         // 在 2~4 格内找随机可通行落点
@@ -787,6 +827,7 @@ void World::orderGuard(const std::vector<EID>& sel) {
         Ent& e = ents[id];
         if (unitDef(e.utype).weapon.damage == 0) continue;
         e.path.clear();
+        e.wps.clear();
         e.target = INVALID_EID;
         e.guard = true;
         if (!unitDef(e.utype).isAir()) e.state = UState::Idle;
@@ -1465,6 +1506,7 @@ void World::updateSW() {
 // ===================== 更新 =====================
 void World::update() {
     tick++;
+    for (Ent& e : ents) { e.px = e.x; e.py = e.y; } // 渲染插值：逻辑帧前位置快照
     updateSW();
     // EVA 播报节流倒计时 + 间谍效果计时
     for (int pi = 0; pi < numPlayers; pi++) {
@@ -1480,6 +1522,13 @@ void World::update() {
     regrowOre();         // 矿脉缓慢再生
     updateParadrop();    // 伞兵充能（美国空指部/科技机场）
     // 生产进度
+    // 性能优化：预计算每个玩家的各类工厂数量缓存（避免每类生产都遍历所有实体）
+    // 用数组大小 64（BldType 枚举值约 30+，留余量）
+    int facCount[MAX_PLAYERS][64] = {}; // [player][BldType]
+    for (const Ent& e : ents) {
+        if (!e.alive || !e.isBuilding || e.player < 0 || e.player >= numPlayers) continue;
+        facCount[e.player][(int)e.btype]++;
+    }
     for (int pi = 0; pi < numPlayers; pi++) {
         Player& p = players[pi];
         if (!p.active || p.defeated) continue;
@@ -1491,12 +1540,13 @@ void World::update() {
             const UnitDef& u = unitDef((UnitType)pr.typeIdx);
             // 多工厂加速：每个额外同类生产建筑 +50% 速度（上限 2.5x，RA2 原作设定）
             int fac = 0;
-            for (const Ent& e : ents)
-                if (e.alive && e.isBuilding && e.player == pi && isFactoryFor(e.btype, u)) fac++;
+            for (int b = 0; b < 64; b++)
+                if (facCount[pi][b] > 0 && isFactoryFor((BldType)b, u)) fac += facCount[pi][b];
             float speed = rate * std::min(2.5f, 1.0f + 0.5f * std::max(0, fac - 1));
             float perTick = (float)u.cost / u.buildTime * speed;
-            if (p.money <= 0) continue; // 资金不足暂停
-            p.money -= (int)ceilf(perTick);
+            int need = (int)ceilf(perTick);
+            if (p.money < need) continue; // 资金不足暂停（RA2：缺钱停产，不允许负值）
+            p.money -= need;
             pr.progress++;
             if (pr.progress >= (int)(u.buildTime / speed)) {
                 spawnFromFactory(pi, u);
@@ -1516,8 +1566,9 @@ void World::update() {
             if (pr.active && !pr.ready) {
                 const BldDef& d = bldDef((BldType)pr.typeIdx);
                 float perTick = (float)d.cost / d.buildTime * rate;
-                if (p.money > 0) {
-                    p.money -= (int)ceilf(perTick);
+                int need = (int)ceilf(perTick);
+                if (p.money >= need) { // 资金不足暂停（不允许负值）
+                    p.money -= need;
                     pr.progress++;
                     if (pr.progress >= (int)(d.buildTime / rate)) {
                         pr.ready = true; // 建筑就绪等待放置（AI 会直接放）
@@ -1644,6 +1695,7 @@ void World::updateUnit(Ent& e, EID id) {
     const UnitDef& ud = unitDef(e.utype);
     if (e.atkCd > 0) e.atkCd--;
     if (e.invuln > 0) e.invuln--;
+    if (e.fireAnim > 0) e.fireAnim--; // 开火动画序列推进
     // 心灵控制链接维护：被控单位消失（运输装载/进驻等消耗路径）则清空控制者链接
     if (e.mindTarget != INVALID_EID && !valid(e.mindTarget)) e.mindTarget = INVALID_EID;
     if (e.mindBy != INVALID_EID && !valid(e.mindBy)) { e.player = e.origPlayer; e.mindBy = INVALID_EID; e.origPlayer = -1; }
@@ -1700,7 +1752,7 @@ void World::updateUnit(Ent& e, EID id) {
                 damage((int)i, dmg, e.player);
             }
             // 绿色辐射辉光
-            Effect ef; ef.kind = 10;
+            Effect ef; ef.kind = 12;
             ef.x = e.x + (rng.unit() - 0.5f) * 4.0f; ef.y = e.y + (rng.unit() - 0.5f) * 4.0f;
             ef.maxAge = 22; effects.push_back(ef);
         }
@@ -1903,7 +1955,15 @@ void World::updateUnit(Ent& e, EID id) {
                 if (en != INVALID_EID) { e.target = en; e.state = UState::Chasing; break; }
             }
             moveAlongPath(e, id);
-            if (e.pathIdx >= (int)e.path.size()) e.state = UState::Idle;
+            if (e.pathIdx >= (int)e.path.size()) {
+                if (!e.wps.empty()) { // 路径点接续（RA2 原作 Z 键路径）
+                    auto w = e.wps.front();
+                    e.wps.pop_front();
+                    orderMove({id}, w.first, w.second, e.state == UState::AttackMoving);
+                } else {
+                    e.state = UState::Idle;
+                }
+            }
             break;
         }
         case UState::Chasing: {
@@ -2051,13 +2111,18 @@ void World::updateUnit(Ent& e, EID id) {
             }
             // C4 爆破手不对建筑开枪：等待下次爆破冷却（RA2 原作：谭雅/海豹对建筑仅用 C4）
             if (ud.hasC4() && t.isBuilding) break;
-            // 面向目标
+            // 面向目标（RA2 炮塔 ROT：炮塔/车体按限速平滑转向，大致对准即开火）
             int wantDir = dirFromVec(tx - e.x, ty - e.y);
-            e.turretDir = wantDir;
-            if (!g_sprites.hasTurret(e.utype)) e.dir = wantDir;
-            if (e.atkCd <= 0) {
-                fireWeapon(e, id, e.target);
-                e.atkCd = ew.cooldown;
+            {
+                int rotPace = ud.isInfantry() ? 1 : (ud.isNaval() ? 3 : 2); // 每 N tick 转 45°
+                bool hasTur = g_sprites.hasTurret(e.utype);
+                int& face = hasTur ? e.turretDir : e.dir;
+                if (face != wantDir && (tick % rotPace) == 0) face = rotStepDir(face, wantDir);
+                if (!hasTur) e.turretDir = e.dir; // 无炮塔单位：车身即炮向
+                if (rotDistDir(face, wantDir) <= 1 && e.atkCd <= 0) {
+                    fireWeapon(e, id, e.target);
+                    e.atkCd = ew.cooldown;
+                }
             }
             break;
         }
@@ -2346,6 +2411,11 @@ void World::moveAlongPath(Ent& e, EID id) {
         else e.path.clear();
         return;
     }
+    // 行走动画相位与移动同步：每格一循环（RA2 原作步态，art.ini 序列帧）
+    if (ud.isInfantry() || e.utype == UnitType::TerrorDrone) {
+        const UnitAnimInfo& ai = g_sprites.animInfo(e.utype);
+        if (ai.walk > 0) e.walkFrame = (e.moveTick * ai.walk / ud.speed) % ai.walk;
+    }
     if (++e.moveTick >= ud.speed) {
         e.moveTick = 0;
         e.blockTick = 0;
@@ -2354,7 +2424,9 @@ void World::moveAlongPath(Ent& e, EID id) {
         if (!g_sprites.hasTurret(e.utype)) e.turretDir = e.dir;
         e.x = tx; e.y = ty;
         e.pathIdx++;
-        if (ud.isInfantry() && (++e.walkAnim % 4 == 0)) e.walkFrame ^= 1;
+        // 无序列素材的单位（蜘蛛等）：保留旧两帧切换
+        if ((ud.isInfantry() || e.utype == UnitType::TerrorDrone) && g_sprites.animInfo(e.utype).walk == 0
+            && (++e.walkAnim % 4 == 0)) e.walkFrame ^= 1;
         if (e.camouflaged) { e.camouflaged = false; e.camoTick = 0; } // 幻影移动解除伪装
         pickupCrates(e); // 驶入补给箱：拾取
     }
@@ -2386,6 +2458,16 @@ void World::updateHarvester(Ent& e, EID id) {
             break;
         }
         case UState::HarvestDig: {
+            // 采矿尘土反馈（RA2 原作：矿车挖掘时矿点扬尘）
+            if (tick % 7 == (uint64_t)(id % 7)) {
+                Effect dust; dust.kind = 11;
+                dust.x = e.oreCell.x + 0.5f + (rng.unit() - 0.5f) * 0.6f;
+                dust.y = e.oreCell.y + 0.5f + (rng.unit() - 0.5f) * 0.6f;
+                dust.maxAge = 14; effects.push_back(dust);
+            }
+            // 挖掘研磨声（RA2 原作：矿车钻头持续低鸣；24 tick ≈ 0.8s 一循环，与 0.55s 音效衔接）
+            if (tick % 24 == (uint64_t)(id % 24))
+                g_sfx.playAt(Sfx::Dig, e.oreCell.x + 0.5f, e.oreCell.y + 0.5f);
             if (++e.digTimer >= 20) {
                 e.digTimer = 0;
                 int got = map.harvestAt(e.oreCell.x, e.oreCell.y, 1);
@@ -2444,6 +2526,14 @@ void World::updateHarvester(Ent& e, EID id) {
             break;
         }
         case UState::HarvestUnload: {
+            // 卸矿扬尘反馈（RA2 原作：矿料倒入精炼厂料斗时扬起矿尘）
+            if (valid(e.dockRefinery) && tick % 6 == (uint64_t)(id % 6)) {
+                const Ent& rb = ents[e.dockRefinery];
+                Effect pour; pour.kind = 11;
+                pour.x = rb.x + 1.5f + (rng.unit() - 0.5f) * 0.5f;
+                pour.y = rb.y + (float)bldDef(rb.btype).h - 0.4f + (rng.unit() - 0.5f) * 0.3f;
+                pour.maxAge = 12; effects.push_back(pour);
+            }
             if (++e.digTimer >= 30) {
                 e.digTimer = 0;
                 if (e.oreLoad > 0) {
@@ -2474,6 +2564,7 @@ void World::updateBuilding(Ent& e, EID id) {
     const BldDef& bd = bldDef(e.btype);
     if (e.atkCd > 0) e.atkCd--;
     if (e.invuln > 0) e.invuln--;
+    if (e.constructAnim > 0) e.constructAnim--; // 建造动画推进
     // 建筑被超时空武器照射：冻结且累积抹除（中立建筑同样可被抹除）
     if (e.chrono > 0) {
         int threshold = bd.hp / 3 + 20;
@@ -2619,6 +2710,11 @@ void World::fireWeapon(Ent& e, EID id, EID targetId) {
     // 磁暴线圈充电加成：伤害 +50%
     if (e.isBuilding && e.btype == BldType::TeslaCoil && e.teslaCharge > 0)
         w.damage = (int)(w.damage * 1.5f);
+    // 步兵开火动画（art.ini FireUp 序列）：播放期间渲染开火帧
+    if (!e.isBuilding) {
+        const UnitAnimInfo& fai = g_sprites.animInfo(e.utype);
+        if (fai.fire > 0) e.fireAnim = fai.fire * 2; // 每相位 2 tick
+    }
     float sx = e.x, sy = e.y;
     if (e.isBuilding) { sx += bldDef(e.btype).w / 2.0f; sy += bldDef(e.btype).h / 2.0f; }
     float tx = t.x, ty = t.y;
@@ -3049,7 +3145,7 @@ void deserProd(Ser& s, ProdItem& p) {
 
 bool World::saveGame(FILE* f) const {
     Ser s{f};
-    s.wbuf("RA2WRLD4", 8);
+    s.wbuf("RA2WRLD5", 8);
     s.w(tick); s.w(numPlayers); s.w(rng.s);
     s.w(cratesEnabled); s.w(aiAlliance);
     // 地图（含矿石余量与迷雾）
@@ -3102,6 +3198,7 @@ bool World::saveGame(FILE* f) const {
             for (const Vec2i& wp : e.path) { s.w(wp.x); s.w(wp.y); }
             s.w(e.pathIdx); s.w(e.moveTick); s.w(e.blockTick);
             s.w(e.walkFrame); s.w(e.walkAnim);
+            s.w(e.fireAnim); s.w(e.constructAnim); s.w(e.deployAnim);
             s.w(st); s.w(e.atkCd); s.w(e.target); s.w(e.goalX); s.w(e.goalY);
             s.w(e.oreLoad); s.w(e.oreCell.x); s.w(e.oreCell.y); s.w(e.dockRefinery); s.w(e.digTimer);
             s.w(e.invuln);
@@ -3146,6 +3243,7 @@ bool World::saveGame(FILE* f) const {
         s.w(n);
         for (const Effect& e : effects) {
             s.w(e.alive); s.w(e.kind); s.w(e.x); s.w(e.y); s.w(e.x2); s.w(e.y2); s.w(e.age); s.w(e.maxAge);
+            s.w(e.aux); s.w(e.aux2); s.w(e.aux3);
         }
     }
     {
@@ -3175,7 +3273,7 @@ bool World::loadGame(FILE* f) {
     Ser s{f};
     char magic[8];
     s.rbuf(magic, 8);
-    if (!s.ok || memcmp(magic, "RA2WRLD4", 8) != 0) return false;
+    if (!s.ok || memcmp(magic, "RA2WRLD5", 8) != 0) return false;
     s.r(tick); s.r(numPlayers); s.r(rng.s);
     s.r(cratesEnabled); s.r(aiAlliance);
     // 地图
@@ -3242,6 +3340,7 @@ bool World::loadGame(FILE* f) {
             for (Vec2i& wp : e.path) { s.r(wp.x); s.r(wp.y); }
             s.r(e.pathIdx); s.r(e.moveTick); s.r(e.blockTick);
             s.r(e.walkFrame); s.r(e.walkAnim);
+            s.r(e.fireAnim); s.r(e.constructAnim); s.r(e.deployAnim);
             s.r(st); e.state = (UState)st;
             s.r(e.atkCd); s.r(e.target); s.r(e.goalX); s.r(e.goalY);
             s.r(e.oreLoad); s.r(e.oreCell.x); s.r(e.oreCell.y); s.r(e.dockRefinery); s.r(e.digTimer);
@@ -3297,6 +3396,7 @@ bool World::loadGame(FILE* f) {
         effects.assign(n, Effect{});
         for (Effect& e : effects) {
             s.r(e.alive); s.r(e.kind); s.r(e.x); s.r(e.y); s.r(e.x2); s.r(e.y2); s.r(e.age); s.r(e.maxAge);
+            s.r(e.aux); s.r(e.aux2); s.r(e.aux3);
         }
     }
     {
@@ -3561,7 +3661,7 @@ void World::chronoShiftUnits(const std::vector<EID>& sel, float tx, float ty) {
 void World::applyCmd(int player, const Cmd& c) {
     if (player < 0 || player >= numPlayers) return;
     switch (c.type) {
-        case Cmd::Move:        orderMove(c.ids, c.x, c.y, c.attackMove); break;
+        case Cmd::Move:        orderMove(c.ids, c.x, c.y, c.attackMove, (c.a & 1) != 0); break;
         case Cmd::Attack:      orderAttack(c.ids, c.a); break;
         case Cmd::Harvest:     orderHarvest(c.ids, c.a, c.b); break;
         case Cmd::Stop:        orderStop(c.ids); break;

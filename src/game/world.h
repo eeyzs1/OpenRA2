@@ -33,11 +33,13 @@ struct Projectile {
 
 struct Effect {
     bool alive = true;
-    int kind;           // 0 爆炸 1 烟雾 2 磁暴电弧 3 光棱光束 4 建筑爆炸
+    int kind;           // 0 爆炸 1 烟雾 2 磁暴电弧 3 光棱光束 4 建筑爆炸 9 超时空抹除 10 单位死亡动画 11 采矿尘土
     float x, y;
     float x2, y2;       // 光束终点
     int age = 0;
     int maxAge;
+    // kind=10 死亡动画参数：utype/dir/colorId
+    int aux = 0, aux2 = 0, aux3 = 0;
 };
 
 // 生产项
@@ -113,6 +115,7 @@ public:
         UnitType utype = UnitType::GI;
         BldType btype = BldType::ConYard;
         float x = 0, y = 0;        // 单位：浮点瓦片坐标；建筑：左上格
+        float px = 0, py = 0;      // 上一逻辑帧位置（渲染插值用，update() 开头快照）
         int dir = 2;
         int turretDir = 2;
         int hp = 1;
@@ -122,11 +125,16 @@ public:
         int moveTick = 0;
         int blockTick = 0;          // 路径被堵计时（超时放弃路径）
         int walkFrame = 0, walkAnim = 0;
+        // 动画状态机（art.ini 序列驱动）
+        int fireAnim = 0;       // 开火动画剩余 tick（>0 播放开火序列，phase 由剩余量推导）
+        int constructAnim = 0;  // 建筑建造动画剩余 tick（>0 播放 mk 序列，播完为成品）
+        int deployAnim = 0;     // MCV 展开/部署动画剩余 tick（>0 期间单位定格播展开序列）
         // 战斗
         UState state = UState::Idle;
         int atkCd = 0;
         EID target = INVALID_EID;
         float goalX = 0, goalY = 0; // 期望目的地
+        std::deque<std::pair<float, float>> wps; // 路径点队列（Z 键追加，到位自动接续）
         // 采矿
         int oreLoad = 0;
         Vec2i oreCell{-1, -1};
@@ -238,7 +246,7 @@ public:
     bool valid(EID id) const { return id >= 0 && id < (int)ents.size() && ents[id].alive; }
 
     // 指令
-    void orderMove(const std::vector<EID>& sel, float x, float y, bool attackMove);
+    void orderMove(const std::vector<EID>& sel, float x, float y, bool attackMove, bool append = false);
     void orderAttack(const std::vector<EID>& sel, EID target);
     void orderHarvest(const std::vector<EID>& sel, int x, int y);
     void orderStop(const std::vector<EID>& sel);
@@ -268,7 +276,7 @@ public:
         Type type = None;
         std::vector<EID> ids; // 选择集（可空）
         float x = 0, y = 0;   // 目标点（地图格坐标）
-        int a = 0, b = 0;     // 参数：type 索引 / 目标 EID / (bx,by)
+        int a = 0, b = 0;     // 参数：type 索引 / 目标 EID / (bx,by)；Move 专用：a&1=追加路径点
         bool attackMove = false; // Move 用：A 键攻击移动
     };
     void applyCmd(int player, const Cmd& c); // 执行一条玩家命令（联机双端对称调用）

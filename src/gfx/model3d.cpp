@@ -10,7 +10,7 @@ namespace {
 constexpr float SIN_E = 0.5f, COS_E = 0.8660254f;
 // 光源（指向光源，模型-相机共用空间）：左上前方
 constexpr float LX = -0.42f, LY = -0.50f, LZ = 0.759f; // 已归一
-constexpr float AMB = 0.55f, DIFF = 0.60f;
+constexpr float AMB = 0.38f, DIFF = 0.95f; // 更强对比朗伯：明暗分界更锐利，接近 RA2 预渲染手绘质感
 
 void rotZ(float& x, float& y, float cs, float sn) {
     float nx = x * cs - y * sn, ny = x * sn + y * cs;
@@ -245,7 +245,8 @@ void M3Builder::fin(const float v0[3], const float v1[3], const float v2[3], flo
 // ---------------- 渲染 ----------------
 PixBuf m3Render(const std::vector<M3Quad>& quads, int dir, int outW, int outH, float gy,
                 uint8_t partFilter, float pivX, float pivY, float scale) {
-    constexpr int SS = 2;
+    // 4x 超采样：单位/建筑在屏幕上占比小，4x 能显著消除锯齿，输出更细腻的预渲染质感
+    constexpr int SS = 4;
     int W = outW * SS, H = outH * SS;
     PixBuf hi(W, H);
     std::vector<float> zb((size_t)W * H, 1e30f);
@@ -284,17 +285,19 @@ PixBuf m3Render(const std::vector<M3Quad>& quads, int dir, int outW, int outH, f
             for (int py = minY; py <= maxY; py++)
                 for (int px = minX; px <= maxX; px++) {
                     float fx = px + 0.5f, fy = py + 0.5f;
-                    float w1 = ((bx - fx) * (cy2 - fy) - (cx2 - fx) * (by - fy)) / area;
-                    float w2 = ((cx2 - fx) * (ay - fy) - (ax - fx) * (cy2 - fy)) / area;
-                    float w0 = 1.0f - w1 - w2;
-                    if (w0 < -0.001f || w1 < -0.001f || w2 < -0.001f) continue;
-                    float depth = w0 * sd[i0] + w1 * sd[i1] + w2 * sd[i2];
+                    // 重心坐标：wa/wb/wc 分别对应顶点 i0/i1/i2
+                    // （面积比 λ_A=area(P,B,C)/area、λ_B=area(P,C,A)/area、λ_C=1-λ_A-λ_B）
+                    float wa = ((bx - fx) * (cy2 - fy) - (cx2 - fx) * (by - fy)) / area;
+                    float wb = ((cx2 - fx) * (ay - fy) - (ax - fx) * (cy2 - fy)) / area;
+                    float wc = 1.0f - wa - wb;
+                    if (wa < -0.001f || wb < -0.001f || wc < -0.001f) continue;
+                    float depth = wa * sd[i0] + wb * sd[i1] + wc * sd[i2];
                     size_t zi = (size_t)py * W + px;
                     if (depth >= zb[zi]) continue;
                     zb[zi] = depth;
-                    float nx = w0 * snx[i0] + w1 * snx[i1] + w2 * snx[i2];
-                    float ny = w0 * sny[i0] + w1 * sny[i1] + w2 * sny[i2];
-                    float nz = w0 * snz[i0] + w1 * snz[i1] + w2 * snz[i2];
+                    float nx = wa * snx[i0] + wb * snx[i1] + wc * snx[i2];
+                    float ny = wa * sny[i0] + wb * sny[i1] + wc * sny[i2];
+                    float nz = wa * snz[i0] + wb * snz[i1] + wc * snz[i2];
                     float nl = sqrtf(nx * nx + ny * ny + nz * nz);
                     if (nl < 1e-6f) continue;
                     nx /= nl; ny /= nl; nz /= nl;
@@ -309,7 +312,12 @@ PixBuf m3Render(const std::vector<M3Quad>& quads, int dir, int outW, int outH, f
                         out = Color{(uint8_t)(255 * k), (uint8_t)(26 * k), (uint8_t)(22 * k), 255};
                     } else {
                         float k = AMB + DIFF * std::max(0.0f, nx * LX + ny * LY + nz * LZ);
-                        if (k > 1.22f) k = 1.22f;
+                        if (k > 1.28f) k = 1.28f;
+                        // 表面微噪（确定性哈希，±4%）：打破纯平涂色的矢量感，
+                        // 模拟 RA2 手绘预渲染素材的颗粒/笔触质感
+                        uint32_t h = (uint32_t)px * 73856093u ^ (uint32_t)py * 19349663u;
+                        h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+                        k *= 0.96f + 0.08f * ((h % 1024) / 1024.0f);
                         out = Color{(uint8_t)std::min(255, (int)(c.r * k)),
                                     (uint8_t)std::min(255, (int)(c.g * k)),
                                     (uint8_t)std::min(255, (int)(c.b * k)), 255};
@@ -318,18 +326,18 @@ PixBuf m3Render(const std::vector<M3Quad>& quads, int dir, int outW, int outH, f
                 }
         }
     }
-    // 2x2 盒滤波降采样（覆盖比例作 alpha → 抗锯齿边缘）
+    // SS×SS 盒滤波降采样（覆盖比例作 alpha → 抗锯齿边缘）
     PixBuf lo(outW, outH);
     for (int y = 0; y < outH; y++)
         for (int x = 0; x < outW; x++) {
             int r = 0, g = 0, b = 0, n = 0;
-            for (int dy = 0; dy < 2; dy++)
-                for (int dx = 0; dx < 2; dx++) {
-                    Color c = hi.get(x * 2 + dx, y * 2 + dy);
+            for (int dy = 0; dy < SS; dy++)
+                for (int dx = 0; dx < SS; dx++) {
+                    Color c = hi.get(x * SS + dx, y * SS + dy);
                     if (c.a > 0) { r += c.r; g += c.g; b += c.b; n++; }
                 }
             if (n) lo.set(x, y, Color{(uint8_t)(r / n), (uint8_t)(g / n), (uint8_t)(b / n),
-                                      (uint8_t)(255 * n / 4)});
+                                      (uint8_t)(255 * n / (SS * SS))});
         }
     return lo;
 }

@@ -208,6 +208,7 @@ inline const char* sfxAssetName(Sfx s) {
         case Sfx::Eva: return "eva";
         case Sfx::NavalCannon: return "navalcannon";
         case Sfx::Torpedo: return "torpedo";
+        case Sfx::Dig: return "dig";
         default: return "unknown";
     }
 }

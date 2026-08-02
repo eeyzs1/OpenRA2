@@ -31,6 +31,7 @@ enum class Sfx : uint8_t {
     Eva,        // EVA 播报提示音
     NavalCannon,// 舰炮
     Torpedo,    // 鱼雷发射
+    Dig,        // 矿车挖掘研磨
     COUNT
 };
 

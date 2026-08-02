@@ -6,10 +6,14 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <unordered_set>
 
 // ===================== 初始化 =====================
 void Game::init(bool windowed, bool hidden) {
-    SetConfigFlags(FLAG_WINDOW_HIGHDPI); // DPI 感知：帧缓冲=物理像素，输入仍为逻辑坐标
+    // 不使用 FLAG_WINDOW_HIGHDPI：在高 DPI 缩放（如 150%）的屏幕上，HIGHDPI 会导致
+    // 帧缓冲（物理像素）与窗口（逻辑像素）尺寸不匹配，letterbox 缩放计算出超出屏幕的 dst 矩形，
+    // 表现为 GUI 右侧/底部被截断。改由 OS 负责 DPI 缩放，GetRenderWidth()=GetScreenWidth()=逻辑像素，
+    // letterbox 代码一致工作。
     if (hidden) SetConfigFlags(FLAG_WINDOW_HIDDEN); // 测试模式：不弹窗不抢焦点
     loadSettings(); // settings.ini：语言/显示模式/分辨率/音量/键位（文件缺失则全默认）
     // 素材外置化：规则数值与字符串须在字体字模收集（appendAllFontText）与任何数据使用前加载；
@@ -43,9 +47,9 @@ void Game::init(bool windowed, bool hidden) {
         g_sfx.setMasterVol(vols[cfgVolume] / 100.0f); // 持久化音量生效
     }
 
-    // 逻辑分辨率离屏缓冲：像素风点对点放大，高分屏不模糊
+    // 逻辑分辨率离屏缓冲：双线性放大（RA2 预渲染风格，非像素风；非整数倍缩放下 POINT 会产生像素块）
     canvas = LoadRenderTexture(SCREEN_W, SCREEN_H);
-    SetTextureFilter(canvas.texture, TEXTURE_FILTER_POINT);
+    SetTextureFilter(canvas.texture, TEXTURE_FILTER_BILINEAR);
 
     // 迷雾贴图：黑菱形与半透菱形
     {
@@ -117,6 +121,8 @@ void Game::newGame(uint64_t seed) {
         }
     message(TextFormat(TR(S::MsgFindMCVFmt), keyName(keyBind[KA_Deploy])));
     phase = Phase::InGame;
+    bakeTerrain(); // 整图地表烘焙（连续噪声，无瓦片网格感）
+    g_sprites.preloadMatch(localPlayer); // 开局预载本地玩家素材，消除游戏中懒加载掉帧
     // 脚本引擎：加载 assets/scripts/*.lua 并触发 OnGameStart
     // g_script.init(&world, 0, -1);
     // g_script.onGameStart();
@@ -169,6 +175,8 @@ void Game::newCampaignGame(int mission) {
         }
     message(missionBrief(mission));
     phase = Phase::InGame;
+    bakeTerrain();
+    g_sprites.preloadMatch(localPlayer); // 开局预载本地玩家素材，消除游戏中懒加载掉帧
     // 脚本引擎：加载 assets/scripts/*.lua 并触发 OnGameStart
     g_script.init(&world, 1, mission);
     g_script.onGameStart();
@@ -419,6 +427,8 @@ bool Game::loadGameFile(const char* path) {
     gameOver = victory = false;
     evaLines.clear();
     phase = Phase::InGame;
+    bakeTerrain(); // 读档后按载入地图重烘地表
+    g_sprites.preloadMatch(localPlayer);
     return true;
 }
 
@@ -454,6 +464,8 @@ void Game::shutdown() {
     UnloadRenderTexture(minimap);
     UnloadTexture(fogBlack);
     UnloadTexture(fogDim);
+    if (terrainTex.id) UnloadTexture(terrainTex);
+    if (fogMaskTex.id) UnloadTexture(fogMaskTex);
     if (previewTex.id > 0) UnloadTexture(previewTex);
     if (fontOk) UnloadFont(font);
     CloseWindow();
@@ -471,8 +483,11 @@ void Game::screenToWorld(int sx, int sy, float& wx, float& wy) const {
 
 Vector2 Game::unitScreenPos(const World::Ent& e) const {
     // 瓦片浮点坐标 → 世界像素：sx=(x-y)*32, sy=(x+y)*16
-    float wx = (e.x - e.y) * (TILE_W / 2.0f);
-    float wy = (e.x + e.y) * (TILE_H / 2.0f);
+    // 渲染插值：逻辑 30Hz、渲染 60fps，在两帧逻辑位置间线性插值消除跳动感
+    float ex = e.px + (e.x - e.px) * interpAlpha;
+    float ey = e.py + (e.y - e.py) * interpAlpha;
+    float wx = (ex - ey) * (TILE_W / 2.0f);
+    float wy = (ex + ey) * (TILE_H / 2.0f);
     return {wx - camX, wy - camY};
 }
 
@@ -504,6 +519,9 @@ void Game::run() {
                     n++;
                 }
                 if (n == 4) logicAcc = 0;
+                interpAlpha = std::clamp((float)(logicAcc / step), 0.0f, 1.0f); // 渲染插值进度
+            } else {
+                interpAlpha = 1.0f; // 暂停/结算：定格在最新逻辑位置
             }
         }
         render();
@@ -928,6 +946,16 @@ void Game::campaignSmokeTest(int mission, int frames) {
         TraceLog(LOG_INFO, "  start neutral ents: %d", neutral);
     }
     for (int i = 0; i < frames && !gameOver; i++) logic();
+    // 目检用：揭示全图、相机移到地图中心（覆盖水域/矿区等各类地形，出生点看不到全地貌）
+    world.map.reveal(localPlayer, world.map.w / 2, world.map.h / 2, world.map.w);
+    {
+        int csx, csy;
+        tileToScreen(world.map.w / 2, world.map.h / 2, csx, csy);
+        camX = (float)csx - (SCREEN_W - sidebarW) / 2.0f;
+        camY = (float)csy - SCREEN_H / 2.0f;
+    }
+    shotFile = TextFormat("smoke_campaign_%d.png", mission); // 截图供素材/地图目检（无头模式落盘 PNG）
+    render();
     int firedN = 0;
     for (const Trigger& t : missionTriggers)
         if (t.fired) firedN++;
@@ -941,6 +969,54 @@ void Game::campaignSmokeTest(int mission, int frames) {
         TraceLog(LOG_INFO, "  end player %d: blds=%d units=%d money=%d defeated=%d",
                  p, blds, units, world.players[p].money, (int)world.players[p].defeated);
     }
+}
+
+// 遭遇战截图：固定种子开局 + 预热（AI 与本地玩家发展出建筑/电力/部队），相机对准本地基地后拍全屏
+void Game::debugShot(int warmTicks, const char* file) {
+    newGame(20260801);
+    // 本地玩家也由 AI 代打（截图需发展出完整基地/电力/部队）
+    ais.insert(ais.begin(), SkirmishAI{});
+    ais[0].reset(0);
+    ais[0].difficulty = AIDiff::Normal;
+    for (int i = 0; i < warmTicks && !gameOver; i++) logic();
+    // 相机对准本地玩家建造场（含建成的电厂/兵营等，验证 GUI 电力条与建筑贴图）
+    bool found = false;
+    for (auto& e : world.ents) {
+        if (e.alive && e.isBuilding && e.player == localPlayer && e.btype == BldType::ConYard) {
+            int sx, sy;
+            tileToScreen((int)e.x + 1, (int)e.y + 1, sx, sy);
+            camX = (float)sx - (SCREEN_W - sidebarW) / 2.0f;
+            camY = (float)sy - SCREEN_H / 2.0f;
+            found = true;
+            break;
+        }
+    }
+    if (!found) TraceLog(LOG_WARNING, "debugShot: local ConYard not found");
+    int blds = 0, units = 0;
+    for (auto& e : world.ents)
+        if (e.alive && e.player == localPlayer) { if (e.isBuilding) blds++; else units++; }
+    TraceLog(LOG_INFO, "debugShot: warm=%d local blds=%d units=%d power=%d/%d", warmTicks, blds, units,
+             world.players[localPlayer].powerMade, world.players[localPlayer].powerUsed);
+    shotFile = file;
+    render();
+}
+
+// 临时诊断：战役真实渲染耗时（真实窗口+解除帧率上限，分离逻辑/渲染耗时定位"战役卡"）
+void Game::benchCampaign(int mission, int warmTicks, int frames) {
+    newCampaignGame(mission);
+    for (int i = 0; i < warmTicks && !gameOver; i++) logic(); // 预热：让 AI 发展出规模兵力
+    int alive = 0;
+    for (auto& e : world.ents) if (e.alive) alive++;
+    SetTargetFPS(0); // 解除 60fps 上限
+    double t0 = GetTime();
+    for (int i = 0; i < frames; i++) logic();
+    double t1 = GetTime();
+    for (int i = 0; i < frames; i++) render();
+    double t2 = GetTime();
+    printf("BENCH mission=%d warm=%d ents=%d: logic=%.2fms render=%.2fms total=%.2fms (%.0f fps)\n",
+           mission, warmTicks, alive,
+           (t1 - t0) * 1000.0 / frames, (t2 - t1) * 1000.0 / frames,
+           (t2 - t0) * 1000.0 / frames, frames * 2.0 / (t2 - t0));
 }
 
 void Game::logic() {
@@ -1083,6 +1159,28 @@ void Game::doBoxSelect(Rectangle r, bool additive) {
         if (unitDef(e.utype).isAir() && e.state != UState::Landed) p.y -= AIR_ALT;
         if (p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height)
             sel.push_back((int)i);
+    }
+}
+
+void Game::cmdDeploySel() {
+    for (EID id : sel)
+        if (world.valid(id) && world.ents[id].utype == UnitType::MCV) {
+            World::Cmd c; c.type = World::Cmd::Deploy; c.ids.push_back(id);
+            issueCmd(c);
+            sel.erase(std::remove(sel.begin(), sel.end(), id), sel.end());
+            message(TR(S::MsgDeployed));
+        }
+    // 辐射工兵/重装大兵/美国大兵/攻城直升机：部署/收起（RA2 原作同键）
+    bool anyDeploy = false;
+    for (EID id : sel)
+        if (world.valid(id) && !world.ents[id].isBuilding
+            && (world.ents[id].utype == UnitType::Desolator || world.ents[id].utype == UnitType::GuardianGI
+                || world.ents[id].utype == UnitType::GI || world.ents[id].utype == UnitType::SiegeChopper))
+            anyDeploy = true;
+    if (anyDeploy) {
+        World::Cmd c; c.type = World::Cmd::RadDeploy; c.ids = sel;
+        issueCmd(c);
+        message(TR(S::MsgDeployToggled));
     }
 }
 
@@ -1345,8 +1443,22 @@ void Game::handleInput() {
         }
         // 右键指令
         if (mPressed(MOUSE_RIGHT_BUTTON) && !dragging) {
-            if (!sel.empty()) issueSmartOrder((int)mouse.x, (int)mouse.y);
-            else { selBuilding = INVALID_EID; }
+            if (!sel.empty()) {
+                if (waypointLatch) { // 路径点模式：追加到队列而非替换目标
+                    float wx, wy;
+                    screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
+                    int tx, ty;
+                    screenToTile(wx, wy, tx, ty);
+                    if (world.map.inBounds(tx, ty)) {
+                        World::Cmd c; c.type = World::Cmd::Move; c.ids = sel;
+                        c.x = (float)tx; c.y = (float)ty; c.a = 1; // a&1=路径点追加
+                        issueCmd(c);
+                    }
+                } else {
+                    issueSmartOrder((int)mouse.x, (int)mouse.y);
+                    waypointLatch = false; // 普通指令自动退出路径点模式
+                }
+            } else { selBuilding = INVALID_EID; waypointLatch = false; }
         }
     }
 
@@ -1365,26 +1477,12 @@ void Game::handleInput() {
             message(TR(S::MsgUngarrison));
         }
     }
-    if (ka(KA_Deploy)) {
-        for (EID id : sel)
-            if (world.valid(id) && world.ents[id].utype == UnitType::MCV) {
-                World::Cmd c; c.type = World::Cmd::Deploy; c.ids.push_back(id);
-                issueCmd(c);
-                sel.erase(std::remove(sel.begin(), sel.end(), id), sel.end());
-                message(TR(S::MsgDeployed));
-            }
-        // 辐射工兵/重装大兵/美国大兵/攻城直升机：部署/收起（RA2 原作同键）
-        bool anyDeploy = false;
-        for (EID id : sel)
-            if (world.valid(id) && !world.ents[id].isBuilding
-                && (world.ents[id].utype == UnitType::Desolator || world.ents[id].utype == UnitType::GuardianGI
-                    || world.ents[id].utype == UnitType::GI || world.ents[id].utype == UnitType::SiegeChopper))
-                anyDeploy = true;
-        if (anyDeploy) {
-            World::Cmd c; c.type = World::Cmd::RadDeploy; c.ids = sel;
-            issueCmd(c);
-            message(TR(S::MsgDeployToggled));
-        }
+    if (ka(KA_Deploy)) cmdDeploySel();
+    // 路径点模式开关（RA2 原作 Z 键）：开启后右键追加路径点
+    if (ka(KA_Waypoint) && !sel.empty()) {
+        waypointLatch = !waypointLatch;
+        message(waypointLatch ? TR(S::MsgWaypointOn) : TR(S::MsgWaypointOff));
+        g_sfx.play(Sfx::Click, 0.6f);
     }
     // 散布（RA2 原作键位）
     if (ka(KA_Scatter) && !sel.empty()) {
@@ -1475,6 +1573,12 @@ void Game::handleInput() {
             }
     }
     if (ka(KA_Pause) && !netGame) paused = !paused; // 联机不可单方暂停（lockstep 步进对齐）
+    // 页签快捷键（RA2 原作 QWER：建筑/防御/步兵/载具）
+    if (kPressed(KEY_Q)) { uiTab = 0; uiScroll = 0; }
+    if (kPressed(KEY_W)) { uiTab = 1; uiScroll = 0; }
+    if (kPressed(KEY_E)) { uiTab = 2; uiScroll = 0; }
+    if (kPressed(KEY_R)) { uiTab = 3; uiScroll = 0; }
+    if (kPressed(KEY_F3)) showFps = !showFps; // 帧率/耗时显示（性能诊断）
     if (!netGame) {
         if (ka(KA_SpeedUp) || kPressed(KEY_KP_ADD)) gameSpeed = std::min(2, gameSpeed + 1);
         if (ka(KA_SpeedDown) || kPressed(KEY_KP_SUBTRACT)) gameSpeed = std::max(0, gameSpeed - 1);
@@ -1509,15 +1613,19 @@ void Game::updateCamera() {
     if (kDown(KEY_DOWN)) camY += sp;
     Vector2 m = mousePos();
     if (m.x < 4) camX -= sp;
-    if (m.x > viewW - 4 && m.x < viewW + 2) camX += sp;
+    // 右缘滚动：以物理屏幕右缘为准（侧边栏占 viewW..SCREEN_W；原触发区是战场/侧栏交界处的
+    // 6px 细条且 x<viewW+2 排除了侧栏区域——鼠标自然甩到屏幕最右会落入侧边栏，永远不触发）
+    if (m.x > SCREEN_W - 4) camX += sp;
     if (m.y < 4) camY -= sp;
     if (m.y > SCREEN_H - 4) camY += sp;
-    // 边界
-    float minX = -(float)world.map.h * TILE_W / 2 - 200;
-    float maxX = (float)world.map.w * TILE_W / 2 + 200 - viewW;
-    float maxY = (float)(world.map.w + world.map.h) * TILE_H / 2 + 100 - SCREEN_H;
+    // 边界（等距投影：x∈[-h*TW/2, w*TW/2]，y∈[0,(w+h)*TH/2]；屏幕占 [camX,camX+viewW]×[camY,camY+SCREEN_H]，
+    // 需保证画布与地图始终有交集，故左/上边界需减去可视尺寸，右/下边界直接取地图边缘+余量）
+    float minX = -(float)world.map.h * TILE_W / 2.0f - (float)viewW - 200.0f;
+    float maxX = (float)world.map.w * TILE_W / 2.0f + 200.0f;
+    float minY = -(float)SCREEN_H - 100.0f;
+    float maxY = (float)(world.map.w + world.map.h) * TILE_H / 2.0f + 100.0f;
     camX = std::clamp(camX, minX, maxX);
-    camY = std::clamp(camY, -100.0f, maxY);
+    camY = std::clamp(camY, minY, maxY);
 }
 
 // ===================== 渲染 =====================
@@ -1546,6 +1654,9 @@ void Game::render() {
         Rectangle src{0, 0, (float)SCREEN_W, -(float)SCREEN_H};
         Rectangle dst{(rw - rh * SCREEN_W / SCREEN_H) / 2, 0, rh * SCREEN_W / SCREEN_H, rh};
         if (rw / SCREEN_W < rh / SCREEN_H) dst = Rectangle{0, (rh - rw * SCREEN_H / SCREEN_W) / 2, rw, rw * SCREEN_H / SCREEN_W};
+        // 一次性诊断：打印 letterbox 实际值
+        static bool dbgOnce = false;
+        if (!dbgOnce) { TraceLog(LOG_INFO, "LETTERBOX: rw=%.0f rh=%.0f canvas=%dx%d dst={%.0f,%.0f,%.0f,%.0f}", rw, rh, SCREEN_W, SCREEN_H, dst.x, dst.y, dst.width, dst.height); dbgOnce = true; }
         DrawTexturePro(canvas.texture, src, dst, {0, 0}, 0, WHITE);
         EndDrawing();
         return;
@@ -1580,13 +1691,227 @@ void Game::render() {
     EndDrawing();
 }
 
+// ===================== 整图地表烘焙（RA2 预渲染感） =====================
+// 连续值噪声：晶格哈希 + 双线性插值（世界像素坐标 → 跨瓦片连续，无逐格重置）
+static inline uint32_t tHash(int x, int y, uint64_t seed) {
+    uint32_t h = ((uint32_t)x * 73856093u) ^ ((uint32_t)y * 19349663u) ^ ((uint32_t)seed * 83492791u);
+    h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+    return h;
+}
+static float tNoise(float x, float y, int stride, uint64_t seed) {
+    int gx = (int)floorf(x / stride), gy = (int)floorf(y / stride);
+    float fx = x / stride - gx, fy = y / stride - gy;
+    fx = fx * fx * (3.0f - 2.0f * fx); fy = fy * fy * (3.0f - 2.0f * fy);
+    auto h = [&](int ix, int iy) { return (float)(tHash(ix, iy, seed) % 1024) / 1024.0f; };
+    float a = h(gx, gy), b = h(gx + 1, gy), c = h(gx, gy + 1), d = h(gx + 1, gy + 1);
+    return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+}
+static uint8_t lerp8(int a, int b, float t) { return (uint8_t)(a + (int)((b - a) * t)); }
+
+void Game::bakeTerrain() {
+    double bakeT0 = GetTime();
+    int w = world.map.w, h = world.map.h;
+    if (w <= 0 || h <= 0) return;
+    terrainOX = (float)(h - 1) * (TILE_W / 2);
+    terrainW = (w + h - 2) * (TILE_W / 2) + TILE_W;
+    terrainH = (w + h - 2) * (TILE_H / 2) + TILE_H;
+    // GPU 纹理上限钳制（常见上限 8192）：128 大地图 8193px 超界，降到 8000 内
+    terrainSC = std::min(TERRAIN_SC, std::min(8000.0f / terrainW, 8000.0f / terrainH));
+    int bw = (int)(terrainW * terrainSC) + 1, bh = (int)(terrainH * terrainSC) + 1;
+    PixBuf pb(bw, bh);
+    const uint64_t seed = 20260723; // 固定种子：同一地形类型烘焙观感一致
+    // 真实 RA2 地形瓦片（gen_terrain.py 自 isotemp.mix 提取，64x32 菱形）：
+    // 文件存在则逐像素采样，缺失/采样到透明点回退程序化配色。
+    // Ore/Gems 不在此采样（烘焙层垫采空土地，矿脉瓦片动态绘制于上层）。
+    PixBuf tilePx[6][8];
+    bool tileOk[6][8] = {};
+    {
+        static const char* kTileNames[6] = {"clear", "rough", "water", "ore", "gems", "bridge"};
+        for (int ti = 0; ti < 6; ti++) {
+            if (ti == (int)Terrain::Ore || ti == (int)Terrain::Gems) continue;
+            for (int v = 0; v < 8; v++) {
+                char path[192];
+                snprintf(path, sizeof(path), "assets/sprites/tile_%s_%d.png", kTileNames[ti], v);
+                tileOk[ti][v] = tilePx[ti][v].loadFromFile(path)
+                             && tilePx[ti][v].w == TILE_W && tilePx[ti][v].h == TILE_H;
+            }
+        }
+    }
+    // 岸线过渡瓦片（RA2 shore 系列，按邻水 mask 索引；gen_terrain.py 自 isotemp.mix 扫描分类提取）
+    PixBuf shorePx[16][2];
+    bool shoreOk[16][2] = {};
+    for (int m = 1; m < 16; m++)
+        for (int v = 0; v < 2; v++) {
+            char path[192];
+            snprintf(path, sizeof(path), "assets/sprites/tile_shore_m%d_%d.png", m, v);
+            shoreOk[m][v] = shorePx[m][v].loadFromFile(path)
+                         && shorePx[m][v].w == TILE_W && shorePx[m][v].h == TILE_H;
+        }
+    // 预计算每格邻水 mask（仅陆格：bit0 +x / bit1 +y / bit2 -x / bit3 -y 邻格为水）
+    std::vector<uint8_t> shoreMask((size_t)w * h, 0);
+    for (int ty = 0; ty < h; ty++)
+        for (int tx = 0; tx < w; tx++) {
+            Terrain tt = world.map.at(tx, ty).terrain;
+            if (tt == Terrain::Water || tt == Terrain::Bridge) continue;
+            uint8_t m = 0;
+            if (world.map.inBounds(tx + 1, ty) && world.map.at(tx + 1, ty).terrain == Terrain::Water) m |= 1;
+            if (world.map.inBounds(tx, ty + 1) && world.map.at(tx, ty + 1).terrain == Terrain::Water) m |= 2;
+            if (world.map.inBounds(tx - 1, ty) && world.map.at(tx - 1, ty).terrain == Terrain::Water) m |= 4;
+            if (world.map.inBounds(tx, ty - 1) && world.map.at(tx, ty - 1).terrain == Terrain::Water) m |= 8;
+            shoreMask[(size_t)ty * w + tx] = m;
+        }
+    for (int by = 0; by < bh; by++) {
+        float sy = by / terrainSC;
+        for (int bx = 0; bx < bw; bx++) {
+            float sx = bx / terrainSC - terrainOX; // 等距世界坐标（tileToScreen 域）
+            // 边界抖动：扰乱地形类型逐格硬边（海岸/地块边缘有机化）
+            float dith = tNoise(sx, sy, 9, seed + 7) - 0.5f;
+            float jx = sx + dith * 13.0f, jy = sy + dith * 7.0f;
+            float fx = jx / (TILE_W / 2.0f), fy = jy / (TILE_H / 2.0f);
+            int tx = (int)floorf((fx + fy) / 2.0f), ty = (int)floorf((fy - fx) / 2.0f);
+            if (!world.map.inBounds(tx, ty)) continue; // 地图外透明（显示黑底）
+            Terrain t = world.map.at(tx, ty).terrain;
+            Color c;
+            // 优先采样真实 RA2 瓦片：变体按 5x5 格块哈希选取（块内恒定 → 成片纹理；
+            // 55% 概率用主变体 0 保证大面积统一，避免逐格随机的棋盘格感）；
+            // 局部坐标用抖动后位置（与瓦片选择一致，边界有机混入邻块纹理）
+            int ti = (int)t;
+            uint32_t vh = tHash(tx / 5, ty / 5, seed + 13);
+            int tv = (vh % 100 < 55) ? 0 : 1 + (int)(vh % 7);
+            bool fromTile = false;
+            int ppx = 0, ppy = 0;
+            // 岸线瓦片优先：陆格邻水时按邻水 mask 采样 RA2 岸线过渡（沙滩/草滩自然入水）
+            uint8_t sm = shoreMask[(size_t)ty * w + tx];
+            if (sm) {
+                int sv = (int)((tHash(tx, ty, seed + 29) >> 4) & 1);
+                if (shoreOk[sm][sv]) {
+                    tileToScreen(tx, ty, ppx, ppy);
+                    int ix = (int)floorf(jx - ppx) + TILE_W / 2, iy = (int)floorf(jy - ppy);
+                    if ((unsigned)ix < (unsigned)TILE_W && (unsigned)iy < (unsigned)TILE_H) {
+                        Color tc = shorePx[sm][sv].px[(size_t)iy * TILE_W + ix];
+                        if (tc.a >= 128) { c = tc; fromTile = true; }
+                    }
+                }
+            }
+            if (!fromTile && tileOk[ti][tv]) {
+                tileToScreen(tx, ty, ppx, ppy);
+                int ix = (int)floorf(jx - ppx) + TILE_W / 2, iy = (int)floorf(jy - ppy);
+                if ((unsigned)ix < (unsigned)TILE_W && (unsigned)iy < (unsigned)TILE_H) {
+                    Color tc = tilePx[ti][tv].px[(size_t)iy * TILE_W + ix];
+                    if (tc.a >= 128) { c = tc; fromTile = true; }
+                }
+            }
+            if (!fromTile) {
+            // 连续噪声（回退配色用；真实瓦片采样成功时无需计算，省 ~40% 烘焙耗时）
+            float nBig = tNoise(sx, sy, 56, seed);
+            float nMid = tNoise(sx, sy, 15, seed + 5);
+            float n = nBig * 0.60f + nMid * 0.40f;
+            float grain = ((float)(tHash(bx, by, seed + 11) % 256) / 255.0f - 0.5f) * 13.0f;
+            switch (t) {
+                case Terrain::Clear: {
+                    // 草地：黄绿基调 + 大斑块；低频噪声处掺入泥土斑（RA2 地图常见的裸地）
+                    float patch = tNoise(sx, sy, 90, seed + 23);
+                    float dirt = std::clamp((patch - 0.60f) / 0.28f, 0.0f, 1.0f);
+                    dirt = dirt * dirt * (3.0f - 2.0f * dirt);
+                    c = Color{lerp8(58, 102, n), lerp8(94, 146, n), lerp8(42, 68, n), 255};
+                    if (nMid > 0.86f && nBig > 0.45f) { c.r = 116; c.g = 120; c.b = 56; } // 枯草点
+                    if (dirt > 0.0f) {
+                        Color d{lerp8(118, 154, nMid), lerp8(96, 128, nMid), lerp8(58, 84, nMid), 255};
+                        c.r = lerp8(c.r, d.r, dirt); c.g = lerp8(c.g, d.g, dirt); c.b = lerp8(c.b, d.b, dirt);
+                    }
+                    break;
+                }
+                case Terrain::Rough: {
+                    c = Color{lerp8(122, 158, n), lerp8(100, 134, n), lerp8(62, 90, n), 255};
+                    if (nMid < 0.14f) { c.r -= 24; c.g -= 22; c.b -= 16; } // 碎石暗斑
+                    break;
+                }
+                case Terrain::Water: {
+                    // 深水 + 横向波光条带（连续波形跨瓦片）
+                    float wv = sinf((sy + nMid * 9.0f) * 0.55f) * 0.5f + 0.5f;
+                    float m = n * 0.62f + wv * 0.38f;
+                    c = Color{lerp8(16, 38, m), lerp8(50, 96, m), lerp8(96, 158, m), 255};
+                    if (wv > 0.88f && nMid > 0.55f) { c.r += 20; c.g += 24; c.b += 24; } // 波峰高光
+                    break;
+                }
+                case Terrain::Ore:
+                case Terrain::Gems: {
+                    // 矿格下垫采空土地（矿脉瓦片动态绘制在上层；采空后地形变 Rough 与之一致）
+                    c = Color{lerp8(96, 126, n), lerp8(76, 104, n), lerp8(46, 68, n), 255};
+                    break;
+                }
+                case Terrain::Bridge: {
+                    float plank = (float)(((int)sy / 4) % 2) * 0.10f;
+                    float v = 0.72f + n * 0.38f - plank;
+                    c = Color{(uint8_t)(148 * v), (uint8_t)(100 * v), (uint8_t)(56 * v), 255};
+                    if ((int)sy % 4 == 0) { c.r = (uint8_t)(c.r * 0.55f); c.g = (uint8_t)(c.g * 0.55f); c.b = (uint8_t)(c.b * 0.55f); }
+                    break;
+                }
+            }
+            c.r = (uint8_t)clampi(c.r + (int)grain, 0, 255);
+            c.g = (uint8_t)clampi(c.g + (int)grain, 0, 255);
+            c.b = (uint8_t)clampi(c.b + (int)grain, 0, 255);
+            } // !fromTile 回退配色（真实瓦片像素自带纹理，不再加颗粒噪）
+            // 直写像素数组：循环边界已保证不越界；且避免 set()/get() 内联函数的
+            // 分支模式在同循环读写同一缓冲区时触发 MSVC /O2 自动向量化错误（曾致一半写入丢失）
+            pb.px[(size_t)by * bw + bx] = c;
+        }
+    }
+    if (terrainTex.id) UnloadTexture(terrainTex);
+    terrainTex = pb.toTexture();
+    SetTextureFilter(terrainTex, TEXTURE_FILTER_BILINEAR); // 放大平滑 = 预渲染柔感
+    fogMaskTick = -1; // 迷雾遮罩需按新地图重建
+    TraceLog(LOG_INFO, "bakeTerrain: %dx%d px in %.1f ms", bw, bh, (GetTime() - bakeT0) * 1000.0);
+}
+
+// ---- 迷雾软遮罩：1/8 分辨率 alpha 图（UNSEEN 255 / SEEN 112 / VISIBLE 0），bilinear 放大软边界 ----
+void Game::bakeFogMask() {
+    if (terrainW <= 0 || terrainH <= 0) return;
+    const int FS = 8; // 遮罩缩小倍数
+    int fw = terrainW / FS + 2, fh = terrainH / FS + 2;
+    PixBuf pb(fw, fh); // 默认全 0 = 可见
+    int w = world.map.w, h = world.map.h;
+    for (int ty = 0; ty < h; ty++)
+        for (int tx = 0; tx < w; tx++) {
+            FogState fs = world.map.fogAt(localPlayer, tx, ty);
+            if (fs == FOG_VISIBLE) continue;
+            uint8_t a = fs == FOG_UNSEEN ? 255 : 112;
+            int px, py;
+            tileToScreen(tx, ty, px, py);
+            float mx = (px + terrainOX) / FS, my = (float)py / FS; // 菱形顶（遮罩域）
+            // 填充菱形（世界 64x32 → 遮罩 8x4；略放大保证 bilinear 后无漏缝；max 规则保证 UNSEEN 优先）
+            for (int dy = -1; dy <= 5; dy++)
+                for (int dx = -5; dx <= 5; dx++) {
+                    if (fabsf(dx) / 5.0f + fabsf(dy - 2) / 3.0f > 1.0f) continue;
+                    int mx2 = (int)mx + dx, my2 = (int)my + dy;
+                    if (a >= pb.get(mx2, my2).a) pb.set(mx2, my2, Color{0, 0, 0, a});
+                }
+        }
+    if (fogMaskTex.id) UnloadTexture(fogMaskTex);
+    fogMaskTex = pb.toTexture();
+    SetTextureFilter(fogMaskTex, TEXTURE_FILTER_BILINEAR);
+}
+
 void Game::drawWorld() {
     int viewW = SCREEN_W - sidebarW;
-    // 计算可见瓦片范围
+    // ---- 整图地表：1 次 draw（烘焙纹理源矩形裁剪到可视区；区外留黑底） ----
+    if (terrainTex.id) {
+        Rectangle src{(camX + terrainOX) * terrainSC, camY * terrainSC,
+                      viewW * terrainSC, SCREEN_H * terrainSC};
+        Rectangle dst{0, 0, (float)viewW, (float)SCREEN_H};
+        const float inv = 1.0f / terrainSC;
+        if (src.x < 0) { dst.x -= src.x * inv; dst.width += src.x * inv; src.width += src.x; src.x = 0; }
+        if (src.y < 0) { dst.y -= src.y * inv; dst.height += src.y * inv; src.height += src.y; src.y = 0; }
+        float maxX = terrainW * terrainSC, maxY = terrainH * terrainSC;
+        if (src.x + src.width > maxX) { float over = src.x + src.width - maxX; src.width -= over; dst.width -= over * inv; }
+        if (src.y + src.height > maxY) { float over = src.y + src.height - maxY; src.height -= over; dst.height -= over * inv; }
+        if (src.width > 0 && src.height > 0)
+            DrawTexturePro(terrainTex, src, dst, {0, 0}, 0, WHITE);
+    }
+    // ---- 矿脉/彩矿：动态瓦片（采空/再生会变化，不参与烘焙；烘焙层在矿格下垫了采空土地） ----
     int x0, y0, x1, y1;
     screenToTile(camX, camY - 64, x0, y0);
     screenToTile(camX + viewW + 64, camY + SCREEN_H + 64, x1, y1);
-    // 等距地图需要扩大范围
     int x2, y2, x3, y3;
     screenToTile(camX + viewW + 64, camY - 128, x2, y2);
     screenToTile(camX - 64, camY + SCREEN_H + 128, x3, y3);
@@ -1598,13 +1923,13 @@ void Game::drawWorld() {
     for (int ty = minTY; ty <= maxTY; ty++)
         for (int tx = minTX; tx <= maxTX; tx++) {
             const Cell& c = world.map.at(tx, ty);
+            if (c.terrain != Terrain::Ore && c.terrain != Terrain::Gems) continue;
             int px, py;
             tileToScreen(tx, ty, px, py);
             int sx = px - camX, sy = py - camY;
             if (sx < -TILE_W || sx > viewW + TILE_W || sy < -TILE_H || sy > SCREEN_H + TILE_H) continue;
             const Sprite& s = g_sprites.tile(c.terrain, c.variant & 7);
             DrawTexture(s.tex, sx - TILE_W / 2, sy, WHITE);
-            // 装饰物在实体层按深度画
         }
 }
 
@@ -1613,6 +1938,7 @@ void Game::drawEntities() {
     // 深度排序绘制项
     struct Item { float depth; int kind; int id; }; // kind 0 单位 1 建筑 2 树
     std::vector<Item> items;
+    items.reserve(world.ents.size() + 512);
     for (size_t i = 0; i < world.ents.size(); i++) {
         const World::Ent& e = world.ents[i];
         if (!e.alive) continue;
@@ -1625,19 +1951,29 @@ void Game::drawEntities() {
             items.push_back({e.x + e.y + (flying ? 1000.0f : 0.0f), 0, (int)i});
         }
     }
-    // 树木
-    int minTX = std::max(0, (int)((camY) / TILE_H) - world.map.h), maxX2 = world.map.w;
-    for (int ty = 0; ty < world.map.h; ty++)
-        for (int tx = 0; tx < world.map.w; tx++) {
-            const Cell& c = world.map.at(tx, ty);
-            if (c.overlay >= Overlay::Tree1 && c.overlay <= Overlay::Tree3) {
-                int px, py;
-                tileToScreen(tx, ty, px, py);
-                int sx = px - camX, sy = py - camY;
-                if (sx < -64 || sx > viewW + 64 || sy < -96 || sy > SCREEN_H + 64) continue;
-                items.push_back({(float)(tx + ty) + 0.9f, 2, ty * world.map.w + tx});
+    // 树木：仅扫描可见瓦片范围（与 drawWorld 同边界，避免全图扫描）
+    {
+        int x0, y0, x1, y1, x2, y2, x3, y3;
+        screenToTile(camX, camY - 64, x0, y0);
+        screenToTile(camX + viewW + 64, camY + SCREEN_H + 64, x1, y1);
+        screenToTile(camX + viewW + 64, camY - 128, x2, y2);
+        screenToTile(camX - 64, camY + SCREEN_H + 128, x3, y3);
+        int minTX = std::max(0, std::min({x0, x1, x2, x3}) - 1);
+        int maxTX = std::min(world.map.w - 1, std::max({x0, x1, x2, x3}) + 1);
+        int minTY = std::max(0, std::min({y0, y1, y2, y3}) - 1);
+        int maxTY = std::min(world.map.h - 1, std::max({y0, y1, y2, y3}) + 1);
+        for (int ty = minTY; ty <= maxTY; ty++)
+            for (int tx = minTX; tx <= maxTX; tx++) {
+                const Cell& c = world.map.at(tx, ty);
+                if (c.overlay >= Overlay::Tree1 && c.overlay <= Overlay::Tree3) {
+                    int px, py;
+                    tileToScreen(tx, ty, px, py);
+                    int sx = px - camX, sy = py - camY;
+                    if (sx < -64 || sx > viewW + 64 || sy < -96 || sy > SCREEN_H + 64) continue;
+                    items.push_back({(float)(tx + ty) + 0.9f, 2, ty * world.map.w + tx});
+                }
             }
-        }
+    }
     // 补给箱（地面道具，参与深度排序）
     for (size_t i = 0; i < world.crates.size(); i++) {
         const World::Crate& c = world.crates[i];
@@ -1646,6 +1982,8 @@ void Game::drawEntities() {
         items.push_back({(float)(c.x + c.y) + 0.5f, 3, (int)i});
     }
     std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.depth < b.depth; });
+    // 选择集 O(1) 查找
+    std::unordered_set<EID> selSet(sel.begin(), sel.end());
 
     for (const Item& it : items) {
         if (it.kind == 3) {
@@ -1683,22 +2021,50 @@ void Game::drawEntities() {
             Vector2 p = unitScreenPos(e);
             if (p.x < -80 || p.x > viewW + 80 || p.y < -80 || p.y > SCREEN_H + 80) continue;
             int cid = world.players[e.player].colorId;
-            // 阴影（地面投影，飞行中缩小变远）
-            DrawEllipse((int)p.x, (int)p.y + 4, flying ? 8 : 14, flying ? 3 : 5,
-                        Color{0, 0, 0, (unsigned char)(flying ? 50 : 70)});
+            // RA2 式阴影：多层渐变椭圆（中心深边缘浅，飞行中更小更淡）
+            if (!flying) {
+                DrawEllipse((int)p.x, (int)p.y + 4, 16, 6, Color{0, 0, 0, 30});
+                DrawEllipse((int)p.x, (int)p.y + 4, 12, 4, Color{0, 0, 0, 50});
+                DrawEllipse((int)p.x, (int)p.y + 4, 8, 3, Color{0, 0, 0, 70});
+            } else {
+                DrawEllipse((int)p.x, (int)p.y + 4, 10, 4, Color{0, 0, 0, 20});
+                DrawEllipse((int)p.x, (int)p.y + 4, 6, 2, Color{0, 0, 0, 40});
+            }
             if (flying) p.y -= AIR_ALT;
-            const Sprite& body = g_sprites.unitBody(e.utype, e.dir,
-                unitDef(e.utype).canHarvet() ? (e.oreLoad > 10 ? 1 : 0) : e.walkFrame, cid);
+            // 动画状态机选择（art.ini 序列）：开火 > 行走 > 部署站姿 > 站立
+            const UnitAnimInfo& ai = g_sprites.animInfo(e.utype);
+            const Sprite* bodyP;
+            if (e.fireAnim > 0 && ai.fire > 0) {
+                int phase = (ai.fire * 2 - e.fireAnim) / 2; // 0..fire-1
+                bodyP = &g_sprites.unitAnim(e.utype, UAnim::Fire, e.dir, phase, cid);
+            } else if (ud.isInfantry() && ai.walk > 0 && !e.path.empty() && e.pathIdx < (int)e.path.size()
+                       && e.state != UState::Idle && e.state != UState::Attacking && e.state != UState::Landed) {
+                bodyP = &g_sprites.unitAnim(e.utype, UAnim::Walk, e.dir, e.walkFrame, cid);
+            } else if (e.deployed && ai.dep) {
+                bodyP = &g_sprites.unitAnim(e.utype, UAnim::Dep, e.dir, 0, cid);
+            } else {
+                // 站立：步兵恒为 f0 站立帧；矿车 f0/f1 为空载/满载；其余车辆沿用旧两帧
+                int stf = ud.canHarvet() ? (e.oreLoad > 10 ? 1 : 0) : (ud.isInfantry() ? 0 : (e.walkFrame & 1));
+                bodyP = &g_sprites.unitBody(e.utype, e.dir, stf, cid);
+            }
+            const Sprite& body = *bodyP;
             Color tint = (e.player != localPlayer && fs == FOG_SEEN) ? Color{120, 120, 120, 255} : WHITE;
             DrawTexture(body.tex, (int)p.x - body.ox, (int)p.y - body.oy, tint);
             if (g_sprites.hasTurret(e.utype)) {
                 const Sprite& tur = g_sprites.unitTurret(e.utype, e.turretDir, cid);
                 DrawTexture(tur.tex, (int)p.x - tur.ox, (int)p.y - tur.oy, tint);
             }
-            // 血条与选择框
-            bool selected = std::find(sel.begin(), sel.end(), it.id) != sel.end();
+            // 血条与选择框（RA2 式：选择框为方框+四角标记，血条更细）
+            bool selected = selSet.count(it.id) > 0;
             if (selected) {
-                DrawEllipseLines((int)p.x, (int)p.y + 4, 16, 6, GREEN);
+                // RA2 式选择框：四角小方块 + 绿色边框
+                int sx = (int)p.x, sy = (int)p.y;
+                DrawRectangleLines(sx - 16, sy - 20, 32, 24, Color{0, 255, 0, 200});
+                // 四角标记
+                DrawRectangle(sx - 18, sy - 22, 4, 4, GREEN);
+                DrawRectangle(sx + 14, sy - 22, 4, 4, GREEN);
+                DrawRectangle(sx - 18, sy + 2, 4, 4, GREEN);
+                DrawRectangle(sx + 14, sy + 2, 4, 4, GREEN);
             }
             if (selected || e.hp < ud.hp)
                 drawHealthBar((int)p.x - 14, (int)p.y - 26, 28, (float)e.hp / ud.hp, selected);
@@ -1728,7 +2094,17 @@ void Game::drawEntities() {
             if (e.player != localPlayer && fs == FOG_UNSEEN) continue;
             Vector2 p = bldScreenPos(e);
             int cid = e.player >= 0 ? world.players[e.player].colorId : -1; // 中立建筑 player=-1：精灵层用灰色
-            const Sprite& s = g_sprites.building(e.btype, cid, false);
+            // 建造动画：mk 关键帧序列（逐帧起楼），播完显示成品
+            const Sprite* sp;
+            int mkf = g_sprites.bldMkFrames(e.btype);
+            if (e.constructAnim > 0 && mkf > 1) {
+                int total = mkf * 5;
+                int frame = (total - e.constructAnim) / 5; // 0..mkf-1
+                sp = &g_sprites.buildingMk(e.btype, frame, cid);
+            } else {
+                sp = &g_sprites.building(e.btype, cid, false);
+            }
+            const Sprite& s = *sp;
             Color tint = (e.player != localPlayer && fs == FOG_SEEN) ? Color{110, 110, 110, 255} : WHITE;
             DrawTexture(s.tex, (int)p.x - s.ox, (int)p.y - s.oy, tint);
             const BldDef& d = bldDef(e.btype);
@@ -1779,6 +2155,26 @@ void Game::drawEntities() {
         } else {
             const Sprite& s = g_sprites.projectile(0, 0);
             DrawTexture(s.tex, sx - s.ox, sy - s.oy, WHITE);
+        }
+    }
+
+    // 路径点可视化（Z 模式或单位队列非空）：绿线串联 + 菱形节点
+    for (EID id : sel) {
+        if (!world.valid(id)) continue;
+        const World::Ent& e = world.ents[id];
+        if (e.isBuilding || e.wps.empty()) continue;
+        Vector2 prev = unitScreenPos(e);
+        int i = 0;
+        for (auto& w : e.wps) {
+            float wx = (w.first - w.second) * (TILE_W / 2.0f) - camX;
+            float wy = (w.first + w.second) * (TILE_H / 2.0f) - camY;
+            DrawLine((int)prev.x, (int)prev.y, (int)wx, (int)wy, Color{80, 255, 80, 170});
+            // 节点菱形（RA2 路径点标记风格）
+            DrawTriangle({wx, wy - 5}, {wx + 5, wy}, {wx, wy + 5}, Color{60, 230, 60, 220});
+            DrawTriangle({wx, wy - 5}, {wx - 5, wy}, {wx, wy + 5}, Color{60, 230, 60, 220});
+            DrawCircle((int)wx, (int)wy, 1.5f, Color{220, 255, 220, 255});
+            prev = {wx, wy};
+            if (++i >= 12) break; // 最多显示 12 个，避免满屏线条
         }
     }
 
@@ -1941,6 +2337,33 @@ void Game::drawEffectsLayer() {
             float r = 10 + t * 110;
             DrawEllipseLines(sx, sy, r, r / 2, Color{220, 60, 50, (uint8_t)(230 * (1 - t))});
             DrawEllipseLines(sx, sy, r * 0.7f, r * 0.35f, Color{255, 120, 100, (uint8_t)(160 * (1 - t))});
+        } else if (ef.kind == 10) {
+            // 单位死亡动画（art.ini Die1 序列）：aux=utype aux2=dir aux3=colorId
+            int sx, sy;
+            toPx(ef.x, ef.y, sx, sy);
+            const UnitAnimInfo& dai = g_sprites.animInfo((UnitType)ef.aux);
+            if (dai.die > 0) {
+                int phase = ef.age * dai.die / ef.maxAge;
+                if (phase >= dai.die) phase = dai.die - 1;
+                const Sprite& ds = g_sprites.unitAnim((UnitType)ef.aux, UAnim::Die, ef.aux2, phase, ef.aux3);
+                DrawTexture(ds.tex, sx - ds.ox, sy - ds.oy, WHITE);
+            }
+        } else if (ef.kind == 11) {
+            // 采矿尘土：褐色尘团上扬扩散
+            int sx, sy;
+            toPx(ef.x, ef.y, sx, sy);
+            float t = (float)ef.age / ef.maxAge;
+            int r = 2 + (int)(t * 6);
+            DrawCircle(sx, sy - (int)(t * 10), (float)r, Color{150, 120, 80, (uint8_t)(140 * (1 - t))});
+            DrawCircle(sx + 3, sy - 2 - (int)(t * 7), (float)(r * 2 / 3), Color{170, 140, 96, (uint8_t)(110 * (1 - t))});
+        } else if (ef.kind == 12) {
+            // 辐射辉光：绿色半透明圆斑闪烁
+            int sx, sy;
+            toPx(ef.x, ef.y, sx, sy);
+            float t = (float)ef.age / ef.maxAge;
+            float r = 14 + sinf(ef.age * 0.7f) * 4;
+            DrawCircle(sx, sy, r, Color{80, 220, 60, (uint8_t)(70 * (1 - t))});
+            DrawCircle(sx, sy, r * 0.55f, Color{140, 255, 100, (uint8_t)(90 * (1 - t))});
         }
     }
     // 心灵探测器（RA2 原作）：显示视野内敌方单位的攻击目标线
@@ -1961,23 +2384,24 @@ void Game::drawEffectsLayer() {
 
 void Game::drawFogLayer() {
     int viewW = SCREEN_W - sidebarW;
-    int x0, y0, x1, y1, x2, y2, x3, y3;
-    screenToTile(camX, camY - 64, x0, y0);
-    screenToTile(camX + viewW + 64, camY + SCREEN_H + 64, x1, y1);
-    screenToTile(camX + viewW + 64, camY - 128, x2, y2);
-    screenToTile(camX - 64, camY + SCREEN_H + 128, x3, y3);
-    int minTX = std::max(0, std::min({x0, x1, x2, x3}) - 1), maxTX = std::min(world.map.w - 1, std::max({x0, x1, x2, x3}) + 1);
-    int minTY = std::max(0, std::min({y0, y1, y2, y3}) - 1), maxTY = std::min(world.map.h - 1, std::max({y0, y1, y2, y3}) + 1);
-    for (int ty = minTY; ty <= maxTY; ty++)
-        for (int tx = minTX; tx <= maxTX; tx++) {
-            FogState fs = world.map.fogAt(localPlayer, tx, ty);
-            if (fs == FOG_VISIBLE) continue;
-            int px, py;
-            tileToScreen(tx, ty, px, py);
-            int sx = px - (int)camX, sy = py - (int)camY;
-            if (fs == FOG_UNSEEN) DrawTexture(fogBlack, sx - TILE_W / 2, sy, WHITE);
-            else DrawTexture(fogDim, sx - TILE_W / 2, sy, WHITE);
-        }
+    // 软迷雾遮罩：低分辨率 alpha 图 bilinear 放大（消除逐格菱形棋盘格；draw ~800 → 1）
+    if (fogMaskTick != (int)(world.tick / 6)) { // 每 6 逻辑帧重烘（5 次/秒，跟随探索扩展）
+        bakeFogMask();
+        fogMaskTick = (int)(world.tick / 6);
+    }
+    if (!fogMaskTex.id) return;
+    const float FS = 8.0f;
+    Rectangle src{(camX + terrainOX) / FS, camY / FS, viewW / FS, SCREEN_H / FS};
+    Rectangle dst{0, 0, (float)viewW, (float)SCREEN_H};
+    if (src.x < 0) { dst.x -= src.x * FS; dst.width += src.x * FS; src.width += src.x; src.x = 0; }
+    if (src.y < 0) { dst.y -= src.y * FS; dst.height += src.y * FS; src.height += src.y; src.y = 0; }
+    float maxX = terrainW / FS + 2, maxY = terrainH / FS + 2;
+    if (src.x + src.width > maxX) { float over = src.x + src.width - maxX; src.width -= over; dst.width -= over * FS; }
+    if (src.y + src.height > maxY) { float over = src.y + src.height - maxY; src.height -= over; dst.height -= over * FS; }
+    if (src.width > 0 && src.height > 0)
+        DrawTexturePro(fogMaskTex, src, dst, {0, 0}, 0, WHITE);
+    // 遮罩外区域（地图外）按未探索纯黑处理
+    DrawRectangle(viewW, 0, sidebarW, SCREEN_H, BLACK); // 侧边栏区域保险（HUD 会覆盖）
 }
 
 void Game::drawPlacement() {
@@ -2147,7 +2571,7 @@ int Game::playTest() {
     shot("pt_01_mainmenu.png");
 
     // ---- 1b 设置页：语言热切换 / 显示模式 / 按键重绑 / 持久化 ----
-    clickL(285, 617); // “设置”按钮 {120,588,330,58}（主菜单第4按钮：遭遇战/局域网/战役/设置/退出）
+    clickL(720, 514); // “设置”按钮 {570,490,300,48}（主菜单第4按钮：遭遇战/战役/局域网/设置/编辑器/退出）
     check(phase == Phase::Settings, "点击[设置]进设置页");
     frame(2);
     shot("pt_01b_settings.png");
@@ -2180,7 +2604,7 @@ int Game::playTest() {
     check(phase == Phase::MainMenu, "设置页返回主菜单");
 
     // ---- 2 遭遇战设置 ----
-    clickL(285, 389); // “遭遇战”按钮 {120,360,330,58}
+    clickL(720, 334); // “遭遇战”按钮 {570,310,300,48}（主菜单第1按钮）
     check(phase == Phase::Setup, "点击[遭遇战]进设置");
     frame(2); // 让地图预览生成
     shot("pt_02_setup.png");
@@ -2207,8 +2631,8 @@ int Game::playTest() {
     check(world.hasBld(0, BldType::ConYard), "按D展开建造厂");
     shot("pt_03_deployed.png");
 
-    // ---- 6 侧边栏生产电厂（建筑页签第1个图标 {1256,358,86,66}）----
-    clickL(1299, 391);
+    // ---- 6 侧边栏生产电厂（建筑页签第1个图标：orig 首槽 {1283,240,64x50}）----
+    clickL(1315, 265);
     check(world.players[0].bldProd.active, "点击电厂图标开始生产");
     frame(2);
     shot("pt_03c_tooltip.png"); // 悬停生产图标：名称/造价/耗时提示框
@@ -2216,7 +2640,7 @@ int Game::playTest() {
     check(world.players[0].bldProd.ready, "电厂生产就绪");
 
     // ---- 7 放置建筑 ----
-    clickL(1299, 391); // 就绪后再点图标进入放置模式
+    clickL(1315, 265); // 就绪后再点图标进入放置模式
     check(placing, "再次点击进入放置模式");
     BldType pt = world.players[0].placingBld;
     const BldDef& pd = bldDef(pt);
@@ -2295,7 +2719,7 @@ int Game::playTest() {
     {
         int bcnt = world.countBlds(0, pt);
         int money0 = world.players[0].money;
-        clickL(1345, 782); // “出售”按钮 {1317,762,56,40}
+        clickL(1380, 186); // “出售”按钮：orig 穹带右半中心 {1267,170,150x33}（1:1 布局 Y_MODE≈170）
         check(sideMode == 2, "点击[出售]进入出售模式");
         EID pbld = INVALID_EID;
         for (size_t i = 0; i < world.ents.size(); i++)
@@ -2339,10 +2763,10 @@ int Game::playTest() {
     check(phase == Phase::MainMenu && !showMenu, "点击[返回主菜单]");
 
     // ---- 11 战役模式 ----
-    clickL(285, 541); // “战役模式” {120,512,330,58}（主菜单第3按钮：遭遇战/局域网/战役/设置/退出）
+    clickL(720, 394); // “战役模式” {570,370,300,48}（主菜单第2按钮）
     check(phase == Phase::MissionSelect, "点击[战役模式]");
     shot("pt_07_missions.png");
-    clickL(330, 300); // 第一张任务卡 {150,200,360,200}
+    clickL(330, 300); // 第一张任务卡 {44,180,320,168}
     check(phase == Phase::InGame && campaignMission == 0, "点击任务1进入战役");
     frame(10);
     shot("pt_08_campaign.png");

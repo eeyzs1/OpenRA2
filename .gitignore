@@ -11,3 +11,7 @@ settings.ini
 assets/sprites/
 assets/sfx/
 assets/music/*.wav
+# RA2 原版游戏文件：版权素材+超大文件（RA2.MIX 269MB 等），仅作本地素材提取源，绝不入库
+tools/ra2pack/game/
+tools/ra2pack/full-pack.7z
+__pycache__/

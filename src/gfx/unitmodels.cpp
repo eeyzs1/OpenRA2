@@ -136,14 +136,14 @@ void oreLoad(M3Builder& b, float x0, float x1, float hw, float z, int n, uint64_
 
 int unitCanvasSize3D(UnitType t) {
     switch (t) {
-        case UnitType::Apocalypse: case UnitType::MCV: case UnitType::BattleFortress: return 56;
-        case UnitType::Harvester: case UnitType::ChronoMiner: case UnitType::WarMiner: return 52;
+        case UnitType::Apocalypse: case UnitType::MCV: case UnitType::BattleFortress: return 72;
+        case UnitType::Harvester: case UnitType::ChronoMiner: case UnitType::WarMiner: return 64;
         case UnitType::Destroyer: case UnitType::Typhoon: case UnitType::Aegis:
-        case UnitType::AmphTransport: case UnitType::Boomer: return 56;
-        case UnitType::SeaScorpion: case UnitType::Squid: case UnitType::MasterMind: return 48;
-        case UnitType::Dreadnought: case UnitType::AircraftCarrier: case UnitType::Kirov: return 64;
-        case UnitType::Nighthawk: case UnitType::FloatingDisc: case UnitType::SiegeChopper: return 52;
-        default: return 44;
+        case UnitType::AmphTransport: case UnitType::Boomer: return 72;
+        case UnitType::SeaScorpion: case UnitType::Squid: case UnitType::MasterMind: return 60;
+        case UnitType::Dreadnought: case UnitType::AircraftCarrier: case UnitType::Kirov: return 84;
+        case UnitType::Nighthawk: case UnitType::FloatingDisc: case UnitType::SiegeChopper: return 64;
+        default: return 56;
     }
 }
 
@@ -157,9 +157,9 @@ float unitGroundY3D(UnitType t) {
 
 float unitScale3D(UnitType t) {
     const UnitDef& d = unitDef(t);
-    if (d.isAir()) return 1.15f;
-    if (d.isNaval()) return 1.05f;
-    return 1.32f; // 地面载具：RA2 式饱满占比
+    if (d.isAir()) return 0.90f;
+    if (d.isNaval()) return 0.82f;
+    return 1.02f; // 地面载具：RA2 式饱满占比（高分辨率下模型尺寸不变，画布增大）
 }
 
 bool buildUnitModel3D(UnitType t, M3Builder& b, bool full, float* turretPivotX, float* turretPivotY) {

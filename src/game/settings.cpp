@@ -36,6 +36,7 @@ static const int DEF_KEYS[KA_COUNT] = {
     KEY_F9,     // KA_QuickLoad
     KEY_EQUAL,  // KA_SpeedUp
     KEY_MINUS,  // KA_SpeedDown
+    KEY_Z,      // KA_Waypoint
 };
 
 void Game::resetKeyBinds() {
@@ -90,4 +91,8 @@ void Game::applyDisplay() {
         }
         SetWindowSize(RES_LIST[cfgResIdx][0], RES_LIST[cfgResIdx][1]);
     }
+    // 诊断：打印实际窗口/帧缓冲尺寸，定位 letterbox 缩放问题
+    TraceLog(LOG_INFO, "DISPLAY: applyDisplay() -> window=%dx%d render=%dx%d monitor=%dx%d",
+             GetScreenWidth(), GetScreenHeight(), GetRenderWidth(), GetRenderHeight(),
+             GetMonitorWidth(GetCurrentMonitor()), GetMonitorHeight(GetCurrentMonitor()));
 }

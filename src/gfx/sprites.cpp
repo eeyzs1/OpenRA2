@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 
 const Color HOUSE_COLORS[MAX_PLAYERS] = {
     {255, 200, 40, 255},  // 金
@@ -198,8 +199,8 @@ PixBuf SpriteBank::baseTile(Terrain t, int variant) {
             c.r = (uint8_t)clampi(c.r + (int)g, 0, 255);
             c.g = (uint8_t)clampi(c.g + (int)g, 0, 255);
             c.b = (uint8_t)clampi(c.b + (int)g, 0, 255);
-            // 边缘轻微暗化（弱网格感：过强的菱形描边会让地表呈现棋盘格）
-            if (dx + dy > 0.96f) { c.r = (uint8_t)(c.r * 0.88f); c.g = (uint8_t)(c.g * 0.88f); c.b = (uint8_t)(c.b * 0.88f); }
+            // 注：不做边缘暗化——边缘描边会让相邻瓦片呈现菱形棋盘格（地表已改整图连续烘焙，
+            // 本函数仅用于矿脉/彩矿动态瓦片与地图预览，无缝拼接优先）
             p.set(x, y, c);
         }
     return p;
@@ -1068,7 +1069,7 @@ bool SpriteBank::hasTurret(UnitType t) const {
         case UnitType::IFV: case UnitType::FlakTrack: case UnitType::MirageTank:
         case UnitType::RobotTank:
         case UnitType::LasherTank: case UnitType::GatlingTank:
-        case UnitType::Magnetron: case UnitType::MasterMind: case UnitType::Boomer:
+        case UnitType::Magnetron: case UnitType::MasterMind:
             return true;
         default: return false;
     }
@@ -1904,10 +1905,15 @@ PixBuf SpriteBank::bldContentPix(BldType t, bool constructing) {
             for (int k = 0; k < 4; k++) maxZ = std::max(maxZ, q.v[k][2]);
         int outW = (d.w + d.h) * TILE_W / 2 + 24;              // 与旧 2D 画布同宽
         int gy = (int)ceilf(halfH + maxZ * 0.866f + 8.0f);
-        int outH = gy + (int)ceilf(halfH * 2.0f) + 4;          // 底部 4px 留白
+        int outH = gy + (int)ceilf(halfH) + 4;                 // 基座南角下方 4px 留白
         pb = padCanvas(m3Render(mb.quads, 0, outW, outH, (float)gy), 2, 2, 2, 2);
+        // 锚点契约：绘制锚点 = 占地菱形南角（bldScreenPos）；南角在渲染中位于 gy+halfH
+        bldGroundY_ = gy + (int)ceilf(halfH) + 2; // pad 上偏移 2
     } else {
-        pb = padCanvas(baseBuilding(t, constructing), 2, 2, 2, 2); // 脚手架/未建模：2D 兜底
+        PixBuf inner = baseBuilding(t, constructing);
+        // 2D 兜底：基座菱形中心 y = ch-4-halfH（baseBuilding 内坐标），南角 = ch-4
+        bldGroundY_ = (inner.h - 4) + 2; // pad 上偏移 2
+        pb = padCanvas(inner, 2, 2, 2, 2); // 脚手架/未建模：2D 兜底
     }
     ra2Bevel(pb);
     ra2Outline(pb);
@@ -1938,23 +1944,7 @@ const Sprite& SpriteBank::overlaySpr(Overlay o) {
     return cache.emplace(k, s).first->second;
 }
 
-const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
-    UnitType orig = t;
-    t = spriteAliasUnit(t);
-    dir &= 7;
-    // 满载采矿车用 frame=1（只对载具有效；步兵 frame 为行走帧）
-    bool isMiner = (t == UnitType::Harvester || t == UnitType::ChronoMiner || t == UnitType::WarMiner);
-    int fKey = isMiner ? (frame ? 1 : 0) : (unitDef(t).isInfantry() ? (frame & 1) : 0);
-    uint64_t k = keyOf(3, (int)t, dir, fKey, player);
-    auto it = cache.find(k);
-    if (it != cache.end()) return it->second;
-    PixBuf pb;
-    // 素材文件优先（assets/sprites/ 由 --gen-assets 离线生成或用户自制），缺失回退程序生成
-    bool ext = loadSpr(pb, "assets/sprites/unit_%s_d%d_f%d.png", unitAssetName(orig), dir, fKey)
-            || loadSpr(pb, "assets/sprites/unit_%s_d%d.png", unitAssetName(orig), dir)
-            || (orig != t && (loadSpr(pb, "assets/sprites/unit_%s_d%d_f%d.png", unitAssetName(t), dir, fKey)
-                           || loadSpr(pb, "assets/sprites/unit_%s_d%d.png", unitAssetName(t), dir)));
-    if (!ext) pb = unitContentPix(t, dir, fKey);
+const Sprite& SpriteBank::finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, int player) {
     // RA2 风格地面投影：仅地面单位（空军/海军不烘投影）；文件素材与程序生成统一烘焙
     const UnitDef& ud = unitDef(t);
     if (!ud.isAir() && !ud.isNaval()) {
@@ -1970,6 +1960,35 @@ const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
     Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2; s.oy = s.tex.height / 2 + 4;
     return cache.emplace(k, s).first->second;
+}
+
+const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
+    UnitType orig = t;
+    t = spriteAliasUnit(t);
+    dir &= 7;
+    // 满载采矿车用 frame=1（只对载具有效；步兵/恐怖机器人 frame 为行走帧）
+    bool isMiner = (t == UnitType::Harvester || t == UnitType::ChronoMiner || t == UnitType::WarMiner);
+    bool walker = unitDef(t).isInfantry() || t == UnitType::TerrorDrone;
+    int fKey = isMiner ? (frame ? 1 : 0) : (walker ? (frame & 1) : 0);
+    uint64_t k = keyOf(3, (int)t, dir, fKey, player);
+    auto it = cache.find(k);
+    if (it != cache.end()) return it->second;
+    PixBuf pb;
+    // 素材文件优先（assets/sprites/ 由 --gen-assets 离线生成或用户自制），缺失回退程序生成
+    bool ext = loadSpr(pb, "assets/sprites/unit_%s_d%d_f%d.png", unitAssetName(orig), dir, fKey)
+            || loadSpr(pb, "assets/sprites/unit_%s_d%d.png", unitAssetName(orig), dir)
+            || (orig != t && (loadSpr(pb, "assets/sprites/unit_%s_d%d_f%d.png", unitAssetName(t), dir, fKey)
+                           || loadSpr(pb, "assets/sprites/unit_%s_d%d.png", unitAssetName(t), dir)));
+    if (!ext) {
+        static int missLog[512] = {}; // 每 (类型,方向,帧) 只报一次，避免刷屏
+        int mk = ((int)t * 8 + dir) * 4 + fKey;
+        if (mk >= 0 && mk < 512 && !missLog[mk]) {
+            missLog[mk] = 1;
+            fprintf(stderr, "SPRITE-FALLBACK unit=%s dir=%d f=%d (procedural)\n", unitAssetName(orig), dir, fKey);
+        }
+        pb = unitContentPix(t, dir, fKey);
+    }
+    return finishUnitSprite(k, std::move(pb), t, player);
 }
 
 const Sprite& SpriteBank::unitTurret(UnitType t, int dir, int player) {
@@ -1989,6 +2008,22 @@ const Sprite& SpriteBank::unitTurret(UnitType t, int dir, int player) {
     return cache.emplace(k, s).first->second;
 }
 
+const Sprite& SpriteBank::finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, int player) {
+    // RA2 风格地面投影（底部偏右椭圆）；文件素材与程序生成统一烘焙、统一锚点
+    int ow = pb.w, oh = pb.h;
+    PixBuf canvas(ow + 14, oh + 10);
+    // 阴影中心直接对齐建筑地面（避免建筑悬浮在阴影上方）
+    bakeShadow(canvas, 6 + ow / 2 + 5, 4 + groundY, (int)(ow * 0.40f), 6);
+    canvas.blit(pb, 6, 4);
+    pb = std::move(canvas);
+    pb.remap(Pal::REMAP, player >= 0 ? HOUSE_COLORS[player] : Color{150, 150, 155, 255}); // 中立=灰
+    Sprite s = makeSprite(std::move(pb), 0, 0);
+    // 锚点 = 内容画布经阴影画布 blit(x=6,y=4) 后的坐标；ox=内容中心x+6，oy=地面中心y+4
+    s.ox = (s.tex.width - 14) / 2 + 6;
+    s.oy = groundY + 4; // blit 上偏移 4
+    return cache.emplace(k, s).first->second;
+}
+
 const Sprite& SpriteBank::building(BldType t, int player, bool constructing) {
     BldType orig = t;
     t = spriteAliasBld(t);
@@ -1998,19 +2033,117 @@ const Sprite& SpriteBank::building(BldType t, int player, bool constructing) {
     PixBuf pb;
     bool ext = loadSpr(pb, "assets/sprites/bld_%s%s.png", bldAssetName(orig), constructing ? "_scaffold" : "")
             || (orig != t && loadSpr(pb, "assets/sprites/bld_%s%s.png", bldAssetName(t), constructing ? "_scaffold" : ""));
-    if (!ext) pb = bldContentPix(t, constructing);
-    // RA2 风格地面投影（底部偏右椭圆）；文件素材与程序生成统一烘焙、统一锚点
-    int ow = pb.w, oh = pb.h;
-    PixBuf canvas(ow + 14, oh + 10);
-    bakeShadow(canvas, 6 + ow / 2 + 5, 4 + oh - 6, (int)(ow * 0.40f), 6);
-    canvas.blit(pb, 6, 4);
-    pb = std::move(canvas);
-    pb.remap(Pal::REMAP, player >= 0 ? HOUSE_COLORS[player] : Color{150, 150, 155, 255}); // 中立=灰
-    Sprite s = makeSprite(std::move(pb), 0, 0);
-    // 锚点 = 内容画布底中点经填充后的坐标（左填 6 上填 4）
-    s.ox = (s.tex.width - 14) / 2 + 6;
-    s.oy = s.tex.height - 10;
-    return cache.emplace(k, s).first->second;
+    int groundY; // 内容画布中"占地菱形南角"的 y 坐标（绘制锚点契约，同 bldScreenPos）
+    if (!ext) {
+        pb = bldContentPix(t, constructing);
+        groundY = bldGroundY_;
+    } else {
+        // 外部素材：无 3D 地面信息，锚点契约 = 占地菱形南角 ≈ 内容底边（素材约定底部 4px 留白）
+        groundY = pb.h - 4;
+    }
+    return finishBldSprite(k, std::move(pb), groundY, player);
+}
+
+// ===================== 动画系统（art.ini 序列 + mk 建造动画） =====================
+void SpriteBank::loadAnimsIni() {
+    FILE* f = fopen("assets/sprites/anims.ini", "rb");
+    if (!f) return;
+    char line[256];
+    char sec[64] = "";
+    auto findUnit = [](const char* nm) -> int {
+        for (int i = 0; i < (int)UnitType::COUNT; i++)
+            if (strcmp(unitAssetName((UnitType)i), nm) == 0) return i;
+        return -1;
+    };
+    auto findBld = [](const char* nm) -> int {
+        for (int i = 0; i < (int)BldType::COUNT; i++)
+            if (strcmp(bldAssetName((BldType)i), nm) == 0) return i;
+        return -1;
+    };
+    int curUnit = -1, curBld = -1;
+    while (fgets(line, sizeof(line), f)) {
+        char* p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == ';' || *p == '\r' || *p == '\n' || !*p) continue;
+        if (*p == '[') {
+            char* e = strchr(p, ']');
+            if (!e) continue;
+            *e = 0;
+            strncpy(sec, p + 1, sizeof(sec) - 1); sec[sizeof(sec) - 1] = 0;
+            curUnit = -1; curBld = -1;
+            if (strncmp(sec, "bld_", 4) == 0) curBld = findBld(sec + 4);
+            else curUnit = findUnit(sec);
+            continue;
+        }
+        char* eq = strchr(p, '=');
+        if (!eq) continue;
+        *eq = 0;
+        char* key = p, * val = eq + 1;
+        // 修剪空白
+        auto trim = [](char* s) {
+            char* e = s + strlen(s);
+            while (e > s && (e[-1] == ' ' || e[-1] == '\t' || e[-1] == '\r' || e[-1] == '\n')) *--e = 0;
+            while (*s == ' ' || *s == '\t') s++;
+            return s;
+        };
+        key = trim(key); val = trim(val);
+        int iv = atoi(val);
+        if (curUnit >= 0) {
+            UnitAnimInfo& ai = uanims[curUnit];
+            if (!strcmp(key, "walk")) ai.walk = iv;
+            else if (!strcmp(key, "walkrate")) ai.walkRate = iv > 0 ? iv : 4;
+            else if (!strcmp(key, "fire")) ai.fire = iv;
+            else if (!strcmp(key, "firerate")) ai.fireRate = iv > 0 ? iv : 4;
+            else if (!strcmp(key, "die")) ai.die = iv;
+            else if (!strcmp(key, "dep")) ai.dep = iv != 0;
+        } else if (curBld >= 0) {
+            if (!strcmp(key, "mk")) banims[curBld] = iv;
+        }
+    }
+    fclose(f);
+    TraceLog(LOG_INFO, "anims.ini: %zu units, %zu blds", uanims.size(), banims.size());
+}
+
+const UnitAnimInfo& SpriteBank::animInfo(UnitType t) const {
+    static const UnitAnimInfo EMPTY;
+    auto it = uanims.find((int)t);
+    return it != uanims.end() ? it->second : EMPTY;
+}
+
+int SpriteBank::bldMkFrames(BldType t) const {
+    auto it = banims.find((int)t);
+    return it != banims.end() ? it->second : 0;
+}
+
+const Sprite& SpriteBank::unitAnim(UnitType t, UAnim a, int dir, int phase, int player) {
+    dir &= 7;
+    // 站立或无动画素材的单位：直接回退 unitBody（自身带缓存）
+    if (a == UAnim::Stand) return unitBody(t, dir, 0, player);
+    uint64_t k = keyOf(12, (int)t, ((int)a << 4) | dir, phase & 0xFF, player);
+    auto it = cache.find(k);
+    if (it != cache.end()) return it->second;
+    const char* nm = unitAssetName(t);
+    PixBuf pb;
+    bool ok = false;
+    switch (a) {
+        case UAnim::Walk: ok = loadSpr(pb, "assets/sprites/unit_%s_walk_d%d_f%d.png", nm, dir, phase); break;
+        case UAnim::Fire: ok = loadSpr(pb, "assets/sprites/unit_%s_fire_d%d_f%d.png", nm, dir, phase); break;
+        case UAnim::Die:  ok = loadSpr(pb, "assets/sprites/unit_%s_die_f%d.png", nm, phase); break;
+        case UAnim::Dep:  ok = loadSpr(pb, "assets/sprites/unit_%s_dep_d%d.png", nm, dir); break;
+        default: break;
+    }
+    if (!ok) return unitBody(t, dir, 0, player); // 帧缺失：回退站立（不缓存，保持 key 干净）
+    return finishUnitSprite(k, std::move(pb), t, player);
+}
+
+const Sprite& SpriteBank::buildingMk(BldType t, int frame, int player) {
+    uint64_t k = keyOf(13, (int)t, frame & 0xFF, 0, player);
+    auto it = cache.find(k);
+    if (it != cache.end()) return it->second;
+    PixBuf pb;
+    if (!loadSpr(pb, "assets/sprites/bld_%s_mk_f%d.png", bldAssetName(t), frame))
+        return building(t, player, false); // 帧缺失：回退成品
+    return finishBldSprite(k, std::move(pb), pb.h - 4, player);
 }
 
 const Sprite& SpriteBank::explosion(int frame) {
@@ -2064,18 +2197,69 @@ const Sprite& SpriteBank::smoke(int frame) {
 }
 
 // ---------------- 图标 ----------------
-static PixBuf makeIcon(const PixBuf& src, int ox, int oy) {
-    // 放入 56x44 画布
-    PixBuf p(56, 44);
-    p.fillRect(0, 0, 56, 44, Color{24, 26, 30, 255});
-    // 计算缩放
-    float sx = 52.0f / src.w, sy = 40.0f / src.h;
+// RA2 原作 cameo = 带天空/地面的小场景照（非深色底）：上部钢青天空渐变+云斑，
+// 地平线 ~63% 处，下部棕灰土地+噪点；建筑按地面锚点立于地面，底部软椭圆投影。
+static PixBuf makeIconScene() {
+    PixBuf p(108, 84); // 原作 cameo 槽 60x48（比例 1.25），画布近似同比例 108x84
+    const int HOR = 51; // 地平线 y
+    auto hsh = [](int x, int y, uint32_t s) {
+        uint32_t v = ((uint32_t)x * 73856093u) ^ ((uint32_t)y * 19349663u) ^ s;
+        v ^= v >> 13; v *= 0x5bd1e995u; v ^= v >> 15;
+        return (float)(v % 1024) / 1024.0f;
+    };
+    auto vnoise2 = [&](int x, int y, int scale, uint32_t s) {
+        int gx = x / scale, gy = y / scale;
+        float fx = (x % scale) / (float)scale, fy = (y % scale) / (float)scale;
+        fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+        float a = hsh(gx, gy, s), b = hsh(gx + 1, gy, s), c = hsh(gx, gy + 1, s), d = hsh(gx + 1, gy + 1, s);
+        return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+    };
+    for (int y = 0; y < 84; y++)
+        for (int x = 0; x < 108; x++) {
+            Color c;
+            if (y < HOR) { // 天空：顶钢青 → 地平线灰白
+                float t = (float)y / HOR;
+                float cl = vnoise2(x, y, 14, 77) * 0.5f + vnoise2(x, y, 5, 78) * 0.5f; // 云斑
+                float v = t * 0.85f + (cl - 0.5f) * 0.16f;
+                if (cl > 0.72f) v += (cl - 0.72f) * 0.9f; // 云团提亮
+                c = Color{lerp8(116, 208, v), lerp8(148, 214, v), lerp8(188, 220, v), 255};
+            } else { // 土地：棕灰 + 斑块 + 细噪（向底部渐暗）
+                float t = (float)(y - HOR) / (84 - HOR);
+                float n = vnoise2(x, y, 9, 81) * 0.6f + vnoise2(x, y, 3, 83) * 0.4f;
+                float v = (1.0f - t * 0.30f) * (0.82f + n * 0.30f);
+                c = Color{(uint8_t)(148 * v), (uint8_t)(136 * v), (uint8_t)(112 * v), 255};
+                if (n > 0.78f) { c.r = (uint8_t)(c.r * 0.82f); c.g = (uint8_t)(c.g * 0.82f); c.b = (uint8_t)(c.b * 0.82f); }
+            }
+            if (y >= HOR - 1 && y <= HOR) { c.r = (uint8_t)(c.r * 0.78f); c.g = (uint8_t)(c.g * 0.78f); c.b = (uint8_t)(c.b * 0.78f); } // 地平线暗线
+            // 四角轻晕影
+            float ex = (x - 54) / 54.0f, ey = (y - 42) / 42.0f;
+            float vig = 1.0f - (ex * ex + ey * ey) * 0.10f;
+            p.set(x, y, Color{(uint8_t)(c.r * vig), (uint8_t)(c.g * vig), (uint8_t)(c.b * vig), 255});
+        }
+    return p;
+}
+static PixBuf makeIcon(const PixBuf& src, int groundY) {
+    static const PixBuf scene = makeIconScene();
+    PixBuf p = scene;
+    // 缩放：宽≤102，地面以上高度≤72（塔顶可近顶缘）
+    float sx = 102.0f / src.w, sy = 72.0f / src.h;
     float sc = sx < sy ? sx : sy;
-    if (sc > 1.6f) sc = 1.6f;
+    if (sc > 1.7f) sc = 1.7f;
     int nw = (int)(src.w * sc), nh = (int)(src.h * sc);
     PixBuf scaled = src.scale(nw > 0 ? nw : 1, nh > 0 ? nh : 1);
-    // 提取有效区域（以锚点为准简单整体缩放绘制）
-    p.blit(scaled, (56 - nw) / 2, (44 - nh) / 2);
+    int gx = 54;                 // 地面中心 x（画面中轴）
+    int gy = 69;                 // 地面锚点落点 y（地平线下 18px，留底部土地前景）
+    int bx = gx - nw / 2, by = gy - (int)(groundY * sc);
+    // 地面软投影（内容之下，椭圆下偏）
+    int srx = (int)(nw * 0.40f); if (srx > 46) srx = 46; if (srx < 6) srx = 6;
+    int sry = srx / 4 + 2;
+    for (int yy = gy - sry; yy <= gy + sry; yy++)
+        for (int xx = gx - srx; xx <= gx + srx; xx++) {
+            float ddx = (xx - gx) / (float)srx, ddy = (yy - gy) / (float)sry;
+            float d = ddx * ddx + ddy * ddy;
+            if (d <= 1.0f) p.blend(xx, yy, Color{30, 28, 22, (uint8_t)(76.0f * (1.0f - d))});
+        }
+    p.blit(scaled, bx, by);
     return p;
 }
 
@@ -2096,7 +2280,15 @@ const Sprite& SpriteBank::iconUnit(UnitType t, int player) {
         body.blit(tur, 2, 2);
     }
     body.remap(Pal::REMAP, HOUSE_COLORS[player]);
-    Sprite s = makeSprite(makeIcon(body, 0, 0), 0, 0);
+    // 地面锚点：最低不透明像素行（履带/足底 = 地面接触线）
+    int gy = body.h - 1;
+    while (gy > 0) {
+        bool solid = false;
+        for (int x = 0; x < body.w && !solid; x++) solid = body.get(x, gy).a > 60;
+        if (solid) break;
+        gy--;
+    }
+    Sprite s = makeSprite(makeIcon(body, gy), 0, 0);
     return cache.emplace(k, s).first->second;
 }
 
@@ -2113,12 +2305,13 @@ const Sprite& SpriteBank::iconBld(BldType t, int player) {
     t = spriteAliasBld(t);
     PixBuf pb = bldContentPix(t, false);
     pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
-    Sprite s = makeSprite(makeIcon(pb, 0, 0), 0, 0);
+    Sprite s = makeSprite(makeIcon(pb, bldGroundY_), 0, 0); // 锚点=基座南角，立于场景地面
     return cache.emplace(k, s).first->second;
 }
 
 void SpriteBank::init() {
     inited = true;
+    loadAnimsIni(); // 动画元数据（walk/fire/die/mk 帧数）
     // 预生成地形瓦片（常用）
     for (int t = 0; t <= (int)Terrain::Bridge; t++)
         for (int v = 0; v < 8; v++) tile((Terrain)t, v);
@@ -2128,13 +2321,40 @@ void SpriteBank::init() {
     muzzle();
 }
 
+// 开局预载（见头文件注释）；仅本地玩家全量 + 中立建筑，AI 玩家单位仍懒加载
+// （其新类型首次进入视野时仅 8 方向≈6ms，不可感知），避免开局等待过长
+void SpriteBank::preloadMatch(int localPlayer) {
+    double t0 = GetTime();
+    size_t n0 = cache.size();
+    for (int i = 0; i < (int)UnitType::COUNT; i++) {
+        UnitType t = (UnitType)i;
+        bool isMiner = (t == UnitType::Harvester || t == UnitType::ChronoMiner || t == UnitType::WarMiner);
+        int frames = (isMiner || unitDef(t).isInfantry() || t == UnitType::TerrorDrone) ? 2 : 1;
+        for (int d = 0; d < 8; d++)
+            for (int f = 0; f < frames; f++) unitBody(t, d, f, localPlayer);
+        if (hasTurret(t))
+            for (int d = 0; d < 8; d++) unitTurret(t, d, localPlayer);
+    }
+    for (int i = 0; i < (int)BldType::COUNT; i++) {
+        BldType t = (BldType)i;
+        building(t, localPlayer, false);
+        building(t, localPlayer, true);
+        building(t, -1, false); // 中立（灰色 remap）预置建筑
+    }
+    for (int i = 0; i < (int)UnitType::COUNT; i++) iconUnit((UnitType)i, localPlayer);
+    for (int i = 0; i < (int)BldType::COUNT; i++) iconBld((BldType)i, localPlayer);
+    for (int kind = 0; kind < 2; kind++)
+        for (int d = 0; d < 8; d++) projectile(kind, d);
+    TraceLog(LOG_INFO, "preloadMatch: +%zu sprites in %.0f ms", cache.size() - n0, (GetTime() - t0) * 1000.0);
+}
+
 // ===================== 离线素材生成（--gen-assets） =====================
 // 管线：程序绘制 → PNG 文件（assets/sprites/）；游戏运行时直接加载文件，程序生成仅作缺失兜底
 
 // 单位帧键：与 unitBody() 的 fKey 规则一致（采矿车满载帧 / 步兵行走帧 / 其他仅 0）
 static std::vector<int> unitFrameKeys(UnitType t) {
     bool isMiner = (t == UnitType::Harvester || t == UnitType::ChronoMiner || t == UnitType::WarMiner);
-    if (isMiner || unitDef(t).isInfantry()) return {0, 1};
+    if (isMiner || unitDef(t).isInfantry() || t == UnitType::TerrorDrone) return {0, 1};
     return {0};
 }
 
@@ -2187,10 +2407,20 @@ bool SpriteBank::genAssets(const char* outDir) {
         UnitType t = (UnitType)i;
         PixBuf body = unitContentPix(t, 2, 0);
         if (hasTurret(t)) body.blit(turretContentPix(t, 2), 2, 2);
-        save(makeIcon(body, 0, 0), "%s/icon_unit_%s.png", outDir, unitAssetName(t));
+        int gy = body.h - 1; // 地面锚点：最低不透明像素行
+        while (gy > 0) {
+            bool solid = false;
+            for (int x = 0; x < body.w && !solid; x++) solid = body.get(x, gy).a > 60;
+            if (solid) break;
+            gy--;
+        }
+        save(makeIcon(body, gy), "%s/icon_unit_%s.png", outDir, unitAssetName(t));
     }
-    for (int i = 0; i < (int)BldType::COUNT; i++)
-        save(makeIcon(bldContentPix((BldType)i, false), 0, 0), "%s/icon_bld_%s.png", outDir, bldAssetName((BldType)i));
+    for (int i = 0; i < (int)BldType::COUNT; i++) {
+        PixBuf bc = bldContentPix((BldType)i, false);
+        int gy = bldGroundY_;
+        save(makeIcon(bc, gy), "%s/icon_bld_%s.png", outDir, bldAssetName((BldType)i));
+    }
 
     // ---------- 审核预览图（assets/preview/，不参与游戏） ----------
     // 通用网格拼版：rows 个条目 × cols 个方向/形态，单元格取最大内容尺寸
@@ -2263,11 +2493,19 @@ bool SpriteBank::genAssets(const char* outDir) {
             UnitType t = (UnitType)i;
             PixBuf body = unitContentPix(t, 2, 0);
             if (hasTurret(t)) body.blit(turretContentPix(t, 2), 2, 2);
-            row.push_back(makeIcon(body, 0, 0));
+            int gy = body.h - 1;
+            while (gy > 0) {
+                bool solid = false;
+                for (int x = 0; x < body.w && !solid; x++) solid = body.get(x, gy).a > 60;
+                if (solid) break;
+                gy--;
+            }
+            row.push_back(makeIcon(body, gy));
             if (row.size() == 8) flush();
         }
         for (int i = 0; i < (int)BldType::COUNT; i++) {
-            row.push_back(makeIcon(bldContentPix((BldType)i, false), 0, 0));
+            PixBuf bc = bldContentPix((BldType)i, false);
+            row.push_back(makeIcon(bc, bldGroundY_));
             if (row.size() == 8) flush();
         }
         flush();

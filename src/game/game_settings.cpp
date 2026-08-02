@@ -18,18 +18,17 @@ void Game::drawSettings() {
 
     // ---------- 左面板：显示与声音 ----------
     int px = 48, py = 92, pw = 620;
-    DrawRectangle(px, py, pw, 400, Color{18, 20, 24, 255});
-    DrawRectangleLinesEx({(float)px, (float)py, (float)pw, 400}, 1, Color{74, 78, 86, 255});
-    drawTextM(font, TR(S::DisplaySection), px + 24, py + 14, 19, Color{150, 154, 162, 255});
+    guiPanel(px, py, pw, 400);
+    drawTextS(font, TR(S::DisplaySection), px + 24, py + 14, 19, Color{200, 196, 170, 255});
     // 行：标签 + 值按钮（点击循环切换）
     auto optRow = [&](int y, const char* label, const char* value, bool enabled) {
-        drawTextM(font, label, px + 24, y + 8, 18,
+        drawTextS(font, label, px + 24, y + 8, 18,
                   enabled ? Color{190, 194, 200, 255} : Color{110, 112, 116, 255});
         Rectangle r{(float)px + 292, (float)y, 300, 36};
         bool hover = CheckCollisionPointRec(m, r) && enabled;
-        DrawRectangleRec(r, hover ? Color{50, 54, 62, 255} : Color{32, 34, 40, 255});
-        DrawRectangleLinesEx(r, 1, hover ? Color{240, 200, 90, 255} : Color{100, 92, 56, 255});
-        drawTextM(font, value, (int)r.x + 150 - textW(font, value, 17) / 2, y + 9, 17,
+        guiSlot(r); // 凹陷金属槽
+        DrawRectangleLinesEx(r, 1, hover ? GUI_GOLD_HI : Color{80, 76, 56, 255});
+        drawTextS(font, value, (int)r.x + 150 - textW(font, value, 17) / 2, y + 9, 17,
                   enabled ? Color{255, 224, 130, 255} : Color{120, 122, 126, 255});
         return hover && pr;
     };
@@ -67,27 +66,28 @@ void Game::drawSettings() {
 
     // ---------- 右面板：按键设置 ----------
     int kx = 692, ky = 92, kw = SCREEN_W - kx - 48;
-    DrawRectangle(kx, ky, kw, 608, Color{18, 20, 24, 255});
-    DrawRectangleLinesEx({(float)kx, (float)ky, (float)kw, 608}, 1, Color{74, 78, 86, 255});
-    drawTextM(font, TR(S::KeysSection), kx + 24, ky + 14, 19, Color{150, 154, 162, 255});
-    drawTextM(font, TR(S::KeysTip), kx + 200, ky + 16, 15, Color{110, 112, 120, 255});
+    guiPanel(kx, ky, kw, 608);
+    drawTextS(font, TR(S::KeysSection), kx + 24, ky + 14, 19, Color{200, 196, 170, 255});
+    drawTextS(font, TR(S::KeysTip), kx + 200, ky + 16, 15, Color{110, 112, 120, 255});
     static const S names[KA_COUNT] = {
         S::KaStop, S::KaUnload, S::KaDeploy, S::KaScatter, S::KaGuard, S::KaSameType,
         S::KaMusic, S::KaViewBase, S::KaPause, S::KaRally, S::KaSell,
-        S::KaQuickSave, S::KaQuickLoad, S::KaSpeedUp, S::KaSpeedDown,
+        S::KaQuickSave, S::KaQuickLoad, S::KaSpeedUp, S::KaSpeedDown, S::KaWaypoint,
     };
     for (int i = 0; i < KA_COUNT; i++) {
         int y = ky + 48 + i * 34;
         bool armed = rebinding == i;
-        DrawRectangle(kx + 8, y - 2, kw - 16, 34, armed ? Color{60, 48, 32, 255} : (i % 2 ? Color{22, 24, 28, 255} : Color{28, 30, 34, 255}));
-        drawTextM(font, TR(names[i]), kx + 24, y + 6, 17,
+        // 交替行底色 + 棱台（armed 时金色调）
+        DrawRectangle(kx + 8, y - 2, kw - 16, 34, armed ? Color{60, 48, 32, 255} : (i % 2 ? Color{24, 26, 30, 255} : Color{30, 32, 38, 255}));
+        guiBevel({(float)(kx + 8), (float)(y - 2), (float)(kw - 16), 34}, false);
+        drawTextS(font, TR(names[i]), kx + 24, y + 6, 17,
                   armed ? Color{255, 226, 150, 255} : Color{200, 204, 210, 255});
         Rectangle kr{(float)kx + 458, (float)y, 200, 30};
         bool hover = CheckCollisionPointRec(m, kr);
-        DrawRectangleRec(kr, armed ? Color{90, 50, 40, 255} : (hover ? Color{50, 54, 62, 255} : Color{32, 34, 40, 255}));
-        DrawRectangleLinesEx(kr, 1, armed ? Color{255, 120, 90, 255} : (hover ? Color{240, 200, 90, 255} : Color{100, 92, 56, 255}));
+        guiSlot(kr); // 凹陷金属槽
+        DrawRectangleLinesEx(kr, 1, armed ? Color{255, 120, 90, 255} : (hover ? GUI_GOLD_HI : Color{80, 76, 56, 255}));
         const char* kn = armed ? "…" : keyName(keyBind[i]);
-        drawTextM(font, kn, (int)kr.x + 100 - textW(font, kn, 16) / 2, y + 7, 16, Color{255, 224, 130, 255});
+        drawTextS(font, kn, (int)kr.x + 100 - textW(font, kn, 16) / 2, y + 7, 16, Color{255, 224, 130, 255});
         if (hover && pr && rebinding < 0) { rebinding = i; g_sfx.play(Sfx::Click, 0.5f); }
     }
     // 恢复默认按键
@@ -117,13 +117,12 @@ void Game::drawSettings() {
             g_sfx.play(Sfx::Click, 0.6f);
             saveSettings();
         }
-        // 蒙层提示
+        // 蒙层提示（金属面板风格）
         DrawRectangle(0, 0, SCREEN_W, SCREEN_H, Color{0, 0, 0, 140});
         const char* t = TR(S::PressKey);
         int tw = textW(font, t, 26);
-        DrawRectangle(SCREEN_W / 2 - tw / 2 - 24, SCREEN_H / 2 - 30, tw + 48, 60, Color{26, 28, 34, 240});
-        DrawRectangleLinesEx({(float)(SCREEN_W / 2 - tw / 2 - 24), (float)(SCREEN_H / 2 - 30), (float)tw + 48, 60}, 2,
-                             Color{240, 200, 90, 255});
-        drawTextM(font, t, SCREEN_W / 2 - tw / 2, SCREEN_H / 2 - 13, 26, Color{255, 226, 150, 255});
+        int bx = SCREEN_W / 2 - tw / 2 - 24, by = SCREEN_H / 2 - 30;
+        guiPanel(bx, by, tw + 48, 60);
+        drawTextS(font, t, SCREEN_W / 2 - tw / 2, SCREEN_H / 2 - 13, 26, Color{255, 226, 150, 255});
     }
 }

@@ -32,7 +32,7 @@ enum class S : int {
     MsgSold, MsgConYardNoSell, MsgRepaired, MsgNoRepair, MsgDeployed, MsgDeployToggled,
     MsgScatter, MsgGuard, MsgSelSameType, MsgGroupSetFmt, MsgMusicOn, MsgMusicOff,
     MsgSaved, MsgSaveFail, MsgLoaded, MsgLoadFail, MsgRallySet, MsgSWLaunchedFmt, MsgSelectTargetSW,
-    MsgGarrison, MsgUngarrison, MsgService,
+    MsgGarrison, MsgUngarrison, MsgService, MsgWaypointOn, MsgWaypointOff,
     Paradrop, MsgParadropTarget, EvaParadropDrop, EvaSecretLabFmt, EvaAirportCaptured,
     // EVA 播报（world.cpp）
     EvaDetectEnemySWFmt, EvaUnloadDone, EvaUnloadFail, EvaNukeLaunched, EvaStormComing, EvaChronoStart,
@@ -45,7 +45,7 @@ enum class S : int {
     // 设置页
     Language, DisplaySection, WindowMode, WMFullscreen, WMWindowed, Resolution, ResDesktop,
     KeysSection, ResetKeys, PressKey, KeysTip,
-    KaStop, KaUnload, KaDeploy, KaScatter, KaGuard, KaSameType, KaMusic, KaViewBase,
+    KaStop, KaUnload, KaDeploy, KaScatter, KaGuard, KaWaypoint, KaSameType, KaMusic, KaViewBase,
     KaPause, KaRally, KaSell, KaQuickSave, KaQuickLoad, KaSpeedUp, KaSpeedDown,
     // LAN 联机（P8）
     LanGame, HostGame, JoinGame, WaitPeer, PeerJoined, WaitHostStart,

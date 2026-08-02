@@ -1,12 +1,48 @@
 #include "game/game.h"
 #include "gfx/sprites.h"
+#include "gfx/bldmodels.h"
 #include "sfx/sound.h"
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
+
+// 临时诊断：导出建筑模型四边形 CSV（离线几何验证用）
+static int dumpQuads(BldType t) {
+    M3Builder mb;
+    if (!buildBldModel3D(t, mb)) { printf("no model\n"); return 1; }
+    FILE* f = fopen("quads.csv", "w");
+    fprintf(f, "x0,y0,z0,x1,y1,z1,x2,y2,z2,x3,y3,z3,r,g,b\n");
+    for (const M3Quad& q : mb.quads)
+        fprintf(f, "%g,%g,%g,%g,%g,%g,%g,%g,%g,%g,%g,%g,%d,%d,%d\n",
+                q.v[0][0], q.v[0][1], q.v[0][2], q.v[1][0], q.v[1][1], q.v[1][2],
+                q.v[2][0], q.v[2][1], q.v[2][2], q.v[3][0], q.v[3][1], q.v[3][2],
+                q.color.r, q.color.g, q.color.b);
+    fclose(f);
+    printf("dumped %zu quads\n", mb.quads.size());
+    return 0;
+}
 #ifdef _DEBUG
 #include <crtdbg.h>
 #endif
+
+// 资源目录自定位：双击 exe 时工作目录=exe 所在目录（如 build\Release\），
+// 而 assets/ 在项目根——依次尝试 CWD、exe 旁、exe 上级目录链，找到后切换工作目录，
+// 保证 rules/素材/音乐/存档在任何启动方式（双击/快捷方式/命令行）下都能加载。
+static void locateAssetsDir() {
+    const char* probe = "assets/rules/rules.ini";
+    if (FileExists(probe)) return; // CWD 已正确（命令行从项目根启动）
+    const char* appDir = GetApplicationDirectory(); // raylib：exe 所在目录（带尾部分隔符）
+    char buf[512];
+    const char* ups[] = { "", "../", "../../", "../../../" };
+    for (const char* up : ups) {
+        snprintf(buf, sizeof buf, "%s%s", appDir, up);
+        if (ChangeDirectory(buf) && FileExists(probe)) {
+            printf("ASSETS: relocated working dir near exe (%s)\n", buf);
+            return;
+        }
+    }
+    printf("ASSETS: WARNING assets/rules/rules.ini not found, keep CWD\n");
+}
 
 int main(int argc, char** argv) {
 #ifdef _DEBUG
@@ -16,6 +52,10 @@ int main(int argc, char** argv) {
     _CrtSetReportMode(_CRT_ERROR, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
     _CrtSetReportFile(_CRT_ERROR, _CRTDBG_FILE_STDERR);
 #endif
+    locateAssetsDir(); // 资源根目录自定位（双击 exe 也能找到 assets/）
+    // 临时诊断命令
+    if (argc > 1 && strcmp(argv[1], "--dump-quads") == 0)
+        return dumpQuads(argc > 2 && argv[2][0] == 'p' ? BldType::PowerPlant : BldType::ConYard);
     // 离线素材生成：程序绘制/合成 → 落盘 PNG/WAV，不创建窗口与音频设备
     if (argc > 1 && strcmp(argv[1], "--gen-assets") == 0) {
         bool okS = g_sprites.genAssets("assets/sprites");
@@ -63,9 +103,24 @@ int main(int argc, char** argv) {
         game.shutdown();
         return fails == 0 ? 0 : 1;
     }
+    // 临时诊断：战役真实渲染耗时（逻辑/渲染分离计时）
+    if (argc > 1 && strcmp(argv[1], "--bench-campaign") == 0) {
+        int mission = argc > 2 ? atoi(argv[2]) : 0;
+        int warm = argc > 3 ? atoi(argv[3]) : 1800;
+        int frames = argc > 4 ? atoi(argv[4]) : 300;
+        game.benchCampaign(mission, warm, frames);
+        game.shutdown();
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "--menu-shot") == 0) {
         bool setup = argc > 2 && strcmp(argv[2], "setup") == 0;
         game.debugMenuShot(setup ? "menu_setup.png" : "menu_main.png", setup);
+        game.shutdown();
+        return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "--shot") == 0) {
+        int warm = argc > 2 ? atoi(argv[2]) : 2400;
+        game.debugShot(warm, "shot_game.png");
         game.shutdown();
         return 0;
     }

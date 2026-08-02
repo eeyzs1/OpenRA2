@@ -21,6 +21,7 @@ enum KeyAction : int {
     KA_Stop = 0, KA_Unload, KA_Deploy, KA_Scatter, KA_Guard, KA_SameType,
     KA_Music, KA_ViewBase, KA_Pause, KA_Rally, KA_Sell,
     KA_QuickSave, KA_QuickLoad, KA_SpeedUp, KA_SpeedDown,
+    KA_Waypoint, // 追加在末尾：配置文件按序号存储，插入中间会破坏既有键位
     KA_COUNT
 };
 
@@ -31,8 +32,10 @@ public:
     void run(); // 主循环
     void smokeTest(int frames); // 无头冒烟测试
     void campaignSmokeTest(int mission, int frames); // 战役冒烟测试：开局跑 N 帧，校验手工地图/触发器
+    void benchCampaign(int mission, int warmTicks, int frames); // 临时诊断：战役真实渲染耗时（解除帧率上限）
     int playTest();             // 自动化完整游玩测试：脚本注入输入，真实窗口跑全流程，返回失败数
     void debugMenuShot(const char* file, bool setup); // 菜单截图（验证用）
+    void debugShot(int warmTicks, const char* file); // 遭遇战截图：预热出基地/电厂/单位后拍全屏（验证用）
     int netSelfTestDriver(int role, int frames); // P8 双进程自测：role 0=--net-host 1=--net-client（main 驱动）
 
     // 快速存档固定槽位（F5 保存 / F9 读取，游戏内菜单共用）
@@ -152,8 +155,11 @@ private:
     // UI
     Font font{};
     bool fontOk = false;
-    int sidebarW = 190;
-    int uiTab = 0; // 0 建筑 1 防御 2 步兵 3 车辆 4 海军
+    int sidebarW = 184; // RA2 原作侧边栏占屏宽 ~12.5%（1366x768 原作实测 171px → 1440 等比 180+）
+    static constexpr int BOTTOM_BAR_H = 35; // 底部命令栏（原作 1366x768 底栏 33px → 810 等比 35）
+    int uiTab = 0; // 0 建筑 1 防御(含超武) 2 步兵 3 车辆/海军（RA2 原作 4 页签）
+    int uiScroll = 0;   // 生产网格滚动行（超出一页时 ▲▼ 滚动）
+    bool showFps = false; // F3 帧率/耗时显示（性能诊断）
     bool paused = false;
     bool showMenu = false;
     int gameSpeed = 1; // 1x 2x
@@ -167,6 +173,19 @@ private:
     // 迷雾贴图
     Texture2D fogBlack{}, fogDim{};
 
+    // ---- 整图地表烘焙（连续噪声：消除逐瓦片菱形网格感；渲染 draw 调用 ~800 → 1）----
+    Texture2D terrainTex{};
+    int terrainW = 0, terrainH = 0; // 世界像素域尺寸
+    float terrainOX = 0;            // 等距 sx 原点偏移（tileToScreen 的 sx 最小值为负，平移到 0）
+    static constexpr float TERRAIN_SC = 1.0f; // 烘焙缩放目标（原生分辨率 = 清晰；过大时按 GPU 纹理上限降档）
+    float terrainSC = TERRAIN_SC;             // 实际生效缩放（bakeTerrain 按纹理上限钳制后写入）
+    void bakeTerrain();             // 开局/读档后调用（地图静态，矿脉动态瓦片除外）
+
+    // ---- 迷雾软遮罩（屏幕空间 1/8 分辨率 alpha 图，bilinear 放大 = 软边界，消除棋盘格）----
+    Texture2D fogMaskTex{};
+    int fogMaskTick = -1;           // 上次烘焙的逻辑 tick（定期重烘）
+    void bakeFogMask();
+
     // 逻辑分辨率离屏画布（DPI 点对点放大）
     RenderTexture2D canvas{};
 
@@ -175,6 +194,8 @@ private:
     int minimapTimer = 0;
 
     float logicAcc = 0;
+    float interpAlpha = 1.0f; // 渲染插值系数：逻辑帧间进度 0..1（30Hz 逻辑 → 60fps 平滑）
+    bool waypointLatch = false; // 路径点模式（Z）：右键追加路径点而非替换目标
 
     // ---- 内部 ----
     void newGame(uint64_t seed);
@@ -195,7 +216,7 @@ private:
     void drawFogLayer();
     void drawHUD();
     void updateMinimap(); // 定时重绘小地图纹理（须在画布渲染通道外调用）
-    void drawMinimap();
+    void drawMinimap(int x, int y, int w, int h);
     bool radarOnline() const; // 雷达类建筑在线且电力充足（RA2 小地图激活条件）
     void drawSidebar();
     void drawPlacement();
@@ -236,6 +257,7 @@ private:
     void doSelect(int mx, int my, bool additive);
     void doBoxSelect(Rectangle r, bool additive);
     void issueSmartOrder(int mx, int my);
+    void cmdDeploySel(); // 部署选中单位（MCV 展开/步兵部署，底栏按钮与 D 热键共用）
     void message(const std::string& m);
 
     // 输入包装：统一逻辑坐标（高 DPI 修正）+ 脚本注入（playTest 自动化）
@@ -268,3 +290,16 @@ int textW(Font f, const char* s, int size);
 bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size = 20,
                bool enabled = true, bool danger = false);
 void drawMenuBackdrop(Font font, const char* title);
+
+// RA2 金属 GUI 辅助（game_hud.cpp 实现，菜单/设置页共享复用，确保全 GUI 风格一致）
+void guiMetalFill(int x, int y, int w, int h);          // 平铺拉丝金属底
+void guiBevel(Rectangle r, bool sunken);                // 棱台斜面（凸起/凹陷）
+void guiRivet(int x, int y);                            // 铆钉角饰
+void guiSlot(Rectangle r);                              // 凹陷信息槽
+void guiPanel(int x, int y, int w, int h);              // 金属面板（拉丝+棱+金线+铆钉）
+void drawTextS(Font f, const char* s, int x, int y, int size, Color c); // 带投影文字
+// RA2 GUI 共享色板（与 game_hud.cpp 内一致）
+extern const Color GUI_GOLD;
+extern const Color GUI_GOLD_HI;
+extern const Color GUI_EDGE_HI;
+extern const Color GUI_EDGE_LO;
