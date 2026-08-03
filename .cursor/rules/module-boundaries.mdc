@@ -1,0 +1,28 @@
+---
+description: Module boundaries — sim vs presentation vs UI
+globs: "src/**/*.{cpp,h}"
+alwaysApply: false
+---
+
+# Module boundaries
+
+## Simulation (`World`, `world_*.cpp`, `data`, `map`, `ai`)
+
+- May mutate `World` state and use `Rng`.
+- Must stay deterministic for a given seed + cmd stream.
+- Must **not** include menu/HUD drawing, cursor textures, or Winsock.
+
+## Presentation (`gfx/`, `sfx/`, bake/draw helpers)
+
+- Read `World` / assets; draw or play audio.
+- Must **not** invent new win conditions, damage formulas, or production rules.
+
+## App / UI (`game.cpp`, `game_*.cpp` except pure tests)
+
+- Translate input → `World::Cmd` via `issueCmd` / net path.
+- Own phases, camera, selection, placement preview, menus.
+- Campaign triggers may call into `World` spawn APIs, but combat rules stay in `World`.
+
+## New features
+
+Place code in the existing subsystem file from `docs/architecture.md`. If none fits, **add a new `world_*.cpp` or `game_*.cpp`** rather than appending hundreds of lines to `game.cpp` / `world.cpp`.

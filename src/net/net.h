@@ -2,12 +2,17 @@
 // LAN 联机网络层（P8）：Winsock2 TCP 非阻塞，[len:u16][type:u8][payload] 消息帧。
 // lockstep 只需可靠有序的字节流：命令帧/握手/校验和全走 TCP，LAN 延迟下无需 UDP。
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 class NetLink {
 public:
+    static constexpr size_t MAX_BODY_BYTES = 60000;
+    static constexpr size_t MAX_BUFFER_BYTES = 1u << 20;
+    static constexpr size_t MAX_INBOX_MESSAGES = 256;
     // 消息类型
     enum MsgType : uint8_t {
         MsgHello = 1,   // C→S：version u32, country u8, color u8
@@ -40,11 +45,12 @@ public:
     bool send(uint8_t type) { return send(type, {}); }
     std::deque<Msg> inbox;               // 已解包消息（Game 消费后 pop_front）
 
-    // 序列化助手（小端，x86 直写）
+    // 序列化助手。线协议当前固定为小端；memcpy 避免未对齐/别名 UB。
     struct Writer {
         std::vector<uint8_t> b;
         template <class T> void w(const T& v) {
-            const uint8_t* p = (const uint8_t*)&v;
+            static_assert(std::is_trivially_copyable_v<T>);
+            const uint8_t* p = reinterpret_cast<const uint8_t*>(&v);
             b.insert(b.end(), p, p + sizeof(T));
         }
     };
@@ -54,12 +60,14 @@ public:
         bool ok = true;
         explicit Reader(const std::vector<uint8_t>& b) : p(b.data()), n(b.size()) {}
         template <class T> T r() {
+            static_assert(std::is_trivially_copyable_v<T>);
             T v{};
             if (n < sizeof(T)) { ok = false; return v; }
-            v = *(const T*)p;
+            std::memcpy(&v, p, sizeof(T));
             p += sizeof(T); n -= sizeof(T);
             return v;
         }
+        bool done() const { return ok && n == 0; }
     };
 
 private:

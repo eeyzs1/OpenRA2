@@ -762,7 +762,7 @@ const std::vector<MissionDef>& missionTable() {
             }
         }
         if (v.empty()) {
-            TraceLog(LOG_INFO, "RA2 campaign: assets/campaigns not found, using built-in 24 missions");
+            TraceLog(LOG_INFO, "RA2 campaign: assets/campaigns not found, using built-in 32 missions");
             v = buildBuiltinMissions();
         } else {
             TraceLog(LOG_INFO, "RA2 campaign: %d missions loaded from assets/campaigns", (int)v.size());
@@ -772,7 +772,7 @@ const std::vector<MissionDef>& missionTable() {
     return tbl;
 }
 
-// ===================== 战役导出（--export-assets）：内置 24 关写成 INI 模板 =====================
+// ===================== 战役导出（--export-assets）：内置 32 关写成 INI 模板 =====================
 static const char* trigCondKey(TrigCond c) {
     switch (c) {
         case TrigCond::Always: return "Always";

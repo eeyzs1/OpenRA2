@@ -3,6 +3,7 @@ project(OpenRA2 CXX C)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+include(CTest)
 
 include(FetchContent)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -55,7 +56,10 @@ target_include_directories(ra2 PRIVATE src)
 target_link_libraries(ra2 PRIVATE raylib lua_static)
 
 if(MSVC)
-    target_compile_options(ra2 PRIVATE /W3 /MP /utf-8)
+    target_compile_options(ra2 PRIVATE /W4 /MP /utf-8 /permissive- /Zc:__cplusplus)
+    # GUI subsystem: Explorer/bat `start` closing the parent console must NOT
+    # deliver CTRL_CLOSE_EVENT and kill the game (CUI + start = intermittent instant exit).
+    target_link_options(ra2 PRIVATE /Brepro /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup)
 endif()
 
 # 内存错误检测：cmake -B build-asan -DRA2_ASAN=ON（仅 MSVC Debug 有效）
@@ -64,4 +68,56 @@ if(MSVC AND RA2_ASAN)
     target_compile_options(ra2 PRIVATE /fsanitize=address /Zi)
     target_link_options(ra2 PRIVATE /INFERASANLIBS /INCREMENTAL:NO)
     target_compile_options(raylib PRIVATE /fsanitize=address)
+endif()
+
+# 无窗口纯逻辑基线：不链接 raylib，不初始化图形或音频设备。
+if(BUILD_TESTING)
+    add_executable(ra2_logic_tests
+        tests/logic_tests.cpp
+        src/game/map.cpp
+    )
+    target_include_directories(ra2_logic_tests PRIVATE src)
+    if(MSVC)
+        target_compile_options(ra2_logic_tests PRIVATE /W4 /MP /utf-8 /permissive- /Zc:__cplusplus)
+        target_link_options(ra2_logic_tests PRIVATE /Brepro)
+    endif()
+    add_test(NAME ra2.logic COMMAND ra2_logic_tests)
+    add_test(NAME ra2.state COMMAND ra2 --state-test)
+    set_tests_properties(ra2.state PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        TIMEOUT 60
+    )
+    # 可失败的遭遇战 smoke / 32 关战役矩阵（期望不符返回非零）
+    add_test(NAME ra2.smoke COMMAND ra2 --smoke)
+    set_tests_properties(ra2.smoke PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        TIMEOUT 300
+    )
+    add_test(NAME ra2.campaign_matrix COMMAND ra2 --campaign-matrix)
+    set_tests_properties(ra2.campaign_matrix PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        TIMEOUT 600
+    )
+    if(WIN32)
+        add_test(
+            NAME ra2.net_dual_process
+            COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+                    -File ${CMAKE_SOURCE_DIR}/tests/net_dual_process.ps1
+                    -Exe $<TARGET_FILE:ra2> -Frames 360
+        )
+        set_tests_properties(ra2.net_dual_process PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            TIMEOUT 60
+            RUN_SERIAL TRUE
+        )
+        # Guard against BOM / LF-only / start /D "%~dp0" regressions that break Explorer double-click.
+        add_test(
+            NAME ra2.launch_bats
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/verify_launch_bats.py
+        )
+        set_tests_properties(ra2.launch_bats PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            TIMEOUT 15
+        )
+    endif()
 endif()

@@ -1,0 +1,23 @@
+---
+description: New features must land in subsystem files, not god files
+alwaysApply: true
+---
+
+# Subsystem placement (post-rescue)
+
+Structural rescue is complete. New features are allowed again under these constraints:
+
+## Do
+
+- Put new sim logic in the matching `world_*.cpp` (or add a new `world_*.cpp` if none fits)
+- Put UI / input / render / net glue in the matching `game_*.cpp`
+- Extend `World::Cmd` + `applyCmd` for new player intents
+- When adding sim fields: update `Ent`/`Player`, `checksum()`, and save/load together
+
+## Do not
+
+- Dump large new systems into `game.cpp` or `world.cpp` (keep those as thin facades)
+- Call UI/SFX from `applyCmd` / combat / production paths
+- Change checksum semantics without updating lockstep tests
+
+See `docs/architecture.md`.

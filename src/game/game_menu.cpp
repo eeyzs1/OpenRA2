@@ -424,50 +424,64 @@ void Game::drawSetup() {
         }
     }
 
-    // ---------- 底部选项条 ----------
-    int oy = 600;
-    guiPanel(48, oy, SCREEN_W - 96, 64);
-    auto optBtn = [&](int x, const char* label, const char* value, int w) {
-        drawTextS(font, label, x, oy + 20, 18, Color{190, 194, 200, 255});
+    // ---------- 底部规则面板：模式和每条会改变模拟的选项均可见 ----------
+    int oy = 594;
+    guiPanel(48, oy, SCREEN_W - 96, 94);
+    auto optBtn = [&](int x, int y, const char* label, const char* value, int w) {
+        drawTextS(font, label, x, y + 10, 16, Color{190, 194, 200, 255});
         int lx = x + textW(font, label, 18) + 16;
-        Rectangle r{(float)lx, (float)oy + 10, (float)w, 44};
+        Rectangle r{(float)lx, (float)y, (float)w, 36};
         bool hover = CheckCollisionPointRec(m, r);
         guiSlot(r); // 凹陷金属槽
         DrawRectangleLinesEx(r, 1, hover ? GUI_GOLD_HI : Color{80, 76, 56, 255});
-        drawTextS(font, value, lx + w / 2 - textW(font, value, 18) / 2, oy + 22, 18, Color{255, 224, 130, 255});
+        drawTextS(font, value, lx + w / 2 - textW(font, value, 16) / 2, y + 10, 16, Color{255, 224, 130, 255});
         return hover && pr;
     };
+    static const S modeNames[] = {
+        S::ModeBattle, S::ModeFFA, S::ModeUnholy, S::ModeMegawealth,
+        S::ModeLandRush, S::ModeMeatGrinder, S::ModeNavalWar,
+    };
+    if (optBtn(66, oy + 8, TR(S::GameMode), TR(modeNames[cfgGameMode]), 150)) {
+        cfgGameMode = (cfgGameMode + 1) % (int)SkirmishMode::COUNT;
+        if (cfgGameMode == (int)SkirmishMode::FreeForAll) cfgAlliance = false;
+        if (cfgGameMode == (int)SkirmishMode::LandRush) cfgCrates = true;
+        if (cfgGameMode == (int)SkirmishMode::NavalWar && cfgMapType != 1) {
+            cfgMapType = 1;
+            previewDirty = true;
+        }
+    }
     static const int monies[] = {5000, 10000, 20000, 50000};
-    if (optBtn(80, TR(S::StartMoney), TextFormat("%d", cfgMoney), 130)) {
+    if (optBtn(440, oy + 8, TR(S::StartMoney), TextFormat("%d", cfgMoney), 100)) {
         int i = 0;
         while (i < 4 && monies[i] != cfgMoney) i++;
         cfgMoney = monies[(i + 1) % 4];
         g_sfx.play(Sfx::Click, 0.5f);
     }
     const S speedNames[] = {S::SpeedSlow, S::SpeedNormal, S::SpeedFast};
-    if (optBtn(420, TR(S::GameSpeed), TR(speedNames[gameSpeed]), 110)) {
+    if (optBtn(730, oy + 8, TR(S::GameSpeed), TR(speedNames[gameSpeed]), 90)) {
         gameSpeed = (gameSpeed + 1) % 3;
         g_sfx.play(Sfx::Click, 0.5f);
     }
-    // 音量：热更新立即生效（音效+音乐），无需重启
-    static const int vols[] = {0, 25, 50, 75, 100};
-    if (optBtn(660, TR(S::Volume), TextFormat("%d", vols[cfgVolume]), 70)) {
-        cfgVolume = (cfgVolume + 1) % 5;
-        g_sfx.setMasterVol(vols[cfgVolume] / 100.0f);
-        g_sfx.play(Sfx::Click, 0.5f);
-        saveSettings();
-    }
-    if (optBtn(830, TR(S::Crates), TR(cfgCrates ? S::On : S::Off), 70)) {
+    if (optBtn(1010, oy + 8, TR(S::Crates), TR(cfgCrates ? S::On : S::Off), 62)) {
         cfgCrates = !cfgCrates;
         g_sfx.play(Sfx::Click, 0.5f);
     }
-    if (optBtn(1000, TR(S::AIAlliance), TR(cfgAlliance ? S::On : S::Off), 70)) {
+    if (optBtn(66, oy + 50, TR(S::AIAlliance), TR(cfgAlliance ? S::On : S::Off), 58)) {
         cfgAlliance = !cfgAlliance;
+        if (cfgAlliance) cfgGameMode = (int)SkirmishMode::Battle;
         g_sfx.play(Sfx::Click, 0.5f);
     }
+    if (optBtn(310, oy + 50, TR(S::SharedVision), TR(cfgSharedVision ? S::On : S::Off), 58))
+        cfgSharedVision = !cfgSharedVision;
+    if (optBtn(585, oy + 50, TR(S::ShortGame), TR(cfgShortGame ? S::On : S::Off), 58))
+        cfgShortGame = !cfgShortGame;
+    if (optBtn(850, oy + 50, TR(S::Superweapons), TR(cfgSuperweapons ? S::On : S::Off), 58))
+        cfgSuperweapons = !cfgSuperweapons;
+    if (optBtn(1090, oy + 50, TR(S::McvRepacks), TR(cfgMcvRepacks ? S::On : S::Off), 58))
+        cfgMcvRepacks = !cfgMcvRepacks;
 
     // ---------- 底部：开始游戏 / 返回 ----------
-    int by = 700;
+    int by = 714;
     if (ra2Button(font, m, pr, {(float)(SCREEN_W / 2 - 330), (float)by, 320, 62}, TR(S::StartGame), 28))
         newGame(previewSeed); // 用预览的同一张图开局：所见即所玩
     if (ra2Button(font, m, pr, {(float)(SCREEN_W / 2 + 30), (float)by, 200, 62}, TR(S::Back), 24))

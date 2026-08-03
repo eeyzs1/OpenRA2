@@ -122,6 +122,8 @@ inline const char* unitAssetName(UnitType t) {
         case UnitType::Boris: return "boris";
         case UnitType::SiegeChopper: return "siegechopper";
         case UnitType::ChaosDrone: return "chaosdrone";
+        case UnitType::Slave: return "slave";
+        case UnitType::SlaveMiner: return "slaveminer";
         default: return "unknown";
     }
 }
@@ -209,6 +211,9 @@ inline const char* sfxAssetName(Sfx s) {
         case Sfx::NavalCannon: return "navalcannon";
         case Sfx::Torpedo: return "torpedo";
         case Sfx::Dig: return "dig";
+        case Sfx::MirageFire: return "mirage";
+        case Sfx::RhinoFire: return "rhino";
+        case Sfx::ApocFire: return "apoc";
         default: return "unknown";
     }
 }

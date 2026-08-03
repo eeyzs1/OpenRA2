@@ -1,6 +1,7 @@
 #include "game/data.h"
 #include "core/ini.h"
 #include "raylib.h"
+#include <algorithm>
 #include <cstring>
 #include <string>
 
@@ -12,26 +13,30 @@ static constexpr uint8_t FY = 1 << (int)Faction::Yuri;
 static constexpr uint8_t ALLF = FA | FS | FC | FY;
 
 // 武器预设
+static WeaponDef withWH(WeaponDef w, WeaponDef::Warhead h) { w.warhead = h; return w; }
+static WeaponDef withReport(WeaponDef w, const char* r) { w.report = r; return w; }
 static WeaponDef wNone() { return WeaponDef{0, 0, 0, false, false, "shell", 1, 1, 1}; }
-static WeaponDef wRifle() { return WeaponDef{8, 4, 20, false, true, "bullet", 1.0f, 0.5f, 0.4f}; }
-static WeaponDef wHeavyRifle() { return WeaponDef{14, 5, 18, false, true, "bullet", 1.0f, 0.6f, 0.5f}; }
+static WeaponDef wRifle() { return withWH(WeaponDef{8, 4, 20, false, true, "bullet", 1.0f, 0.5f, 0.4f}, WeaponDef::Warhead::SmallArms); }
+static WeaponDef wGiRifle() { return withReport(wRifle(), "GIAttack"); }
+static WeaponDef wConscriptRifle() { return withReport(wRifle(), "ConscriptAttack"); }
+static WeaponDef wHeavyRifle() { return withWH(WeaponDef{14, 5, 18, false, true, "bullet", 1.0f, 0.6f, 0.5f}, WeaponDef::Warhead::SmallArms); }
 static WeaponDef wFlak() { return WeaponDef{12, 6, 24, true, true, "flak", 1.0f, 0.7f, 0.5f}; }
-static WeaponDef wTeslaBolt() { return WeaponDef{30, 5, 40, false, true, "tesla", 1.2f, 1.0f, 0.8f}; }
-static WeaponDef wSniper() { return WeaponDef{60, 8, 70, false, true, "bullet", 1.0f, 0.05f, 0.05f}; }
+static WeaponDef wTeslaBolt() { return withWH(WeaponDef{30, 5, 40, false, true, "tesla", 1.2f, 1.0f, 0.8f}, WeaponDef::Warhead::AP); }
+static WeaponDef wSniper() { return withWH(WeaponDef{60, 8, 70, false, true, "bullet", 1.0f, 0.05f, 0.05f}, WeaponDef::Warhead::HollowPoint); }
 // 辐射工兵：辐射射线，对步兵致命；部署后为区域辐射
-static WeaponDef wRadiation() { return WeaponDef{50, 5, 30, false, true, "rad", 2.5f, 0.3f, 0.1f}; }
+static WeaponDef wRadiation() { return withWH(WeaponDef{50, 5, 30, false, true, "rad", 2.5f, 0.3f, 0.1f}, WeaponDef::Warhead::Radiation); }
 // 超时空抹除：不造成伤害，命中叠加"抹除进度"（special: chrono）
 static WeaponDef wChrono() { return WeaponDef{1, 6, 20, false, true, "chrono", 1.0f, 1.0f, 0.0f}; }
-static WeaponDef wTankGun(int dmg, int rng, int cd) { return WeaponDef{dmg, rng, cd, false, true, "shell", 0.6f, 1.0f, 0.8f}; }
-static WeaponDef wPrism() { return WeaponDef{50, 7, 55, false, true, "prism", 1.0f, 0.8f, 1.4f}; }
-static WeaponDef wV3() { return WeaponDef{150, 14, 220, false, true, "missile", 0.5f, 1.0f, 1.5f, false, 1.5f}; }
+static WeaponDef wTankGun(int dmg, int rng, int cd) { return withWH(WeaponDef{dmg, rng, cd, false, true, "shell", 0.6f, 1.0f, 0.8f}, WeaponDef::Warhead::AP); }
+static WeaponDef wPrism() { return withWH(WeaponDef{50, 7, 55, false, true, "prism", 1.0f, 0.8f, 1.4f}, WeaponDef::Warhead::HE); }
+static WeaponDef wV3() { return withWH(WeaponDef{150, 14, 220, false, true, "missile", 0.5f, 1.0f, 1.5f, false, 1.5f}, WeaponDef::Warhead::HE); }
 static WeaponDef wBomb(int dmg) { return WeaponDef{dmg, 3, 40, false, true, "shell", 0.5f, 1.0f, 1.5f}; }   // 航弹：对建筑强
 static WeaponDef wAirMissile() { return WeaponDef{80, 4, 30, false, true, "missile", 0.6f, 1.2f, 1.0f}; } // 米格空空/地导弹
 static WeaponDef wNavalGun() { return WeaponDef{60, 8, 50, false, true, "naval", 0.6f, 1.1f, 1.0f}; }      // 舰炮：对舰艇/沿岸
 static WeaponDef wTorpedo() { return WeaponDef{100, 7, 60, false, true, "torpedo", 0, 1.2f, 0.8f, true}; } // 鱼雷：仅水上目标
 static WeaponDef wAegisAA() { return WeaponDef{50, 10, 22, true, false, "missile", 0, 1.0f, 0}; }          // 神盾防空：纯对空
 static WeaponDef wPatriot() { return WeaponDef{45, 9, 20, true, false, "missile", 0, 1.2f, 0}; }           // 爱国者飞弹：纯对空
-static WeaponDef wKirovBomb() { return WeaponDef{300, 3, 55, false, true, "shell", 0.6f, 1.0f, 1.6f, false, 2.0f}; } // 基洛夫航空炸弹：范围重击
+static WeaponDef wKirovBomb() { return withWH(WeaponDef{300, 3, 55, false, true, "shell", 0.6f, 1.0f, 1.6f, false, 2.0f}, WeaponDef::Warhead::HE); } // 基洛夫航空炸弹：范围重击
 static WeaponDef wDreadMissile() { return WeaponDef{200, 16, 210, false, true, "missile", 0.4f, 1.0f, 1.4f, false, 1.5f}; } // 无畏舰远程导弹
 static WeaponDef wHornet() { return WeaponDef{80, 18, 150, false, true, "missile", 0.8f, 1.2f, 1.0f, false, 1.0f}; } // 航母舰载机打击
 static WeaponDef wRocketGun() { return WeaponDef{10, 5, 18, true, true, "bullet", 1.0f, 0.6f, 0.5f}; }     // 火箭飞行兵卡宾枪
@@ -41,7 +46,7 @@ static WeaponDef wIvanBomb() { return WeaponDef{1, 2, 90, false, true, "shell", 
 
 // ---- RA2 补全：新单位武器 ----
 static WeaponDef wWarMinerGun() { return WeaponDef{10, 4, 20, false, true, "bullet", 1.0f, 0.5f, 0.3f}; } // 武装采矿车机枪
-static WeaponDef wTDGun() { return WeaponDef{90, 5, 50, false, true, "shell", 0.15f, 2.2f, 0.3f}; }       // 坦克杀手：反装甲专精
+static WeaponDef wTDGun() { return withWH(WeaponDef{90, 5, 50, false, true, "shell", 0.15f, 2.2f, 0.3f}, WeaponDef::Warhead::AP); }       // 坦克杀手：反装甲专精
 static WeaponDef wTerrorBomb() { return WeaponDef{150, 1, 60, false, true, "shell", 1.0f, 1.0f, 1.0f, false, 2.0f}; } // 恐怖分子自爆
 static WeaponDef wDemoBomb() { return WeaponDef{400, 1, 120, false, true, "shell", 0.8f, 1.2f, 1.2f, false, 3.0f}; }  // 自爆卡车
 static WeaponDef wSonic() { return WeaponDef{40, 6, 40, false, true, "shell", 0.5f, 1.2f, 0.5f, true}; }  // 海豚音波：仅水上目标
@@ -50,8 +55,8 @@ static WeaponDef wFortressGun() { return WeaponDef{20, 5, 18, false, true, "bull
 static WeaponDef wNighthawkGun() { return WeaponDef{8, 4, 20, false, true, "bullet", 1.0f, 0.4f, 0.3f}; } // 夜鹰舱门机枪
 static WeaponDef wHornetBomb() { return WeaponDef{80, 3, 40, false, true, "shell", 0.5f, 1.0f, 1.2f, false, 0.5f}; } // 舰载机航弹
 // ---- P6：海豹/尤里/偷科技武器 ----
-static WeaponDef wSMG() { return WeaponDef{25, 4, 12, false, true, "bullet", 1.6f, 0.15f, 0.05f}; }      // 海豹冲锋枪：反步兵专精
-static WeaponDef wPsychic() { return WeaponDef{1, 7, 90, false, true, "psi", 1.0f, 1.0f, 0.0f}; }         // 心灵波：不造成伤害，命中夺取控制权（特殊处理）
+static WeaponDef wSMG() { return withWH(WeaponDef{25, 4, 12, false, true, "bullet", 1.6f, 0.15f, 0.05f}, WeaponDef::Warhead::SmallArms); }      // 海豹冲锋枪：反步兵专精
+static WeaponDef wPsychic() { return withWH(WeaponDef{1, 7, 90, false, true, "psi", 1.0f, 1.0f, 0.0f}, WeaponDef::Warhead::Psychic); }         // 心灵波：不造成伤害，命中夺取控制权（特殊处理）
 
 // ---- 尤复阵营：尤里单位武器 ----
 static WeaponDef wPsychicFire() { return WeaponDef{25, 5, 25, false, true, "psi", 2.0f, 0.3f, 0.2f}; }    // 尤里新兵：心灵火焰，反步兵
@@ -60,13 +65,13 @@ static WeaponDef wVirusRifle() { return WeaponDef{80, 9, 60, false, true, "bulle
 static WeaponDef wLasherGun() { return WeaponDef{35, 5, 35, false, true, "shell", 0.7f, 1.0f, 0.7f}; }    // 狂风坦克：主炮
 static WeaponDef wGatling(int dmg, int cd) { return WeaponDef{dmg, 6, cd, true, true, "bullet", 1.0f, 0.8f, 0.4f}; } // 盖特：防空对地速射
 static WeaponDef wMagnetron() { return WeaponDef{1, 7, 80, false, true, "shell", 0, 0.5f, 0}; }           // 磁电坦克：吊起车辆（特殊处理）
-static WeaponDef wMasterMind() { return WeaponDef{1, 8, 70, false, true, "psi", 1.0f, 1.0f, 0.0f}; }      // 主脑：多重心灵控制
+static WeaponDef wMasterMind() { return withWH(WeaponDef{1, 8, 70, false, true, "psi", 1.0f, 1.0f, 0.0f}, WeaponDef::Warhead::Psychic); }      // 主脑：多重心灵控制
 static WeaponDef wDiscBeam() { return WeaponDef{40, 5, 30, false, true, "shell", 1.0f, 1.2f, 1.5f}; }     // 飞碟：吸电/瘫痪建筑
 static WeaponDef wBoomerMissile() { return WeaponDef{180, 14, 200, false, true, "missile", 0.5f, 1.0f, 1.4f, false, 1.5f}; } // 雷鸣潜艇导弹
 static WeaponDef wGatlingCannonGun() { return WeaponDef{30, 7, 15, true, true, "bullet", 1.0f, 0.7f, 0.3f}; } // 盖特机炮：防空对地
 
 // ---- 尤复补全：YR 新增单位武器 ----
-static WeaponDef wBorisAK() { return WeaponDef{60, 5, 10, false, true, "bullet", 1.8f, 0.3f, 0.15f}; }     // 鲍里斯 AK-47：反步兵专精
+static WeaponDef wBorisAK() { return withWH(WeaponDef{60, 5, 10, false, true, "bullet", 1.8f, 0.3f, 0.15f}, WeaponDef::Warhead::SmallArms); }     // 鲍里斯 AK-47：反步兵专精
 static WeaponDef wSiegeChopperMG() { return WeaponDef{15, 5, 20, true, true, "bullet", 1.0f, 0.5f, 0.3f}; } // 攻城直升机飞行机枪
 static WeaponDef wChaosGas() { return WeaponDef{5, 3, 60, false, true, "shell", 0.5f, 0.5f, 0.1f, false, 2.0f}; } // 混乱毒气：范围伤害+混乱
 static WeaponDef wPsychicTowerMC() { return WeaponDef{1, 7, 80, false, true, "psi", 1.0f, 1.0f, 0.0f}; }    // 心灵控制塔：自动心灵控制
@@ -108,10 +113,10 @@ const WeaponDef& siegeChopperDeployedWeapon() { return wSiegeDeploy; }
 // 表为可写静态：启动时 loadRules() 用 assets/rules/rules.ini 逐项覆盖
 static UnitDef g_units[(int)UnitType::COUNT] = {
     // type, name, cost, btime, hp, speed, sight, armor, move, weapon, factions, prereq, ammo
-    {UnitType::MCV,        "基地车",    2500, 500, 600, 24, 5, Armor::Heavy, MoveType::Vehicle, wNone(), ALLF, BldType::WarFactory, 0},
-    {UnitType::Harvester,  "采矿车",    1400, 280, 700, 20, 4, Armor::Heavy, MoveType::Vehicle, wNone(), FC | FY, BldType::OreRefinery},
-    {UnitType::GI,         "美国大兵",   200, 60,  100, 14, 5, Armor::None, MoveType::Infantry, wRifle(), FA, BldType::COUNT},
-    {UnitType::Conscript,  "动员兵",    100, 45,  90,  14, 5, Armor::None, MoveType::Infantry, wRifle(), FS, BldType::COUNT},
+    {UnitType::MCV,        "基地车",    3000, 500, 600, 24, 5, Armor::Heavy, MoveType::Vehicle, wNone(), ALLF, BldType::WarFactory, 0},
+    {UnitType::Harvester,  "采矿车",    1400, 280, 1000, 20, 4, Armor::Heavy, MoveType::Vehicle, wNone(), FC, BldType::OreRefinery},
+    {UnitType::GI,         "美国大兵",   200, 60,  125, 14, 5, Armor::None, MoveType::Infantry, wGiRifle(), FA, BldType::COUNT},
+    {UnitType::Conscript,  "动员兵",    100, 45,  90,  14, 5, Armor::None, MoveType::Infantry, wConscriptRifle(), FS, BldType::COUNT},
     {UnitType::PLA,        "解放军",    150, 50,  120, 13, 5, Armor::None, MoveType::Infantry, wHeavyRifle(), FC, BldType::COUNT},
     {UnitType::Engineer,   "工程师",    500, 120, 75,  14, 4, Armor::None, MoveType::Infantry, wNone(), ALLF, BldType::COUNT},
     {UnitType::AttackDog,  "军犬",      200, 50,  80,  8,  6, Armor::None, MoveType::Infantry, WeaponDef{50,1,15,false,true,"bullet",2.0f,0,0}, ALLF, BldType::COUNT},
@@ -124,23 +129,23 @@ static UnitDef g_units[(int)UnitType::COUNT] = {
     {UnitType::Chrono,     "超时空军团兵",1500,300, 125, 14, 8, Armor::None, MoveType::Infantry, wChrono(), FA, BldType::BattleLab},
     {UnitType::GuardianGI, "重装大兵",   400, 90,  150, 15, 5, Armor::None, MoveType::Infantry, wGGIRifle(), FA, BldType::COUNT},
     {UnitType::CrazyIvan,  "疯狂伊文",   600, 110, 120, 12, 5, Armor::None, MoveType::Infantry, wIvanBomb(), FS, BldType::Radar},
-    {UnitType::Grizzly,    "灰熊坦克",   700, 150, 300, 12, 6, Armor::Heavy, MoveType::Vehicle, wTankGun(30, 5, 35), FA, BldType::COUNT, 0, 0, eliteOf<ewGrizzly>()},
-    {UnitType::Rhino,      "犀牛坦克",   900, 170, 400, 14, 6, Armor::Heavy, MoveType::Vehicle, wTankGun(40, 5, 40), FS, BldType::COUNT, 0, 0, eliteOf<ewRhino>()},
-    {UnitType::Type99,     "99式坦克",  1200,190, 500, 12, 6, Armor::Heavy, MoveType::Vehicle, wTankGun(55, 6, 42), FC, BldType::COUNT, 0, 0, eliteOf<ewType99>()},
-    {UnitType::FlakTrack,  "高射炮车",   500, 110, 200, 10, 6, Armor::Light, MoveType::Vehicle, wFlak(), FS, BldType::COUNT, 0, 5},
+    {UnitType::Grizzly,    "灰熊坦克",   700, 150, 300, 12, 6, Armor::Heavy, MoveType::Vehicle, withReport(wTankGun(30, 5, 35), "GrizzlyTankAttack"), FA, BldType::COUNT, 0, 0, eliteOf<ewGrizzly>()},
+    {UnitType::Rhino,      "犀牛坦克",   900, 170, 400, 14, 6, Armor::Heavy, MoveType::Vehicle, withReport(wTankGun(40, 5, 40), "RhinoTankAttack"), FS, BldType::COUNT, 0, 0, eliteOf<ewRhino>()},
+    {UnitType::Type99,     "99式坦克",  1200,190, 500, 12, 6, Armor::Heavy, MoveType::Vehicle, withReport(wTankGun(55, 6, 42), "RhinoTankAttack"), FC, BldType::COUNT, 0, 0, eliteOf<ewType99>()},
+    {UnitType::FlakTrack,  "高射炮车",   500, 110, 200, 10, 6, Armor::Light, MoveType::Vehicle, wFlak(), FS, BldType::COUNT, 0, 0},
     {UnitType::IFV,        "多功能步兵车",600, 110, 200, 8,  7, Armor::Light, MoveType::Vehicle, WeaponDef{20,6,20,true,true,"missile",0.8f,1.0f,0.8f}, FA, BldType::COUNT, 0, 1},
-    {UnitType::PrismTank,  "光棱坦克",   1200,240, 180, 16, 7, Armor::Light, MoveType::Vehicle, wPrism(), FA, BldType::BattleLab, 0, 0, eliteOf<ewPrism>()},
-    {UnitType::TeslaTank,  "磁能坦克",   1200,240, 320, 14, 7, Armor::Heavy, MoveType::Vehicle, wTeslaBolt(), FS, BldType::BattleLab, 0, 0, eliteOf<ewTeslaTank>(), Country::Russia},
-    {UnitType::MirageTank, "幻影坦克",   1000,220, 250, 12, 7, Armor::Light, MoveType::Vehicle, wTankGun(45, 6, 38), FA | FC, BldType::BattleLab},
+    {UnitType::PrismTank,  "光棱坦克",   1200,240, 150, 16, 7, Armor::Light, MoveType::Vehicle, wPrism(), FA, BldType::BattleLab, 0, 0, eliteOf<ewPrism>()},
+    {UnitType::TeslaTank,  "磁能坦克",   1200,240, 300, 14, 7, Armor::Heavy, MoveType::Vehicle, wTeslaBolt(), FS, BldType::BattleLab, 0, 0, eliteOf<ewTeslaTank>(), Country::Russia},
+    {UnitType::MirageTank, "幻影坦克",   1000,220, 250, 12, 7, Armor::Light, MoveType::Vehicle, withReport(wTankGun(45, 6, 38), "MirageTankAttack"), FA | FC, BldType::BattleLab},
     {UnitType::V3Launcher, "V3火箭车",  800, 200, 150, 18, 6, Armor::Light, MoveType::Vehicle, wV3(), FS | FC, BldType::Radar, 0, 0, eliteOf<ewV3>()},
-    {UnitType::Apocalypse, "天启坦克",   1750,350, 800, 18, 7, Armor::Heavy, MoveType::Vehicle, WeaponDef{80,6,50,true,true,"shell",0.8f,1.2f,1.0f}, FS | FC, BldType::BattleLab, 0, 0, eliteOf<ewApoc>()},
+    {UnitType::Apocalypse, "天启坦克",   1750,350, 800, 18, 7, Armor::Heavy, MoveType::Vehicle, withReport(WeaponDef{80,6,50,true,true,"shell",0.8f,1.2f,1.0f}, "ApocalypseAttackGround"), FS | FC, BldType::BattleLab, 0, 0, eliteOf<ewApoc>()},
     {UnitType::TerrorDrone,"恐怖机器人", 500, 100, 120, 6,  5, Armor::Light, MoveType::Vehicle, wDroneBite(), FS | FC, BldType::Radar},
     // 空军：speed 越小越快；ammo 打完返航装填
     {UnitType::Intruder,   "入侵者战机", 1200,240, 200, 3,  6, Armor::Light, MoveType::Air, wBomb(150), FA, BldType::COUNT, 1},
     {UnitType::MiG,        "米格战机",   1200,240, 260, 2,  6, Armor::Light, MoveType::Air, wAirMissile(), FS, BldType::COUNT, 2},
     {UnitType::BlackEagle, "黑鹰战机",   1500,300, 320, 2,  7, Armor::Light, MoveType::Air, wBomb(250), FA, BldType::COUNT, 1, 0, nullptr, Country::Korea},
     // 基洛夫：ammo=0 不返航（自由飞行轰炸）；火箭飞行兵：兵营生产的空中步兵
-    {UnitType::Kirov,      "基洛夫空艇", 2000,400, 1000,5,  6, Armor::Heavy, MoveType::Air, wKirovBomb(), FS | FC, BldType::BattleLab, 0, 0, eliteOf<ewKirov>()},
+    {UnitType::Kirov,      "基洛夫空艇", 2000,400, 2000,5,  6, Armor::Heavy, MoveType::Air, wKirovBomb(), FS | FC, BldType::BattleLab, 0, 0, eliteOf<ewKirov>()},
     {UnitType::Rocketeer,  "火箭飞行兵", 600, 120, 100, 6,  7, Armor::None, MoveType::Air, wRocketGun(), FA, BldType::COUNT, 0},
     // 海军：speed 越小越快；船厂生产
     {UnitType::Destroyer,  "驱逐舰",     1000,240, 600, 16, 7, Armor::Heavy, MoveType::Naval, wNavalGun(), FA, BldType::COUNT, 0, 0, eliteOf<ewDestroyer>()},
@@ -151,8 +156,8 @@ static UnitDef g_units[(int)UnitType::COUNT] = {
     {UnitType::AircraftCarrier,"航空母舰",2000,400, 800, 16, 8, Armor::Heavy, MoveType::Naval, wHornet(), FA, BldType::BattleLab, 0, 3}, // 载机量 3（cargo 计舰载机）
     {UnitType::AmphTransport,"两栖运输船",900, 220, 300, 12, 5, Armor::Light, MoveType::Amphibious, wNone(), ALLF, BldType::COUNT, 0, 5},
     // ---- RA2 补全：采矿车阵营差异化 ----
-    {UnitType::ChronoMiner,"超时空采矿车",1400,280, 700, 20, 4, Armor::Heavy, MoveType::Vehicle, wNone(), FA, BldType::OreRefinery},
-    {UnitType::WarMiner,   "武装采矿车", 1400,280, 900, 20, 4, Armor::Heavy, MoveType::Vehicle, wWarMinerGun(), FS, BldType::OreRefinery, 0, 0, eliteOf<ewWarMiner>()},
+    {UnitType::ChronoMiner,"超时空采矿车",1400,280, 1000, 20, 4, Armor::Heavy, MoveType::Vehicle, wNone(), FA, BldType::OreRefinery},
+    {UnitType::WarMiner,   "武装采矿车", 1400,280, 1000, 20, 4, Armor::Heavy, MoveType::Vehicle, wWarMinerGun(), FS, BldType::OreRefinery, 0, 0, eliteOf<ewWarMiner>()},
     // ---- RA2 补全：国家特色单位 ----
     {UnitType::TankDestroyer,"坦克杀手", 900, 170, 400, 12, 6, Armor::Heavy, MoveType::Vehicle, wTDGun(), FA, BldType::COUNT, 0, 0, nullptr, Country::Germany},
     {UnitType::Terrorist,  "恐怖分子",   200, 45,  60, 12, 5, Armor::None, MoveType::Infantry, wTerrorBomb(), FS, BldType::COUNT, 0, 0, nullptr, Country::Cuba},
@@ -190,63 +195,66 @@ static UnitDef g_units[(int)UnitType::COUNT] = {
     {UnitType::SiegeChopper,"攻城直升机", 1200,240, 200, 4, 7, Armor::Light, MoveType::Air, wSiegeChopperMG(), FS, BldType::Radar, 0},
     // 混乱无人机：尤里空军，释放毒气使敌军自相残杀（战车工厂生产）
     {UnitType::ChaosDrone, "混乱无人机",  800, 160, 150, 5, 6, Armor::Light, MoveType::Air, wChaosGas(), FY, BldType::BattleLab, 0},
+    // 奴隶：尤里采矿步兵；奴隶矿车：尤里采矿车并可部署为卸货点
+    {UnitType::Slave,      "奴隶",        30,  20,  70, 12, 4, Armor::None, MoveType::Infantry, wNone(), 0, BldType::OreRefinery},
+    {UnitType::SlaveMiner,  "奴隶矿车",  1400, 280, 800, 18, 5, Armor::Heavy, MoveType::Vehicle, wNone(), FY, BldType::OreRefinery},
 };
 
 // ===================== 建筑表 =====================
 static BldDef g_blds[(int)BldType::COUNT] = {
     // type, name, cost, btime, hp, w,h, power, sight, weapon, factions, prereq, capturable
-    {BldType::ConYard,      "建造厂",   3000, 600, 1500, 3,3, 0,    6, wNone(), ALLF, BldType::COUNT, false},
-    {BldType::PowerPlant,   "发电厂",   800,  160, 600,  2,2, 200,  4, wNone(), FA, BldType::COUNT, true},
-    {BldType::TeslaReactor, "磁能反应堆",600,  130, 500,  2,2, 150,  4, wNone(), FS | FC, BldType::COUNT, true},
-    {BldType::NuclearReactor,"核子反应堆",1000, 220, 800, 3,3, 500,  4, wNone(), FS | FC, BldType::BattleLab, true},
-    {BldType::Barracks,     "兵营",     500,  110, 700,  2,2, -20,  5, wNone(), ALLF, BldType::COUNT, true},
-    {BldType::WarFactory,   "战车工厂", 2000, 400, 1000, 3,3, -40,  5, wNone(), ALLF, BldType::Barracks, false},
-    {BldType::OreRefinery,  "矿石精炼厂",1400, 280, 900,  3,2, -40,  5, wNone(), ALLF, BldType::COUNT, true},
-    {BldType::Radar,        "雷达站",   1000, 200, 600,  2,2, -50,  10, wNone(), ALLF, BldType::OreRefinery, true},
-    {BldType::BattleLab,    "作战实验室",2000, 400, 700,  2,2, -100, 6, wNone(), ALLF, BldType::Radar, true},
-    {BldType::AirForceCmd,  "空指部",   1000, 220, 600,  2,2, -50,  8, wNone(), ALLF, BldType::OreRefinery, true},
-    {BldType::NavalYard,    "海军船厂", 1000, 220, 1000, 3,3, -20,  5, wNone(), ALLF, BldType::WarFactory, false},
+    {BldType::ConYard,      "建造厂",   3000, 600, 1000, 4,4, 0,    6, wNone(), ALLF, BldType::COUNT, false},
+    {BldType::PowerPlant,   "发电厂",   800,  160, 750,  2,2, 200,  4, wNone(), FA, BldType::COUNT, true},
+    {BldType::TeslaReactor, "磁能反应堆",600,  130, 750,  3,2, 150,  4, wNone(), FS | FC, BldType::COUNT, true},
+    {BldType::NuclearReactor,"核子反应堆",1000, 220, 800, 4,4, 500,  4, wNone(), FS | FC, BldType::BattleLab, true},
+    {BldType::Barracks,     "兵营",     500,  110, 500,  3,2, -20,  5, wNone(), ALLF, BldType::COUNT, true},
+    {BldType::WarFactory,   "战车工厂", 2000, 400, 1000, 5,3, -40,  5, wNone(), ALLF, BldType::Barracks, false},
+    {BldType::OreRefinery,  "矿石精炼厂",2000, 280, 1000,  4,3, -50,  5, wNone(), ALLF, BldType::COUNT, true},
+    {BldType::Radar,        "雷达站",   1000, 200, 1000,  2,2, -50,  10, wNone(), ALLF, BldType::OreRefinery, true},
+    {BldType::BattleLab,    "作战实验室",2000, 400, 500,  3,2, -100, 6, wNone(), ALLF, BldType::Radar, true},
+    {BldType::AirForceCmd,  "空指部",   1000, 220, 600,  3,2, -50,  8, wNone(), ALLF, BldType::OreRefinery, true},
+    {BldType::NavalYard,    "海军船厂", 1000, 220, 1500, 4,4, -20,  5, wNone(), ALLF, BldType::WarFactory, false},
     {BldType::Pillbox,      "机枪碉堡",  500,  100, 400,  1,1, 0,   6, wHeavyRifle(), FA, BldType::Barracks, false},
     {BldType::SentryGun,    "哨戒炮",   500,  100, 400,  1,1, 0,   6, wHeavyRifle(), FS | FC, BldType::Barracks, false},
-    {BldType::PrismTower,   "光棱塔",   1500, 280, 500,  1,1, -75, 8, wPrism(), FA, BldType::Radar, false},
+    {BldType::PrismTower,   "光棱塔",   1500, 280, 600,  1,1, -75, 8, wPrism(), FA, BldType::Radar, false},
     {BldType::TeslaCoil,    "磁暴线圈",  1500, 280, 600,  1,1, -75, 8, wTeslaBolt(), FS | FC, BldType::Radar, false},
-    {BldType::FlakCannon,   "高射炮",   1000, 200, 500,  1,1, -50, 8, wFlak(), FS | FC, BldType::Radar, false},
+    {BldType::FlakCannon,   "高射炮",   1000, 200, 900,  1,1, -50, 8, wFlak(), FS | FC, BldType::Radar, false},
     {BldType::GrandCannon,  "巨炮",     2000, 360, 700,  2,2, -100,10, WeaponDef{120,10,90,false,true,"shell",0.5f,1.2f,1.2f}, FA, BldType::BattleLab, false, 0, Country::France},
-    {BldType::PatriotMissile,"爱国者飞弹",1000, 200, 500,  1,1, -50, 8, wPatriot(), FA, BldType::Radar, false},
+    {BldType::PatriotMissile,"爱国者飞弹",1000, 200, 900,  1,1, -50, 8, wPatriot(), FA, BldType::Radar, false},
     {BldType::Wall,         "围墙",     50,   20,  200,  1,1, 0,   1, wNone(), ALLF, BldType::COUNT, false},
-    {BldType::OrePurifier,  "矿石精炼器",2500, 500, 900,  2,2, -200,5, wNone(), FA | FC, BldType::BattleLab, true},
+    {BldType::OrePurifier,  "矿石精炼器",2500, 500, 900,  3,3, -200,5, wNone(), FA | FC, BldType::BattleLab, true},
     {BldType::IndustrialPlant,"工业工厂",2500, 500, 900, 3,2, -200,5, wNone(), FS, BldType::BattleLab, true},
     // 超武建筑：高耗电，建成后对应超武开始充能
-    {BldType::NukeSilo,     "核弹发射井",3000, 600, 1000, 2,2, -150,5, wNone(), FS | FC, BldType::BattleLab, true},
-    {BldType::WeatherDevice,"天气控制器",3000, 600, 1000, 3,2, -150,5, wNone(), FA, BldType::BattleLab, true},
-    {BldType::IronCurtain,  "铁幕装置",  2500, 500, 900,  2,2, -150,5, wNone(), FS | FC, BldType::BattleLab, true},
-    {BldType::ChronoSphere, "超时空传送仪",2500,500, 900,  3,2, -150,5, wNone(), FA, BldType::BattleLab, true},
+    {BldType::NukeSilo,     "核弹发射井",5000, 600, 1000, 3,3, -200,5, wNone(), FS | FC, BldType::BattleLab, true},
+    {BldType::WeatherDevice,"天气控制器",5000, 600, 1000, 3,2, -200,5, wNone(), FA, BldType::BattleLab, true},
+    {BldType::IronCurtain,  "铁幕装置",  2500, 500, 750,  3,3, -200,5, wNone(), FS | FC, BldType::BattleLab, true},
+    {BldType::ChronoSphere, "超时空传送仪",2500,500, 750,  4,3, -200,5, wNone(), FA, BldType::BattleLab, true},
     // 中立科技建筑：不由玩家建造（factionMask=0），工程师占领后生效
     {BldType::OilDerrick,   "科技油井",  0,   0,   1000, 2,2, 0,   4, wNone(), 0, BldType::COUNT, true},
-    {BldType::Hospital,     "医院",      0,   0,   800,  2,2, 0,   4, wNone(), 0, BldType::COUNT, true},
-    {BldType::MachineShop,  "机械商店",  0,   0,   800,  2,2, 0,   4, wNone(), 0, BldType::COUNT, true},
+    {BldType::Hospital,     "医院",      0,   0,   800,  6,4, 0,   4, wNone(), 0, BldType::COUNT, true},
+    {BldType::MachineShop,  "机械商店",  0,   0,   800,  4,3, 0,   4, wNone(), 0, BldType::COUNT, true},
     // ---- RA2 补全：高级建筑 ----
     {BldType::CloningVat,   "复制中心",  2500, 500, 800,  2,2, -100,5, wNone(), FS, BldType::BattleLab, false},
-    {BldType::ServiceDepot, "维修厂",    900,  180, 900,  3,2, -20, 5, wNone(), ALLF, BldType::WarFactory, false},
+    {BldType::ServiceDepot, "维修厂",    800,  180, 1200,  3,3, -25, 5, wNone(), ALLF, BldType::WarFactory, false},
     {BldType::GapGenerator, "裂缝产生器",1600, 320, 600,  1,1, -100,6, wNone(), FA, BldType::BattleLab, false},
     {BldType::SpySat,       "间谍卫星",  1500, 300, 800,  2,2, -100,8, wNone(), FA, BldType::BattleLab, false},
-    {BldType::PsychicSensor,"心灵探测器",1200, 240, 600,  1,1, -50, 8, wNone(), FS, BldType::BattleLab, false},
+    {BldType::PsychicSensor,"心灵探测器",1200, 240, 600,  2,2, -50, 8, wNone(), FS, BldType::BattleLab, false},
     {BldType::BattleBunker, "战斗碉堡",  500,  100, 700,  1,1, 0,   6, wNone(), FS, BldType::Barracks, false, 5},
     {BldType::TankBunker,   "坦克碉堡",  400,  90,  900,  1,1, 0,   5, wNone(), FS, BldType::WarFactory, false, 1}, // 进驻 1 辆车辆对外射击
     // ---- RA2 补全：中立科技建筑（工程师占领生效）----
     {BldType::TechAirport,  "科技机场",  0,   0,   1000, 3,2, 0,   6, wNone(), 0, BldType::COUNT, true},
     {BldType::SecretLab,    "秘密实验室",0,   0,   800,  2,2, 0,   5, wNone(), 0, BldType::COUNT, true},
-    {BldType::CivHouse,     "民房",      0,   0,   600,  2,2, 0,   3, wNone(), 0, BldType::COUNT, false, 8},
+    {BldType::CivHouse,     "民房",      0,   0,   600,  3,2, 0,   3, wNone(), 0, BldType::COUNT, false, 8},
     // ---- 尤复阵营：尤里专属建筑 ----
-    {BldType::BioReactor,   "生化反应堆", 600,  130, 500,  2,2, 150,  4, wNone(), FY, BldType::COUNT, true},
+    {BldType::BioReactor,   "生化反应堆", 600,  130, 500,  2,2, 150,  4, wNone(), FY, BldType::COUNT, true, 5},
     {BldType::GatlingCannon,"盖特机炮",  1000, 200, 500,  1,1, -50,  8, wGatlingCannonGun(), FY, BldType::Radar, false},
-    {BldType::Grinder,      "回收炉",    1000, 200, 800,  2,2, -50,  5, wNone(), FY, BldType::WarFactory, false},
+    {BldType::Grinder,      "回收炉",    1000, 200, 800,  2,2, -50,  5, wNone(), FY, BldType::WarFactory, false, 99},
     {BldType::GeneticMutator,"基因突变器",2500, 500, 900,  2,2, -150, 5, wNone(), FY, BldType::BattleLab, true},
     {BldType::PsychicDominator,"心灵控制仪",3000,600,1000, 3,2, -150, 5, wNone(), FY, BldType::BattleLab, true},
     // ---- 尤复补全：YR 新增建筑 ----
     {BldType::PsychicTower, "心灵控制塔",  1500, 280, 900, 1,1, -75, 8, wPsychicTowerMC(), FY, BldType::Radar, false},
     {BldType::TechPowerPlant,"科技电厂",    0,   0,   600, 2,2, 200,  4, wNone(), 0, BldType::COUNT, true},
-    {BldType::TechOutpost,  "科技前哨站",   0,   0,   800, 3,2, 50,   6, wNone(), 0, BldType::COUNT, true},
+    {BldType::TechOutpost,  "科技前哨站",   0,   0,   800, 4,3, 50,   6, wNone(), 0, BldType::COUNT, true},
 };
 
 // ===================== 超武表 =====================
@@ -317,6 +325,7 @@ static const char* kUnitKey[(int)UnitType::COUNT] = {
     "NavySEAL", "Yuri", "ChronoCommando", "PsiCommando",
     "Initiate", "Brute", "Virus", "LasherTank", "GatlingTank", "Magnetron", "MasterMind", "FloatingDisc", "Boomer",
     "Boris", "SiegeChopper", "ChaosDrone",
+    "Slave", "SlaveMiner",
 };
 static const char* kBldKey[(int)BldType::COUNT] = {
     "ConYard", "PowerPlant", "TeslaReactor", "NuclearReactor",
@@ -391,9 +400,23 @@ static void poolEliteWeapons() {
 static bool parseArmor(const char* s, Armor& out) {
     if (!s) return false;
     if (!strcmp(s, "None")) { out = Armor::None; return true; }
+    if (!strcmp(s, "Flak")) { out = Armor::Flak; return true; }
+    if (!strcmp(s, "Plate")) { out = Armor::Plate; return true; }
     if (!strcmp(s, "Light")) { out = Armor::Light; return true; }
+    if (!strcmp(s, "Medium")) { out = Armor::Medium; return true; }
     if (!strcmp(s, "Heavy")) { out = Armor::Heavy; return true; }
-    if (!strcmp(s, "Building")) { out = Armor::Building; return true; }
+    if (!strcmp(s, "Wood")) { out = Armor::Wood; return true; }
+    if (!strcmp(s, "Steel")) { out = Armor::Steel; return true; }
+    if (!strcmp(s, "Concrete") || !strcmp(s, "Building")) { out = Armor::Concrete; return true; }
+    if (!strcmp(s, "Special1")) { out = Armor::Special1; return true; }
+    if (!strcmp(s, "Special2")) { out = Armor::Special2; return true; }
+    return false;
+}
+static bool parseWarhead(const char* s, WeaponDef::Warhead& out) {
+    if (!s) return false;
+    static const char* names[] = {"Legacy", "SmallArms", "AP", "HE", "HollowPoint", "Psychic", "Radiation"};
+    for (int i = 0; i < (int)WeaponDef::Warhead::COUNT; ++i)
+        if (!strcmp(s, names[i])) { out = (WeaponDef::Warhead)i; return true; }
     return false;
 }
 static bool parseMove(const char* s, MoveType& out) {
@@ -408,7 +431,7 @@ static bool parseMove(const char* s, MoveType& out) {
 // 阵营掩码："All"/"None" 或 "Allies|Soviet|China" 管道组合
 static bool parseFactionMask(const char* s, uint8_t& out) {
     if (!s) return false;
-    if (!strcmp(s, "All")) { out = 0b111; return true; }
+    if (!strcmp(s, "All")) { out = 0b1111; return true; }
     if (!strcmp(s, "None")) { out = 0; return true; }
     uint8_t m = 0;
     char buf[64];
@@ -444,6 +467,7 @@ static void loadWeaponKeys(const Ini::Section& sec, const char* prefix, WeaponDe
     if ((v = sec.get(kb("VsBld")))) w.vsBuilding = Ini::toFloat(v, w.vsBuilding);
     if ((v = sec.get(kb("NavalOnly")))) w.navalOnly = Ini::toBool(v, w.navalOnly);
     if ((v = sec.get(kb("Splash")))) w.splash = Ini::toFloat(v, w.splash);
+    if ((v = sec.get(kb("Warhead")))) parseWarhead(v, w.warhead);
 }
 
 void loadRules(const char* path) {
@@ -555,6 +579,9 @@ void loadRules(const char* path) {
             if ((v = sec.get("LowPowerSpeedFactor"))) g_gameRules.lowPowerSpeedFactor = Ini::toFloat(v, g_gameRules.lowPowerSpeedFactor);
             if ((v = sec.get("CrateInterval"))) g_gameRules.crateInterval = Ini::toInt(v, g_gameRules.crateInterval);
             if ((v = sec.get("OreRegrowRate"))) g_gameRules.oreRegrowRate = Ini::toInt(v, g_gameRules.oreRegrowRate);
+            if ((v = sec.get("VeteranRatio"))) g_gameRules.veteranRatio = Ini::toFloat(v, g_gameRules.veteranRatio);
+            if ((v = sec.get("BioReactorPowerPerOccupant"))) g_gameRules.bioReactorPowerPerOccupant = Ini::toInt(v, g_gameRules.bioReactorPowerPerOccupant);
+            if ((v = sec.get("GrinderRefund"))) g_gameRules.grinderRefund = Ini::toFloat(v, g_gameRules.grinderRefund);
             if ((v = sec.get("VeteranDmgBonus"))) { // 逗号分隔 3 个值
                 int a = 0, b = 0, c = 0;
                 if (sscanf(v, "%d,%d,%d", &a, &b, &c) == 3) {
@@ -563,6 +590,44 @@ void loadRules(const char* path) {
                     g_gameRules.veteranismDmgBonus[2] = c / 100.0f;
                 }
             }
+            auto loadPct3 = [&](const char* key, float (&dst)[3]) {
+                if (const char* x = sec.get(key)) {
+                    int a = 0, b = 0, c = 0;
+                    if (sscanf(x, "%d,%d,%d", &a, &b, &c) == 3) {
+                        dst[0] = a / 100.0f; dst[1] = b / 100.0f; dst[2] = c / 100.0f;
+                    }
+                }
+            };
+            loadPct3("VeteranArmorBonus", g_gameRules.veteranArmorBonus);
+            loadPct3("VeteranSpeedBonus", g_gameRules.veteranSpeedBonus);
+            loadPct3("VeteranRofBonus", g_gameRules.veteranRofBonus);
+            if ((v = sec.get("VeteranSelfHeal"))) {
+                sscanf(v, "%d,%d,%d", &g_gameRules.veteranSelfHeal[0],
+                       &g_gameRules.veteranSelfHeal[1], &g_gameRules.veteranSelfHeal[2]);
+            }
+            g_gameRules.maxMoney = std::max(0, g_gameRules.maxMoney);
+            g_gameRules.startingMoneyCap = std::clamp(g_gameRules.startingMoneyCap, 0, g_gameRules.maxMoney);
+            g_gameRules.lowPowerSpeedFactor = std::clamp(g_gameRules.lowPowerSpeedFactor, 0.01f, 1.0f);
+            g_gameRules.crateInterval = std::max(0, g_gameRules.crateInterval);
+            g_gameRules.oreRegrowRate = std::max(0, g_gameRules.oreRegrowRate);
+            g_gameRules.veteranRatio = std::clamp(g_gameRules.veteranRatio, 0.1f, 100.0f);
+            g_gameRules.bioReactorPowerPerOccupant = std::max(0, g_gameRules.bioReactorPowerPerOccupant);
+            g_gameRules.grinderRefund = std::clamp(g_gameRules.grinderRefund, 0.0f, 2.0f);
+            for (float& bonus : g_gameRules.veteranismDmgBonus) bonus = std::clamp(bonus, 0.0f, 10.0f);
+            patched++;
+        } else if (sn.rfind("Warhead.", 0) == 0) {
+            WeaponDef::Warhead wh;
+            if (!parseWarhead(sn.c_str() + 8, wh) || wh == WeaponDef::Warhead::Legacy) {
+                warn("warhead"); continue;
+            }
+            const char* v = sec.get("Verses");
+            float vals[(int)Armor::COUNT] = {};
+            int got = v ? sscanf(v, "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f",
+                &vals[0], &vals[1], &vals[2], &vals[3], &vals[4], &vals[5],
+                &vals[6], &vals[7], &vals[8], &vals[9], &vals[10]) : 0;
+            if (got != (int)Armor::COUNT) { warn("Verses (11 comma-separated multipliers)"); continue; }
+            for (int i = 0; i < (int)Armor::COUNT; ++i)
+                g_gameRules.warheadVerses[(int)wh][i] = std::clamp(vals[i], 0.0f, 10.0f);
             patched++;
         } else if (sn.rfind("AIBuild.", 0) == 0) {
             const char* facStr = sn.c_str() + 8;
@@ -593,11 +658,24 @@ void loadRules(const char* path) {
 static const char* armorKey(Armor a) {
     switch (a) {
         case Armor::None: return "None";
+        case Armor::Flak: return "Flak";
+        case Armor::Plate: return "Plate";
         case Armor::Light: return "Light";
+        case Armor::Medium: return "Medium";
         case Armor::Heavy: return "Heavy";
-        case Armor::Building: return "Building";
+        case Armor::Wood: return "Wood";
+        case Armor::Steel: return "Steel";
+        case Armor::Concrete: return "Concrete";
+        case Armor::Special1: return "Special1";
+        case Armor::Special2: return "Special2";
+        case Armor::COUNT: break;
     }
     return "?";
+}
+static const char* warheadKey(WeaponDef::Warhead w) {
+    static const char* names[] = {"Legacy", "SmallArms", "AP", "HE", "HollowPoint", "Psychic", "Radiation"};
+    int i = (int)w;
+    return i >= 0 && i < (int)WeaponDef::Warhead::COUNT ? names[i] : "Legacy";
 }
 static const char* moveKey(MoveType m) {
     switch (m) {
@@ -638,6 +716,7 @@ static void writeWeaponKeys(FILE* f, const char* prefix, const WeaponDef& w) {
     fprintf(f, "%s=%g\n", key("VsBld", b), w.vsBuilding);
     fprintf(f, "%s=%s\n", key("NavalOnly", b), w.navalOnly ? "yes" : "no");
     fprintf(f, "%s=%g\n", key("Splash", b), w.splash);
+    fprintf(f, "%s=%s\n", key("Warhead", b), warheadKey(w.warhead));
 }
 
 void exportRules(const char* path) {
@@ -647,6 +726,22 @@ void exportRules(const char* path) {
     if (!f) { TraceLog(LOG_WARNING, "RA2 export: cannot write %s", path); return; }
     fprintf(f, "; OpenRA2 rules - unit/building/superweapon stats. Edit values to customize;\n");
     fprintf(f, "; delete keys or sections to fall back to built-in defaults. See assets/README.txt.\n\n");
+    fprintf(f, "[GameRules]\nVeteranRatio=%g\nVeteranDmgBonus=%g,%g,%g\n",
+            g_gameRules.veteranRatio, g_gameRules.veteranismDmgBonus[0] * 100,
+            g_gameRules.veteranismDmgBonus[1] * 100, g_gameRules.veteranismDmgBonus[2] * 100);
+    fprintf(f, "VeteranArmorBonus=%g,%g,%g\nVeteranSpeedBonus=%g,%g,%g\nVeteranRofBonus=%g,%g,%g\n",
+            g_gameRules.veteranArmorBonus[0] * 100, g_gameRules.veteranArmorBonus[1] * 100, g_gameRules.veteranArmorBonus[2] * 100,
+            g_gameRules.veteranSpeedBonus[0] * 100, g_gameRules.veteranSpeedBonus[1] * 100, g_gameRules.veteranSpeedBonus[2] * 100,
+            g_gameRules.veteranRofBonus[0] * 100, g_gameRules.veteranRofBonus[1] * 100, g_gameRules.veteranRofBonus[2] * 100);
+    fprintf(f, "VeteranSelfHeal=%d,%d,%d\nBioReactorPowerPerOccupant=%d\nGrinderRefund=%g\n\n",
+            g_gameRules.veteranSelfHeal[0], g_gameRules.veteranSelfHeal[1], g_gameRules.veteranSelfHeal[2],
+            g_gameRules.bioReactorPowerPerOccupant, g_gameRules.grinderRefund);
+    for (int wi = 1; wi < (int)WeaponDef::Warhead::COUNT; ++wi) {
+        fprintf(f, "[Warhead.%s]\nVerses=", warheadKey((WeaponDef::Warhead)wi));
+        for (int ai = 0; ai < (int)Armor::COUNT; ++ai)
+            fprintf(f, "%s%g", ai ? "," : "", g_gameRules.warheadVerses[wi][ai]);
+        fprintf(f, "\n\n");
+    }
     for (int i = 0; i < (int)UnitType::COUNT; i++) {
         const UnitDef& d = g_units[i];
         fprintf(f, "[Unit.%s]\n", kUnitKey[i]);

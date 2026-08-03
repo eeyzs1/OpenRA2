@@ -32,6 +32,9 @@ enum class Sfx : uint8_t {
     NavalCannon,// 舰炮
     Torpedo,    // 鱼雷发射
     Dig,        // 矿车挖掘研磨
+    MirageFire, // 幻影坦克主炮
+    RhinoFire,  // 犀牛/99式主炮
+    ApocFire,   // 天启双管
     COUNT
 };
 

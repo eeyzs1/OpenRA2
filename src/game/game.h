@@ -30,13 +30,15 @@ public:
     void init(bool windowed = false, bool hidden = false); // 默认无边框全屏；windowed 调试窗口；hidden 测试用隐藏窗口（不弹窗）
     void shutdown();
     void run(); // 主循环
-    void smokeTest(int frames); // 无头冒烟测试
-    void campaignSmokeTest(int mission, int frames); // 战役冒烟测试：开局跑 N 帧，校验手工地图/触发器
+    int smokeTest(int frames); // 无头冒烟测试，返回失败断言数
+    int campaignSmokeTest(int mission, int frames); // 战役冒烟测试：开局跑 N 帧，返回失败断言数
+    int campaignMatrixTest(int frames); // 32 关启动/触发器/胜负静态与运行矩阵
     void benchCampaign(int mission, int warmTicks, int frames); // 临时诊断：战役真实渲染耗时（解除帧率上限）
     int playTest();             // 自动化完整游玩测试：脚本注入输入，真实窗口跑全流程，返回失败数
     void debugMenuShot(const char* file, bool setup); // 菜单截图（验证用）
     void debugShot(int warmTicks, const char* file); // 遭遇战截图：预热出基地/电厂/单位后拍全屏（验证用）
     int netSelfTestDriver(int role, int frames); // P8 双进程自测：role 0=--net-host 1=--net-client（main 驱动）
+    int statePersistenceTest(); // 存档 schema/边界/复杂状态 round-trip 与 checksum 覆盖
 
     // 快速存档固定槽位（F5 保存 / F9 读取，游戏内菜单共用）
     static constexpr const char* QUICKSAVE_PATH = "saves/quicksave.sav";
@@ -63,7 +65,12 @@ private:
 
     // 遭遇战选项（设置界面可改，开局应用；音量热更新）
     bool cfgCrates = true;   // 随机补给箱
-    bool cfgAlliance = false; // AI 互相结盟
+    bool cfgAlliance = false; // AI 组成同一联盟
+    bool cfgSharedVision = true;
+    bool cfgShortGame = false;
+    bool cfgSuperweapons = true;
+    bool cfgMcvRepacks = false;
+    int cfgGameMode = (int)SkirmishMode::Battle;
     int cfgVolume = 4;       // 音量档位 0..4（0/25/50/75/100%）
 
     // ---- 应用设置（settings.ini 持久化，改动即保存即时生效，无需重启）----
@@ -126,12 +133,32 @@ private:
     // 摄像机（世界像素偏移）
     float camX = 0, camY = 0;
     float camSpeed = 14;
+    float camZoom = 1.0f; // 滚轮缩放：0.5=拉远，2.0=拉近
+    static constexpr float CAM_ZOOM_MIN = 0.5f;
+    static constexpr float CAM_ZOOM_MAX = 2.0f;
 
     // 选择
     std::vector<EID> sel;
     EID selBuilding = INVALID_EID;
     bool dragging = false;
     Vector2 dragStart{0, 0};
+
+    // 鼠标光标（RA2 mouse.shp 提取帧）
+    enum class CursorKind : uint8_t {
+        Arrow, Move, Attack, Harvest, Enter, Deploy, Repair, Sell, NoMove, COUNT
+    };
+    CursorKind cursorKind = CursorKind::Arrow;
+    void updateHoverCursor(int mx, int my);
+    void drawGameCursor(int mx, int my);
+    void loadGameCursors();
+    void unloadGameCursors();
+    struct CursorDef { int start, count, interval, hx, hy; };
+    // mouse.shp 全量约 450 帧；AttackMove=404 必须可加载（Ares 表）
+    static constexpr int CURSOR_MAX_FRAMES = 512;
+    Texture2D cursorFrames[CURSOR_MAX_FRAMES]{};
+    int cursorFrameN = 0;
+    CursorDef cursorDefs[(int)CursorKind::COUNT]{};
+    bool cursorsLoaded = false;
 
     // 编队（Ctrl+数字设定，数字召回，双击数字跳转视角）
     std::vector<EID> groups[10];
@@ -146,6 +173,7 @@ private:
 
     // 超武目标选择模式（COUNT = 无）
     SWType targetingSW = SWType::COUNT;
+    std::vector<EID> chronoSourceSel; // 第一阶段来源区域车辆；最终随 lockstep Cmd 同步
     // 伞兵空降点选择模式（RA2 原作：美国空指部/科技机场支援技能）
     bool targetingParadrop = false;
 
@@ -199,7 +227,7 @@ private:
 
     // ---- 内部 ----
     void newGame(uint64_t seed);
-    void newCampaignGame(int mission);
+    void newCampaignGame(int mission, bool prepareRender = true);
     void spawnCampaignWave();
     bool saveGameFile(const char* path); // 快速存档（F5/菜单）：Game 头 + World 全量状态
     bool loadGameFile(const char* path); // 快速读档（F9/菜单）
@@ -250,6 +278,8 @@ private:
     void screenToWorld(int sx, int sy, float& wx, float& wy) const;
     Vector2 unitScreenPos(const World::Ent& e) const;
     Vector2 bldScreenPos(const World::Ent& e) const;
+    // 单位屏幕贴图矩形（含锚点/飞行高度）；点选与选中框共用，避免脚底锚点导致难选
+    Rectangle unitScreenRect(const World::Ent& e) const;
 
     // 输入辅助
     EID pickUnit(int mx, int my) const;

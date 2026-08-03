@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <algorithm>
 #include <string>
 #include <vector>
 #include "core/util.h"
@@ -111,6 +112,9 @@ enum class UnitType : uint8_t {
     Boris,                       // 鲍里斯（苏英雄，AK47+呼叫米格空袭建筑）
     SiegeChopper,                // 攻城直升机（苏，飞行机枪/部署远程炮击）
     ChaosDrone,                  // 混乱无人机（尤里，释放毒气使敌军自相残杀）
+    // ---- 尤复：奴隶矿车经济 ----
+    Slave,                       // 奴隶（步兵采矿，返回精炼厂/奴隶矿车）
+    SlaveMiner,                   // 奴隶矿车（尤里采矿车；展开后作卸货点并自动产奴）
     COUNT
 };
 
@@ -189,10 +193,19 @@ struct WeaponDef {
     float vsBuilding = 1.0f;
     bool navalOnly = false;  // 仅攻击水上目标（潜艇鱼雷）
     float splash = 0;        // 溅射半径（格，0=单体；V3 火箭范围杀伤）
+    // Legacy 保留旧三分类系数；其他值使用 [Warhead.*] × Armor 矩阵。
+    enum class Warhead : uint8_t { Legacy, SmallArms, AP, HE, HollowPoint, Psychic, Radiation, COUNT };
+    Warhead warhead = Warhead::Legacy;
+    const char* report = "";
 };
 
 // ===================== 单位定义 =====================
-enum class Armor : uint8_t { None, Light, Heavy, Building };
+// 原版 rules(md).ini 装甲域；Building 是旧配置名，作为 Concrete 的兼容别名。
+enum class Armor : uint8_t {
+    None, Flak, Plate, Light, Medium, Heavy, Wood, Steel, Concrete, Special1, Special2,
+    Building = Concrete,
+    COUNT = 11
+};
 enum class MoveType : uint8_t { Infantry, Vehicle, Air, Naval, Amphibious };
 
 struct UnitDef {
@@ -216,7 +229,10 @@ struct UnitDef {
     bool isAir() const { return move == MoveType::Air; }
     bool isNaval() const { return move == MoveType::Naval; }
     bool isAmphib() const { return move == MoveType::Amphibious; }
-    bool canHarvet() const { return type == UnitType::Harvester || type == UnitType::ChronoMiner || type == UnitType::WarMiner; }
+    bool canHarvet() const {
+        return type == UnitType::Harvester || type == UnitType::ChronoMiner
+            || type == UnitType::WarMiner || type == UnitType::Slave || type == UnitType::SlaveMiner;
+    }
     // RA2 原作：海豹部队/谭雅可游泳渡水（两栖步兵，仍走兵营队列）
     bool canSwim() const { return type == UnitType::NavySEAL || type == UnitType::Tanya; }
     // RA2 原作：C4 爆破手（近身爆破建筑；会游泳的还可炸舰船）
@@ -278,10 +294,64 @@ struct GameRules {
     int startingMoneyCap = 50000; // 遭遇战初始资金上限
     float lowPowerSpeedFactor = 0.5f; // 低电时生产速度系数
     float veteranismDmgBonus[3] = {1.0f, 1.1f, 1.3f}; // 新兵/老兵/精英伤害加成
+    float veteranArmorBonus[3] = {1.0f, 0.8f, 0.6f};  // 承伤倍率
+    float veteranSpeedBonus[3] = {1.0f, 1.2f, 1.4f};  // 移速倍率
+    float veteranRofBonus[3] = {1.0f, 0.8f, 0.6f};    // ROF 间隔倍率
+    int veteranSelfHeal[3] = {0, 1, 2};                // 每次自愈量
+    float veteranRatio = 3.0f;                         // 每级所需摧毁价值 / 自身价值
+    int bioReactorPowerPerOccupant = 100;
+    float grinderRefund = 1.0f;
+    float warheadVerses[(int)WeaponDef::Warhead::COUNT][(int)Armor::COUNT] = {};
     int crateInterval = 1800;    // 补给箱生成间隔（帧）
     int oreRegrowRate = 1;       // 矿脉再生速率
+    GameRules() {
+        for (auto& row : warheadVerses) for (float& v : row) v = 1.0f;
+        const float small[] = {1,1,1,.5f,.25f,.25f,.75f,.25f,.1f,1,1};
+        const float ap[] = {.25f,.25f,.25f,1,1,1,.75f,.75f,.5f,1,1};
+        const float he[] = {1,1,1,.75f,.5f,.25f,1,.75f,.5f,1,1};
+        const float hp[] = {1,1,1,.05f,.05f,.05f,.05f,.05f,.05f,1,1};
+        const float psi[] = {1,1,1,1,1,1,0,0,0,0,0};
+        const float rad[] = {1,1,1,.2f,.1f,.1f,.05f,.05f,.05f,0,0};
+        const float* rows[] = {nullptr, small, ap, he, hp, psi, rad};
+        for (int w = 1; w < (int)WeaponDef::Warhead::COUNT; ++w)
+            for (int a = 0; a < (int)Armor::COUNT; ++a) warheadVerses[w][a] = rows[w][a];
+    }
 };
 extern GameRules g_gameRules;
+
+inline bool isHero(UnitType t) {
+    return t == UnitType::Tanya || t == UnitType::Boris;
+}
+
+// 民房可进驻步兵（RA2/YR：大兵系；中国解放军=动员兵对位；尤里新兵；重装大兵）
+inline bool canGarrisonCivHouse(UnitType t) {
+    switch (t) {
+        case UnitType::GI: case UnitType::Conscript: case UnitType::PLA:
+        case UnitType::Initiate: case UnitType::GuardianGI:
+            return true;
+        default: return false;
+    }
+}
+
+// Legacy 武器继续读取 VsInf/VsVeh/VsBld；显式 Warhead 则按目标装甲矩阵结算。
+inline float weaponVsArmor(const WeaponDef& w, Armor armor, bool infantry, bool building) {
+    if (w.warhead == WeaponDef::Warhead::Legacy)
+        return building ? w.vsBuilding : (infantry ? w.vsInfantry : w.vsVehicle);
+    int wi = (int)w.warhead, ai = std::clamp((int)armor, 0, (int)Armor::COUNT - 1);
+    return g_gameRules.warheadVerses[wi][ai];
+}
+
+// 核心经规则统一入口：宝石为普通矿的 2 倍；矿石精炼器提高 25% 收益；
+// 工业工厂仅降低战车工厂车辆造价 25%，绝不改变生产速度。
+inline int oreUnitValue(bool gems) {
+    return gems ? 70 : 35;
+}
+inline int oreIncomeWithPurifier(int value, bool hasPurifier) {
+    return hasPurifier ? value * 125 / 100 : value;
+}
+inline int industrialPlantUnitCost(int baseCost, bool isWarFactoryVehicle, bool hasIndustrialPlant) {
+    return isWarFactoryVehicle && hasIndustrialPlant ? baseCost * 75 / 100 : baseCost;
+}
 
 // ===================== AI 建造序列定制（rules.ini [AIBuild.*] 节） =====================
 // 用户可定制各阵营 AI 的建造顺序与生产偏好，覆盖内置默认
@@ -326,6 +396,11 @@ const char* swTypeKey(SWType t);
 
 // 生产建筑判断
 bool isFactoryFor(BldType b, const UnitDef& u); // 兵营产步兵，重工产车辆
+// 可设集结点的生产建筑（兵营/重工/船厂/空指/精炼厂/复制中心）
+inline bool isRallyBuilding(BldType t) {
+    return t == BldType::Barracks || t == BldType::WarFactory || t == BldType::NavalYard
+        || t == BldType::AirForceCmd || t == BldType::OreRefinery || t == BldType::CloningVat;
+}
 // 某阵营可建造的列表
 std::vector<BldType> buildableBlds(Faction f);
 std::vector<UnitType> trainableUnits(Faction f, bool naval = false);
@@ -336,7 +411,7 @@ inline UnitType harvesterType(Faction f) {
     switch (f) {
         case Faction::Allies: return UnitType::ChronoMiner;
         case Faction::Soviet: return UnitType::WarMiner;
-        case Faction::Yuri:   return UnitType::Harvester;
+        case Faction::Yuri:   return UnitType::SlaveMiner;
         default: return UnitType::Harvester;
     }
 }
@@ -353,9 +428,25 @@ inline std::vector<Vec2i> bldFootprint(const BldDef& d) {
 inline int garrisonDomain(BldType t) {
     switch (t) {
         case BldType::CivHouse:
-        case BldType::BattleBunker: return 1;
+        case BldType::BattleBunker:
+        case BldType::BioReactor: return 1;
         case BldType::TankBunker: return 2;
+        case BldType::Grinder: return 3; // 己方单位进入后立即回收
         default: return 0;
+    }
+}
+
+// RA2：防御页签 / 独立防御建造队列（含超武建筑）
+inline bool isDefenseBld(BldType t) {
+    switch (t) {
+        case BldType::Pillbox: case BldType::SentryGun: case BldType::FlakCannon:
+        case BldType::GatlingCannon: case BldType::PrismTower: case BldType::TeslaCoil:
+        case BldType::PsychicTower: case BldType::GrandCannon: case BldType::PatriotMissile:
+        case BldType::Wall: case BldType::BattleBunker: case BldType::TankBunker:
+        case BldType::NukeSilo: case BldType::WeatherDevice: case BldType::IronCurtain:
+        case BldType::ChronoSphere: case BldType::GeneticMutator: case BldType::PsychicDominator:
+            return true;
+        default: return false;
     }
 }
 
@@ -365,6 +456,7 @@ inline bool psychicImmune(UnitType t) {
         case UnitType::AttackDog: case UnitType::Yuri: case UnitType::PsiCommando:
         case UnitType::TerrorDrone: case UnitType::RobotTank:
         case UnitType::Harvester: case UnitType::ChronoMiner: case UnitType::WarMiner:
+        case UnitType::SlaveMiner: case UnitType::Slave:
         case UnitType::Tanya: case UnitType::BattleFortress:
         case UnitType::Boris: case UnitType::ChaosDrone:
             return true;

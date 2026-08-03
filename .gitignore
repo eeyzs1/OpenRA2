@@ -15,3 +15,6 @@ assets/music/*.wav
 tools/ra2pack/game/
 tools/ra2pack/full-pack.7z
 __pycache__/
+# Agent/playtest scratch (screenshots, dumps, probes)
+tools/_scratch/**
+!tools/_scratch/README.txt

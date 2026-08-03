@@ -54,7 +54,8 @@ void Game::loadSettings() {
         *eq = 0;
         int v = atoi(eq + 1);
         if (strcmp(line, "lang") == 0) cfgLang = v ? 1 : 0;
-        else if (strcmp(line, "window_mode") == 0) cfgWindowMode = v ? 1 : 0;
+        // 0=无边框全屏 1=窗口（与 saveSettings 写入值一致；勿再做成布尔翻转）
+        else if (strcmp(line, "window_mode") == 0) cfgWindowMode = (v == 0) ? 0 : 1;
         else if (strcmp(line, "resolution") == 0) { if (v >= 0 && v < 8) cfgResIdx = v; }
         else if (strcmp(line, "volume") == 0) { if (v >= 0 && v <= 4) cfgVolume = v; }
         else if (strncmp(line, "key_", 4) == 0) {
@@ -91,6 +92,7 @@ void Game::applyDisplay() {
         }
         SetWindowSize(RES_LIST[cfgResIdx][0], RES_LIST[cfgResIdx][1]);
     }
+    SetWindowFocused(); // 从 bat/资源管理器启动时抢回前台，避免“已启动但看不见”
     // 诊断：打印实际窗口/帧缓冲尺寸，定位 letterbox 缩放问题
     TraceLog(LOG_INFO, "DISPLAY: applyDisplay() -> window=%dx%d render=%dx%d monitor=%dx%d",
              GetScreenWidth(), GetScreenHeight(), GetRenderWidth(), GetRenderHeight(),

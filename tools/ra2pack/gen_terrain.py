@@ -50,8 +50,41 @@ def tmp_block(name, idx, base, stride):
         return None
     return tmp_render(d, base + idx * stride)
 
+def fill_diamond_edges(img):
+    """60→64 NEAREST 后菱形边缘常留透明缝；用邻域不透明色填 1px，拼地时如一体。"""
+    px = img.load()
+    w, h = img.size
+    misses = []
+    for y in range(h):
+        for x in range(w):
+            if px[x, y][3] >= 128:
+                continue
+            # 菱形内：距中心的曼哈顿式等距覆盖
+            cx, cy = (w - 1) * 0.5, (h - 1) * 0.5
+            # 只填菱形轮廓附近的洞，不填画布四角
+            dx = abs(x - cx) / (w * 0.5)
+            dy = abs(y - cy) / (h * 0.5)
+            if dx + dy > 1.15:
+                continue
+            acc = [0, 0, 0, 0]
+            n = 0
+            for ox, oy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1)):
+                nx, ny = x + ox, y + oy
+                if 0 <= nx < w and 0 <= ny < h and px[nx, ny][3] >= 128:
+                    c = px[nx, ny]
+                    for i in range(4):
+                        acc[i] += c[i]
+                    n += 1
+            if n:
+                misses.append((x, y, tuple(v // n for v in acc)))
+    for x, y, c in misses:
+        px[x, y] = c
+    return img
+
 def save_tile(img, terrain, variant):
-    img = img.resize((TILE_W, TILE_H), Image.LANCZOS)
+    # NEAREST：保持 RA2 TMP 锐利像素，避免 LANCZOS 把草地糊成泥色
+    img = img.resize((TILE_W, TILE_H), Image.NEAREST)
+    img = fill_diamond_edges(img)
     img.save(os.path.join(SPR, f"tile_{terrain}_{variant}.png"), "PNG")
     report.append(f"tile_{terrain}_{variant}")
 

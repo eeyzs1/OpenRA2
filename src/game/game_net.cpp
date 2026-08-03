@@ -3,12 +3,21 @@
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <thread>
 
 // ===================== 命令入队 =====================
 void Game::issueCmd(const World::Cmd& c) {
-    if (netGame) { pendingCmds.push_back(c); return; }
+    if (netGame) {
+        if (pendingCmds.size() >= 256 || c.ids.size() > 4096) {
+            TraceLog(LOG_WARNING, "NET local command exceeded protocol limits");
+            netDesync = true;
+            return;
+        }
+        pendingCmds.push_back(c);
+        return;
+    }
     world.applyCmd(localPlayer, c);
 }
 
@@ -48,6 +57,9 @@ void Game::netBeginGame() {
     sel.clear();
     selBuilding = INVALID_EID;
     placing = false;
+    targetingSW = SWType::COUNT;
+    chronoSourceSel.clear();
+    targetingParadrop = false;
     gameOver = victory = false;
     gameSpeed = 1; // 联机锁定 1x（lockstep 步进对齐）
     // 摄像机对准本端出生点
@@ -82,57 +94,141 @@ void Game::netHandleMsgs() {
         else if (lobbyState == 1 || lobbyState == 2) lobbyState = 3;
         return;
     }
+    auto reject = [&](const char* reason) {
+        TraceLog(LOG_WARNING, "NET protocol error: %s", reason);
+        if (netGame) netPeerLeft = true;
+        else lobbyState = 3;
+        net.close();
+    };
+    auto validCountry = [](int value) {
+        return value > (int)Country::None && value < (int)Country::COUNT;
+    };
+    auto validMapSize = [](int value) { return value == 64 || value == 96 || value == 128; };
+    auto validTargetEid = [&](int value) {
+        return value >= 0 && value < (int)world.ents.size();
+    };
     while (!net.inbox.empty()) {
         NetLink::Msg m = std::move(net.inbox.front());
         net.inbox.pop_front();
         NetLink::Reader r(m.body);
         switch (m.type) {
             case NetLink::MsgHello: { // C→S：version u32, country u8, color u8
-                if (lobbyRole != 0) break;
+                if (netGame || lobbyRole != 0 || lobbyState != 1) { reject("unexpected hello"); return; }
                 uint32_t ver = r.r<uint32_t>();
-                if (ver != 1) { netLeave(); lobbyState = 3; break; }
-                peerCountry = r.r<uint8_t>();
-                peerColor = r.r<uint8_t>();
+                int country = r.r<uint8_t>();
+                int color = r.r<uint8_t>();
+                if (!r.done() || ver != 2 || !validCountry(country) || color < 0 || color >= MAX_PLAYERS) {
+                    reject("invalid hello");
+                    return;
+                }
+                peerCountry = country;
+                peerColor = color;
                 lobbyState = 2; // 已连接待开局
                 break;
             }
             case NetLink::MsgWelcome: { // S→C：seed u64, mapSize u8, mapType u8, money i32, crates u8, hostCountry u8, hostColor u8
-                if (lobbyRole != 1) break;
-                netSeed = r.r<uint64_t>();
-                cfgMapSize = r.r<uint8_t>();
-                cfgMapType = r.r<uint8_t>();
-                cfgMoney = r.r<int32_t>();
-                cfgCrates = r.r<uint8_t>() != 0;
-                peerCountry = r.r<uint8_t>();
-                peerColor = r.r<uint8_t>();
+                if (netGame || lobbyRole != 1 || lobbyState != 1) { reject("unexpected welcome"); return; }
+                uint64_t seed = r.r<uint64_t>();
+                int mapSize = r.r<uint8_t>();
+                int mapType = r.r<uint8_t>();
+                int money = r.r<int32_t>();
+                int crates = r.r<uint8_t>();
+                int country = r.r<uint8_t>();
+                int color = r.r<uint8_t>();
+                if (!r.done() || seed == 0 || !validMapSize(mapSize) || mapType < 0 || mapType > 2
+                    || money < 0 || money > 1000000 || crates > 1
+                    || !validCountry(country) || color < 0 || color >= MAX_PLAYERS) {
+                    reject("invalid welcome");
+                    return;
+                }
+                netSeed = seed;
+                cfgMapSize = mapSize;
+                cfgMapType = mapType;
+                cfgMoney = money;
+                cfgCrates = crates != 0;
+                peerCountry = country;
+                peerColor = color;
+                lobbyState = 2;
                 break;
             }
-            case NetLink::MsgStart:
-                if (lobbyRole == 1) { netPlayer = 1; netBeginGame(); }
+            case NetLink::MsgStart: {
+                if (!r.done() || netGame || lobbyRole != 1 || lobbyState != 2
+                    || netSeed == 0 || !validCountry(peerCountry)) {
+                    reject("unexpected start");
+                    return;
+                }
+                netPlayer = 1;
+                netBeginGame();
                 break;
+            }
             case NetLink::MsgCmdFrame: {
+                if (!netGame) { reject("command outside game"); return; }
                 uint32_t t = r.r<uint32_t>();
-                uint8_t n = r.r<uint8_t>();
+                uint16_t n = r.r<uint16_t>();
+                if (!r.ok || n > 256 || t < netSimTick || t > netSimTick + NET_DELAY + 16
+                    || remoteCmds.count(t)) {
+                    reject("invalid command frame header");
+                    return;
+                }
                 std::vector<World::Cmd> cmds;
                 cmds.reserve(n);
                 for (int i = 0; i < n && r.ok; i++) {
                     World::Cmd c;
-                    c.type = (World::Cmd::Type)r.r<uint8_t>();
-                    uint8_t ni = r.r<uint8_t>();
+                    int type = r.r<uint8_t>();
+                    c.type = (World::Cmd::Type)type;
+                    uint16_t ni = r.r<uint16_t>();
+                    if (type <= (int)World::Cmd::None || type > (int)World::Cmd::LaunchSW || ni > 4096) {
+                        r.ok = false;
+                        break;
+                    }
                     for (int j = 0; j < ni && r.ok; j++) c.ids.push_back(r.r<int32_t>());
                     c.x = r.r<float>();
                     c.y = r.r<float>();
                     c.a = r.r<int32_t>();
                     c.b = r.r<int32_t>();
-                    c.attackMove = r.r<uint8_t>() != 0;
-                    if (r.ok) cmds.push_back(std::move(c));
+                    uint8_t attackMove = r.r<uint8_t>();
+                    c.attackMove = attackMove != 0;
+                    bool valid = r.ok && attackMove <= 1 && std::isfinite(c.x) && std::isfinite(c.y)
+                              && c.x >= -1.0f && c.y >= -1.0f
+                              && c.x <= world.map.w + 1.0f && c.y <= world.map.h + 1.0f;
+                    for (EID id : c.ids)
+                        valid = valid && id >= 0 && id < (int)world.ents.size();
+                    switch (c.type) {
+                        case World::Cmd::Attack: case World::Cmd::Capture: case World::Cmd::Repair:
+                        case World::Cmd::Board: case World::Cmd::Garrison: case World::Cmd::Service:
+                            valid = valid && validTargetEid(c.a);
+                            break;
+                        case World::Cmd::StartUnitProd: case World::Cmd::CancelUnitProd:
+                        case World::Cmd::HoldUnitProd:
+                            valid = valid && c.a >= 0 && c.a < (int)UnitType::COUNT;
+                            break;
+                        case World::Cmd::StartBldProd: case World::Cmd::PlaceBuilding:
+                        case World::Cmd::HoldBldProd: case World::Cmd::CancelBldProd:
+                            valid = valid && c.a >= 0 && c.a < (int)BldType::COUNT;
+                            break;
+                        case World::Cmd::LaunchSW:
+                            valid = valid && c.a >= 0 && c.a < (int)SWType::COUNT;
+                            break;
+                        case World::Cmd::Harvest:
+                            valid = valid && world.map.inBounds(c.a, c.b);
+                            break;
+                        default: break;
+                    }
+                    if (!valid) { r.ok = false; break; }
+                    cmds.push_back(std::move(c));
                 }
-                if (r.ok && !remoteCmds.count(t)) remoteCmds[t] = std::move(cmds);
+                if (!r.done()) { reject("malformed command frame"); return; }
+                remoteCmds[t] = std::move(cmds);
                 break;
             }
             case NetLink::MsgChecksum: {
+                if (!netGame) { reject("checksum outside game"); return; }
                 uint32_t t = r.r<uint32_t>();
                 uint32_t sum = r.r<uint32_t>();
+                if (!r.done() || t == 0 || t % 90 != 0 || t > netSimTick + 90) {
+                    reject("invalid checksum");
+                    return;
+                }
                 // 本端已过该 tick 才能比对（双方发送时机相同，正常都已过）
                 if (t <= netSimTick) {
                     // 重算该 tick 不可行——在推进到 t 时记录历史校验和比对
@@ -145,11 +241,14 @@ void Game::netHandleMsgs() {
                 break;
             }
             case NetLink::MsgBye:
+                if (!r.done()) { reject("invalid bye"); return; }
                 if (netGame) netPeerLeft = true;
                 else lobbyState = 3;
                 net.close();
-                break;
-            default: break;
+                return;
+            default:
+                reject("unknown message");
+                return;
         }
     }
 }
@@ -163,10 +262,10 @@ void Game::netAdvance() {
         pendingCmds.clear();
         NetLink::Writer w;
         w.w((uint32_t)target);
-        w.w((uint8_t)localCmds[target].size());
+        w.w((uint16_t)localCmds[target].size());
         for (const World::Cmd& c : localCmds[target]) {
             w.w((uint8_t)c.type);
-            w.w((uint8_t)c.ids.size());
+            w.w((uint16_t)c.ids.size());
             for (EID id : c.ids) w.w((int32_t)id);
             w.w(c.x);
             w.w(c.y);
@@ -307,7 +406,7 @@ int Game::netSelfTestDriver(int role, int frames) {
         }
         if (!net.connected()) { TraceLog(LOG_ERROR, "net-test: connect timeout"); return 1; }
         NetLink::Writer w;
-        w.w((uint32_t)1);
+        w.w((uint32_t)2);
         w.w((uint8_t)cfgCountry);
         w.w((uint8_t)cfgColor);
         net.send(NetLink::MsgHello, w.b);

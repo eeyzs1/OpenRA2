@@ -19,6 +19,8 @@ enum class S : int {
     ChangeMap, MapSize, SizeS, SizeM, SizeL, MapType, MapContinent, MapIslands, MapLake,
     Player, Color, Country, CommanderYou, ComputerN, Remove, AddComputer,
     StartMoney, GameSpeed, SpeedSlow, SpeedNormal, SpeedFast, Volume, Crates, AIAlliance, StartGame,
+    GameMode, ModeBattle, ModeFFA, ModeUnholy, ModeMegawealth, ModeLandRush, ModeMeatGrinder, ModeNavalWar,
+    ShortGame, SharedVision, Superweapons, McvRepacks,
     // HUD / 侧边栏
     Money, Power, LowPower, NeedBld, Ready, ClickTarget,
     TabBld, TabDef, TabInf, TabVeh, TabNavy,
@@ -40,12 +42,13 @@ enum class S : int {
     EvaBaseAttack, EvaHarvAttack, EvaBldDestroyedFmt, EvaPromoteVetFmt, EvaPromoteEliteFmt,
     SpyStealMoneyFmt, SpyMoneyVictim, SpyPowerVictim, SpyPowerOk, SpyRadarOk, SpyRadarVictim,
     SpyBarracks, SpyFactory, SpyNavy, SpyLabVictim, SpyLabOk, SpyGenericFmt,
-    CrateMoney, CrateHeal, CrateVet, EvaInfNoChrono, EvaWaveIncoming,
+    CrateMoney, CrateHeal, CrateVet, CrateUnit, CrateReveal, CratePower, CrateArmor, CrateSpeed,
+    EvaInfNoChrono, EvaWaveIncoming,
     SpyTechChrono, SpyTechPsi, SpySWVictim, SpySWReset, EvaMindGain, EvaMindLost,
     // 设置页
     Language, DisplaySection, WindowMode, WMFullscreen, WMWindowed, Resolution, ResDesktop,
     KeysSection, ResetKeys, PressKey, KeysTip,
-    KaStop, KaUnload, KaDeploy, KaScatter, KaGuard, KaWaypoint, KaSameType, KaMusic, KaViewBase,
+    KaStop, KaUnload, KaDeploy, KaScatter, KaGuard, KaWaypoint, KaSameType, KaTeam01, KaTeam02, KaMusic, KaViewBase,
     KaPause, KaRally, KaSell, KaQuickSave, KaQuickLoad, KaSpeedUp, KaSpeedDown,
     // LAN 联机（P8）
     LanGame, HostGame, JoinGame, WaitPeer, PeerJoined, WaitHostStart,

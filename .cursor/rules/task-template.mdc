@@ -1,0 +1,15 @@
+---
+description: Required task declaration for AI coding work
+alwaysApply: true
+---
+
+# Task template
+
+Before making code changes, briefly state:
+
+1. **Goal** — one sentence
+2. **Files to touch** — list paths
+3. **Files off-limits** — e.g. do not grow `game.cpp` / `world.cpp`; do not edit launch bats directly
+4. **Acceptance** — e.g. `cmake --build build --config Release`, `ra2.exe --smoke 2000`, or `ctest`
+
+If the task is architecture/refactor related, follow mechanical-move rules: no behavior changes, preserve `Cmd`/`checksum`.

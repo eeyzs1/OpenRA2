@@ -89,6 +89,8 @@ INFANTRY = {"gi", "conscript", "engineer", "spy", "flaktrooper",
             "terrorist", "navyseal", "yuri", "chronocommando", "psicommando",
             "rocketeer", "guardiangi", "pla", "initiate", "brute", "virus", "boris"}
 MINERS = {"harvester", "chronominer", "warminer"}
+# 卸货动画 VXL（HORV/CMON）：与车体 Image 不同
+MINER_UNLOAD_VXL = {"harvester": "horv", "chronominer": "cmon", "warminer": "horv"}
 # 引擎 MoveType（src/game/data.cpp）：空军/海军不烘地面投影，锚点=内容中心
 AIR = {"intruder", "blackeagle", "kirov", "nighthawk", "hornet", "rocketeer",
        "mig", "siegechopper", "floatingdisc"}
@@ -97,14 +99,14 @@ NAVAL = {"destroyer", "typhoon", "aegis", "seascorpion", "dreadnought",
 BLDS = {
     "conyard": ["GACNST"], "powerplant": ["GAPOWR"], "teslareactor": ["NAPOWR"],
     "nuclearreactor": ["NANRCT"], "barracks": ["GAPILE"], "warfactory": ["GAWEAP"],
-    "orerefinery": ["GAREFN"], "radar": ["NARADR"], "battlelab": ["GATECH"],
+    "orerefinery": ["GAREFN"], "radar": ["GARADR", "NARADR"], "battlelab": ["GATECH"],
     "airforcecmd": ["GAAIRC"], "navalyard": ["GAYARD"], "pillbox": ["GAPILL"],
     "sentrygun": ["NALASR"], "prismtower": ["ATESLA"], "teslacoil": ["TESLA"],
     "flakcannon": ["NAFLAK"], "grandcannon": ["GTGCAN"], "patriotmissile": ["NASAM"],
     "wall": ["GAWALL"], "orepurifier": ["GAOREP"], "industrialplant": ["NAINDP", "NAREFN"],
     "techpowerplant": ["CAPOWR", "GAPOWR"], "nukesilo": ["NAMISL"],
     "weatherdevice": ["GAWEAT"], "ironcurtain": ["NAIRON"], "chronosphere": ["GACSPH"],
-    "oilderrick": ["CAOILD"], "hospital": ["CATHOSP"], "machineshop": ["CAMACH", "CAOUTP"],
+    "oilderrick": ["CAOILD"], "hospital": ["CAHOSP", "CATHOSP"], "machineshop": ["CAOUTP", "CAMACH"],
     "cloningvat": ["NACLON"], "servicedepot": ["GADEPT"], "gapgenerator": ["GAGAP"],
     "spysat": ["GASPYSAT"], "psychicsensor": ["NAPSIS"], "techairport": ["CAAIRP"],
     "secretlab": ["CASLAB", "CALAB"], "civhouse": ["CAHSE01"], "techoutpost": ["CAOUTP"],
@@ -145,40 +147,49 @@ def ph_size(kind, name, default):
     return _size_cache[key]
 
 # ------------------------------------------------------------- VXL 渲染
+# RA2 源瓦片 60×30 → 引擎 64×32；VXL/建筑共用此比例
+RA2_TILE_W, ENGINE_TILE_W = 60, 64
+BLD_SCALE = ENGINE_TILE_W / RA2_TILE_W
+
 def render_voxel_unit(img, canvas, eng=""):
-    """8 方向渲染，返回 [PIL]*8 或 None。统一 scale。
-    地面单位：地面接触点（最低体素层）对齐引擎投影线 y=0.72h（引擎在此烘阴影）；
-    空军/海军：内容中心对齐锚点 (w/2, h/2+4)。"""
+    """8 方向渲染，返回 ([PIL]*8, layout) 或 (None, None)。
+    layout = {scale, w, ch, floating, orgs:[(orgx,orgy)*8]} 供炮塔同坐标系叠绘。
+    固定 px_per_voxel = 64/60；地面单位南触点 y=0.72h。"""
     vd = get(img + ".vxl")
     if not vd:
-        return None
-    hd = get(img + ".hva")
-    v = Vxl(vd); h = Hva(hd) if hd else None
+        return None, None
+    # 静态站姿烘焙：不用 HVA（与炮塔/炮管共用 section 坐标系对齐）。
+    # HVA 大平移在单独烘炮塔时会被丢弃，若车体保留会导致错位。
+    v = Vxl(vd); h = None
     w, ch = canvas
     floating = eng in AIR or eng in NAVAL
-    anchor_y = ch / 2 + 4 if floating else ch * 0.72
-    # 第一遍：8 方向投影。模型中心不在原点（旋转时扫出圆形轨迹），
-    # 故 scale 用「单方向最大包围盒」而非并集，各方向按自身地面锚点对齐
     per = []
     maxbw = 0.0; maxbh = 0.0
     for e in range(8):
-        # 引擎 dir e = 屏幕角 45e°（东起顺时针，y 向下）；经 zep 机头朝向验证
         pts, zmin = vxl_project(v, h, _phi_for_screen_alpha(45 * e))
         if not pts:
-            return None
+            return None, None
         xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
         maxbw = max(maxbw, max(xs) - min(xs)); maxbh = max(maxbh, max(ys) - min(ys))
         per.append((pts, zmin, min(xs), max(xs), min(ys), max(ys)))
     bw = maxbw + 1.3; bh = maxbh + 1.3
-    margin = 3
-    scale = min((w - 2 * margin) / bw, (ch - 2 * margin) / bh)
+    scale = ENGINE_TILE_W / float(RA2_TILE_W)
+    margin = 2
+    need_w = int(bw * scale) + 2 * margin
+    if floating:
+        need_h = int(bh * scale) + 2 * margin
+    else:
+        need_h = max(int(bh * scale / 0.72) + margin, int(bh * scale) + 2 * margin)
+    w = max(w, need_w)
+    ch = max(ch, need_h)
+    anchor_y = ch / 2 + 4 if floating else ch * 0.72
     out = []
+    orgs = []
     for e in range(8):
         pts, zmin, mnx, mxx, mny, mxy = per[e]
         if floating:
-            gx = (mnx + mxx) / 2; gy = (mny + mxy) / 2  # 空军/海军：内容中心
+            gx = (mnx + mxx) / 2; gy = (mny + mxy) / 2
         else:
-            # 地面接触点：最底层（sy 最大 1.2 范围内）体素的屏幕均值
             ycut = mxy - 1.2
             low = [p for p in pts if p[1] >= ycut]
             if low:
@@ -188,9 +199,10 @@ def render_voxel_unit(img, canvas, eng=""):
                 gx = (mnx + mxx) / 2; gy = mxy
         orgx = w / 2 - gx * scale
         orgy = anchor_y - gy * scale + 0.5 * scale
-        ss = 3 if scale >= 1.6 else 2
-        out.append(render_pts(pts, PAL_U, scale, orgx, orgy, w, ch, supersample=ss))
-    return out
+        orgs.append((orgx, orgy))
+        out.append(render_pts(pts, PAL_U, scale, orgx, orgy, w, ch, supersample=2))
+    layout = {"scale": scale, "w": w, "ch": ch, "floating": floating, "orgs": orgs}
+    return out, layout
 
 # ------------------------------------------------------------- SHP 工具
 def shp_frame_img(shp, i, pal, remap=True):
@@ -213,7 +225,8 @@ def composite_frames(shp, idxs, pal, remap=True):
     return big.crop(bbox)
 
 def place_bottom_center(content, canvas, bottom_margin):
-    """内容等比缩放到画布内（仅缩小或<=1.6x放大），底边对齐 h-bottom_margin，水平居中"""
+    """内容等比缩放到画布内（仅缩小或<=1.6x放大），底边对齐 h-bottom_margin，水平居中。
+    仅用于单位/图标；建筑必须保留 SHP 原画布偏移，见 render_building。"""
     w, ch = canvas
     cw, chh = content.size
     if cw == 0 or chh == 0:
@@ -228,6 +241,16 @@ def place_bottom_center(content, canvas, bottom_margin):
     y = ch - bottom_margin - content.height
     img.paste(content, (x, y), content)
     return img
+
+# BLD_SCALE / ENGINE_TILE_W 定义见上方 VXL 节
+
+def scale_bld_canvas(img):
+    """NEAREST 放大到引擎瓦片比例，保持锐利像素边（RA2 原作观感）"""
+    if abs(BLD_SCALE - 1.0) < 0.001:
+        return img
+    nw = max(1, round(img.width * BLD_SCALE))
+    nh = max(1, round(img.height * BLD_SCALE))
+    return img.resize((nw, nh), Image.NEAREST)
 
 # ------------------------------------------------------------- 步兵/SHP 单位
 # art.ini 序列驱动（权威帧映射）：Ready=站立 Walk=行走 FireUp=开火 Die1=死亡
@@ -416,6 +439,7 @@ def render_shp_unit(img, eng, canvas):
 
 # ------------------------------------------------------------- 炮塔（tur.vxl 8 方向）
 # 近亲替代单位的炮塔跟随近亲（type99 用犀牛炮塔等）
+# 炮塔：与车体 Image stem 配对（*tur.vxl）；画布约为车体 55%，避免旧超大占位把炮塔撑满画布
 TURRETS = {
     "grizzly": "gtnktur", "rhino": "htnktur", "type99": "htnktur",
     "apocalypse": "mtnktur", "prismtank": "sreftur", "teslatank": "ttnktur",
@@ -424,12 +448,48 @@ TURRETS = {
     "magnetron": "ttnktur", "mastermind": "mtnktur",
 }
 
-def render_turret(tur, canvas):
-    """tur.vxl 8 方向渲染（无 hva：炮塔以旋转轴心为原点，直接投影）"""
+def _merge_vxl(*vxls):
+    """合并多个 VXL（同坐标系：炮塔+炮管），保留各自 section。"""
+    out = Vxl.__new__(Vxl)
+    out.sections = []
+    for v in vxls:
+        if v is None:
+            continue
+        out.sections.extend(v.sections)
+    return out
+
+def render_turret(tur, layout):
+    """tur+barl 与车体同一画布/原点叠绘（layout 来自 render_voxel_unit）。"""
+    if not layout:
+        return None
     vd = get(tur + ".vxl")
     if not vd:
         return None
-    v = Vxl(vd)
+    vtur = Vxl(vd)
+    barl_name = tur[:-3] + "barl" if tur.endswith("tur") else tur + "barl"
+    vbarl = Vxl(get(barl_name + ".vxl")) if has(barl_name + ".vxl") else None
+    v = _merge_vxl(vtur, vbarl)
+    scale = layout["scale"]
+    w, ch = layout["w"], layout["ch"]
+    orgs = layout["orgs"]
+    out = []
+    for e in range(8):
+        pts, zmin = vxl_project(v, None, _phi_for_screen_alpha(45 * e))
+        if not pts:
+            return None
+        orgx, orgy = orgs[e]
+        out.append(render_pts(pts, PAL_U, scale, orgx, orgy, w, ch, supersample=2))
+    return out
+
+def render_turret_centered(tur, canvas):
+    """无车体 layout 时回退：内容居中（近亲表兜底）。"""
+    vd = get(tur + ".vxl")
+    if not vd:
+        return None
+    vtur = Vxl(vd)
+    barl_name = tur[:-3] + "barl" if tur.endswith("tur") else tur + "barl"
+    vbarl = Vxl(get(barl_name + ".vxl")) if has(barl_name + ".vxl") else None
+    v = _merge_vxl(vtur, vbarl)
     w, ch = canvas
     per = []
     maxbw = 0.0; maxbh = 0.0
@@ -440,21 +500,37 @@ def render_turret(tur, canvas):
         xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
         maxbw = max(maxbw, max(xs) - min(xs)); maxbh = max(maxbh, max(ys) - min(ys))
         per.append((pts, min(xs), max(xs), min(ys), max(ys)))
-    bw = maxbw + 1.3; bh = maxbh + 1.3
-    margin = 3
-    scale = min((w - 2 * margin) / bw, (ch - 2 * margin) / bh)
+    scale = ENGINE_TILE_W / float(RA2_TILE_W)
+    need = int(max(maxbw, maxbh) * scale) + 6
+    w = max(w, need); ch = max(ch, need)
     out = []
     for e in range(8):
         pts, mnx, mxx, mny, mxy = per[e]
         gx = (mnx + mxx) / 2; gy = (mny + mxy) / 2
         orgx = w / 2 - gx * scale
         orgy = ch / 2 - gy * scale
-        ss = 3 if scale >= 1.6 else 2
-        out.append(render_pts(pts, PAL_U, scale, orgx, orgy, w, ch, supersample=ss))
+        out.append(render_pts(pts, PAL_U, scale, orgx, orgy, w, ch, supersample=2))
     return out
 
 # ------------------------------------------------------------- 建筑
-def render_building(img, canvas, frame0=0, single=True):
+def bib_shp_candidates(bibshape: str):
+    """art.ini BibShape（如 GAREFNBB）→ 温带优先的 SHP 候选名。"""
+    b = bibshape.lower().strip()
+    if not b:
+        return []
+    out = []
+    if len(b) >= 3:
+        for c in "gtuas":
+            out.append(b[0] + c + b[2:])
+    out.append(b)
+    seen = set()
+    return [x for x in out if not (x in seen or seen.add(x))]
+
+def render_building(img, canvas=None, frame0=0, single=True, bib=None, active_anim=None, remap=True):
+    """保留 SHP 原画布与帧偏移（地基对齐关键），再按 64/60 放大到引擎瓦片。
+    禁止 crop+居中：会剪掉地基留白，建成后地面缺角、比例错位。
+    bib：art.ini BibShape；active_anim：ActiveAnim（油田泵机等补全缺块）。
+    Remapable=no 的科技建筑必须 remap=False，否则 16..31 被画成亮红。"""
     sd = get(img + ".shp")
     if not sd:
         return None
@@ -470,22 +546,70 @@ def render_building(img, canvas, frame0=0, single=True):
             if a > besta:
                 best, besta = i, a
         frame0 = best
-    # 基帧 + 第一个小覆盖帧（旗帜/天线等，面积 < 基帧 40%；核弹井天线 38%）
+    # 基帧 + 后续小覆盖帧（旗帜/天线等）；最多叠 3 层以免特效帧污染
     idxs = [frame0]
-    f0 = shp_frame_img(shp, frame0, PAL_U)
+    f0 = shp_frame_img(shp, frame0, PAL_U, remap=remap)
     if not f0:
         return None
     a0 = f0[1][2] * f0[1][3]
     if not single:
         for i in range(frame0 + 1, n):
-            fi = shp_frame_img(shp, i, PAL_U)
-            if fi and fi[1][2] * fi[1][3] < a0 * 0.4:
+            fi = shp_frame_img(shp, i, PAL_U, remap=remap)
+            if not fi:
+                continue
+            area = fi[1][2] * fi[1][3]
+            if area < a0 * 0.45:
                 idxs.append(i)
+                if len(idxs) >= 4:
+                    break
+    big = Image.new("RGBA", (shp.w, shp.h), (0, 0, 0, 0))
+    # BibShape：南侧地基垫，必须在主体之下，否则精炼厂/战车厂看起来“缺半截”
+    if bib:
+        for stem in bib_shp_candidates(bib):
+            if not has(stem + ".shp"):
+                continue
+            bshp = Shp(get(stem + ".shp"))
+            fr0 = bshp.frame_pixels(0)
+            if fr0 and fr0.w > 0:
+                r = shp_frame_img(bshp, 0, PAL_U, remap=False)
+                if r:
+                    fi, (x, y, w, h) = r
+                    if x + fi.width > big.width or y + fi.height > big.height or x < 0 or y < 0:
+                        nw = max(big.width, x + fi.width, bshp.w)
+                        nh = max(big.height, y + fi.height, bshp.h)
+                        bigger = Image.new("RGBA", (nw, nh), (0, 0, 0, 0))
+                        bigger.paste(big, (0, 0), big)
+                        big = bigger
+                    big.paste(fi, (max(0, x), max(0, y)), fi)
+            break
+    for i in idxs:
+        r = shp_frame_img(shp, i, PAL_U, remap=remap)
+        if r:
+            fi, (x, y, w, h) = r
+            big.paste(fi, (x, y), fi)
+    # ActiveAnim 静态取帧0（油田泵机/动画层补全主体缺块）
+    if active_anim:
+        for stem in bib_shp_candidates(active_anim):  # 同 theater 字母替换
+            if not has(stem + ".shp"):
+                continue
+            ash = Shp(get(stem + ".shp"))
+            fr = ash.frame_pixels(0)
+            if not fr or fr.w <= 0:
                 break
-    content = composite_frames(shp, idxs, PAL_U)
-    if not content:
+            r = shp_frame_img(ash, 0, PAL_U, remap=remap)
+            if r:
+                fi, (x, y, w, h) = r
+                if x + fi.width > big.width or y + fi.height > big.height or x < 0 or y < 0:
+                    nw = max(big.width, x + fi.width, ash.w)
+                    nh = max(big.height, y + fi.height, ash.h)
+                    bigger = Image.new("RGBA", (nw, nh), (0, 0, 0, 0))
+                    bigger.paste(big, (0, 0), big)
+                    big = bigger
+                big.paste(fi, (max(0, x), max(0, y)), fi)
+            break
+    if big.getbbox() is None:
         return None
-    return place_bottom_center(content, canvas, 4)
+    return scale_bld_canvas(big)
 
 # ------------------------------------------------------------- 图标
 def render_icon(cameo, canvas):
@@ -542,15 +666,45 @@ for eng, cands in UNITS.items():
         report["units_skip"].append((eng, "no rules id")); continue
     img = R[rid].get("Image", rid).lower()
     ok = False
+    layout = None
     if has(img + ".vxl"):
-        canvas = ph_size("unit", eng, (60, 60))
-        dirs = render_voxel_unit(img, canvas, eng)
+        # 采矿车加大画布，避免货舱被裁切；地面车辆随内容尺寸，勿强行 128（1:1 体素会显得过小）
+        default = (140, 140) if eng in MINERS else (72, 72)
+        canvas = ph_size("unit", eng, default)
+        # 强制采矿车升到至少 120；其它地面载具至少 64（旧超大占位会偏空）
+        if eng in MINERS:
+            canvas = (max(canvas[0], 140), max(canvas[1], 140))
+        elif eng not in AIR and eng not in NAVAL and eng not in INFANTRY:
+            canvas = (max(min(canvas[0], 96), 64), max(min(canvas[1], 96), 64))
+        dirs, layout = render_voxel_unit(img, canvas, eng)
         if dirs:
             for e in range(8):
                 save(dirs[e], f"unit_{eng}_d{e}_f0.png")
             if eng in MINERS:
                 for e in range(8):
-                    save(dirs[e], f"unit_{eng}_d{e}_f1.png")
+                    # 满载：货舱区域略提亮偏黄（VXL 无独立满载帧，用色调区分空/满）
+                    full = dirs[e].copy()
+                    px = full.load()
+                    w, h = full.size
+                    for y in range(h):
+                        for x in range(w):
+                            r, g, b, a = px[x, y]
+                            if a < 128: continue
+                            # 中后部货舱带：避开驾驶室 remap 红
+                            if r > 150 and g < 90 and b < 90: continue
+                            if x < w * 0.35:
+                                nr = min(255, int(r * 1.12 + 18))
+                                ng = min(255, int(g * 1.08 + 10))
+                                nb = min(255, int(b * 0.92))
+                                px[x, y] = (nr, ng, nb, a)
+                    save(full, f"unit_{eng}_d{e}_f1.png")
+            if eng in MINER_UNLOAD_VXL:
+                uvxl = MINER_UNLOAD_VXL[eng]
+                if has(uvxl + ".vxl"):
+                    udirs, _ = render_voxel_unit(uvxl, canvas, eng)
+                    if udirs:
+                        for e in range(8):
+                            save(udirs[e], f"unit_{eng}_unload_d{e}_f0.png")
             ok = True
     elif has(img + ".shp"):
         canvas = ph_size("unit", eng, (24, 30) if eng in INFANTRY or eng == "attackdog" else (60, 60))
@@ -569,10 +723,20 @@ for eng, cands in UNITS.items():
         report["units_ok"].append((eng, rid, img))
     else:
         report["units_skip"].append((eng, f"{rid}/{img} file missing"))
-    # 炮塔（tur.vxl 8 方向，近亲替代跟随 TURRETS 映射）
-    if eng in TURRETS:
-        tcanvas = ph_size("turret", eng, (48, 48))
-        tdirs = render_turret(TURRETS[eng], tcanvas)
+    # 炮塔：与车体同一坐标系/画布叠绘（layout）；失败则居中兜底
+    if ok:
+        tur = img + "tur"
+        if not has(tur + ".vxl") and eng in TURRETS:
+            tur = TURRETS[eng]
+        if has(tur + ".vxl"):
+            tdirs = render_turret(tur, layout) if layout else None
+            if not tdirs:
+                tdirs = render_turret_centered(tur, (48, 48))
+            if tdirs:
+                for e in range(8):
+                    save(tdirs[e], f"turret_{eng}_d{e}.png")
+    elif eng in TURRETS:
+        tdirs = render_turret_centered(TURRETS[eng], (48, 48))
         if tdirs:
             for e in range(8):
                 save(tdirs[e], f"turret_{eng}_d{e}.png")
@@ -607,33 +771,51 @@ for eng, cands in BLDS.items():
     rid = next((c for c in cands if c in R), None) or cands[0]
     img = R.get(rid, {}).get("Image", rid).lower()
     asec = A.get(img.upper(), {}) or A.get(rid, {})
-    # 文件探测：img.shp，_a 后缀，NewTheater 剧场字母变体（第2字符 -> a/t/s/g/n），rules id
-    # 民用建筑（C 前缀）第2字符为剧场字母：A=arctic 雪地、T=温带；本游戏地图全温带，t 变体优先
+    # 温带地图优先：generic(G) 是本安装里真正的温带静态建筑；T 多为 mk；A 是雪地勿抢先
+    # NewTheater：第2字符 = T温 / A雪 / U城 / G通用
     civ = img.startswith("c")
-    order = "tasgn" if civ else "atsgn"
+    order = "gtuas"  # G 温带通用 → T → U → A雪 → S
     tv = [img[0] + c + img[2:] + ".shp" for c in order] if len(img) >= 3 else []
     tries = (tv + [img + ".shp", img + "_a.shp"]) if civ \
-        else ([img + ".shp", img + "_a.shp"] + tv)
+        else ([img[0] + "g" + img[2:] + ".shp", img[0] + "t" + img[2:] + ".shp",
+               img + ".shp", img + "_a.shp"] + tv)
     tries += [rid.lower() + ".shp", rid.lower() + "_a.shp"]
+    # 去重保序
+    seen = set(); tries = [x for x in tries if not (x in seen or seen.add(x))]
     found = next((x for x in tries if has(x)), None)
-    # 完整建筑在 mk 建造动画（主 SHP 只是基坑/埋地状态），帧位置自动选
+    # 完整建筑在 mk：优先温带 mk（gt*mk / nt*mk），再回退
     mk_stem = BLD_FROM_MK.get(eng)
     use_mk = bool(mk_stem) and has(mk_stem + ".shp")
     if use_mk:
         found = mk_stem + ".shp"
     frame0 = -1 if use_mk else BLD_FRAME0.get(eng, 0)
+    bib = asec.get("BibShape") or A.get(rid, {}).get("BibShape")
+    active = asec.get("ActiveAnim") or A.get(rid, {}).get("ActiveAnim")
+    # Remapable 缺省 yes；科技/民用常 no —— 误 remap 会把屋顶/标识打成亮红
+    remap_s = (asec.get("Remapable") or A.get(rid, {}).get("Remapable") or "yes").lower()
+    do_remap = remap_s not in ("no", "false", "0")
     if found:
-        canvas = ph_size("bld", eng, (120, 100))
-        b = render_building(found[:-4], canvas, frame0=frame0, single=use_mk)
+        b = render_building(found[:-4], frame0=frame0, single=use_mk, bib=bib,
+                            active_anim=active, remap=do_remap)
         if b:
+            tag = found
+            if bib: tag += f"+bib:{bib}"
+            if active: tag += f"+anim:{active}"
+            if not do_remap: tag += "+noremap"
             save(b, f"bld_{eng}.png")
-            report["blds_ok"].append((eng, rid, found))
+            report["blds_ok"].append((eng, rid, tag))
         else:
             report["blds_skip"].append((eng, f"{found} render fail"))
     else:
         report["blds_skip"].append((eng, f"{rid}/{img} shp missing"))
-    # ---- 建造动画关键帧（mk 均采 MK_KEYS-1 帧 + 完整帧，与静态图同画布对齐） ----
+    # ---- 建造动画关键帧：优先温带 mk（g* → t*mk） ----
     mk_auto = mk_stem if use_mk else None
+    if not mk_auto and len(img) >= 3:
+        for letter in "gtua":
+            cand = img[0] + letter + img[2:] + "mk"
+            if has(cand + ".shp"):
+                mk_auto = cand
+                break
     if not mk_auto:
         for cand in [img + "mk", rid.lower() + "mk"]:
             if has(cand + ".shp"):
@@ -643,7 +825,6 @@ for eng, cands in BLDS.items():
         msd = get(mk_auto + ".shp")
         mshp = Shp(msd)
         mn = mshp.nframes
-        canvas = ph_size("bld", eng, (120, 100))
         # 完整帧 = 最大不透明帧（与静态一致）；关键帧均采 [0, best] 区间
         best, besta = 0, -1
         for i in range(mn):
@@ -659,30 +840,18 @@ for eng, cands in BLDS.items():
         if best not in keys:
             keys.append(best)
         keys.sort()
-        # 联合 bbox：各关键帧在 mk 画布原位合成后取并集，逐帧裁剪同一区域，避免播放时水平抖动
-        ims = []
-        ubox = None
-        for idx in keys:
+        got = 0
+        for p, idx in enumerate(keys):
+            # 整幅 mk 画布 + 原帧偏移（与成品同坐标系），禁止 crop/居中
             big = Image.new("RGBA", (mshp.w, mshp.h), (0, 0, 0, 0))
             r = shp_frame_img(mshp, idx, PAL_U)
             if not r:
-                ims.append(None)
                 continue
             fi, (fx, fy, fw, fh) = r
             big.paste(fi, (fx, fy), fi)
-            bb = big.getbbox()
-            ims.append((big, bb))
-            if bb:
-                ubox = bb if ubox is None else (min(ubox[0], bb[0]), min(ubox[1], bb[1]),
-                                                max(ubox[2], bb[2]), max(ubox[3], bb[3]))
-        got = 0
-        for p, it in enumerate(ims):
-            if not it or not ubox:
+            if big.getbbox() is None:
                 continue
-            big, _ = it
-            content = big.crop(ubox)
-            im = place_bottom_center(content, canvas, 4)
-            save(im, f"bld_{eng}_mk_f{p}.png")
+            save(scale_bld_canvas(big), f"bld_{eng}_mk_f{p}.png")
             got += 1
         if got > 1:
             ANIM_META["blds"][eng] = {"mk": got}

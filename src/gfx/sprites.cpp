@@ -1,5 +1,6 @@
 #include "gfx/sprites.h"
 #include "gfx/assets.h"
+#include "gfx/vxl.h"
 #include "gfx/model3d.h"
 #include "gfx/unitmodels.h"
 #include "gfx/bldmodels.h"
@@ -8,6 +9,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 const Color HOUSE_COLORS[MAX_PLAYERS] = {
     {255, 200, 40, 255},  // 金
@@ -23,8 +25,12 @@ const Color HOUSE_COLORS[MAX_PLAYERS] = {
 SpriteBank g_sprites;
 
 int dirFromVec(float dx, float dy) {
-    if (dx == 0 && dy == 0) return 2;
-    float a = atan2f(dy, dx);            // 屏幕坐标 y 向下
+    // 入参为瓦片坐标差分；等距投影到屏幕方向后再取 8 向
+    // sx=(x-y)*TW/2, sy=(x+y)*TH/2（与 tileToScreen 一致）
+    float sx = (dx - dy) * (TILE_W * 0.5f);
+    float sy = (dx + dy) * (TILE_H * 0.5f);
+    if (sx == 0.f && sy == 0.f) return 2;
+    float a = atan2f(sy, sx);            // 屏幕坐标 y 向下
     int d = (int)roundf(a / (3.14159265f / 4.0f));
     d = ((d % 8) + 8) % 8;               // 0=东 顺时针
     return d;
@@ -45,6 +51,7 @@ static bool loadSpr(PixBuf& out, const char* fmt, ...) {
     return out.loadFromFile(path);
 }
 
+// 外部 PNG 清洗：去黑/灰 fringe、半透明白边；弱化底部烘焙地皮；剔除孤立伪影色斑（如蓝斑）
 // ---------------- RA2 补全：图形别名（已全量绘制专属图形，仅保留兜底入口） ----------------
 static UnitType spriteAliasUnit(UnitType t) {
     return t; // 全部单位均有专属图形（外部素材仍可按别名前的原始名覆盖）
@@ -139,15 +146,16 @@ PixBuf SpriteBank::baseTile(Terrain t, int variant) {
     };
     for (int y = 0; y < TILE_H; y++)
         for (int x = 0; x < TILE_W; x++) {
-            // 菱形裁剪
+            // 菱形裁剪；矿脉/彩矿边缘软化 alpha，避免硬菱形叠在草地上
             float dx = fabsf(x - TILE_W / 2.0f) / (TILE_W / 2.0f);
             float dy = fabsf(y - TILE_H / 2.0f) / (TILE_H / 2.0f);
-            if (dx + dy > 1.0f) continue;
+            float md = dx + dy;
+            if (md > 1.0f) continue;
             float n1 = vnoise(x, y, 8, seed);        // 大斑块
             float n2 = vnoise(x, y, 3, seed + 5);    // 中斑块
             float n = n1 * 0.62f + n2 * 0.38f;       // 0..1
             float g = (grain(x, y) - 0.5f) * 14.0f;  // 细颗粒 ±7
-            Color c;
+            Color c{80, 100, 60, 255};
             switch (t) {
                 case Terrain::Clear: {
                     // RA2 温带草地：黄绿基调，深绿/浅绿斑块交错，偶发枯草点
@@ -199,8 +207,9 @@ PixBuf SpriteBank::baseTile(Terrain t, int variant) {
             c.r = (uint8_t)clampi(c.r + (int)g, 0, 255);
             c.g = (uint8_t)clampi(c.g + (int)g, 0, 255);
             c.b = (uint8_t)clampi(c.b + (int)g, 0, 255);
-            // 注：不做边缘暗化——边缘描边会让相邻瓦片呈现菱形棋盘格（地表已改整图连续烘焙，
-            // 本函数仅用于矿脉/彩矿动态瓦片与地图预览，无缝拼接优先）
+            // 矿脉动态叠层：边缘 15% 渐隐，避免硬菱形轮廓
+            if ((t == Terrain::Ore || t == Terrain::Gems) && md > 0.82f)
+                c.a = (uint8_t)clampi((int)((1.0f - md) / 0.18f * 255.0f), 0, 255);
             p.set(x, y, c);
         }
     return p;
@@ -925,20 +934,20 @@ PixBuf SpriteBank::baseUnitBody(UnitType t, int dir, int frame) {
             break;
         }
         case UnitType::TerrorDrone: {
-            // 恐怖机器人：圆身 + 四足 + 红眼（机械蜘蛛）
+            // 恐怖机器人：圆身 + 四足 + 红眼（机械蜘蛛）— 体型约半格，小于坦克
             Color metal{92, 96, 104, 255};
-            for (int s = -1; s <= 1; s += 2) { // 四条腿（前后各二）
-                p.line(cx - 3, cy + s * 3, cx - 9, cy + s * 8, metal);
-                p.line(cx + 3, cy + s * 3, cx + 9, cy + s * 8, metal);
-                p.set(cx - 9, cy + s * 8 + (s > 0 ? 1 : -1), Pal::GUN);
-                p.set(cx + 9, cy + s * 8 + (s > 0 ? 1 : -1), Pal::GUN);
+            for (int s = -1; s <= 1; s += 2) {
+                p.line(cx - 2, cy + s * 2, cx - 5, cy + s * 5, metal);
+                p.line(cx + 2, cy + s * 2, cx + 5, cy + s * 5, metal);
+                p.set(cx - 5, cy + s * 5 + (s > 0 ? 1 : -1), Pal::GUN);
+                p.set(cx + 5, cy + s * 5 + (s > 0 ? 1 : -1), Pal::GUN);
             }
-            p.fillEllipse(cx, cy, 7, 5, metal);          // 圆身
-            p.ellipse(cx, cy, 7, 5, Pal::GUN);
-            p.fillEllipse(cx + 5, cy, 3, 3, Color{70, 74, 82, 255}); // 头部
-            p.set(cx + 6, cy - 1, Color{255, 60, 50, 255});          // 红眼
-            p.set(cx + 6, cy + 1, Color{255, 60, 50, 255});
-            p.hline(cx - 4, cx + 2, cy - 4, Pal::REMAP);   // 阵营条
+            p.fillEllipse(cx, cy, 4, 3, metal);
+            p.ellipse(cx, cy, 4, 3, Pal::GUN);
+            p.fillEllipse(cx + 3, cy, 2, 2, Color{70, 74, 82, 255});
+            p.set(cx + 4, cy - 1, Color{255, 60, 50, 255});
+            p.set(cx + 4, cy + 1, Color{255, 60, 50, 255});
+            p.hline(cx - 2, cx + 1, cy - 2, Pal::REMAP);
             break;
         }
         case UnitType::SeaScorpion: {
@@ -1893,7 +1902,7 @@ PixBuf SpriteBank::bldContentPix(BldType t, bool constructing) {
     M3Builder mb;
     if (!constructing && buildBldModel3D(t, mb)) {
         // 3D 预渲染建筑：模型在瓦片坐标系拼装（占地 0..w × 0..h，原点在 (0,0) 角），
-        // 需平移使占地中心对准渲染原点（锚点契约：内容画布底中点 = 占地中心地面）
+        // 需平移使占地中心对准渲染原点；南尖 x = 画布中心 + (w−h)·TILE_W/4（非正方形占地）
         const BldDef& d = bldDef(t);
         float halfH = (d.w + d.h) * TILE_H / 4.0f;             // 底面菱形半高（屏幕像素）
         float tx = -(d.w - d.h) * (TILE_W / 4.0f);             // 占地中心模型 x → 0
@@ -1908,6 +1917,7 @@ PixBuf SpriteBank::bldContentPix(BldType t, bool constructing) {
         int outH = gy + (int)ceilf(halfH) + 4;                 // 基座南角下方 4px 留白
         pb = padCanvas(m3Render(mb.quads, 0, outW, outH, (float)gy), 2, 2, 2, 2);
         // 锚点契约：绘制锚点 = 占地菱形南角（bldScreenPos）；南角在渲染中位于 gy+halfH
+        // finishBldSprite 按最低不透明行质心取 ox（≈ outW/2+(w−h)·TILE_W/4 + pad）
         bldGroundY_ = gy + (int)ceilf(halfH) + 2; // pad 上偏移 2
     } else {
         PixBuf inner = baseBuilding(t, constructing);
@@ -1928,6 +1938,22 @@ const Sprite& SpriteBank::tile(Terrain t, int variant) {
     PixBuf pb;
     if (!loadSpr(pb, "assets/sprites/tile_%s_%d.png", terrainAssetName(t), variant))
         pb = baseTile(t, variant);
+    // 文件矿脉瓦片也做边缘软化（硬菱形叠草地很扎眼）
+    if ((t == Terrain::Ore || t == Terrain::Gems) && pb.w > 0 && pb.h > 0) {
+        float cx = (pb.w - 1) * 0.5f, cy = (pb.h - 1) * 0.5f;
+        float hw = pb.w * 0.5f, hh = pb.h * 0.5f;
+        for (int y = 0; y < pb.h; y++)
+            for (int x = 0; x < pb.w; x++) {
+                Color c = pb.get(x, y);
+                if (c.a < 8) continue;
+                float md = fabsf(x - cx) / hw + fabsf(y - cy) / hh;
+                if (md > 0.82f && md <= 1.05f) {
+                    int a = (int)((1.05f - md) / 0.23f * c.a);
+                    c.a = (uint8_t)(a < 0 ? 0 : (a > 255 ? 255 : a));
+                    pb.set(x, y, c);
+                }
+            }
+    }
     Sprite s = makeSprite(std::move(pb), TILE_W / 2, 0);
     return cache.emplace(k, s).first->second;
 }
@@ -1947,9 +1973,15 @@ const Sprite& SpriteBank::overlaySpr(Overlay o) {
 const Sprite& SpriteBank::finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, int player) {
     // RA2 风格地面投影：仅地面单位（空军/海军不烘投影）；文件素材与程序生成统一烘焙
     const UnitDef& ud = unitDef(t);
+    // 恐怖机器人 SHP 画布偏大：缩到约步兵量级
+    if (t == UnitType::TerrorDrone || t == UnitType::ChaosDrone) {
+        int nw = std::max(1, pb.w * 55 / 100);
+        int nh = std::max(1, pb.h * 55 / 100);
+        pb = pb.scale(nw, nh);
+    }
     if (!ud.isAir() && !ud.isNaval()) {
         int ow = pb.w, oh = pb.h;
-        bool inf = ud.isInfantry();
+        bool inf = ud.isInfantry() || t == UnitType::TerrorDrone || t == UnitType::ChaosDrone;
         PixBuf canvas(ow + 12, oh + 8);
         bakeShadow(canvas, 6 + ow / 2 + 3, 4 + (inf ? oh - 2 : (int)(oh * 0.72f)),
                    inf ? 7 : (int)(ow * 0.30f), inf ? 3 : (int)(oh * 0.10f));
@@ -1958,7 +1990,13 @@ const Sprite& SpriteBank::finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, 
     }
     pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
     Sprite s = makeSprite(std::move(pb), 0, 0);
-    s.ox = s.tex.width / 2; s.oy = s.tex.height / 2 + 4;
+    s.ox = s.tex.width / 2;
+    // 地面载具：锚点与 gen_assets 南触点 0.72h 一致；步兵/空/海仍用中心+4
+    if (!ud.isAir() && !ud.isNaval() && !ud.isInfantry()
+        && t != UnitType::TerrorDrone && t != UnitType::ChaosDrone)
+        s.oy = (int)(s.tex.height * 0.72f);
+    else
+        s.oy = s.tex.height / 2 + 4;
     return cache.emplace(k, s).first->second;
 }
 
@@ -1967,18 +2005,24 @@ const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
     t = spriteAliasUnit(t);
     dir &= 7;
     // 满载采矿车用 frame=1（只对载具有效；步兵/恐怖机器人 frame 为行走帧）
-    bool isMiner = (t == UnitType::Harvester || t == UnitType::ChronoMiner || t == UnitType::WarMiner);
+    bool isMiner = (t == UnitType::Harvester || t == UnitType::ChronoMiner
+                || t == UnitType::WarMiner || t == UnitType::SlaveMiner);
     bool walker = unitDef(t).isInfantry() || t == UnitType::TerrorDrone;
     int fKey = isMiner ? (frame ? 1 : 0) : (walker ? (frame & 1) : 0);
     uint64_t k = keyOf(3, (int)t, dir, fKey, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
     PixBuf pb;
-    // 素材文件优先（assets/sprites/ 由 --gen-assets 离线生成或用户自制），缺失回退程序生成
-    bool ext = loadSpr(pb, "assets/sprites/unit_%s_d%d_f%d.png", unitAssetName(orig), dir, fKey)
+    // 优先运行时 VXL（bounds 映射）；无 VXL 再 PNG（SHP 步兵/机器人）；最后程序化
+    bool ext = VxlRt::renderBody(t, dir, fKey, pb);
+    if (!ext) {
+        ext = loadSpr(pb, "assets/sprites/unit_%s_d%d_f%d.png", unitAssetName(orig), dir, fKey)
+            || (fKey != 0 && loadSpr(pb, "assets/sprites/unit_%s_d%d_f0.png", unitAssetName(orig), dir))
             || loadSpr(pb, "assets/sprites/unit_%s_d%d.png", unitAssetName(orig), dir)
             || (orig != t && (loadSpr(pb, "assets/sprites/unit_%s_d%d_f%d.png", unitAssetName(t), dir, fKey)
+                           || (fKey != 0 && loadSpr(pb, "assets/sprites/unit_%s_d%d_f0.png", unitAssetName(t), dir))
                            || loadSpr(pb, "assets/sprites/unit_%s_d%d.png", unitAssetName(t), dir)));
+    }
     if (!ext) {
         static int missLog[512] = {}; // 每 (类型,方向,帧) 只报一次，避免刷屏
         int mk = ((int)t * 8 + dir) * 4 + fKey;
@@ -1988,6 +2032,38 @@ const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
         }
         pb = unitContentPix(t, dir, fKey);
     }
+    // 采矿车满载：VXL 无独立帧，货舱区域略提亮偏黄
+    if (ext && isMiner && fKey == 1 && VxlRt::hasBody(t)) {
+        for (int y = 0; y < pb.h; y++)
+            for (int x = 0; x < pb.w; x++) {
+                Color c = pb.get(x, y);
+                if (c.a < 128) continue;
+                if (c.r > 150 && c.g < 90 && c.b < 90) continue;
+                if (x < pb.w * 35 / 100) {
+                    c.r = (uint8_t)std::min(255, (int)(c.r * 1.12f + 18));
+                    c.g = (uint8_t)std::min(255, (int)(c.g * 1.08f + 10));
+                    c.b = (uint8_t)std::min(255, (int)(c.b * 0.92f));
+                    pb.set(x, y, c);
+                }
+            }
+    }
+    return finishUnitSprite(k, std::move(pb), t, player);
+}
+
+const Sprite& SpriteBank::unitUnload(UnitType t, int dir, int player) {
+    UnitType orig = t;
+    t = spriteAliasUnit(t);
+    dir &= 7;
+    uint64_t k = keyOf(15, (int)t, dir, 0, player);
+    auto it = cache.find(k);
+    if (it != cache.end()) return it->second;
+    PixBuf pb;
+    bool ext = VxlRt::renderUnload(t, dir, pb);
+    if (!ext) {
+        ext = loadSpr(pb, "assets/sprites/unit_%s_unload_d%d_f0.png", unitAssetName(orig), dir)
+            || (orig != t && loadSpr(pb, "assets/sprites/unit_%s_unload_d%d_f0.png", unitAssetName(t), dir));
+    }
+    if (!ext) return unitBody(orig, dir, 0, player);
     return finishUnitSprite(k, std::move(pb), t, player);
 }
 
@@ -1999,28 +2075,61 @@ const Sprite& SpriteBank::unitTurret(UnitType t, int dir, int player) {
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
     PixBuf pb;
-    bool ext = loadSpr(pb, "assets/sprites/turret_%s_d%d.png", unitAssetName(orig), dir)
+    bool ext = VxlRt::renderTurret(t, dir, pb);
+    if (!ext) {
+        ext = loadSpr(pb, "assets/sprites/turret_%s_d%d.png", unitAssetName(orig), dir)
             || (orig != t && loadSpr(pb, "assets/sprites/turret_%s_d%d.png", unitAssetName(t), dir));
+    }
     if (!ext) pb = turretContentPix(t, dir);
     pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
     Sprite s = makeSprite(std::move(pb), 0, 0);
-    s.ox = s.tex.width / 2; s.oy = s.tex.height / 2 + 4;
+    s.ox = s.tex.width / 2;
+    // 与车体同一锚点规则：叠绘时 body.ox/oy 对齐才不漂
+    const UnitDef& ud = unitDef(t);
+    if (!ud.isAir() && !ud.isNaval() && !ud.isInfantry())
+        s.oy = (int)(s.tex.height * 0.72f);
+    else
+        s.oy = s.tex.height / 2 + 4;
     return cache.emplace(k, s).first->second;
 }
 
-const Sprite& SpriteBank::finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, int player) {
+const Sprite& SpriteBank::finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, int player, bool withShadow) {
     // RA2 风格地面投影（底部偏右椭圆）；文件素材与程序生成统一烘焙、统一锚点
     int ow = pb.w, oh = pb.h;
+    // 油井等 SHP 南角仅 1–2 像素细尖：阴影若钉在尖端，主体白地基会像悬空。
+    // 锚点仍用南角（与占地菱形一致）；阴影钉在「够宽」的地基行。
+    int shadowY = groundY;
+    const int minSolid = std::max(8, ow / 20);
+    while (shadowY > 0) {
+        int n = 0;
+        for (int x = 0; x < ow; x++) if (pb.get(x, shadowY).a > 60) n++;
+        if (n >= minSolid) break;
+        shadowY--;
+    }
+    // 南尖锚点 ox：最低不透明行（groundY）像素质心，勿盲目用画布水平中心
+    long long tipSum = 0;
+    int tipN = 0;
+    int tipY = groundY;
+    if (tipY < 0) tipY = 0;
+    if (tipY >= oh) tipY = oh - 1;
+    for (int x = 0; x < ow; x++)
+        if (pb.get(x, tipY).a > 60) { tipSum += x; tipN++; }
+    int contentOx = tipN > 0 ? (int)(tipSum / tipN) : ow / 2;
     PixBuf canvas(ow + 14, oh + 10);
-    // 阴影中心直接对齐建筑地面（避免建筑悬浮在阴影上方）
-    bakeShadow(canvas, 6 + ow / 2 + 5, 4 + groundY, (int)(ow * 0.40f), 6);
+    if (withShadow) {
+        // 阴影居中在南角锚点正下方（略偏南），勿再右偏，否则与占地菱形错位
+        bakeShadow(canvas, 6 + contentOx, 4 + shadowY + 2, (int)(ow * 0.38f), 5);
+    }
     canvas.blit(pb, 6, 4);
     pb = std::move(canvas);
-    pb.remap(Pal::REMAP, player >= 0 ? HOUSE_COLORS[player] : Color{150, 150, 155, 255}); // 中立=灰
+    // Remapable=no 的科技建筑（油田/医院等）：跳过 house remap，保留原 SHP 色
+    // player==-2 哨兵：显式无 remap；中立(-1)仍可灰显可俘建筑
+    const bool skipRemap = (player == -2);
+    if (!skipRemap)
+        pb.remap(Pal::REMAP, player >= 0 ? HOUSE_COLORS[player] : Color{150, 150, 155, 255});
     Sprite s = makeSprite(std::move(pb), 0, 0);
-    // 锚点 = 内容画布经阴影画布 blit(x=6,y=4) 后的坐标；ox=内容中心x+6，oy=地面中心y+4
-    s.ox = (s.tex.width - 14) / 2 + 6;
-    s.oy = groundY + 4; // blit 上偏移 4
+    s.ox = contentOx + 6; // blit 左偏移 6 — 南角对齐占地菱形南尖
+    s.oy = groundY + 4;   // blit 上偏移 4
     return cache.emplace(k, s).first->second;
 }
 
@@ -2038,10 +2147,42 @@ const Sprite& SpriteBank::building(BldType t, int player, bool constructing) {
         pb = bldContentPix(t, constructing);
         groundY = bldGroundY_;
     } else {
-        // 外部素材：无 3D 地面信息，锚点契约 = 占地菱形南角 ≈ 内容底边（素材约定底部 4px 留白）
-        groundY = pb.h - 4;
+        // 外部 SHP 素材：落地点 = 最低不透明行（地基南角），勿用固定 h-4（透明底边会让建筑浮空/切脚）
+        groundY = pb.h - 1;
+        while (groundY > 0) {
+            bool solid = false;
+            for (int x = 0; x < pb.w && !solid; x++) solid = pb.get(x, groundY).a > 60;
+            if (solid) break;
+            groundY--;
+        }
     }
-    return finishBldSprite(k, std::move(pb), groundY, player);
+    return finishBldSprite(k, std::move(pb), groundY, player, true);
+}
+
+const Sprite& SpriteBank::buildingGhost(BldType t, int player) {
+    BldType orig = t;
+    t = spriteAliasBld(t);
+    // key 槽位 14：无烘焙投影的放置幽灵（与成品 key 5 分开缓存）
+    uint64_t k = keyOf(14, (int)t, 0, 0, player);
+    auto it = cache.find(k);
+    if (it != cache.end()) return it->second;
+    PixBuf pb;
+    bool ext = loadSpr(pb, "assets/sprites/bld_%s.png", bldAssetName(orig))
+            || (orig != t && loadSpr(pb, "assets/sprites/bld_%s.png", bldAssetName(t)));
+    int groundY;
+    if (!ext) {
+        pb = bldContentPix(t, false);
+        groundY = bldGroundY_;
+    } else {
+        groundY = pb.h - 1;
+        while (groundY > 0) {
+            bool solid = false;
+            for (int x = 0; x < pb.w && !solid; x++) solid = pb.get(x, groundY).a > 60;
+            if (solid) break;
+            groundY--;
+        }
+    }
+    return finishBldSprite(k, std::move(pb), groundY, player, false);
 }
 
 // ===================== 动画系统（art.ini 序列 + mk 建造动画） =====================
@@ -2143,7 +2284,35 @@ const Sprite& SpriteBank::buildingMk(BldType t, int frame, int player) {
     PixBuf pb;
     if (!loadSpr(pb, "assets/sprites/bld_%s_mk_f%d.png", bldAssetName(t), frame))
         return building(t, player, false); // 帧缺失：回退成品
-    return finishBldSprite(k, std::move(pb), pb.h - 4, player);
+    // 与成品共用地面锚点，避免建造动画逐帧跳动/切脚
+    const Sprite& fin = building(t, player, false);
+    int groundY = fin.oy - 4; // finishBldSprite 把 oy = groundY + 4
+    if (groundY < 0 || groundY >= pb.h) {
+        groundY = pb.h - 1;
+        while (groundY > 0) {
+            bool solid = false;
+            for (int x = 0; x < pb.w && !solid; x++) solid = pb.get(x, groundY).a > 60;
+            if (solid) break;
+            groundY--;
+        }
+    }
+    // 若 mk 画布宽高与成品不同，先垫到成品内容尺寸，保证 ox 与放置预览一致
+    int finOw = fin.tex.width - 14, finOh = fin.tex.height - 10;
+    if (finOw > 0 && finOh > 0 && (pb.w != finOw || pb.h != finOh)) {
+        PixBuf padded(finOw, finOh);
+        int ox = (finOw - pb.w) / 2, oy = finOh - pb.h; // 底对齐（地基）
+        if (oy < 0) oy = 0;
+        padded.blit(pb, ox, oy);
+        pb = std::move(padded);
+        groundY = fin.oy - 4;
+        if (groundY < 0) groundY = 0;
+        if (groundY >= pb.h) groundY = pb.h - 1;
+    }
+    const Sprite& mk = finishBldSprite(k, std::move(pb), groundY, player);
+    // 强制与成品同锚点（放置幽灵 / 建成后位置不跳）
+    const_cast<Sprite&>(mk).ox = fin.ox;
+    const_cast<Sprite&>(mk).oy = fin.oy;
+    return mk;
 }
 
 const Sprite& SpriteBank::explosion(int frame) {
@@ -2311,6 +2480,7 @@ const Sprite& SpriteBank::iconBld(BldType t, int player) {
 
 void SpriteBank::init() {
     inited = true;
+    VxlRt::init(); // 运行时 VXL（调色板 / VPL）
     loadAnimsIni(); // 动画元数据（walk/fire/die/mk 帧数）
     // 预生成地形瓦片（常用）
     for (int t = 0; t <= (int)Terrain::Bridge; t++)
@@ -2328,7 +2498,8 @@ void SpriteBank::preloadMatch(int localPlayer) {
     size_t n0 = cache.size();
     for (int i = 0; i < (int)UnitType::COUNT; i++) {
         UnitType t = (UnitType)i;
-        bool isMiner = (t == UnitType::Harvester || t == UnitType::ChronoMiner || t == UnitType::WarMiner);
+        bool isMiner = (t == UnitType::Harvester || t == UnitType::ChronoMiner
+                || t == UnitType::WarMiner || t == UnitType::SlaveMiner);
         int frames = (isMiner || unitDef(t).isInfantry() || t == UnitType::TerrorDrone) ? 2 : 1;
         for (int d = 0; d < 8; d++)
             for (int f = 0; f < frames; f++) unitBody(t, d, f, localPlayer);
@@ -2353,7 +2524,8 @@ void SpriteBank::preloadMatch(int localPlayer) {
 
 // 单位帧键：与 unitBody() 的 fKey 规则一致（采矿车满载帧 / 步兵行走帧 / 其他仅 0）
 static std::vector<int> unitFrameKeys(UnitType t) {
-    bool isMiner = (t == UnitType::Harvester || t == UnitType::ChronoMiner || t == UnitType::WarMiner);
+    bool isMiner = (t == UnitType::Harvester || t == UnitType::ChronoMiner
+                || t == UnitType::WarMiner || t == UnitType::SlaveMiner);
     if (isMiner || unitDef(t).isInfantry() || t == UnitType::TerrorDrone) return {0, 1};
     return {0};
 }
@@ -2362,12 +2534,14 @@ bool SpriteBank::genAssets(const char* outDir) {
     MakeDirectory("assets");
     MakeDirectory(outDir);
     MakeDirectory("assets/preview");
-    int n = 0, fail = 0;
+    int n = 0, fail = 0, skipped = 0;
     auto save = [&](const PixBuf& pb, const char* fmt, ...) {
         char path[256];
         va_list ap; va_start(ap, fmt);
         vsnprintf(path, sizeof(path), fmt, ap);
         va_end(ap);
+        // 已有 MIX 提取的真实素材时不覆盖（避免程序像素占位冲掉 gen_assets.py 产物）
+        if (FileExists(path)) { skipped++; return; }
         if (pb.saveToFile(path)) n++; else fail++;
     };
     // 地形瓦片（6 类 × 8 变体）
@@ -2512,7 +2686,7 @@ bool SpriteBank::genAssets(const char* outDir) {
         sheet("assets/preview/icons.png", rows, sheetBg);
     }
 
-    TraceLog(LOG_INFO, "gen-assets: %d sprites written to %s (%d failed)", n, outDir, fail);
-    printf("gen-assets: %d sprites written to %s, %d failed; previews in assets/preview/\n", n, outDir, fail);
+    TraceLog(LOG_INFO, "gen-assets: %d written, %d skipped(existing), %d failed -> %s", n, skipped, fail, outDir);
+    printf("gen-assets: %d written, %d skipped (kept MIX extracts), %d failed -> %s\n", n, skipped, fail, outDir);
     return fail == 0;
 }

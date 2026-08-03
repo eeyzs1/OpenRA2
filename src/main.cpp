@@ -1,10 +1,21 @@
 #include "game/game.h"
 #include "gfx/sprites.h"
 #include "gfx/bldmodels.h"
+#include "gfx/vxl.h"
+#include "gfx/pixel.h"
 #include "sfx/sound.h"
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
+#include <exception>
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  define CloseWindow CloseWindowWin32
+#  define ShowCursor ShowCursorWin32
+#  include <windows.h>
+#  undef CloseWindow
+#  undef ShowCursor
+#endif
 
 // 临时诊断：导出建筑模型四边形 CSV（离线几何验证用）
 static int dumpQuads(BldType t) {
@@ -44,7 +55,26 @@ static void locateAssetsDir() {
     printf("ASSETS: WARNING assets/rules/rules.ini not found, keep CWD\n");
 }
 
+#ifdef _WIN32
+// bat/`start` 关闭父控制台时会向子进程广播 CTRL_CLOSE；忽略以免秒退。
+static BOOL WINAPI ra2ConsoleCtrlHandler(DWORD type) {
+    switch (type) {
+    case CTRL_C_EVENT:
+    case CTRL_BREAK_EVENT:
+    case CTRL_CLOSE_EVENT:
+    case CTRL_LOGOFF_EVENT:
+    case CTRL_SHUTDOWN_EVENT:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+#endif
+
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    SetConsoleCtrlHandler(ra2ConsoleCtrlHandler, TRUE);
+#endif
 #ifdef _DEBUG
     // 无头/CI 环境：CRT 断言输出到 stderr 而非弹窗（弹窗会阻塞且变成断点）
     _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);
@@ -56,6 +86,40 @@ int main(int argc, char** argv) {
     // 临时诊断命令
     if (argc > 1 && strcmp(argv[1], "--dump-quads") == 0)
         return dumpQuads(argc > 2 && argv[2][0] == 'p' ? BldType::PowerPlant : BldType::ConYard);
+    // 运行时 VXL 样张：不进主循环，直接渲几辆车到 tools/ra2pack/out/
+    if (argc > 1 && strcmp(argv[1], "--dump-vxl") == 0) {
+        VxlRt::init();
+        MakeDirectory("tools/ra2pack/out");
+        struct { UnitType t; const char* name; bool tur; } samples[] = {
+            {UnitType::Grizzly, "grizzly", true},
+            {UnitType::Rhino, "rhino", true},
+            {UnitType::Apocalypse, "apocalypse", true},
+            {UnitType::Harvester, "harvester", false},
+            {UnitType::IFV, "ifv", true},
+            {UnitType::TeslaTank, "teslatank", true},
+        };
+        int ok = 0;
+        for (auto& s : samples) {
+            PixBuf body;
+            if (!VxlRt::renderBody(s.t, 2, 0, body)) {
+                printf("dump-vxl: FAIL body %s\n", s.name);
+                continue;
+            }
+            if (s.tur) {
+                PixBuf tur;
+                if (VxlRt::renderTurret(s.t, 2, tur) && tur.w == body.w && tur.h == body.h)
+                    body.blit(tur, 0, 0);
+            }
+            char path[256];
+            snprintf(path, sizeof(path), "tools/ra2pack/out/rt_%s_d2.png", s.name);
+            if (body.saveToFile(path)) {
+                printf("dump-vxl: wrote %s (%dx%d)\n", path, body.w, body.h);
+                ok++;
+            }
+        }
+        printf("dump-vxl: %d/%d ok\n", ok, (int)(sizeof(samples) / sizeof(samples[0])));
+        return ok > 0 ? 0 : 1;
+    }
     // 离线素材生成：程序绘制/合成 → 落盘 PNG/WAV，不创建窗口与音频设备
     if (argc > 1 && strcmp(argv[1], "--gen-assets") == 0) {
         bool okS = g_sprites.genAssets("assets/sprites");
@@ -87,16 +151,43 @@ int main(int argc, char** argv) {
     game.init(windowed, testMode);
     if (argc > 1 && strcmp(argv[1], "--smoke") == 0) {
         int frames = argc > 2 ? atoi(argv[2]) : 600;
-        game.smokeTest(frames);
+        int fails = 1;
+        try {
+            fails = game.smokeTest(frames);
+        } catch (const std::exception& e) {
+            TraceLog(LOG_ERROR, "SMOKE EXCEPTION: %s", e.what());
+        } catch (...) {
+            TraceLog(LOG_ERROR, "SMOKE EXCEPTION: unknown exception");
+        }
         game.shutdown();
-        return 0;
+        return fails == 0 ? 0 : 1;
     }
     if (argc > 1 && strcmp(argv[1], "--smoke-campaign") == 0) {
         int mission = argc > 2 ? atoi(argv[2]) : 0;
         int frames = argc > 3 ? atoi(argv[3]) : 600;
-        game.campaignSmokeTest(mission, frames);
+        int fails = 1;
+        try {
+            fails = game.campaignSmokeTest(mission, frames);
+        } catch (const std::exception& e) {
+            TraceLog(LOG_ERROR, "CAMPAIGN SMOKE EXCEPTION: %s", e.what());
+        } catch (...) {
+            TraceLog(LOG_ERROR, "CAMPAIGN SMOKE EXCEPTION: unknown exception");
+        }
         game.shutdown();
-        return 0;
+        return fails == 0 ? 0 : 1;
+    }
+    if (argc > 1 && strcmp(argv[1], "--campaign-matrix") == 0) {
+        int frames = argc > 2 ? atoi(argv[2]) : 60;
+        int fails = 1;
+        try {
+            fails = game.campaignMatrixTest(frames);
+        } catch (const std::exception& e) {
+            TraceLog(LOG_ERROR, "CAMPAIGN MATRIX EXCEPTION: %s", e.what());
+        } catch (...) {
+            TraceLog(LOG_ERROR, "CAMPAIGN MATRIX EXCEPTION: unknown exception");
+        }
+        game.shutdown();
+        return fails == 0 ? 0 : 1;
     }
     if (argc > 1 && strcmp(argv[1], "--play-test") == 0) {
         int fails = game.playTest();
@@ -123,6 +214,11 @@ int main(int argc, char** argv) {
         game.debugShot(warm, "shot_game.png");
         game.shutdown();
         return 0;
+    }
+    if (argc > 1 && strcmp(argv[1], "--state-test") == 0) {
+        int failures = game.statePersistenceTest();
+        game.shutdown();
+        return failures == 0 ? 0 : 1;
     }
     // P8 联机双进程自测：先起 --net-host，再起 --net-client；两端日志比对校验和
     if (argc > 1 && (strcmp(argv[1], "--net-host") == 0 || strcmp(argv[1], "--net-client") == 0)) {

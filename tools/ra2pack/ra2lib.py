@@ -306,7 +306,9 @@ def remap_index(idx: int):
     return None
 
 def shp_frame_to_rgba(frame: ShpFrame, pal, canvas=None, remap=True):
-    """returns PIL image of the frame (not canvas), with remap applied"""
+    """returns PIL image of the frame (not canvas), with remap applied.
+    RA2 unittem.pal: index 0 = transparent; index 1 = shadow (palette RGB is
+    bright blue and must never be drawn opaque — use translucent black)."""
     from PIL import Image
     img = Image.new("RGBA", (frame.w, frame.h), (0, 0, 0, 0))
     out = img.load()
@@ -315,6 +317,9 @@ def shp_frame_to_rgba(frame: ShpFrame, pal, canvas=None, remap=True):
         for xx in range(frame.w):
             v = px[yy * frame.w + xx]
             if v == 0:
+                continue
+            if v == 1:
+                out[xx, yy] = (0, 0, 0, 120)
                 continue
             rm = remap_index(v) if remap else None
             if rm:
@@ -330,7 +335,11 @@ class VxlSection:
         self.name = ""
         self.size = (0, 0, 0)
         self.transform = None
-        self.voxels = []   # (x,y,z,color)
+        self.scale = 1.0
+        self.mins = (0.0, 0.0, 0.0)
+        self.maxs = (0.0, 0.0, 0.0)
+        self.normals_type = 4  # RA2 default (tailer last byte)
+        self.voxels = []   # (x,y,z,color,normal)
 
 class Vxl:
     def __init__(self, data: bytes):
@@ -354,10 +363,15 @@ class Vxl:
             mins = struct.unpack_from("<3f", data, tbase + 64)
             maxs = struct.unpack_from("<3f", data, tbase + 76)
             sx, sy, sz = data[tbase + 88], data[tbase + 89], data[tbase + 90]
+            ntype = data[tbase + 91] if tbase + 91 < len(data) else 4
             sec = VxlSection()
             sec.name = heads[i]
             sec.size = (sx, sy, sz)
             sec.transform = tf
+            sec.scale = scale
+            sec.mins = mins
+            sec.maxs = maxs
+            sec.normals_type = ntype
             body = data[body_start: body_start + bodysize]
             if sstart == 0xFFFFFFFF or send == 0xFFFFFFFF or sx == 0 or sy == 0 or sz == 0:
                 self.sections.append(sec)
@@ -377,16 +391,115 @@ class Vxl:
                     z += body[p]; p += 1
                     cnt = body[p]; p += 1
                     for k in range(cnt):
-                        sec.voxels.append((x, y, z, body[p])); p += 2
+                        if p + 1 >= len(body):
+                            break
+                        col, nrm = body[p], body[p + 1]
+                        sec.voxels.append((x, y, z, col, nrm)); p += 2
                         z += 1
                     p += 1
             self.sections.append(sec)
 
+# ---------------------------------------------------------------- VPL + normals（原版光照）
+_VPL = None
+_NORMALS4 = None
+
+def load_vpl(data: bytes):
+    """voxels.vpl → (nsections, tables[sec][color]=out_color)"""
+    if not data or len(data) < 16 + 768:
+        return None
+    first, last, nsec, _unk = struct.unpack_from("<IIII", data, 0)
+    nsec = max(1, min(32, nsec))
+    base = 16 + 768
+    tables = []
+    for s in range(nsec):
+        off = base + s * 256
+        tables.append(list(data[off:off + 256]))
+    return {"first": first, "last": last, "n": nsec, "tables": tables}
+
+def get_vpl():
+    global _VPL
+    if _VPL is None:
+        try:
+            t = MixTree()
+            _, raw = t.find("voxels.vpl")
+            _VPL = load_vpl(raw) if raw else False
+        except Exception:
+            _VPL = False
+    return _VPL if _VPL else None
+
+def get_normals4():
+    global _NORMALS4
+    if _NORMALS4 is None:
+        try:
+            from ra2_normals4 import NORMALS4
+            _NORMALS4 = NORMALS4
+        except Exception:
+            _NORMALS4 = []
+    return _NORMALS4
+
+_NORMALS2 = None
+
+def get_normals2():
+    global _NORMALS2
+    if _NORMALS2 is None:
+        try:
+            from ra2_normals2 import NORMALS2
+            _NORMALS2 = NORMALS2
+        except Exception:
+            _NORMALS2 = []
+    return _NORMALS2
+
+def get_normals_for_type(ntype: int):
+    """VXL tailer normals_type：2=TS 表，4=RA2 表；其它回退 4。"""
+    if ntype == 2:
+        n = get_normals2()
+        if n:
+            return n
+    return get_normals4()
+
+def vpl_shade_index(color: int, normal_idx: int, facing_cos: float, facing_sin: float,
+                    normals_type: int = 4, light=(-0.55, -0.55, 0.63)):
+    """按 normals_type 取法线表 × voxels.vpl → 调色板索引。"""
+    norms = get_normals_for_type(normals_type)
+    vpl = get_vpl()
+    if norms and vpl:
+        ni = normal_idx % len(norms)
+        nx, ny, nz = norms[ni]
+        rx = nx * facing_cos - ny * facing_sin
+        ry = nx * facing_sin + ny * facing_cos
+        rz = nz
+        lx, ly, lz = light
+        ln = math.sqrt(lx * lx + ly * ly + lz * lz) or 1.0
+        dot = (rx * lx + ry * ly + rz * lz) / ln
+        nsec = vpl["n"]
+        sec = int(max(0.0, min(1.0, (dot + 1.0) * 0.5)) * (nsec - 1) + 0.5)
+        sec = max(0, min(nsec - 1, sec))
+        out = vpl["tables"][sec][color & 255]
+        # 近白（常为索引 15）：回退原色，由面乘子做明暗，避免雪花
+        if out == 15 or (not (16 <= (color & 255) <= 31) and sec > 20):
+            # 用中段表或原色
+            sec2 = min(sec, 14)
+            out2 = vpl["tables"][sec2][color & 255]
+            if out2 == 15:
+                return color & 255, max(0.45, min(1.0, 0.5 + 0.5 * max(0.0, dot)))
+            out = out2
+        return out, 1.0
+    shade = 0.72
+    if norms:
+        ni = normal_idx % len(norms)
+        nx, ny, nz = norms[ni]
+        rx = nx * facing_cos - ny * facing_sin
+        ry = nx * facing_sin + ny * facing_cos
+        rz = nz
+        lx, ly, lz = light
+        ln = math.sqrt(lx * lx + ly * ly + lz * lz) or 1.0
+        dot = (rx * lx + ry * ly + rz * lz) / ln
+        shade = max(0.42, min(1.0, 0.48 + 0.52 * max(0.0, dot)))
+    return color & 255, shade
+
 class Hva:
     def __init__(self, data: bytes):
         self.valid = False
-        # RA2 HVA: 16-byte id (often a source path, not "*HVA*"), i32 nframes, i32 nsec,
-        # then nsec 16-byte names, then nframes*nsec 48-byte matrices.
         if len(data) < 24:
             return
         self.nframes, self.nsec = struct.unpack_from("<II", data, 16)
@@ -400,7 +513,7 @@ class Hva:
         need = pos + self.nframes * self.nsec * 48
         if len(data) < need:
             return
-        self.mats = []  # [frame][section] -> 12 floats
+        self.mats = []
         for f in range(self.nframes):
             row = []
             for s in range(self.nsec):
@@ -410,25 +523,44 @@ class Hva:
         self.valid = True
 
 def _apply_mat(m, x, y, z):
-    # m: 12 floats, 3 rows x 4 cols
     return (m[0] * x + m[1] * y + m[2] * z + m[3],
             m[4] * x + m[5] * y + m[6] * z + m[7],
             m[8] * x + m[9] * y + m[10] * z + m[11])
 
-# ---------------------------------------------------------------- VXL renderer v2
-# 屏幕精确朝向：引擎 dir 0..7 = 东起顺时针（屏幕系）。将世界旋转角 phi 映射到屏幕角 alpha，
-# 使模型 +x（voxel 前向）投影后精确指向屏幕 8 方向。
+# ---------------------------------------------------------------- VXL renderer v7
+# 表面立方体面 + normals_type + VPL（近白回退）+ NEAREST
+_FACE_OFFSETS = (
+    (1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1),
+)
+_FACE_CORNERS = (
+    ((1, 0, 0), (1, 1, 0), (1, 1, 1), (1, 0, 1)),
+    ((0, 0, 0), (0, 0, 1), (0, 1, 1), (0, 1, 0)),
+    ((0, 1, 0), (0, 1, 1), (1, 1, 1), (1, 1, 0)),
+    ((0, 0, 0), (1, 0, 0), (1, 0, 1), (0, 0, 1)),
+    ((0, 0, 1), (1, 0, 1), (1, 1, 1), (0, 1, 1)),
+    ((0, 0, 0), (0, 1, 0), (1, 1, 0), (1, 0, 0)),
+)
+_FACE_NORMALS = (
+    (1.0, 0.0, 0.0), (-1.0, 0.0, 0.0),
+    (0.0, 1.0, 0.0), (0.0, -1.0, 0.0),
+    (0.0, 0.0, 1.0), (0.0, 0.0, -1.0),
+)
+_FACE_MUL = (0.88, 0.72, 0.92, 0.78, 1.05, 0.65)
+
 def _phi_for_screen_alpha(alpha_deg: float) -> float:
     a = math.radians(alpha_deg)
     return math.degrees(math.atan2(2 * math.sin(a) - math.cos(a), 2 * math.sin(a) + math.cos(a)))
 
+def _proj(x, y, z):
+    return x - y, (x + y) * 0.5 - z
+
+def _rot_z(x, y, z, cosf, sinf):
+    return x * cosf - y * sinf, x * sinf + y * cosf, z
+
 def vxl_project(vxl: Vxl, hva, facing_phi_deg: float, hva_frame: int = 0):
-    """Transform all voxels to world space, rotate about Z, return
-    (pts, zmin) where pts = [(sx, sy, depth, color, bright)] in voxel units (px=1),
-    using projection sx=(x-y), sy=(x+y)/2-z, camera dir (1,1,1)."""
     cosf = math.cos(math.radians(facing_phi_deg))
     sinf = math.sin(math.radians(facing_phi_deg))
-    world = []
+    pts = []
     zmin = 1e9
     for sec in vxl.sections:
         m = None
@@ -439,93 +571,134 @@ def vxl_project(vxl: Vxl, hva, facing_phi_deg: float, hva_frame: int = 0):
             except ValueError:
                 m = None
         tf = sec.transform
-        # HVA 平移异常检测（如 shad 旋翼节平移 300+ 体素）：若 m*tf 把节中心甩出
-        # 超过 1.5 倍节尺寸，则该节弃用 HVA，仅用 section transform
-        if m is not None and tf is not None:
+        mins = getattr(sec, "mins", None)
+        maxs = getattr(sec, "maxs", None)
+        sx, sy, sz = sec.size
+        has_bounds = (
+            mins is not None and maxs is not None and sx > 0 and sy > 0 and sz > 0
+            and (maxs[0] - mins[0]) > 0.01 and (maxs[1] - mins[1]) > 0.01 and (maxs[2] - mins[2]) > 0.01
+        )
+        # HVA：仅用于动画；静态定位靠 Voxel Bounds（ModEnc）。偏移过大则丢弃。
+        if m is not None and has_bounds:
+            # HVA 平移按 OpenRA 方式按盒尺寸缩放；静态坦克 HVA 常为 0，可忽略
+            pass
+        if m is not None and tf is not None and not has_bounds:
             cx, cy, cz = (s / 2 + 0.5 for s in sec.size)
             ax, ay, az = _apply_mat(tf, cx, cy, cz)
             bx, by, bz = _apply_mat(m, ax, ay, az)
             lim = 1.5 * max(sec.size)
             if abs(bx - ax) > lim or abs(by - ay) > lim or abs(bz - az) > lim:
                 m = None
-        for (x, y, z, c) in sec.voxels:
-            if tf is not None:
-                x1, y1, z1 = _apply_mat(tf, x + 0.5, y + 0.5, z + 0.5)
+        ntype = getattr(sec, "normals_type", 4) or 4
+        occ = {(vx, vy, vz) for (vx, vy, vz, _c, _n) in sec.voxels}
+
+        def xform(lx, ly, lz, _m=m):
+            # 网格 → 共享世界盒（炮塔叠车体、炮管在炮塔前）
+            if has_bounds:
+                vx = mins[0] + lx * (maxs[0] - mins[0]) / sx
+                vy = mins[1] + ly * (maxs[1] - mins[1]) / sy
+                vz = mins[2] + lz * (maxs[2] - mins[2]) / sz
+                x1, y1, z1 = vx, vy, vz
+            elif tf is not None:
+                x1, y1, z1 = _apply_mat(tf, lx, ly, lz)
             else:
-                x1, y1, z1 = x + 0.5, y + 0.5, z + 0.5
-            if m is not None:
-                wx, wy, wz = _apply_mat(m, x1, y1, z1)
-            else:
-                wx, wy, wz = x1, y1, z1
-            rx = wx * cosf - wy * sinf
-            ry = wx * sinf + wy * cosf
-            world.append((rx, ry, wz, c))
-            if wz < zmin:
-                zmin = wz
-    if not world:
-        return [], 0.0
-    # occupancy for approximate normals
-    occ = set()
-    for (rx, ry, wz, c) in world:
-        occ.add((int(round(rx)), int(round(ry)), int(round(wz))))
-    # 光源：屏幕左上 —— +z 最亮，+y（屏幕左侧面）次之，+x 最暗
-    light = (0.18, 0.52, 0.84)
-    ln = math.sqrt(sum(v * v for v in light))
-    light = tuple(v / ln for v in light)
-    pts = []
-    for (rx, ry, wz, c) in world:
-        ix, iy, iz = int(round(rx)), int(round(ry)), int(round(wz))
-        nx = ny = nz = 0
-        for dx, dy, dz in ((1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)):
-            if (ix + dx, iy + dy, iz + dz) not in occ:
-                nx += dx; ny += dy; nz += dz
-        if nx == 0 and ny == 0 and nz == 0:
-            continue  # interior
-        sx = rx - ry
-        sy = (rx + ry) * 0.5 - wz
-        depth = rx + ry + wz
-        nn = math.sqrt(nx * nx + ny * ny + nz * nz)
-        dot = (nx * light[0] + ny * light[1] + nz * light[2]) / nn
-        shade = max(0.0, min(1.0, dot * 0.5 + 0.5))
-        pts.append((sx, sy, depth, c, shade))
-    return pts, zmin
+                x1, y1, z1 = lx, ly, lz
+            if _m is not None and not has_bounds:
+                x1, y1, z1 = _apply_mat(_m, x1, y1, z1)
+            return _rot_z(x1, y1, z1, cosf, sinf)
+
+        for (vx, vy, vz, c, nrm) in sec.voxels:
+            cx, cy, cz = xform(vx + 0.5, vy + 0.5, vz + 0.5)
+            if cz < zmin:
+                zmin = cz
+            col_lit, sh0 = vpl_shade_index(c, nrm, cosf, sinf, normals_type=ntype)
+            face_list = []
+            for fi, (dx, dy, dz) in enumerate(_FACE_OFFSETS):
+                if (vx + dx, vy + dy, vz + dz) in occ:
+                    continue
+                fnx, fny, fnz = _FACE_NORMALS[fi]
+                rnx, rny, rnz = _rot_z(fnx, fny, fnz, cosf, sinf)
+                if rnx + rny + rnz <= 0.02:
+                    continue
+                corners = [xform(vx + a, vy + b, vz + c3) for (a, b, c3) in _FACE_CORNERS[fi]]
+                face_list.append((corners, sh0 * _FACE_MUL[fi], col_lit))
+            if not face_list:
+                continue
+            sx, sy = _proj(cx, cy, cz)
+            pts.append((sx, sy, cx + cy + cz, c & 255, 1.0, face_list))
+    return pts, (zmin if pts else 0.0)
+
+def _fill_tri(zbuf, W, H, p0, p1, p2, depth, col):
+    x0, y0 = p0; x1, y1 = p1; x2, y2 = p2
+    minx = max(0, int(math.floor(min(x0, x1, x2))))
+    maxx = min(W - 1, int(math.ceil(max(x0, x1, x2))))
+    miny = max(0, int(math.floor(min(y0, y1, y2))))
+    maxy = min(H - 1, int(math.ceil(max(y0, y1, y2))))
+    area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
+    if abs(area) < 1e-6:
+        return
+    for yy in range(miny, maxy + 1):
+        row = yy * W
+        for xx in range(minx, maxx + 1):
+            w0 = (x1 - xx) * (y2 - yy) - (x2 - xx) * (y1 - yy)
+            w1 = (x2 - xx) * (y0 - yy) - (x0 - xx) * (y2 - yy)
+            w2 = (x0 - xx) * (y1 - yy) - (x1 - xx) * (y0 - yy)
+            inside = (w0 >= 0 and w1 >= 0 and w2 >= 0) if area > 0 else (w0 <= 0 and w1 <= 0 and w2 <= 0)
+            if not inside:
+                continue
+            i = row + xx
+            cur = zbuf[i]
+            if cur is None or depth > cur[0]:
+                zbuf[i] = (depth, col)
+
+def _fill_quad(zbuf, W, H, corners, depth, col):
+    _fill_tri(zbuf, W, H, corners[0], corners[1], corners[2], depth, col)
+    _fill_tri(zbuf, W, H, corners[0], corners[2], corners[3], depth, col)
+
+def _rgb_of(c, shade, pal):
+    if 16 <= (c & 255) <= 31:
+        t = (c - 16) / 15.0
+        r = int(140 + 100 * max(0.0, min(1.0, t)) * max(0.55, min(1.0, shade)))
+        return (min(255, r), 0, 0, 255)
+    r, g, b = pal[c & 255]
+    if r + g + b > 700:
+        r = g = b = 200
+    bmul = max(0.38, min(1.05, shade))
+    return (min(255, int(r * bmul)), min(255, int(g * bmul)), min(255, int(b * bmul)), 255)
 
 def render_pts(pts, pal, scale: float, org_x: float, org_y: float, canvas_w: int, canvas_h: int,
-               supersample: int = 3):
-    """Rasterize projected voxels into canvas (RGBA PIL image).
-    World origin maps to (org_x, org_y); scale = px per voxel unit.
-    Z-buffer splat; supersampled then downscaled."""
+               supersample: int = 2):
     from PIL import Image
-    ss = supersample
+    ss = max(1, supersample)
     W, H = canvas_w * ss, canvas_h * ss
     zbuf = [None] * (W * H)
-    half = 1.02 * scale * ss  # splat half-size：体素沿 (1,-1) 方向相邻时投影相距 2*scale，需 half>=scale 才无缝
-    for (sx, sy, depth, c, shade) in pts:
-        rm = remap_index(c)
-        if rm:
-            # remap 像素必须保持 r>150 才能被引擎 remap；明暗限制在 0.72..1.0
-            b = 0.72 + 0.28 * shade
-            col = (min(255, int(rm[0] * b)), 0, 0, 255)
-        else:
-            b = 0.55 + 0.45 * shade
-            r, g, bb = pal[c]
-            col = (min(255, int(r * b)), min(255, int(g * b)), min(255, int(bb * b)), 255)
-        cx = (org_x + sx * scale) * ss
-        cy = (org_y + sy * scale) * ss
-        d = depth
-        x0 = int(cx - half); x1 = int(cx + half) + 1
-        y0 = int(cy - half); y1 = int(cy + half) + 1
-        for yy in range(y0, y1):
-            if yy < 0 or yy >= H:
-                continue
-            row = yy * W
-            for xx in range(x0, x1):
-                if xx < 0 or xx >= W:
-                    continue
-                i = row + xx
-                cur = zbuf[i]
-                if cur is None or d > cur[0]:
-                    zbuf[i] = (d, col)
+    s = scale * ss
+    ox = org_x * ss
+    oy = org_y * ss
+
+    def P(wx, wy, wz):
+        sx, sy = _proj(wx, wy, wz)
+        return (ox + sx * s, oy + sy * s)
+
+    for item in sorted(pts, key=lambda p: p[2]):
+        depth = item[2]
+        face_list = item[5] if len(item) >= 6 and isinstance(item[5], list) else None
+        if not face_list:
+            sx, sy, depth, c, shade = item[:5]
+            col = _rgb_of(c, shade, pal)
+            cx = int(round(ox + sx * s)); cy = int(round(oy + sy * s))
+            for yy in range(max(0, cy - 1), min(H, cy + 2)):
+                row = yy * W
+                for xx in range(max(0, cx - 1), min(W, cx + 2)):
+                    i = row + xx
+                    if zbuf[i] is None or depth > zbuf[i][0]:
+                        zbuf[i] = (depth, col)
+            continue
+        for fi, (corners, shade, col_i) in enumerate(face_list):
+            col = _rgb_of(col_i, shade, pal)
+            scr = [P(*p) for p in corners]
+            _fill_quad(zbuf, W, H, scr, depth + 0.001 * fi, col)
+
     img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     out = img.load()
     for yy in range(H):
@@ -535,8 +708,9 @@ def render_pts(pts, pal, scale: float, org_x: float, org_y: float, canvas_w: int
             if v is not None:
                 out[xx, yy] = v[1]
     if ss > 1:
-        img = img.resize((canvas_w, canvas_h), Image.LANCZOS)
+        img = img.resize((canvas_w, canvas_h), Image.NEAREST)
     return img
+
 
 def vxl_pal(vxl_data: bytes):
     """VXL 内嵌 768 字节调色板（6bit，左移 2）"""

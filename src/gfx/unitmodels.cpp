@@ -157,9 +157,12 @@ float unitGroundY3D(UnitType t) {
 
 float unitScale3D(UnitType t) {
     const UnitDef& d = unitDef(t);
-    if (d.isAir()) return 0.90f;
-    if (d.isNaval()) return 0.82f;
-    return 1.02f; // 地面载具：RA2 式饱满占比（高分辨率下模型尺寸不变，画布增大）
+    if (d.isAir()) return 0.82f;
+    if (d.isNaval()) return 0.78f;
+    // 地面载具：贴近 RA2 一格宽体量（原 1.02 偏大）
+    if (d.canHarvet() || t == UnitType::MCV) return 0.92f;
+    if (d.isInfantry()) return 1.0f;
+    return 0.86f;
 }
 
 bool buildUnitModel3D(UnitType t, M3Builder& b, bool full, float* turretPivotX, float* turretPivotY) {

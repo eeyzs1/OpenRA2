@@ -66,8 +66,8 @@ struct MissionDef {
 };
 
 // 战役任务表：首次调用时加载 assets/campaigns/（campaign.ini 列表 + 每关一个 INI），
-// 目录缺失/为空时回退内置 24 关。返回常驻静态表引用。
+// 目录缺失/为空时回退内置 32 关。返回常驻静态表引用。
 const std::vector<MissionDef>& missionTable();
 
-// 战役导出（--export-assets）：把内置 24 关写成 campaign.ini + mission01..24.ini 模板
+// 战役导出（--export-assets）：把内置 32 关写成 campaign.ini + mission01..32.ini 模板
 void exportCampaigns(const char* dir);

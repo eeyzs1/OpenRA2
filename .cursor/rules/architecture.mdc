@@ -1,0 +1,26 @@
+---
+description: OpenRA2 layering — Game vs World, no more god-file dumps
+alwaysApply: true
+---
+
+# Architecture (OpenRA2)
+
+Read and follow `docs/architecture.md`.
+
+## Dependency direction
+
+`core` → `game` (World/sim) → `gfx`/`sfx` → `Game` app shell.
+
+- `World` is deterministic simulation only.
+- `Game` owns input, UI, camera, rendering, and net session glue.
+- Do **not** call raylib UI/draw or play SFX from `World::applyCmd` / combat / production paths.
+
+## God files
+
+- Prefer putting **new** logic in `world_*.cpp` / `game_*.cpp` subsystem files.
+- Do **not** add large new systems into `game.cpp` or `world.cpp`. If a change must touch them, keep it a thin call into a subsystem file.
+- Keep `World::Cmd` → `applyCmd` → `update` and `checksum` semantics intact for lockstep.
+
+## Before coding
+
+State which layer you are changing (sim / present / app) and which file owns it per `docs/architecture.md`.

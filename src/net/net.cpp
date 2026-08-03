@@ -96,9 +96,10 @@ void NetLink::flushOut() {
 
 bool NetLink::send(uint8_t type, const std::vector<uint8_t>& body) {
     if (state != State::Linked) return false;
-    if (body.size() > 60000) return false; // 单帧上限
+    if (type < MsgHello || type > MsgBye || body.size() > MAX_BODY_BYTES) return false;
     uint16_t len = (uint16_t)(body.size() + 1);
-    outBuf.append((const char*)&len, 2);
+    uint8_t header[2] = {(uint8_t)(len & 0xffu), (uint8_t)(len >> 8)};
+    outBuf.append((const char*)header, sizeof(header));
     outBuf.push_back((char)type);
     if (!body.empty()) outBuf.append((const char*)body.data(), body.size());
     flushOut();
@@ -128,7 +129,11 @@ void NetLink::poll() {
     uint8_t buf[16384];
     for (;;) {
         int n = recv((SOCKET)sock, (char*)buf, sizeof(buf), 0);
-        if (n > 0) { rxBuf.insert(rxBuf.end(), buf, buf + n); continue; }
+        if (n > 0) {
+            rxBuf.insert(rxBuf.end(), buf, buf + n);
+            if (rxBuf.size() > MAX_BUFFER_BYTES) { fail(); return; }
+            continue;
+        }
         if (n == 0) { fail(); return; } // 对端关闭
         int e = WSAGetLastError();
         if (e != WSAEWOULDBLOCK) { fail(); return; }
@@ -137,10 +142,16 @@ void NetLink::poll() {
     // 解包完整帧 [len:u16][type:u8][payload]
     for (;;) {
         if (rxBuf.size() < 3) break;
-        uint16_t len = *(const uint16_t*)rxBuf.data();
-        if (len < 1 || rxBuf.size() < (size_t)len + 2) break;
+        uint16_t len = (uint16_t)rxBuf[0] | (uint16_t)((uint16_t)rxBuf[1] << 8);
+        if (len < 1 || len > MAX_BODY_BYTES + 1) { fail(); return; }
+        if (rxBuf.size() < (size_t)len + 2) break;
+        uint8_t type = rxBuf[2];
+        if (type < MsgHello || type > MsgBye || inbox.size() >= MAX_INBOX_MESSAGES) {
+            fail();
+            return;
+        }
         Msg m;
-        m.type = rxBuf[2];
+        m.type = type;
         m.body.assign(rxBuf.begin() + 3, rxBuf.begin() + 2 + len);
         inbox.push_back(std::move(m));
         rxBuf.erase(rxBuf.begin(), rxBuf.begin() + 2 + len);

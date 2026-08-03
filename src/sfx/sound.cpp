@@ -253,6 +253,17 @@ Buf genSfx(Sfx id) {
             applyReverb(b, 0.10f);
             masterize(b, 0.62f);
             break;
+        case Sfx::Dig: { // 短脉冲（≤0.25s）：低频一下 + 极少碎石，避免 0.8s+ 研磨墙
+            b.alloc((int)(0.22f * RATE));
+            toneSweep(b, 0, 88, 52, 0.12f, 22, 0.65f);
+            noiseBurst(b, 0, 0.06f, 9, 380, 0.32f, rng);
+            crackle(b, (int)(0.015f * RATE), 0.05f, 0.05f, 1100, 0.18f, rng);
+            masterize(b, 0.50f);
+            break;
+        }
+        case Sfx::MirageFire:
+        case Sfx::RhinoFire:
+        case Sfx::ApocFire:
         case Sfx::Cannon: // 坦克炮：低频轰体 + 出膛激波 + 炮管振鸣 + 战场回响
             b.alloc((int)(0.50f * RATE));
             toneSweep(b, 0, 120, 30, 0.40f, 6.5f, 1.0f);
@@ -510,16 +521,6 @@ Buf genSfx(Sfx id) {
                 blip(b, 0.04f + 0.045f * k, 300 + k * 110 + rng.unit() * 50, 0.028f, 0.13f, 0.35f + rng.unit() * 0.3f);
             toneSweep(b, 0, 110, 65, 0.34f, 5, 0.4f);
             masterize(b, 0.70f);
-            break;
-        }
-        case Sfx::Dig: { // 矿车挖掘：钻头研磨低鸣 + 碎石崩落 + 机械金属嗡
-            b.alloc((int)(0.55f * RATE));
-            toneSweep(b, 0, 95, 58, 0.48f, 5.5f, 0.85f);
-            noiseBurst(b, 0, 0.40f, 6.5f, 640, 0.70f, rng);
-            crackle(b, (int)(0.05f * RATE), 0.35f, 0.10f, 1500, 0.40f, rng);
-            metalPing(b, 0, 210, 0.18f, 22, 0.18f);
-            applyReverb(b, 0.12f);
-            masterize(b, 0.72f);
             break;
         }
         default: break;
@@ -1021,10 +1022,15 @@ void SoundBank::playAt(Sfx id, float tx, float ty) {
     if (!ok) return; // 无音频设备（隐藏窗口无头测试）：直接静默
     float d = distf(tx, ty, lisX, lisY);
     float vol = (1.0f - d / 30.0f) * masterVol;
+    if (id == Sfx::Dig) vol *= 0.40f; // 挖掘提示音压低
     if (vol <= 0.05f) return;
     int i = (int)id;
     double now = GetTime();
-    if (now - last[i] < 0.045) return;
+    // Dig：短脉冲 + ≥2s 节流；主炮类 0.12s 避免叠成噪音墙
+    double gap = 0.045;
+    if (id == Sfx::Dig) gap = 2.0;
+    else if (id == Sfx::Cannon || id == Sfx::MirageFire || id == Sfx::RhinoFire || id == Sfx::ApocFire) gap = 0.12;
+    if (now - last[i] < gap) return;
     last[i] = now;
     Sound& s = snd[i][rr[i]++ % ALIAS];
     SetSoundVolume(s, vol > 1.0f ? 1.0f : vol);

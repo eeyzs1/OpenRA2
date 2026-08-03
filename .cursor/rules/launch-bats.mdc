@@ -1,0 +1,26 @@
+---
+description: Never break Windows launch bats (BOM/LF/start /D)
+globs: "{launch.bat,启动游戏.bat,tools/write_launch_bats.py,tools/verify_launch_bats.py}"
+alwaysApply: true
+---
+
+# Launch bat integrity (Windows)
+
+Users start the game **only** via `启动游戏.bat` / `launch.bat` (Explorer double-click).
+
+## Never do this
+- Do **not** rewrite bats with the editor/`Write` tool or PowerShell `WriteAllText` casually — that often introduces **UTF-8 BOM** or **LF-only** endings, which break `cmd` when double-clicked.
+- Do **not** use `start ... /D "%~dp0"` — `%~dp0` has a trailing `\`, and `"...\`"` quote-escapes break `start`.
+- Do **not** switch `ra2` back to **/SUBSYSTEM:CONSOLE** — bat/`start` closing the parent console can CTRL_CLOSE-kill a CUI game (intermittent “won't start”).
+
+## Correct way to change launchers
+1. Edit `tools/write_launch_bats.py` only.
+2. Run: `python tools/write_launch_bats.py`
+3. Run: `python tools/verify_launch_bats.py` (must PASS)
+4. Confirm Explorer open starts `ra2` and `launch_log.txt` shows `start_ok`
+
+## Required format
+- ASCII body, **no BOM**, **CRLF only**
+- Launch via **PowerShell `Start-Process`** with absolute exe + WorkingDirectory, then verify process alive
+- `启动游戏.bat` only `call "%~dp0launch.bat"`
+- `ra2` must stay **/SUBSYSTEM:WINDOWS** + `/ENTRY:mainCRTStartup`

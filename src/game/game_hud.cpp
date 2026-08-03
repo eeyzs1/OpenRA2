@@ -9,6 +9,7 @@
 #include "game/campaign.h"
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <ctime>
@@ -99,7 +100,7 @@ struct GuiPal {
     Color chrome0, chrome1;   // 铬面交互件 亮/暗
     Color chromeHi;           // 铬面顶缘高光
     Color glyph;              // 铬面符号色（盟军深海军蓝 / 苏军红珐琅 / 尤里深紫）
-    Color led;                // 资金 LED（原作全阵营统一青白色）
+    Color led;                // 资金 LED（RA2 原作偏黄白高对比，便于辨认）
     Color bgDark;             // 侧边栏底（近黑）
     Color dome0, dome1;       // 底部穹顶 亮/暗
     Color emblem;             // 阵营徽色
@@ -108,15 +109,15 @@ static const GuiPal GUI_PAL[3] = {
     // 盟军：银框 + 蓝铬 + 深蓝符号 + 蓝穹顶 + 银鹰徽
     {{198, 206, 220, 255}, {84, 90, 104, 255}, {28, 32, 40, 255}, {236, 244, 252, 255},
      {88, 142, 255, 255}, {14, 38, 116, 255}, {172, 206, 255, 255}, {12, 28, 72, 255},
-     {164, 216, 244, 255}, {6, 8, 14, 255}, {88, 142, 255, 255}, {14, 38, 116, 255}, {226, 236, 248, 255}},
+     {255, 236, 96, 255}, {6, 8, 14, 255}, {88, 142, 255, 255}, {14, 38, 116, 255}, {226, 236, 248, 255}},
     // 苏军/中国：金框 + 银灰铬 + 红珐琅符号 + 红穹顶 + 红星徽
     {{218, 188, 112, 255}, {106, 80, 32, 255}, {32, 24, 10, 255}, {255, 238, 178, 255},
      {188, 182, 170, 255}, {100, 94, 84, 255}, {244, 240, 232, 255}, {178, 36, 24, 255},
-     {164, 216, 244, 255}, {12, 10, 7, 255}, {168, 52, 40, 255}, {78, 20, 14, 255}, {216, 48, 40, 255}},
+     {255, 236, 96, 255}, {12, 10, 7, 255}, {168, 52, 40, 255}, {78, 20, 14, 255}, {216, 48, 40, 255}},
     // 尤里：紫银框 + 紫铬 + 深紫符号 + 紫穹顶 + Ψ 徽
     {{188, 158, 206, 255}, {74, 56, 92, 255}, {26, 18, 34, 255}, {246, 226, 255, 255},
      {158, 96, 210, 255}, {52, 24, 86, 255}, {226, 182, 255, 255}, {30, 10, 52, 255},
-     {164, 216, 244, 255}, {10, 7, 14, 255}, {158, 96, 210, 255}, {52, 24, 86, 255}, {200, 120, 230, 255}},
+     {255, 236, 96, 255}, {10, 7, 14, 255}, {158, 96, 210, 255}, {52, 24, 86, 255}, {200, 120, 230, 255}},
 };
 static int guiStyleOf(Faction f) { return f == Faction::Allies ? 0 : f == Faction::Yuri ? 2 : 1; }
 
@@ -498,19 +499,30 @@ static void genBottomBar() {
     p.fillEllipse(72, 13, 7, 7, Color{16, 40, 120, 255});
     p.fillEllipse(70, 11, 4, 4, Color{60, 120, 255, 255});
     p.set(68, 9, Color{200, 230, 255, 255});
-    // 6 蓝图标（暗蓝光晕 + 亮蓝芯）
+    // 6 蓝图标：Team01 / Team02 / TypeSelect / Deploy / Guard / PlanningMode（YR ui.ini AdvancedCommandBar）
     Color halo{18, 46, 100, 255}, core{72, 166, 255, 255}, hi{190, 226, 255, 255};
-    p.ellipse(104, 13, 6, 6, halo); p.ellipse(104, 13, 5, 5, core);       // ⓘ 信息
-    p.fillRect(103, 9, 2, 2, hi); p.fillRect(103, 12, 2, 5, hi);
-    p.ellipse(140, 13, 6, 6, halo); p.ellipse(140, 13, 5, 5, core);       // ⏸ 暂停
-    p.fillRect(137, 10, 2, 7, hi); p.fillRect(141, 10, 2, 7, hi);
-    pbTri(p, 168, 13, 174, 8, 174, 18, core); p.fillRect(174, 9, 3, 8, core); // 喇叭+声波
-    for (int i = 0; i < 3; i++) { p.set(180 + i * 4, 10, halo); p.set(180 + i * 4, 13, core); p.set(180 + i * 4, 16, halo); }
-    for (int i = 0; i < 11; i++) { p.set(210 + i, 8 + i, core); p.set(220 - i, 8 + i, core); } // 交叉工具
-    p.set(210, 8, hi); p.set(220, 8, hi); p.set(210, 18, hi); p.set(220, 18, hi);
-    p.fillEllipse(254, 11, 6, 5, core); pbTri(p, 248, 12, 260, 12, 254, 20, core); // 盾
+    // Team01：罗马 I
+    p.fillRect(102, 7, 4, 13, core); p.fillRect(100, 7, 8, 2, hi); p.fillRect(100, 18, 8, 2, hi);
+    // Team02：罗马 II
+    p.fillRect(134, 7, 3, 13, core); p.fillRect(142, 7, 3, 13, core);
+    p.fillRect(132, 7, 15, 2, hi); p.fillRect(132, 18, 15, 2, hi);
+    // TypeSelect：3x3 点阵
+    for (int gy = 0; gy < 3; gy++)
+        for (int gx = 0; gx < 3; gx++)
+            p.fillRect(168 + gx * 5, 7 + gy * 5, 3, 3, core);
+    // Deploy：括号 + 下箭头
+    p.fillRect(204, 7, 2, 13, core); p.fillRect(220, 7, 2, 13, core);
+    p.hline(204, 208, 7, core); p.hline(216, 220, 7, core);
+    p.hline(204, 208, 19, core); p.hline(216, 220, 19, core);
+    pbTri(p, 212, 18, 206, 10, 218, 10, hi);
+    // Guard：盾
+    p.fillEllipse(254, 11, 6, 5, core); pbTri(p, 248, 12, 260, 12, 254, 20, core);
     p.fillEllipse(254, 11, 4, 3, halo);
-    pbTri(p, 288, 8, 296, 13, 288, 18, core); pbTri(p, 296, 8, 304, 13, 296, 18, core); // 速度 »
+    // PlanningMode / Waypoint：折线 + 旗
+    p.set(286, 18, core); p.set(290, 10, core); p.set(296, 16, core); p.set(302, 8, hi);
+    p.set(287, 17, core); p.set(288, 15, core); p.set(289, 12, core);
+    p.set(291, 11, core); p.set(293, 13, core); p.set(295, 15, core);
+    p.fillRect(302, 5, 2, 8, hi); p.fillRect(304, 5, 4, 3, core);
     g_bbar = p.toTexture();
     SetTextureFilter(g_bbar, TEXTURE_FILTER_BILINEAR);
 }
@@ -522,9 +534,74 @@ static void genBottomBar() {
 struct OrigGui {
     Texture2D sidebar[3]{}; // 171x768 × 3 阵营风格
     Texture2D bottombar{};  // 1366x33
+    Texture2D moneyDigit[10]{}; // 青像素数字 0-9
+    Texture2D gclock[55]{};     // gclock2.shp 扫臂
+    int gclockN = 0;
+    bool moneyOk = false;
     bool tried = false, ok = false;
 };
 static OrigGui g_orig;
+
+static void loadMoneyAndClock() {
+    g_orig.moneyOk = false;
+    for (int d = 0; d < 10; d++) {
+        const char* path = TextFormat("assets/gui/money_digits/num_%d.png", d);
+        if (!FileExists(path)) continue;
+        Image img = LoadImage(path);
+        if (!img.data) continue;
+        g_orig.moneyDigit[d] = LoadTextureFromImage(img);
+        SetTextureFilter(g_orig.moneyDigit[d], TEXTURE_FILTER_POINT);
+        UnloadImage(img);
+        g_orig.moneyOk = true;
+    }
+    g_orig.gclockN = 0;
+    for (int i = 0; i < 55; i++) {
+        const char* path = TextFormat("assets/gui/gclock2/gclock2_%02d.png", i);
+        if (!FileExists(path)) break;
+        Image img = LoadImage(path);
+        if (!img.data) break;
+        g_orig.gclock[i] = LoadTextureFromImage(img);
+        SetTextureFilter(g_orig.gclock[i], TEXTURE_FILTER_POINT);
+        UnloadImage(img);
+        g_orig.gclockN = i + 1;
+    }
+}
+
+static void drawMoneyDigits(int value, int cx, int y) {
+    char buf[16];
+    snprintf(buf, sizeof buf, "%d", std::max(0, value));
+    int n = (int)strlen(buf);
+    int dw = g_orig.moneyOk && g_orig.moneyDigit[0].id ? g_orig.moneyDigit[0].width + 1 : 8;
+    int x = cx - n * dw / 2;
+    Color tint = value > 0 ? WHITE : Color{255, 90, 70, 255};
+    for (int i = 0; i < n; i++) {
+        int d = buf[i] - '0';
+        if (d < 0 || d > 9) continue;
+        if (g_orig.moneyOk && g_orig.moneyDigit[d].id) {
+            DrawTexture(g_orig.moneyDigit[d], x, y, tint);
+            x += g_orig.moneyDigit[d].width + 1;
+        } else {
+            drawTextS(GetFontDefault(), TextFormat("%d", d), x, y, 14, Color{90, 230, 255, 255});
+            x += 8;
+        }
+    }
+}
+
+static void drawGClock(Rectangle r, float frac) {
+    if (g_orig.gclockN <= 0) {
+        // 无素材时回退：暗色扇形遮罩（非旋转 cameo）
+        if (frac >= 1.0f) return;
+        int vh = (int)(r.height * (1.0f - frac));
+        DrawRectangle((int)r.x + 1, (int)r.y + 1, (int)r.width - 2, vh, Color{0, 0, 0, 150});
+        return;
+    }
+    int fi = (int)std::lround(frac * (g_orig.gclockN - 1));
+    if (fi < 0) fi = 0;
+    if (fi >= g_orig.gclockN) fi = g_orig.gclockN - 1;
+    Texture2D& t = g_orig.gclock[fi];
+    if (!t.id) return;
+    DrawTexturePro(t, {0, 0, (float)t.width, (float)t.height}, r, {0, 0}, 0, WHITE);
+}
 
 static void hueRotateChrome(PixBuf& p, int style) {
     for (auto& c : p.px) {
@@ -539,6 +616,7 @@ static void hueRotateChrome(PixBuf& p, int style) {
 static void loadOrigGui() {
     if (g_orig.tried) return;
     g_orig.tried = true;
+    loadMoneyAndClock();
     PixBuf sb;
     if (!sb.loadFromFile("assets/gui/sidebar_allied.png")) return;
     if (sb.w != 171 || sb.h != 768) return;
@@ -570,8 +648,8 @@ struct OrigMap {
 // ===================== 7 段 LED 数码管（RA2 资金牌标志） =====================
 static void ledDigit(int d, int x, int y, int h, Color c) {
     static const uint8_t SEGS[10] = {0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F};
-    int t = std::max(2, h / 8);
-    int w = h * 11 / 20, hh = h / 2;
+    int t = std::max(3, h / 6); // 加粗笔段，抗双线性模糊
+    int w = h * 12 / 20, hh = h / 2;
     Color off{(uint8_t)(c.r / 9), (uint8_t)(c.g / 9), (uint8_t)(c.b / 9), 255}; // 灭段残影
     auto seg = [&](int i, int sx, int sy, int sw, int sh) {
         DrawRectangle(sx, sy, sw, sh, (SEGS[d] & (1 << i)) ? c : off);
@@ -588,7 +666,7 @@ static void ledDigit(int d, int x, int y, int h, Color c) {
 static void ledNumberCenter(int value, int cx, int y, int h, Color c) {
     char buf[16];
     snprintf(buf, sizeof buf, "%d", std::max(0, value));
-    int dw = h * 11 / 20 + h / 6;
+    int dw = h * 12 / 20 + h / 5;
     int x = cx - (int)strlen(buf) * dw / 2;
     for (const char* p = buf; *p; p++, x += dw) ledDigit(*p - '0', x, y, h, c);
 }
@@ -714,39 +792,68 @@ std::vector<BldType> Game::tabBuildings() const {
     std::vector<BldType> v;
     Faction f = world.players[localPlayer].faction;
     if (uiTab == 0) {
+        // 建筑栏：仅生产/经济/科技（不含防御）
         static const BldType mainB[] = {
             BldType::PowerPlant, BldType::TeslaReactor, BldType::BioReactor, BldType::OreRefinery, BldType::Barracks,
             BldType::WarFactory, BldType::Radar, BldType::AirForceCmd, BldType::NavalYard, BldType::BattleLab,
             BldType::NuclearReactor, BldType::OrePurifier, BldType::IndustrialPlant,
             BldType::CloningVat, BldType::ServiceDepot, BldType::Grinder, BldType::GapGenerator, BldType::SpySat, BldType::PsychicSensor,
-            BldType::NukeSilo, BldType::WeatherDevice, BldType::IronCurtain, BldType::ChronoSphere,
-            BldType::GeneticMutator, BldType::PsychicDominator,
         };
         for (BldType t : mainB)
-            if (bldDef(t).factionMask & (1 << (int)f)) v.push_back(t);
+            if (world.modeAllowsBuilding(localPlayer, t)) v.push_back(t);
     } else {
+        // 防御栏：战斗防御 + 超武建筑
         static const BldType defB[] = {
             BldType::Pillbox, BldType::SentryGun, BldType::FlakCannon, BldType::GatlingCannon,
             BldType::PrismTower, BldType::TeslaCoil, BldType::PsychicTower, BldType::GrandCannon,
             BldType::PatriotMissile, BldType::Wall, BldType::BattleBunker, BldType::TankBunker,
+            BldType::NukeSilo, BldType::WeatherDevice, BldType::IronCurtain, BldType::ChronoSphere,
+            BldType::GeneticMutator, BldType::PsychicDominator,
         };
         for (BldType t : defB)
-            if (bldDef(t).factionMask & (1 << (int)f)) v.push_back(t);
+            if (world.modeAllowsBuilding(localPlayer, t)) v.push_back(t);
     }
+    (void)f;
     return v;
 }
 
 std::vector<UnitType> Game::tabUnits() const {
     std::vector<UnitType> v;
     Faction f = world.players[localPlayer].faction;
-    for (int i = 0; i < (int)UnitType::COUNT; i++) {
-        const UnitDef& u = unitDef((UnitType)i);
-        if (!(u.factionMask & (1 << (int)f))) continue;
-        int stBit = stolenTechBit((UnitType)i);
+    // 声明序 = 内置 UnitType / rules 类型表序（禁止按造价 sort）
+    static const UnitType infantryOrder[] = {
+        UnitType::GI, UnitType::Conscript, UnitType::PLA, UnitType::Engineer, UnitType::AttackDog, UnitType::Spy,
+        UnitType::FlakTrooper, UnitType::TeslaTrooper, UnitType::Sniper, UnitType::Tanya, UnitType::Desolator,
+        UnitType::Chrono, UnitType::GuardianGI, UnitType::CrazyIvan, UnitType::Rocketeer, UnitType::Terrorist,
+        UnitType::NavySEAL, UnitType::Yuri, UnitType::ChronoCommando, UnitType::PsiCommando,
+        UnitType::Initiate, UnitType::Brute, UnitType::Virus, UnitType::Boris, UnitType::Slave,
+    };
+    static const UnitType vehicleOrder[] = {
+        UnitType::MCV, UnitType::Harvester, UnitType::ChronoMiner, UnitType::WarMiner, UnitType::SlaveMiner,
+        UnitType::Grizzly, UnitType::Rhino, UnitType::Type99, UnitType::FlakTrack, UnitType::IFV,
+        UnitType::PrismTank, UnitType::TeslaTank, UnitType::MirageTank, UnitType::V3Launcher, UnitType::Apocalypse,
+        UnitType::TerrorDrone, UnitType::TankDestroyer, UnitType::DemoTruck, UnitType::RobotTank, UnitType::BattleFortress,
+        UnitType::LasherTank, UnitType::GatlingTank, UnitType::Magnetron, UnitType::MasterMind, UnitType::ChaosDrone,
+        UnitType::Intruder, UnitType::MiG, UnitType::BlackEagle, UnitType::Kirov, UnitType::Nighthawk, UnitType::SiegeChopper,
+        UnitType::FloatingDisc,
+        UnitType::Destroyer, UnitType::Typhoon, UnitType::Aegis, UnitType::SeaScorpion, UnitType::Dreadnought,
+        UnitType::AircraftCarrier, UnitType::AmphTransport, UnitType::Dolphin, UnitType::Squid, UnitType::Boomer,
+    };
+    const UnitType* order = (uiTab == 2) ? infantryOrder : vehicleOrder;
+    const size_t n = (uiTab == 2) ? (sizeof(infantryOrder) / sizeof(infantryOrder[0]))
+                                  : (sizeof(vehicleOrder) / sizeof(vehicleOrder[0]));
+    for (size_t i = 0; i < n; i++) {
+        UnitType t = order[i];
+        const UnitDef& u = unitDef(t);
+        if (u.cost <= 0) continue;
+        if (!world.modeAllowsUnit(localPlayer, t)) continue;
+        int stBit = stolenTechBit(t);
         if (stBit && !(world.players[localPlayer].stolenTech & stBit)) continue;
-        if (uiTab == 2 && u.isInfantry()) v.push_back((UnitType)i);
-        if (uiTab == 3 && !u.isInfantry()) v.push_back((UnitType)i);
+        bool infTab = u.isInfantry() || t == UnitType::Rocketeer;
+        if (uiTab == 2 && infTab) v.push_back(t);
+        if (uiTab == 3 && !infTab) v.push_back(t);
     }
+    (void)f;
     return v;
 }
 
@@ -800,9 +907,8 @@ void Game::drawHUD() {
         // 侧边栏整条原作贴图（资金槽/雷达框/琉璃穹带/页签/槽框/电力轨道/底盖全部即原作原图）
         DrawTexturePro(g_orig.sidebar[style], {0, 0, 171, 768},
                        {(float)sbX, 0, (float)sidebarW, (float)SCREEN_H}, {0, 0}, 0, WHITE);
-        // 资金 LED（黑槽内居中，青白；原作数字位置）
-        ledNumberCenter(me.money, OM.MX(1272), OM.MY(4), OM.MH(11),
-                        me.money > 0 ? P.led : Color{255, 80, 60, 255});
+        // 资金：青像素数字（非 7 段 LED）
+        drawMoneyDigits(me.money, OM.MX(1272), OM.MY(3));
         // 雷达上琉璃带左图标组：点击打开菜单（原作：选项按钮）
         if (CheckCollisionPointRec(mousePos(), {(float)OM.MX(1206), (float)OM.MY(18),
                                                 (float)OM.MW(62), (float)OM.MH(15)}) &&
@@ -847,8 +953,7 @@ void Game::drawHUD() {
 
         // ===================== 顶部银雕 + 资金 LED =====================
         DrawTexture(C.header, sbX, 0, WHITE);
-        ledNumberCenter(me.money, sbX + sidebarW / 2, 8, 13,
-                        me.money > 0 ? P.led : Color{255, 80, 60, 255});
+        drawMoneyDigits(me.money, sbX + sidebarW / 2, 6);
         // 图标带左组：点击打开菜单（原作：选项按钮）
         if (CheckCollisionPointRec(mousePos(), {(float)sbX + 20, 33, 58, 11}) && mPressed(MOUSE_LEFT_BUTTON)) {
             showMenu = true;
@@ -905,13 +1010,12 @@ void Game::drawHUD() {
         Rectangle tr{(float)tabX0 + i * tabPitch, (float)Y_TABS, (float)TAB_W, (float)H_TABS};
         bool active = uiTab == i;
         bool hov = CheckCollisionPointRec(mousePos(), tr);
-        if (orig) { // 贴图页签：激活=辉光增亮，悬停=微亮
-            if (active) {
-                DrawRectangleRec({tr.x + 2, tr.y + 2, tr.width - 4, tr.height - 4}, Color{150, 200, 255, 66});
-                DrawRectangleLinesEx({tr.x + 1, tr.y + 1, tr.width - 2, tr.height - 2}, 1, Color{200, 230, 255, 200});
-            } else if (hov) {
-                DrawRectangleRec({tr.x + 2, tr.y + 2, tr.width - 4, tr.height - 4}, Color{255, 255, 255, 24});
-            }
+        if (orig) {
+            // 原作：整钮提亮（无描边小框）；激活=暖色罩，悬停=浅白罩
+            if (active)
+                DrawRectangleRec(tr, Color{255, 236, 160, 58});
+            else if (hov)
+                DrawRectangleRec(tr, Color{255, 255, 255, 32});
         } else {
             DrawTexture(C.tab[active ? 2 : (hov ? 1 : 0)], (int)tr.x, (int)tr.y, WHITE);
             tabSymbol(i, tr, P.glyph);
@@ -925,9 +1029,9 @@ void Game::drawHUD() {
     // ===================== 电力条（绿顶红底位置色，自底向上填充=剩余电力） =====================
     {
         int pbX, pbW, pbY0, pbY1;
-        // 原作轨道凹槽实测（assets/gui/sidebar_allied.png 扫描）：内腔 x1200-1204, y214-757
-        if (orig) { pbX = OM.MX(1200); pbW = OM.MW(5); pbY0 = OM.MY(214); pbY1 = OM.MY(757); }
-        else { pbX = sbX + 6; pbW = 8; pbY0 = gridY - 2; pbY1 = gridBottom; }
+        // 原作电力条：窄槽分段（约 7–8 逻辑像素宽，避免过粗「另类 UI」）
+        if (orig) { pbX = OM.MX(1198); pbW = OM.MW(8); pbY0 = OM.MY(214); pbY1 = OM.MY(757); }
+        else { pbX = sbX + 4; pbW = 10; pbY0 = gridY - 2; pbY1 = gridBottom; }
         int ix = pbX + 1, iw = pbW - 2, iy0 = pbY0 + 1, ih = pbY1 - pbY0 - 2;
         // 内腔铺深色底：orig 模式覆盖贴图残留色条，非 orig 画整槽
         if (orig) DrawRectangle(ix, iy0, iw, ih, Color{8, 9, 12, 255});
@@ -960,7 +1064,7 @@ void Game::drawHUD() {
     if (uiTab == 1) {
         for (int i = 0; i < (int)SWType::COUNT; i++) {
             const SWDef& sd = swDef((SWType)i);
-            if (!(bldDef(sd.fromBld).factionMask & (1 << (int)me.faction))) continue;
+            if (!world.modeAllowsBuilding(localPlayer, sd.fromBld)) continue;
             if (!world.hasBld(localPlayer, sd.fromBld)) continue;
             items[nItems++] = {2, i};
         }
@@ -1055,6 +1159,7 @@ void Game::drawHUD() {
                             if (targetingParadrop) message(TR(S::MsgParadropTarget));
                         } else {
                             targetingSW = targeting ? SWType::COUNT : (SWType)it.idx;
+                            chronoSourceSel.clear();
                             targetingParadrop = false;
                             if (targetingSW != SWType::COUNT) message(TR(S::MsgSelectTargetSW));
                         }
@@ -1071,8 +1176,8 @@ void Game::drawHUD() {
                                         : g_sprites.iconBld((BldType)typeIdx, me.colorId);
             const char* name = isUnit ? unitName((UnitType)typeIdx) : bldName((BldType)typeIdx);
             int cost = isUnit ? unitDef((UnitType)typeIdx).cost : bldDef((BldType)typeIdx).cost;
-            int time = isUnit ? unitDef((UnitType)typeIdx).buildTime : bldDef((BldType)typeIdx).buildTime;
-            ProdItem& prod = isUnit ? me.unitProd[unitDef((UnitType)typeIdx).prodCat()] : me.bldProd;
+            ProdItem& prod = isUnit ? me.unitProd[unitDef((UnitType)typeIdx).prodCat()]
+                                    : (isDefenseBld((BldType)typeIdx) ? me.defProd : me.bldProd);
             bool canBuild = false, readyThis = false, activeThis = false;
             int queuedN = 0;
             std::string reason;
@@ -1080,14 +1185,17 @@ void Game::drawHUD() {
                 const BldDef& d = bldDef((BldType)typeIdx);
                 bool hasCY = world.hasBld(localPlayer, BldType::ConYard);
                 bool preOk = world.prereqMet(localPlayer, d);
-                canBuild = hasCY && preOk && me.money >= d.cost && !me.bldProd.active;
+                // RA2：建筑/防御双队列，只挡本队列
+                canBuild = hasCY && preOk && !prod.active;
                 if (!hasCY) reason = TextFormat(TR(S::TipRequireFmt), bldName(BldType::ConYard));
                 else if (!preOk) {
                     if (d.prereq != BldType::COUNT && !world.hasBld(localPlayer, d.prereq))
                         reason = TextFormat(TR(S::TipRequireFmt), bldName(d.prereq));
                     else if (d.countryReq != Country::None)
                         reason = TextFormat(TR(S::TipRequireFmt), countryName(d.countryReq));
-                } else if (me.money < d.cost) reason = TR(S::TipNoMoney);
+                }
+                // 缺钱仍可开工（RA2 按 tick 扣款）；仅提示，不阻断
+                if (canBuild && me.money < d.cost) reason = TR(S::TipNoMoney);
             } else {
                 const UnitDef& u = unitDef((UnitType)typeIdx);
                 int cat = u.prodCat();
@@ -1095,7 +1203,7 @@ void Game::drawHUD() {
                     if (q == typeIdx) queuedN++;
                 bool preOk = world.unitPrereqMet(localPlayer, u);
                 bool facOk = world.hasFactoryFor(localPlayer, u);
-                canBuild = preOk && facOk && me.money >= u.cost;
+                canBuild = preOk && facOk;
                 if (!preOk) {
                     if (u.prereq != BldType::COUNT && !world.hasBld(localPlayer, u.prereq))
                         reason = TextFormat(TR(S::TipRequireFmt), bldName(u.prereq));
@@ -1106,26 +1214,41 @@ void Game::drawHUD() {
                     for (int b = 0; b < (int)BldType::COUNT && reason.empty(); b++)
                         if (isFactoryFor((BldType)b, u))
                             reason = TextFormat(TR(S::TipRequireFmt), bldName((BldType)b));
-                } else if (me.money < u.cost) reason = TR(S::TipNoMoney);
+                }
+                if (canBuild && me.money < u.cost) reason = TR(S::TipNoMoney);
             }
             activeThis = prod.active && prod.typeIdx == typeIdx && prod.isUnit == isUnit;
             readyThis = activeThis && prod.ready;
+            bool heldThis = activeThis && prod.held;
             slotShell(r, readyThis, activeThis, false);
-            // 图标铺入（orig=精确填槽内腔，原作满幅 cameo；否则等比居中，名称叠于底部）
-            if (orig) {
+            // 图标静止铺入（原作不旋转 cameo；进度用 gclock2 扫臂）
+            auto drawCameo = [&](Rectangle dst) {
                 DrawTexturePro(icon.tex, {0, 0, (float)icon.tex.width, (float)icon.tex.height},
-                               {r.x + 3, r.y + 3, r.width - 6, r.height - 6}, {0, 0}, 0,
+                               dst, {0, 0}, 0,
                                canBuild || activeThis ? WHITE : Color{88, 88, 92, 255});
+            };
+            if (orig) {
+                drawCameo({r.x + 3, r.y + 3, r.width - 6, r.height - 6});
             } else {
                 float availW = r.width - 4, availH = r.height - 4;
                 float isc = std::min(availW / icon.tex.width, availH / icon.tex.height);
                 float dw = icon.tex.width * isc, dh = icon.tex.height * isc;
-                DrawTexturePro(icon.tex, {0, 0, (float)icon.tex.width, (float)icon.tex.height},
-                               {r.x + (r.width - dw) / 2, r.y + 2 + (availH - dh) / 2, dw, dh}, {0, 0}, 0,
-                               canBuild || activeThis ? WHITE : Color{88, 88, 92, 255});
+                drawCameo({r.x + (r.width - dw) / 2, r.y + 2 + (availH - dh) / 2, dw, dh});
             }
-            if (activeThis && !prod.ready) veil(r, (float)prod.progress / time);
-            if (readyThis && (world.tick / 15) % 2) { // Ready 叠于图标顶部（原作位置）
+            // gclock：按「已付金额/总造价」扫臂（RA2：扣多少钱转多少；缺钱/HOLD 时 paid 冻结 → clock 冻结）
+            if (activeThis && !prod.ready) {
+                float p = 0.0f;
+                if (prod.totalCost > 0)
+                    p = (float)prod.paid / (float)prod.totalCost;
+                else if (cost > 0)
+                    p = (float)prod.paid / (float)cost;
+                drawGClock({r.x + 2, r.y + 2, r.width - 4, r.height - 4}, std::min(1.0f, std::max(0.0f, p)));
+            }
+            if (heldThis) {
+                int hw = (int)MeasureTextEx(font, "HOLD", 12, 1).x;
+                drawTextS(font, "HOLD", (int)(r.x + r.width / 2 - hw / 2), (int)r.y + 3, 12,
+                          Color{255, 220, 100, 255});
+            } else if (readyThis && (world.tick / 15) % 2) {
                 int rw = (int)MeasureTextEx(font, TR(S::Ready), 12, 1).x;
                 drawTextS(font, TR(S::Ready), (int)(r.x + r.width / 2 - rw / 2), (int)r.y + 3, 12,
                           Color{160, 255, 160, 255});
@@ -1143,7 +1266,12 @@ void Game::drawHUD() {
                                      Color{220, 200, 140, 140});
                 if (!tipSet) {
                     tipSet = true; tipName = name; tipPos = mousePos();
-                    tipSub = TextFormat(TR(S::TipCostTimeFmt), cost, time / LOGIC_FPS);
+                    // RA2：侧栏以造价与已付进度为准（gclock=paid/cost），不显示虚假「剩余秒数」
+                    if (activeThis && !prod.ready && prod.totalCost > 0)
+                        tipSub = TextFormat("$%d  (%d/%d)", cost, prod.paid, prod.totalCost);
+                    else
+                        tipSub = TextFormat(TR(S::TipCostTimeFmt), cost);
+                    if (heldThis) tipSub = std::string(tipSub) + "  [HOLD]";
                     if (!reason.empty()) tipReason = reason;
                 }
                 if (mPressed(MOUSE_LEFT_BUTTON)) {
@@ -1151,10 +1279,17 @@ void Game::drawHUD() {
                         me.placingBld = (BldType)typeIdx;
                         placing = true;
                         message(TR(S::MsgPlaceBld));
+                    } else if (activeThis && prod.held) {
+                        // HOLD 中左键 → 继续
+                        World::Cmd c;
+                        c.type = isUnit ? World::Cmd::HoldUnitProd : World::Cmd::HoldBldProd;
+                        c.a = typeIdx; c.b = 0;
+                        issueCmd(c);
                     } else if (!canBuild) { message(TR(S::MsgCannotBuild)); }
                     else if (isUnit || !activeThis) {
-                        bool ok = isUnit ? (world.unitQueuedCount(localPlayer, unitDef((UnitType)typeIdx).prodCat()) < 8)
-                                         : !me.bldProd.active;
+                        // 单位：可排队；建筑/防御：仅本队列空闲时可开（RA2 双队列并行）
+                        bool ok = isUnit ? (world.unitQueuedCount(localPlayer, unitDef((UnitType)typeIdx).prodCat()) < 30)
+                                         : !prod.active;
                         if (!ok) { message(TR(S::MsgQueueBusy)); }
                         else {
                             World::Cmd c;
@@ -1165,12 +1300,18 @@ void Game::drawHUD() {
                     }
                 }
                 if (mPressed(MOUSE_RIGHT_BUTTON)) {
-                    if (isUnit && totalN > 0) {
+                    if (activeThis && !prod.ready && !prod.held) {
+                        // 右键 → HOLD
+                        World::Cmd c;
+                        c.type = isUnit ? World::Cmd::HoldUnitProd : World::Cmd::HoldBldProd;
+                        c.a = typeIdx; c.b = 1;
+                        issueCmd(c);
+                    } else if (isUnit && (totalN > 0 || (activeThis && prod.held))) {
                         World::Cmd c; c.type = World::Cmd::CancelUnitProd; c.a = typeIdx;
                         issueCmd(c);
                         message(TR(S::MsgCanceledOne));
                     } else if (!isUnit && activeThis) {
-                        World::Cmd c; c.type = World::Cmd::CancelBldProd;
+                        World::Cmd c; c.type = World::Cmd::CancelBldProd; c.a = typeIdx;
                         issueCmd(c);
                         message(TR(S::MsgCanceledProd));
                     }
@@ -1217,7 +1358,7 @@ void Game::drawHUD() {
             return CheckCollisionPointRec(mp, {(float)x, (float)by, (float)w, (float)BOTTOM_BAR_H});
         };
         const char* tip = nullptr;
-        // ---- RA2 底栏：左侧菜单药丸 + 单位指令按钮组（停止/部署/散开/警戒/路径点） ----
+        // ---- RA2 底栏：左侧菜单药丸 + 高级指令条（Team01/02/TypeSelect/Deploy/Guard/PlanningMode） ----
         // 热点（orig=原作底栏图标实测位 ×BB；否则程序化底栏位）
         int hxMenu = orig ? (int)(4 * BB) : 6, hwMenu = orig ? (int)(58 * BB) : 52;
         if (barHov(hxMenu, hwMenu)) { // 银药丸：菜单
@@ -1250,77 +1391,130 @@ void Game::drawHUD() {
             }
             if (active) DrawRectangleLinesEx({r.x + 1, r.y + 1, r.width - 2, r.height - 2}, 1, GUI_GOLD);
         };
-        // 单位指令按钮（未选单位时禁用置灰）；orig 模式槽位对齐贴图自带图标中心
-        struct CmdBtn { int x, w; S name; int key; };
+        // YR 默认 AdvancedCommandBar：Team01,Team02,TypeSelect,Deploy,Guard,PlanningMode
+        struct CmdBtn { int x, w; S name; int key; int action; };
         const CmdBtn btns[] = {
-            {orig ? (int)(52 * BB) : 132, orig ? (int)(30 * BB) : 30, S::KaStop, keyBind[KA_Stop]},
-            {orig ? (int)(88 * BB) : 164, orig ? (int)(30 * BB) : 30, S::KaDeploy, keyBind[KA_Deploy]},
-            {orig ? (int)(140 * BB) : 196, orig ? (int)(30 * BB) : 30, S::KaScatter, keyBind[KA_Scatter]},
-            {orig ? (int)(191 * BB) : 228, orig ? (int)(30 * BB) : 30, S::KaGuard, keyBind[KA_Guard]},
-            {orig ? (int)(244 * BB) : 260, orig ? (int)(30 * BB) : 30, S::KaWaypoint, keyBind[KA_Waypoint]},
+            {orig ? (int)(85 * BB)  : 132, orig ? (int)(36 * BB) : 36, S::KaTeam01,   KEY_ONE, 0},
+            {orig ? (int)(137 * BB) : 170, orig ? (int)(36 * BB) : 36, S::KaTeam02,   KEY_TWO, 1},
+            {orig ? (int)(188 * BB) : 208, orig ? (int)(36 * BB) : 36, S::KaSameType, keyBind[KA_SameType], 2},
+            {orig ? (int)(240 * BB) : 246, orig ? (int)(36 * BB) : 36, S::KaDeploy,   keyBind[KA_Deploy], 3},
+            {orig ? (int)(292 * BB) : 284, orig ? (int)(36 * BB) : 36, S::KaGuard,    keyBind[KA_Guard], 4},
+            {orig ? (int)(346 * BB) : 322, orig ? (int)(36 * BB) : 36, S::KaWaypoint, keyBind[KA_Waypoint], 5},
         };
         bool hasSel = !sel.empty();
-        for (int i = 0; i < 5; i++) {
+        auto recallTeam = [&](int n) {
+            auto& g = groups[n];
+            g.erase(std::remove_if(g.begin(), g.end(), [&](EID id) {
+                return !world.valid(id) || world.ents[id].isBuilding;
+            }), g.end());
+            if (g.empty()) return;
+            sel = g;
+            selBuilding = INVALID_EID;
+            double now = GetTime();
+            if (lastGroupKey == n && now - lastGroupTap < 0.5) {
+                float cx = 0, cy = 0;
+                for (EID id : g) {
+                    Vector2 p = unitScreenPos(world.ents[id]);
+                    cx += p.x + camX; cy += p.y + camY;
+                }
+                cx /= (float)g.size(); cy /= (float)g.size();
+                camX = cx - (SCREEN_W - sidebarW) / 2.0f;
+                camY = cy - SCREEN_H / 2.0f;
+            }
+            lastGroupKey = n;
+            lastGroupTap = now;
+        };
+        for (int i = 0; i < 6; i++) {
             const CmdBtn& b = btns[i];
-            Rectangle r{(float)b.x, (float)by + 2, (float)b.w, (float)BOTTOM_BAR_H - 4};
-            bool en = hasSel;
+            Rectangle r{(float)b.x, (float)by + 1, (float)b.w, (float)BOTTOM_BAR_H - 2};
+            bool isTeam = (b.action == 0 || b.action == 1);
+            bool en = isTeam || hasSel;
             bool hov = en && CheckCollisionPointRec(mp, r);
             bool press = hov && mDown(MOUSE_LEFT_BUTTON);
-            bool active = (i == 4 && waypointLatch); // 路径点模式锁存高亮
-            // 铬面底（orig：先铺贴图底色盖住自带蓝图标，保证按钮视觉统一）
-            if (orig) DrawRectangleRec({r.x - 1, r.y, r.width + 2, r.height}, Color{14, 15, 19, 255});
-            chromeBtn(r, hov, press, active, en);
-            // 图标（矢量象形，RA2 指令语义；大号居中）
-            Color ic = en ? (press ? Color{255, 240, 200, 255} : Color{240, 236, 220, 255}) : Color{110, 110, 105, 140};
-            int cx = (int)(r.x + r.width / 2), cy = (int)(r.y + r.height / 2) - 1;
-            switch (i) {
-                case 0: // 停止：实心方块
-                    DrawRectangle(cx - 6, cy - 6, 12, 12, ic);
-                    DrawRectangleLinesEx({(float)cx - 6, (float)cy - 6, 12, 12}, 1, Color{20, 20, 20, 200});
-                    break;
-                case 1: // 部署：上下展开双箭头
-                    DrawTriangle({(float)cx - 7, (float)cy - 1}, {(float)cx + 7, (float)cy - 1}, {(float)cx, (float)cy + 7}, ic);
-                    DrawTriangle({(float)cx - 7, (float)cy + 1}, {(float)cx + 7, (float)cy + 1}, {(float)cx, (float)cy - 7}, ic);
-                    break;
-                case 2: // 散开：四角外指箭头
-                    for (int s1 = -1; s1 <= 1; s1 += 2)
-                        for (int s2 = -1; s2 <= 1; s2 += 2) {
-                            int ax = cx + s1 * 8, ay = cy + s2 * 7;
-                            DrawTriangle({(float)ax, (float)ay}, {(float)(cx + s1 * 2), (float)(cy + s2 * 6)},
-                                         {(float)(cx + s1 * 6), (float)(cy + s2 * 2)}, ic);
-                        }
-                    DrawCircle(cx, cy, 1.8f, ic);
-                    break;
-                case 3: // 警戒：盾形（圆 + 中竖）
-                    DrawCircleLines(cx, cy, 7.5f, ic);
-                    DrawCircleLines(cx, cy, 6.5f, ic);
-                    DrawLine(cx, cy - 7, cx, cy + 7, ic);
-                    break;
-                case 4: // 路径点：旗帜
-                    DrawLine(cx - 5, cy - 7, cx - 5, cy + 8, ic);
-                    DrawTriangle({(float)cx - 4, (float)cy - 7}, {(float)cx - 4, (float)cy - 1},
-                                 {(float)cx + 7, (float)cy - 4}, active ? Color{255, 220, 90, 255} : ic);
-                    break;
+            bool active = (b.action == 5 && waypointLatch);
+            if (!orig) {
+                chromeBtn(r, hov, press, active, en);
+                Color ic = en ? (press ? Color{255, 240, 200, 255} : Color{240, 236, 220, 255}) : Color{110, 110, 105, 140};
+                int cx = (int)(r.x + r.width / 2), cy = (int)(r.y + r.height / 2) - 1;
+                switch (b.action) {
+                    case 0: // Team01 — I
+                        DrawRectangle(cx - 1, cy - 6, 3, 13, ic);
+                        DrawRectangle(cx - 3, cy - 6, 7, 2, ic);
+                        DrawRectangle(cx - 3, cy + 5, 7, 2, ic);
+                        break;
+                    case 1: // Team02 — II
+                        DrawRectangle(cx - 5, cy - 6, 3, 13, ic);
+                        DrawRectangle(cx + 2, cy - 6, 3, 13, ic);
+                        DrawRectangle(cx - 6, cy - 6, 12, 2, ic);
+                        DrawRectangle(cx - 6, cy + 5, 12, 2, ic);
+                        break;
+                    case 2: // TypeSelect
+                        for (int gy = -1; gy <= 1; gy++)
+                            for (int gx = -1; gx <= 1; gx++)
+                                DrawRectangle(cx + gx * 5 - 1, cy + gy * 5 - 1, 3, 3, ic);
+                        break;
+                    case 3: // Deploy
+                        DrawTriangle({(float)cx - 7, (float)cy - 1}, {(float)cx + 7, (float)cy - 1}, {(float)cx, (float)cy + 7}, ic);
+                        DrawTriangle({(float)cx - 7, (float)cy + 1}, {(float)cx + 7, (float)cy + 1}, {(float)cx, (float)cy - 7}, ic);
+                        break;
+                    case 4: // Guard
+                        DrawCircleLines(cx, cy, 7.5f, ic);
+                        DrawCircleLines(cx, cy, 6.5f, ic);
+                        DrawLine(cx, cy - 7, cx, cy + 7, ic);
+                        break;
+                    case 5: { // PlanningMode / Waypoint
+                        DrawLine(cx - 7, cy + 5, cx - 2, cy - 5, ic);
+                        DrawLine(cx - 2, cy - 5, cx + 4, cy + 4, ic);
+                        DrawLine(cx + 4, cy + 4, cx + 8, cy - 3, ic);
+                        DrawCircle(cx - 7, cy + 5, 1.5f, ic);
+                        DrawCircle(cx + 8, cy - 3, 1.5f, ic);
+                        break;
+                    }
+                }
+            } else if (hov) {
+                DrawRectangleLinesEx(r, 1, GUI_GOLD);
             }
-            // 热键字母（右下角小字）
-            if (b.key > 0) drawTextS(font, keyName(b.key), (int)(r.x + r.width - 10), (int)(r.y + r.height - 11), 9, ic);
-            // 交互
-            if (hov) {
+            if (b.key > 0) {
+                Color kc = en ? Color{200, 200, 190, 220} : Color{90, 90, 90, 140};
+                drawTextS(font, keyName(b.key), (int)(r.x + r.width - 10), (int)(r.y + r.height - 11), 9, kc);
+            }
+            bool btnEn = en || (b.action == 3 && world.valid(selBuilding) && !world.ents[selBuilding].garrison.empty());
+            bool btnHov = btnEn && CheckCollisionPointRec(mp, r);
+            if (btnHov) {
                 tip = TR(b.name);
                 if (mPressed(MOUSE_LEFT_BUTTON)) {
                     World::Cmd c;
                     c.ids = sel;
-                    switch (i) {
-                        case 0: c.type = World::Cmd::Stop; issueCmd(c); break;
-                        case 1: cmdDeploySel(); break;
-                        case 2: c.type = World::Cmd::Scatter; issueCmd(c); message(TR(S::MsgScatter)); break;
-                        case 3: c.type = World::Cmd::Guard; issueCmd(c); message(TR(S::MsgGuard)); break;
-                        case 4:
+                    switch (b.action) {
+                        case 0: recallTeam(1); break;
+                        case 1: recallTeam(2); break;
+                        case 2: { // TypeSelect (T)
+                            if (!sel.empty() && world.valid(sel[0]) && !world.ents[sel[0]].isBuilding) {
+                                UnitType ut = world.ents[sel[0]].utype;
+                                std::vector<EID> more;
+                                for (size_t ei = 0; ei < world.ents.size(); ei++) {
+                                    if (!world.ents[ei].alive || world.ents[ei].isBuilding
+                                        || world.ents[ei].player != localPlayer || world.ents[ei].utype != ut)
+                                        continue;
+                                    more.push_back((int)ei);
+                                }
+                                if (!more.empty()) sel = std::move(more);
+                                message(TR(S::MsgSelSameType));
+                            }
+                            break;
+                        }
+                        case 3: cmdDeploySel(); break;
+                        case 4: c.type = World::Cmd::Guard; issueCmd(c); message(TR(S::MsgGuard)); break;
+                        case 5:
                             waypointLatch = !waypointLatch;
                             message(waypointLatch ? TR(S::MsgWaypointOn) : TR(S::MsgWaypointOff));
                             break;
                     }
                     g_sfx.play(Sfx::Click, 0.6f);
+                } else if (isTeam && mPressed(MOUSE_RIGHT_BUTTON)) {
+                    int n = b.action + 1;
+                    groups[n].clear();
+                    g_sfx.play(Sfx::Click, 0.45f);
                 }
             }
         }
@@ -1328,7 +1522,7 @@ void Game::drawHUD() {
         // 超武计时（右侧红字；就绪绿闪）
         for (int i = 0; i < (int)SWType::COUNT; i++) {
             const SWDef& sd = swDef((SWType)i);
-            if (!(bldDef(sd.fromBld).factionMask & (1 << (int)me.faction))) continue;
+            if (!world.modeAllowsBuilding(localPlayer, sd.fromBld)) continue;
             if (!world.hasBld(localPlayer, sd.fromBld)) continue;
             const char* nm = swName((SWType)i);
             char tb[64];

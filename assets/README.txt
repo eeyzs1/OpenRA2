@@ -23,8 +23,16 @@ assets/
   strings/zh.ini|en.ini  界面与播报文本（第 3 节）
   music/                 BGM wav + music.ini 播放列表（第 4 节）
   maps/  (游戏根目录)    手工地图 txt，被战役 MapFile= 引用（第 5 节）
-  sprites/               全部 PNG 图像（--gen-assets 生成，文件名固定）
-  sfx/                   全部 WAV 音效（--gen-assets 生成，文件名固定）
+  sprites/               全部 PNG 图像（--gen-assets / tools/ra2pack 生成；步兵/建筑仍用）
+  voxels/                运行时 VXL/HVA（载具真体素，从 MIX 提取；见 tools/ra2pack）
+  palettes/unittem.pal   单位调色板；voxels/voxels.vpl 体素光照表
+  sfx/                   全部 WAV 音效（优先从原版 audio.bag 提取；见 tools/ra2pack/gen_audio.py）
+
+载具优先用运行时 VXL 渲染（ra2.exe 启动读 assets/voxels/*.vxl）；缺文件时回退 PNG / 程序化。
+诊断样张：ra2.exe --dump-vxl → tools/ra2pack/out/rt_*.png
+
+数值对齐原版：可用 tools/ra2pack/sync_rules_from_mix.py 从安装目录 MIX 的 rules.ini
+同步 Cost/HP 到本仓库 assets/rules/rules.ini（需配置 tools/ra2pack/game）。
 
 1. rules/rules.ini —— 数值规则
 ------------------------------
@@ -33,12 +41,14 @@ assets/
   [Bld.<建筑名>]         例：[Bld.PrismTower]
   [SW.<超武名>]          Nuke / Lightning / IronCurtain / ChronoShift / GeneticMutator / PsychicDominator
   [DeployWeapon.GI|GuardianGI]  美国大兵/重装大兵部署后的武器
+  [Warhead.<弹头名>]      SmallArms / AP / HE / HollowPoint / Psychic / Radiation
 
 单位键：
   Name        中文显示名（英文显示名在 strings/en.ini 的 [Unit] 节）
   Cost BuildTime HP Speed Sight
   Speed       每逻辑帧移动 1/Speed 格，【越大越慢】
-  Armor       None / Light / Heavy / Building
+  Armor       None / Flak / Plate / Light / Medium / Heavy / Wood / Steel /
+              Concrete / Special1 / Special2（Building 兼容映射到 Concrete）
   Move        Infantry / Vehicle / Air / Naval / Amphibious
   Factions    All / None，或管道组合：Allies|Soviet|China|Yuri
   Prereq      前置建筑名（None = 仅需生产建筑本身）
@@ -63,8 +73,24 @@ assets/
   VsInf VsVeh VsBld     对步兵/车辆/建筑伤害系数
   NavalOnly             仅攻击水上目标
   Splash                溅射半径（格，0=单体）
+  Warhead               Legacy（默认沿用 VsInf/VsVeh/VsBld）或上列弹头名
   Proj 贴图名：shell bullet tesla prism missile flak rad chrono psi
               naval torpedo
+
+弹头节：
+  Verses=               11 个逗号分隔倍率，顺序为
+                        None,Flak,Plate,Light,Medium,Heavy,Wood,Steel,
+                        Concrete,Special1,Special2
+
+[GameRules] 官方机制相关键：
+  VeteranRatio          每级军衔所需摧毁价值 / 单位自身价值（默认 3）
+  VeteranDmgBonus       新兵/老兵/精英伤害百分比
+  VeteranArmorBonus     承伤百分比
+  VeteranSpeedBonus     移速百分比
+  VeteranRofBonus       开火间隔百分比
+  VeteranSelfHeal       每次自愈点数
+  BioReactorPowerPerOccupant  生化反应堆每名驻军增电
+  GrinderRefund         回收炉返还造价比例（1 = 100%）
 
 枚举名（节名后缀/键值共用一套规范名，即 data.h 中的枚举名）：
   单位：MCV Harvester GI Conscript PLA Engineer AttackDog Spy
@@ -181,14 +207,15 @@ music.ini（可选）：
 
 6. sprites/ 与 sfx/ —— 图像与音效
 ---------------------------------
+权威来源：用原版 MIX 提取（tools/ra2pack/gen_assets.py / gen_terrain.py）。
 文件名为程序约定，例如：
   unit_grizzly_d0_f0.png   单位<方向d0..d7><帧f0..>
   turret_grizzly_d0.png    炮塔×8 方向
-  bld_prismtower.png       建筑本体（_scaffold.png 为建造脚手架）
+  bld_prismtower.png       建筑本体（建造过程优先 mk 帧序列）
   icon_unit_grizzly.png    侧边栏图标（icon_bld_* 建筑图标）
   tile_clear_0.png         地形 tile×8 变体（clear/rough/water/ore/gems/bridge）
   fx_explosion_0.png       特效序列帧；shot.wav 等音效同名 WAV
-游戏启动时逐一加载；缺失的文件由程序化生成兜底，不会缺失显示。
-想替换外观：用同尺寸同名 PNG/WAV 覆盖即可（图像 RGBA，
-建议遵循 RA2 左上光源风格）；删除文件则回到程序生成版本。
---gen-assets 会重新生成并覆盖本目录全部文件。
+游戏启动时逐一加载；缺失的文件才由程序化生成兜底。
+想替换外观：用同名 PNG/WAV 覆盖即可。
+ra2.exe --gen-assets 只补缺失文件，不会覆盖已有 MIX 提取产物。
+建筑 SHP 必须保留原画布偏移并以 64/60 对齐引擎瓦片；不要再裁切居中。

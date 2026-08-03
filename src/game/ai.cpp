@@ -141,18 +141,20 @@ void SkirmishAI::update(World& w) {
     doBuildOrder(w);
     doProduction(w);
 
-    // 建筑生产就绪后直接放置
-    if (p.bldProd.active && p.bldProd.ready) {
-        BldType t = (BldType)p.bldProd.typeIdx;
+    // 建筑/防御生产就绪后直接放置（RA2 双队列）
+    auto tryReady = [&](ProdItem& pr) {
+        if (!pr.active || !pr.ready) return;
+        BldType t = (BldType)pr.typeIdx;
         if (tryPlaceBld(w, t)) {
             navalFail = 0;
         } else if (t == BldType::NavalYard && ++navalFail > 40) {
-            // 船厂就绪但长期放不下：取消并放弃海军，解锁建造序列
-            w.cancelProd(player, false);
+            w.cancelBldProd(player, t);
             navalFail = 0;
             navalPlaceable = 0;
         }
-    }
+    };
+    tryReady(p.bldProd);
+    tryReady(p.defProd);
 
     doEngineers(w);
     doAttack(w);
@@ -253,7 +255,7 @@ bool SkirmishAI::tryPlaceBld(World& w, BldType t) {
 // ===================== 建造序列（人格驱动） =====================
 void SkirmishAI::doBuildOrder(World& w) {
     Player& p = w.players[player];
-    if (p.bldProd.active) return;  // 正在建造
+    // RA2 双队列：建筑队列忙时仍可开防御，反之亦然
     bool naval = detectWater(w);
 
     // 阵营差异化建筑类型
@@ -277,7 +279,7 @@ void SkirmishAI::doBuildOrder(World& w) {
     BldType sw2T = p.faction == Faction::Yuri ? BldType::GeneticMutator : BldType::IronCurtain;
 
     // 电力不足优先补电
-    if (p.powerMade - p.powerUsed < 30 && w.hasBld(player, BldType::ConYard)) {
+    if (p.powerMade - p.powerUsed < 30 && w.hasBld(player, BldType::ConYard) && !p.bldProd.active) {
         BldType want = w.hasBld(player, BldType::BattleLab) ? bigPowerT : powerT;
         if (w.prereqMet(player, bldDef(want)) && p.money >= bldDef(want).cost) {
             w.startBldProd(player, want);
@@ -285,14 +287,19 @@ void SkirmishAI::doBuildOrder(World& w) {
         }
     }
 
+    auto queueFree = [&](BldType t) {
+        return !(isDefenseBld(t) ? p.defProd.active : p.bldProd.active);
+    };
+
     // 用户自定义建造序列（rules.ini [AIBuild.<Faction>] BuildOrder=...）
     const AIBuildConfig& aiCfg = g_aiBuild[(int)p.faction];
     if (aiCfg.enabled && !aiCfg.buildOrder.empty()) {
         for (const std::string& name : aiCfg.buildOrder) {
             BldType t;
             if (!bldTypeByName(name.c_str(), t)) continue;
+            if (!queueFree(t)) continue;
             const BldDef& d = bldDef(t);
-            if (!(d.factionMask & (1 << (int)p.faction))) continue;
+            if (!w.modeAllowsBuilding(player, t)) continue;
             if (t == BldType::NavalYard && (!naval || !navalSiteAvailable(w))) continue;
             int want = (t == BldType::OreRefinery) ? 2 : 1;
             if (w.countBlds(player, t) >= want) continue;
@@ -343,7 +350,7 @@ void SkirmishAI::doBuildOrder(World& w) {
     }
 
     // 高科前置（Turtler/Technician）：在船厂/防御之前尝试建造 BattleLab
-    if (battleLabEarly && !skipBattleLab && !w.hasBld(player, BldType::BattleLab)) {
+    if (battleLabEarly && !skipBattleLab && !w.hasBld(player, BldType::BattleLab) && queueFree(BldType::BattleLab)) {
         const BldDef& d = bldDef(BldType::BattleLab);
         if ((d.factionMask & (1 << (int)p.faction)) && w.prereqMet(player, d) && p.money >= d.cost + 300) {
             w.startBldProd(player, BldType::BattleLab);
@@ -399,7 +406,8 @@ void SkirmishAI::doBuildOrder(World& w) {
         if (isLateTech && skipLateTech) continue;
 
         const BldDef& d = bldDef(rt);
-        if (!(d.factionMask & (1 << (int)p.faction))) continue;
+        if (!w.modeAllowsBuilding(player, rt)) continue;
+        if (!queueFree(rt)) continue;
         // 已建够数量则跳过；防御建筑允许 defWant 个，矿厂允许 refineryWant 个
         int want;
         if (rt == defT || rt == advDefT) want = defWant;
@@ -445,7 +453,8 @@ void SkirmishAI::doProduction(World& w) {
         int harvBase = aiCfg.enabled ? aiCfg.harvesterTarget : 3;
         int harvTarget = (int)(harvBase * pcfg.econFocus);
         if (harvTarget < 1) harvTarget = 1;
-        if (w.hasBld(player, BldType::OreRefinery) && harvesters < harvTarget) {
+        if (w.skirmishMode != SkirmishMode::Megawealth
+            && w.hasBld(player, BldType::OreRefinery) && harvesters < harvTarget) {
             w.startUnitProd(player, harvesterType(p.faction));
         } else if (!saveMoney) {
             // 混编部队：陆军 >6 坦克且 0 防空车辆时补 AA 护航
@@ -556,7 +565,8 @@ void SkirmishAI::doProduction(World& w) {
     if (w.hasBld(player, BldType::Barracks) && w.unitQueuedCount(player, 0) < 2) {
         // 工程师：维持 1~2 名（占领中立建筑/修复用）
         int engs = w.countUnits(player, UnitType::Engineer);
-        if (engs < 1 && p.money > 1200) {
+        int engineerTarget = w.skirmishMode == SkirmishMode::Megawealth ? 3 : 1;
+        if (engs < engineerTarget && p.money > 700) {
             w.startUnitProd(player, UnitType::Engineer);
         } else if (!saveMoney) {
             // 阵营基础步兵：盟军美国大兵/苏军动员兵/中国解放军/尤里新兵
@@ -896,7 +906,7 @@ void SkirmishAI::doExpansion(World& w) {
 
 // ===================== 工程师行为（沿用原实现 + 人格门控） =====================
 void SkirmishAI::doEngineers(World& w) {
-    if (!pcfg.useEngineers) return;  // 人格门控
+    if (!pcfg.useEngineers && w.skirmishMode != SkirmishMode::Megawealth) return;  // Megawealth 必须占领油井
     // 收集空闲工程师与间谍
     std::vector<EID> idleEngs, idleSpies;
     for (size_t i = 0; i < w.ents.size(); i++) {
@@ -948,7 +958,7 @@ void SkirmishAI::doEngineers(World& w) {
 
 // ===================== 超武（沿用原实现 + 人格门控） =====================
 void SkirmishAI::doSuperWeapon(World& w) {
-    if (!pcfg.useSuperWeapon) return;  // 人格门控
+    if (!pcfg.useSuperWeapon || !w.superweaponsEnabled) return;  // 人格/对局选项门控
     Player& p = w.players[player];
     for (int i = 0; i < (int)SWType::COUNT; i++) {
         if (!p.swReady[i]) continue;
@@ -985,6 +995,40 @@ void SkirmishAI::doSuperWeapon(World& w) {
 // ===================== 支援技能（沿用原实现） =====================
 void SkirmishAI::doSupport(World& w) {
     Player& p = w.players[player];
+    // 尤里经济：优先让闲置新兵进入生化反应堆补电；把严重受损车辆送入回收炉，
+    // 避免 AI 建出官方经济建筑却从不使用。
+    if (p.faction == Faction::Yuri) {
+        for (size_t bi = 0; bi < w.ents.size(); ++bi) {
+            const World::Ent& b = w.ents[bi];
+            if (!b.alive || !b.isBuilding || b.player != player || b.btype != BldType::BioReactor
+                || (int)b.garrison.size() >= bldDef(b.btype).garrisonCap) continue;
+            std::vector<EID> occupants;
+            for (size_t ui = 0; ui < w.ents.size(); ++ui) {
+                const World::Ent& u = w.ents[ui];
+                if (!u.alive || u.isBuilding || u.player != player || u.state != UState::Idle
+                    || u.utype != UnitType::Initiate) continue;
+                occupants.push_back((int)ui);
+                if ((int)occupants.size() >= bldDef(b.btype).garrisonCap - (int)b.garrison.size()) break;
+            }
+            if (!occupants.empty()) w.orderGarrison(occupants, (int)bi);
+        }
+        EID grinder = INVALID_EID;
+        for (size_t i = 0; i < w.ents.size(); ++i)
+            if (w.ents[i].alive && w.ents[i].isBuilding && w.ents[i].player == player
+                && w.ents[i].btype == BldType::Grinder) { grinder = (int)i; break; }
+        if (grinder != INVALID_EID) {
+            std::vector<EID> recycle;
+            for (size_t i = 0; i < w.ents.size(); ++i) {
+                const World::Ent& u = w.ents[i];
+                if (!u.alive || u.isBuilding || u.player != player || u.state != UState::Idle) continue;
+                const UnitDef& ud = unitDef(u.utype);
+                if (ud.isAir() || ud.isNaval() || ud.canHarvet() || isHero(u.utype)) continue;
+                if (u.hp < ud.hp / 4) recycle.push_back((int)i);
+                if (recycle.size() >= 2) break;
+            }
+            if (!recycle.empty()) w.orderGarrison(recycle, grinder);
+        }
+    }
     // 1. 伞兵：空投到敌方建造厂附近（骚扰敌后）
     if (p.paradropReady) {
         float bx = -1, by = -1;

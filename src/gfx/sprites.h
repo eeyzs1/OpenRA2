@@ -31,6 +31,7 @@ public:
 
     // 单位：dir 0..7（0=东，顺时针），frame 步兵行走帧 0..1
     const Sprite& unitBody(UnitType t, int dir, int frame, int player);
+    const Sprite& unitUnload(UnitType t, int dir, int player);
     const Sprite& unitTurret(UnitType t, int dir, int player);
     bool hasTurret(UnitType t) const;
 
@@ -40,6 +41,8 @@ public:
 
     // 建筑（constructing=true 返回脚手架）
     const Sprite& building(BldType t, int player, bool constructing);
+    // 放置预览：成品外观但不烘焙地面投影（绿格已表示占地，避免双重阴影）
+    const Sprite& buildingGhost(BldType t, int player);
     // 建筑建造动画帧（mk 关键帧）：frame 0..mkFrames-1，无素材回退成品
     const Sprite& buildingMk(BldType t, int frame, int player);
     int bldMkFrames(BldType t) const;
@@ -102,7 +105,7 @@ private:
     // 单位身体精灵的公共收尾：地面投影烘焙 + 阵营色 remap + 锚点
     const Sprite& finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, int player);
     // 建筑精灵的公共收尾：地面投影烘焙 + 阵营色 remap + 锚点（groundY=内容画布地面y）
-    const Sprite& finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, int player);
+    const Sprite& finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, int player, bool withShadow = true);
 };
 
 extern SpriteBank g_sprites;
