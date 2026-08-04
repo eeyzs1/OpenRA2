@@ -102,7 +102,8 @@ void World::orderAttack(const std::vector<EID>& sel, EID target) {
         float d = distf(e.x, e.y, tx, ty);
         if (d <= ew.range) {
             e.state = UState::Attacking;
-            e.path.clear();
+            if (!unitHasTurret(e.utype))
+                e.path.clear();
         } else {
             if (ud.isAir()) {
                 e.state = UState::Chasing; // 战机直飞，无需寻路
@@ -325,50 +326,56 @@ void World::orderGarrison(const std::vector<EID>& sel, EID bldId) {
 }
 
 // 建筑撤出驻军：放到周围可走格（中立民房撤空后恢复中立）
+void World::evacuateGarrison(EID bldId) {
+    if (!valid(bldId) || !ents[bldId].isBuilding) return;
+    // 先拷贝驻军清单并清空（spawnUnit 可能触发 ents 扩容，引用会悬空）
+    std::vector<Ent::GarrisonedUnit> out;
+    int owner = -1;
+    BldType bt = BldType::COUNT;
+    float cx = 0, cy = 0;
+    {
+        Ent& b = ents[bldId];
+        if (b.garrison.empty()) return;
+        out = b.garrison;
+        b.garrison.clear();
+        owner = b.player;
+        bt = b.btype;
+        const BldDef& bd = bldDef(bt);
+        cx = b.x + bd.w / 2.0f; cy = b.y + bd.h / 2.0f;
+        if (bt == BldType::CivHouse) b.player = -1; // 中立民房撤空恢复中立
+    }
+    for (int r = 1; r <= 3 && !out.empty(); r++)
+        for (int dy = -r; dy <= r && !out.empty(); dy++)
+            for (int dx = -r; dx <= r && !out.empty(); dx++) {
+                if (dx == 0 && dy == 0) continue;
+                int nx = (int)cx + dx, ny = (int)cy + dy;
+                if (!map.passable(nx, ny) || map.at(nx, ny).terrain == Terrain::Water) continue;
+                if (bldBlocked(nx, ny) || unitAtCell(nx, ny) != INVALID_EID) continue;
+                Ent::GarrisonedUnit saved = out.back();
+                EID uid = spawnUnit(owner, saved.type, nx + 0.5f, ny + 0.5f);
+                Ent& restored = ents[uid];
+                restored.hp = std::clamp(saved.hp, 1, unitDef(saved.type).hp);
+                restored.kills = saved.kills;
+                restored.veterancyValue = saved.veterancyValue;
+                restored.vetRank = saved.vetRank;
+                out.pop_back();
+            }
+    // 放不下的驻军返还建筑（极少见：建筑被围死）
+    if (!out.empty() && valid(bldId)) {
+        Ent& b = ents[bldId];
+        if (b.player < 0) b.player = owner; // 恢复归属以容纳驻军
+        b.garrison = std::move(out);
+    }
+    recomputePower();
+}
+
 void World::orderUngarrison(const std::vector<EID>& sel) {
     for (EID id : sel) {
-        if (!valid(id) || !ents[id].isBuilding) continue;
-        // 先拷贝驻军清单并清空（spawnUnit 可能触发 ents 扩容，引用会悬空）
-        std::vector<Ent::GarrisonedUnit> out;
-        int owner = -1;
-        BldType bt = BldType::COUNT;
-        float cx = 0, cy = 0;
-        {
-            Ent& b = ents[id];
-            if (b.garrison.empty()) continue;
-            out = b.garrison;
-            b.garrison.clear();
-            owner = b.player;
-            bt = b.btype;
-            const BldDef& bd = bldDef(bt);
-            cx = b.x + bd.w / 2.0f; cy = b.y + bd.h / 2.0f;
-            if (bt == BldType::CivHouse) b.player = -1; // 中立民房撤空恢复中立
-        }
-        for (int r = 1; r <= 3 && !out.empty(); r++)
-            for (int dy = -r; dy <= r && !out.empty(); dy++)
-                for (int dx = -r; dx <= r && !out.empty(); dx++) {
-                    if (dx == 0 && dy == 0) continue;
-                    int nx = (int)cx + dx, ny = (int)cy + dy;
-                    if (!map.passable(nx, ny) || map.at(nx, ny).terrain == Terrain::Water) continue;
-                    if (bldBlocked(nx, ny) || unitAtCell(nx, ny) != INVALID_EID) continue;
-                    Ent::GarrisonedUnit saved = out.back();
-                    EID uid = spawnUnit(owner, saved.type, nx + 0.5f, ny + 0.5f);
-                    Ent& restored = ents[uid];
-                    restored.hp = std::clamp(saved.hp, 1, unitDef(saved.type).hp);
-                    restored.kills = saved.kills;
-                    restored.veterancyValue = saved.veterancyValue;
-                    restored.vetRank = saved.vetRank;
-                    out.pop_back();
-                }
-        // 放不下的驻军返还建筑（极少见：建筑被围死）
-        if (!out.empty() && valid(id)) {
-            Ent& b = ents[id];
-            if (b.player < 0) b.player = owner; // 恢复归属以容纳驻军
-            b.garrison = std::move(out);
-        } else if (owner >= 0) {
+        if (!valid(id) || !ents[id].isBuilding || ents[id].garrison.empty()) continue;
+        int owner = ents[id].player;
+        evacuateGarrison(id);
+        if (owner >= 0 && valid(id) && ents[id].garrison.empty())
             eva(owner, TR(S::EvaUnloadDone));
-        }
-        recomputePower();
     }
 }
 
@@ -473,6 +480,7 @@ void World::evaAll(const std::string& text) {
 void World::orderDeploy(EID id) {
     if (!valid(id)) return;
     Ent& e = ents[id];
+    if (e.mindBy != INVALID_EID) return; // mind-controlled: no pack/deploy
     // 奴隶矿车：部署后成为移动卸货点并自动产奴（YR 奴隶经济主路径）
     if (e.utype == UnitType::SlaveMiner && !e.isBuilding) {
         e.deployed = !e.deployed;

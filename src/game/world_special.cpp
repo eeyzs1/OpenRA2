@@ -225,6 +225,8 @@ void World::updateTimedBombs() {
         for (size_t i = 0; i < ents.size(); i++) {
             Ent& e = ents[i];
             if (!e.alive || e.invuln > 0) continue;
+            // 定时炸弹为地面爆炸：空中单位免疫（避免基洛夫空艇被自己的炸弹误伤）
+            if (!e.isBuilding && unitDef(e.utype).isAir() && e.state != UState::Landed) continue;
             float ex = e.x, ey = e.y;
             if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
             float d = distf(ex, ey, b.x, b.y);

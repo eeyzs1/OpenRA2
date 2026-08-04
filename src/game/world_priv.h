@@ -9,6 +9,11 @@ inline int maxHpFor(const World::Ent& e, const UnitDef& ud) {
     (void)e;
     return ud.hp;
 }
+// 弹头倍率后至少 1 点伤害（避免 SmallArms×Concrete=0.8 截成 0）
+inline int scaledWeaponDamage(int base, float mult) {
+    if (base <= 0 || mult <= 0.0f) return 0;
+    return std::max(1, (int)std::lround((double)base * (double)mult));
+}
 inline float weaponMultiplier(const WeaponDef& w, const World::Ent& target) {
     if (target.isBuilding)
         return weaponVsArmor(w, Armor::Concrete, false, true);

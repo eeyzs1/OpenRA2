@@ -82,9 +82,10 @@ void World::moveAlongPath(Ent& e, EID id) {
     float dist = std::sqrt(dx * dx + dy * dy);
     if (dist > 1e-5f) {
         e.dir = dirFromVec(dx, dy);
-        // 有炮塔：追击/攻击时炮塔由状态机对准目标；其余移动炮塔跟车头
-        if (!g_sprites.hasTurret(e.utype)
-            || (e.state != UState::Attacking && e.state != UState::Chasing))
+        // 有炮塔：追击/攻击/攻击移动时炮塔由状态机对准目标；其余移动炮塔跟车头
+        bool turAim = e.state == UState::Attacking || e.state == UState::Chasing
+            || (e.state == UState::AttackMoving && e.target != INVALID_EID);
+        if (!unitHasTurret(e.utype) || !turAim)
             e.turretDir = e.dir;
     }
     // 行走动画相位与移动同步（RA2 原作步态）

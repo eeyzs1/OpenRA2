@@ -435,11 +435,12 @@ void Game::drawEntities() {
             }
             if (selected || e.hp < ud.hp)
                 drawHealthBar(boxX, boxY - 6, std::max(28, boxW), (float)e.hp / ud.hp, selected);
-            // 军衔标志（RA2 原作：老兵 1 杠，精英 2 杠金色）
+            // 军衔标志（RA2：老兵银三角 / 精英金三角，画在单位右下角）
             if (e.vetRank > 0) {
                 Color rc = e.vetRank >= 2 ? Color{255, 200, 60, 255} : Color{220, 220, 220, 255};
                 for (int i = 0; i < e.vetRank; i++) {
-                    int vx = boxX + 2 + i * 9, vy = boxY + boxH + 2;
+                    int vx = boxX + boxW - 8 - (e.vetRank - 1 - i) * 9;
+                    int vy = boxY + boxH - 2;
                     DrawTriangle({(float)vx, (float)vy + 4}, {(float)vx + 3, (float)vy}, {(float)vx + 6, (float)vy + 4}, rc);
                 }
             }
@@ -461,14 +462,15 @@ void Game::drawEntities() {
             FogState fs = world.map.fogAt(localPlayer, (int)e.x, (int)e.y);
             if (e.player != localPlayer && fs == FOG_UNSEEN) continue;
             Vector2 p = bldScreenPos(e);
-            // Remapable=no（油田/医院等）：cid=-2 跳过 house remap
+            // 占领后阵营染色；中立科技保留原色（cid=-2）
             int cid;
-            if (e.btype == BldType::OilDerrick || e.btype == BldType::Hospital
-                || e.btype == BldType::TechAirport || e.btype == BldType::GapGenerator
-                || e.btype == BldType::PrismTower || e.btype == BldType::TeslaCoil)
+            if (e.player >= 0)
+                cid = world.players[e.player].colorId;
+            else if (e.btype == BldType::OilDerrick || e.btype == BldType::Hospital
+                     || e.btype == BldType::TechAirport)
                 cid = -2;
             else
-                cid = e.player >= 0 ? world.players[e.player].colorId : -1;
+                cid = -1;
             // 建造动画：mk 关键帧序列（逐帧起楼），播完显示成品
             const Sprite* sp;
             int mkf = g_sprites.bldMkFrames(e.btype);
@@ -481,6 +483,13 @@ void Game::drawEntities() {
             }
             const Sprite& s = *sp;
             Color tint = (e.player != localPlayer && fs == FOG_SEEN) ? Color{110, 110, 110, 255} : WHITE;
+            // 破损民房：焦黑+橙红燃烧感
+            if (e.btype == BldType::CivHouse && e.hp * 2 <= bldDef(e.btype).hp) {
+                bool flicker = ((world.tick / 4 + (int)it.id) % 2) != 0;
+                tint = flicker ? Color{200, 110, 70, 255} : Color{90, 70, 60, 255};
+                if (e.player != localPlayer && fs == FOG_SEEN)
+                    tint = Color{70, 55, 48, 255};
+            }
             DrawTexture(s.tex, (int)p.x - s.ox, (int)p.y - s.oy, tint);
             // ActiveAnim：油井/医院泵机与灯火循环（CAOILD_A / CAHOSP_A）
             if (e.constructAnim <= 0 && (e.btype == BldType::OilDerrick || e.btype == BldType::Hospital)) {
@@ -527,7 +536,7 @@ void Game::drawEntities() {
             }
             const BldDef& d = bldDef(e.btype);
             const bool bldSelected = ((int)it.id == selBuilding);
-            // 占地四角（等距菱形）与 bldScreenPos 南尖对齐；抬升用内容高度（去掉阴影垫）
+            // RA2 选中：贴地占地菱形黄色虚线框（与放置预览脚印一致），非立体笼
             auto isoCorner = [&](int tx, int ty, int ox, int oy) {
                 int px = 0, py = 0;
                 tileToScreen(tx, ty, px, py);
@@ -538,38 +547,33 @@ void Game::drawEntities() {
             Vector2 be = isoCorner(bx0 + d.w - 1, by0, TILE_W / 2, TILE_H / 2);   // 东
             Vector2 bs = isoCorner(bx0 + d.w - 1, by0 + d.h - 1, 0, TILE_H);      // 南 = bldScreenPos
             Vector2 bw = isoCorner(bx0, by0 + d.h - 1, -TILE_W / 2, TILE_H / 2);  // 西
-            // elev：内容高度（oy 含 +4 垫），按脚印规模夹紧，避免阴影垫把线框拉飞
-            int contentH = std::max(8, s.oy - 4);
-            int elev = std::clamp(contentH * 2 / 3, 12, 56);
-            if (d.w + d.h <= 2) elev = std::min(elev, 28); // 1x1 防御矮一些
-            Vector2 tn{bn.x, bn.y - (float)elev}, te{be.x, be.y - (float)elev};
-            Vector2 ts{bs.x, bs.y - (float)elev}, tw{bw.x, bw.y - (float)elev};
+            auto dashLine = [](Vector2 a, Vector2 b, Color c) {
+                float dx = b.x - a.x, dy = b.y - a.y;
+                float len = sqrtf(dx * dx + dy * dy);
+                if (len < 1.0f) return;
+                dx /= len; dy /= len;
+                const float dash = 5.0f, gap = 3.0f;
+                for (float t = 0; t < len; t += dash + gap) {
+                    float t1 = t, t2 = std::min(len, t + dash);
+                    DrawLineEx({a.x + dx * t1, a.y + dy * t1}, {a.x + dx * t2, a.y + dy * t2}, 1.5f, c);
+                }
+            };
             if (bldSelected) {
-                Color edge{40, 255, 70, 230};
-                Color edgeDim{30, 180, 55, 180};
-                // 底框
-                DrawLineEx(bn, be, 1.5f, edgeDim); DrawLineEx(be, bs, 1.5f, edge);
-                DrawLineEx(bs, bw, 1.5f, edge);    DrawLineEx(bw, bn, 1.5f, edgeDim);
-                // 顶框
-                DrawLineEx(tn, te, 1.5f, edge); DrawLineEx(te, ts, 1.5f, edge);
-                DrawLineEx(ts, tw, 1.5f, edge); DrawLineEx(tw, tn, 1.5f, edge);
-                // 立柱
-                DrawLineEx(bn, tn, 1.5f, edgeDim); DrawLineEx(be, te, 1.5f, edge);
-                DrawLineEx(bs, ts, 1.5f, edge);    DrawLineEx(bw, tw, 1.5f, edgeDim);
+                Color edge{255, 240, 60, 235}; // RA2 选中黄
+                dashLine(bn, be, edge); dashLine(be, bs, edge);
+                dashLine(bs, bw, edge); dashLine(bw, bn, edge);
             }
-            float midTopX = (tn.x + ts.x) * 0.5f;
-            float midTopY = std::min({tn.y, te.y, ts.y, tw.y});
+            // 血条锚在建筑贴图顶缘（与精灵一致，避免立体线框高度错位）
+            int barW = std::clamp((int)(distf(bw.x, bw.y, be.x, be.y) * 0.55f), 36, 96);
+            int barX = (int)p.x - barW / 2;
+            int barY = (int)p.y - s.oy + 2;
             if (bldSelected || e.hp < d.hp) {
-                // 血条锚在线框顶边中点（不再用 sprite.oy，避免部分建筑血条飞出/埋进贴图）
-                int barW = std::clamp((int)(distf(bw.x, bw.y, be.x, be.y) * 0.55f), 36, 96);
-                drawHealthBar((int)midTopX - barW / 2, (int)midTopY - 8, barW,
-                              (float)e.hp / std::max(1, d.hp), bldSelected);
+                drawHealthBar(barX, barY, barW, (float)e.hp / std::max(1, d.hp), bldSelected);
             }
             // 持续维修中：扳手闪烁（表示按 timer 逐格回血，非一次修满）
             if (e.repairing && e.player == localPlayer && (world.tick / 10) % 2) {
-                float wx = (bn.x + bs.x) * 0.5f, wy = midTopY - 18;
-                DrawRectangle((int)wx - 5, (int)wy, 10, 3, Color{255, 220, 80, 255});
-                DrawRectangle((int)wx - 2, (int)wy + 3, 4, 8, Color{255, 200, 60, 255});
+                DrawRectangle(barX + barW / 2 - 5, barY - 12, 10, 3, Color{255, 220, 80, 255});
+                DrawRectangle(barX + barW / 2 - 2, barY - 9, 4, 8, Color{255, 200, 60, 255});
             }
             // 集结点：生产建筑选中时画连线 + 旗杆/旗面（比三角更接近原作旗标）
             if ((int)it.id == selBuilding && isRallyBuilding(e.btype) && e.rallyX >= 0) {

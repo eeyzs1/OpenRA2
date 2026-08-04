@@ -69,7 +69,7 @@ private:
     bool cfgSharedVision = true;
     bool cfgShortGame = false;
     bool cfgSuperweapons = true;
-    bool cfgMcvRepacks = false;
+    bool cfgMcvRepacks = true; // 默认开启：建造厂可打包回 MCV（遭遇战亦可在设置关闭）
     int cfgGameMode = (int)SkirmishMode::Battle;
     int cfgVolume = 4;       // 音量档位 0..4（0/25/50/75/100%）
 

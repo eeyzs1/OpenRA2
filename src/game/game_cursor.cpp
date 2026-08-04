@@ -40,10 +40,13 @@ void Game::updateHoverCursor(int mx, int my) {
     EID eu = pickUnit(mx, my);
     EID eb = pickBuilding(mx, my);
 
-    // 无选单位：己方驻军建筑 → 部署光标（点一下撤出）
+    // 无选单位：己方驻军建筑 → 部署光标（点一下撤出）；建造厂 + MCV Repacks → 打包光标
     if (sel.empty()) {
         if (eb != INVALID_EID && world.ents[eb].player == localPlayer
             && !world.ents[eb].garrison.empty()) {
+            cursorKind = CursorKind::Deploy;
+        } else if (world.valid(selBuilding) && world.ents[selBuilding].player == localPlayer
+                   && world.ents[selBuilding].btype == BldType::ConYard && world.mcvRepacks) {
             cursorKind = CursorKind::Deploy;
         }
         return;
@@ -63,14 +66,11 @@ void Game::updateHoverCursor(int mx, int my) {
             hasDeployable = true;
     }
 
-    // 敌方 → 攻击（工程师对可占领建筑 → 进入）；中立可进驻建筑不当敌人
+    // 敌方 → 攻击（工程师对可占领建筑 → 进入）；中立/盟友不当敌人
     EID enemy = INVALID_EID;
-    if (eu != INVALID_EID && world.ents[eu].player != localPlayer) enemy = eu;
-    if (enemy == INVALID_EID && eb != INVALID_EID && world.ents[eb].player != localPlayer) {
-        const World::Ent& b = world.ents[eb];
-        bool neutGar = b.player < 0 && bldDef(b.btype).garrisonCap > 0 && garrisonDomain(b.btype) != 0;
-        if (!neutGar) enemy = eb;
-    }
+    if (eu != INVALID_EID && world.isEnemy(localPlayer, world.ents[eu].player)) enemy = eu;
+    if (enemy == INVALID_EID && eb != INVALID_EID && world.isEnemy(localPlayer, world.ents[eb].player))
+        enemy = eb;
     // 可进驻建筑（优先于攻击光标，避免中立民房显示攻击）
     if (eb != INVALID_EID && hasInf) {
         const World::Ent& b = world.ents[eb];
@@ -85,6 +85,22 @@ void Game::updateHoverCursor(int mx, int my) {
                 anyFit = true; break;
             }
             if (anyFit) { cursorKind = CursorKind::Enter; return; }
+        }
+    }
+    // 己方维修厂/机械商店/科技前哨：受损车辆 → 修理光标
+    if (eb != INVALID_EID && world.ents[eb].player == localPlayer) {
+        BldType bt = world.ents[eb].btype;
+        if (bt == BldType::ServiceDepot || bt == BldType::MachineShop || bt == BldType::TechOutpost) {
+            for (EID id : sel) {
+                if (!world.valid(id) || world.ents[id].isBuilding) continue;
+                const World::Ent& u = world.ents[id];
+                const UnitDef& ud = unitDef(u.utype);
+                if (ud.isInfantry() || ud.isAir() || ud.pathDomain() != 0 || ud.canHarvet()) continue;
+                if (u.hp < ud.hp || u.parasite != INVALID_EID) {
+                    cursorKind = CursorKind::Repair;
+                    return;
+                }
+            }
         }
     }
     if (enemy != INVALID_EID) {

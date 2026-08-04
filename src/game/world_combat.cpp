@@ -162,6 +162,12 @@ void World::damage(EID id, int dmg, int byPlayer, EID byEnt, int byGarrisonSlot)
     if (!e.isBuilding && e.crateArmorBoost > 0)
         dmg = std::max(1, (int)(dmg * 0.67f));
     e.hp -= dmg;
+    // 民房重伤：驻军撤出继续战斗，房子留下燃烧破损
+    if (e.isBuilding && e.btype == BldType::CivHouse && !e.garrison.empty()) {
+        const int maxHp = bldDef(e.btype).hp;
+        if (e.hp > 0 && e.hp * 2 <= maxHp)
+            evacuateGarrison(id);
+    }
     // 中立单位/建筑（player=-1）：无玩家状态，仅扣血与摧毁，跳过 EVA 与反击
     if (e.player < 0) {
         if (e.hp <= 0) { creditKill(byEnt, id, byGarrisonSlot); kill(id); }

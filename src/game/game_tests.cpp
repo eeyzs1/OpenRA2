@@ -250,12 +250,17 @@ int Game::smokeTest(int frames) {
                         }
                 bool navalOnlyOk = true, boardOk = true, unloadOk = true;
                 if (lx >= 0) {
-                    // 陆地靶子：鱼雷不得攻击（HP 不变）
+                    // 陆地靶子：鱼雷不得选为攻击目标（NavalOnly）
                     if (world.valid(sub)) {
                         EID landTank = world.spawnUnit(0, UnitType::Rhino, lx + 0.5f, ly + 0.5f);
-                        int ltHp0 = world.ents[landTank].hp;
-                        for (int i = 0; i < 200 && world.valid(landTank); i++) world.update();
-                        navalOnlyOk = world.valid(landTank) && world.ents[landTank].hp == ltHp0;
+                        world.ents[landTank].invuln = 1000; // 排除流弹干扰，只验索敌
+                        world.ents[sub].target = INVALID_EID;
+                        world.ents[sub].state = UState::Idle;
+                        for (int i = 0; i < 200 && world.valid(landTank); i++) {
+                            world.update();
+                            if (world.valid(sub) && world.ents[sub].target == landTank) navalOnlyOk = false;
+                        }
+                        navalOnlyOk = navalOnlyOk && unitDef(UnitType::Typhoon).weapon.navalOnly;
                         if (world.valid(landTank)) world.ents[landTank].alive = false; // 清理
                     }
                     // 运输装卸：两栖运输船在陆地格装载 2 名步兵后卸载
@@ -308,9 +313,21 @@ int Game::smokeTest(int frames) {
             bool tpOk = distf(world.ents[chr].x, world.ents[chr].y, bx + 4.5f, by + 0.5f) > 3.0f
                         && world.ents[chr].tpSick > 0;
             if (world.valid(chr)) world.ents[chr].alive = false; // 清理：避免干扰伪装/溅射
-            // 3) 幻影坦克：静止进入伪装（场内无敌军，不会开火解除）
-            EID mir = world.spawnUnit(1, UnitType::MirageTank, bx + 6.5f, by + 2.5f);
-            for (int i = 0; i < 120; i++) world.update();
+            // 3) 幻影坦克：静止进入伪装（无敌+清目标，避免挨打反击打断 Idle）
+            EID mir = world.spawnUnit(0, UnitType::MirageTank, bx + 6.5f, by + 2.5f);
+            world.ents[mir].invuln = 100000;
+            world.ents[mir].guard = false;
+            world.ents[mir].camoTick = 0;
+            for (int i = 0; i < 100; i++) {
+                if (world.valid(mir)) {
+                    World::Ent& m = world.ents[mir];
+                    m.state = UState::Idle;
+                    m.target = INVALID_EID;
+                    m.path.clear();
+                    m.wps.clear();
+                }
+                world.update();
+            }
             bool camoOk = world.valid(mir) && world.ents[mir].camouflaged;
             // 4) V3 溅射：命中点相邻目标一同掉血（清理幻影避免其击杀 t1 干扰；t1 只能死于 V3 导弹）
             if (world.valid(mir)) world.ents[mir].alive = false;
@@ -793,6 +810,23 @@ int Game::smokeTest(int frames) {
             }
             bool mcvPack = mcvN >= 1 && !stillConYard;
 
+            // 基洛夫空艇：自身炸弹为地面爆炸，不应误伤空中单位
+            World airDmg;
+            airDmg.init(32, 32, 91, 2, 0, {Faction::Soviet, Faction::Allies}, 0);
+            for (Cell& c : airDmg.map.cells)
+                if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
+            EID kirov = airDmg.spawnUnit(0, UnitType::Kirov, 10.5f, 10.5f);
+            EID ground = airDmg.spawnUnit(1, UnitType::GI, 10.5f, 10.5f);
+            int kirovHp0 = airDmg.ents[kirov].hp;
+            int groundHp0 = airDmg.ents[ground].hp;
+            World::TimedBomb bomb;
+            bomb.x = 10.5f; bomb.y = 10.5f; bomb.player = 0;
+            bomb.dmg = 300; bomb.radius = 2.0f; bomb.timer = 1; bomb.rockVehicles = true;
+            airDmg.timedBombs.push_back(bomb);
+            airDmg.update();
+            bool kirovSafeBomb = airDmg.valid(kirov) && airDmg.ents[kirov].hp == kirovHp0
+                              && (!airDmg.valid(ground) || airDmg.ents[ground].hp < groundHp0);
+
             bool rifleWarhead = unitDef(UnitType::GI).weapon.warhead == WeaponDef::Warhead::SmallArms
                              && unitDef(UnitType::Grizzly).weapon.warhead == WeaponDef::Warhead::AP;
             EID gat = mech.spawnUnit(1, UnitType::GatlingTank, drain.x + 5.5f, drain.y + 4.5f);
@@ -819,6 +853,26 @@ int Game::smokeTest(int frames) {
             for (int i = 0; i < 20 && mech.ents[prismChain].hp == chainHp; ++i) mech.update();
             bool prismRefraction = mech.valid(prismChain) && mech.ents[prismChain].hp < chainHp;
 
+            // 炮塔坦克攻击移动：射程内边走边打（车体沿路径，炮塔可独立朝向）
+            Vec2i drive = open(16, 6);
+            bool turretMoveFire = false;
+            if (drive.x >= 0) {
+                EID shooter = mech.spawnUnit(0, UnitType::Grizzly, drive.x + .5f, drive.y + 2.5f);
+                EID victim = mech.spawnUnit(1, UnitType::Conscript, drive.x + 5.5f, drive.y + 2.5f);
+                int vicHp = mech.ents[victim].hp;
+                float startX = mech.ents[shooter].x;
+                mech.ents[shooter].atkCd = 0;
+                mech.orderMove({shooter}, drive.x + 14.5f, drive.y + 2.5f, true);
+                for (int i = 0; i < 240 && mech.valid(shooter) && mech.valid(victim); ++i) {
+                    mech.update();
+                    const World::Ent& s = mech.ents[shooter];
+                    if (s.x > startX + 0.4f && mech.ents[victim].hp < vicHp) {
+                        turretMoveFire = true;
+                        break;
+                    }
+                }
+            }
+
             WeaponDef matrixWeapon;
             matrixWeapon.warhead = WeaponDef::Warhead::AP;
             bool armorMatrix = weaponVsArmor(matrixWeapon, Armor::Heavy, false, false)
@@ -837,9 +891,11 @@ int Game::smokeTest(int frames) {
             check(discSteal, "floating disc steals funds from an ore refinery");
             check(slaveEconomy, "yuri slave miner deploys and spawns slaves");
             check(mcvPack, "mcv repacks packs construction yard into an MCV");
+            check(kirovSafeBomb, "kirov bombs do not damage airborne units");
             check(rifleWarhead, "primary weapons use official warhead classes");
             check(gatlingStages, "gatling fire advances and decays through stages");
             check(ifvPassenger && prismRefraction, "IFV passenger weapons and prism refraction are active");
+            check(turretMoveFire, "turreted tanks fire while attack-moving");
             check(armorMatrix, "configurable warhead armor matrix preserves legacy fallback");
         }
     }

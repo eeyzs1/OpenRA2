@@ -11,6 +11,7 @@ namespace {
 // 二进制序列化助手：任何一步读写失败即标记 ok=false（调用方整体放弃）
 // v11 是当前写入格式；读取器保留 v6-v10。新增字段只允许追加到对应结构的既定位置，
 // 并必须由 schema 分支提供旧版默认值，避免“结构体内存快照”式隐式 ABI。
+constexpr char WORLD_SCHEMA_V15[8] = {'R','A','2','W','R','L','D','F'}; // 'F' = 15: autoHarvest + rockVehicles
 constexpr char WORLD_SCHEMA_V14[8] = {'R','A','2','W','R','L','D','E'}; // 'E' = 14：Player.defProd 防御队列
 constexpr char WORLD_SCHEMA_V13[8] = {'R','A','2','W','R','L','D','D'}; // 'D' = 13：ProdItem.held
 constexpr char WORLD_SCHEMA_V12[8] = {'R','A','2','W','R','L','D','C'}; // 'C' = 12：货舱保存生命/军衔 + 箱子增益
@@ -88,7 +89,7 @@ bool World::saveGame(FILE* f) const {
     for (const Ent& e : ents)
         if (e.path.size() > 4096 || e.wps.size() > 4096 || e.cargo.size() > 64
             || e.garrison.size() > 64 || e.mindTargets.size() > 64) return false;
-    s.wbuf(WORLD_SCHEMA_V14, sizeof(WORLD_SCHEMA_V14));
+    s.wbuf(WORLD_SCHEMA_V15, sizeof(WORLD_SCHEMA_V15));
     s.w(tick); s.w(numPlayers); s.w(rng.s);
     s.w(cratesEnabled); s.w(aiAlliance);
     uint8_t mode = (uint8_t)skirmishMode;
@@ -151,6 +152,7 @@ bool World::saveGame(FILE* f) const {
             s.w(e.fireAnim); s.w(e.constructAnim); s.w(e.deployAnim);
             s.w(st); s.w(e.atkCd); s.w(e.target); s.w(e.goalX); s.w(e.goalY);
             s.w(e.oreLoad); s.w(e.gemLoad); s.w(e.oreCell.x); s.w(e.oreCell.y); s.w(e.dockRefinery); s.w(e.digTimer);
+            s.w(e.autoHarvest);
             s.w(e.invuln);
             s.w(e.ammo); s.w(e.rearmTimer); s.w(e.airbase); s.w(e.orbitA);
             s.w(e.rallyX); s.w(e.rallyY); s.w(e.bldAnim); s.w(e.undeploy); s.w(e.guard); s.w(e.repairing);
@@ -221,7 +223,7 @@ bool World::saveGame(FILE* f) const {
     {
         uint32_t n = (uint32_t)timedBombs.size();
         s.w(n);
-        for (const TimedBomb& b : timedBombs) { s.w(b.x); s.w(b.y); s.w(b.timer); s.w(b.player); s.w(b.attachedTo); s.w(b.dmg); s.w(b.radius); }
+        for (const TimedBomb& b : timedBombs) { s.w(b.x); s.w(b.y); s.w(b.timer); s.w(b.player); s.w(b.attachedTo); s.w(b.dmg); s.w(b.radius); s.w(b.rockVehicles); }
     }
     {
         uint32_t n = (uint32_t)evaQueue.size();
@@ -235,6 +237,7 @@ bool World::loadGame(FILE* f) {
     Ser s{f};
     char magic[8];
     s.rbuf(magic, 8);
+    bool schema15 = s.ok && memcmp(magic, WORLD_SCHEMA_V15, 8) == 0;
     bool schema14 = s.ok && memcmp(magic, WORLD_SCHEMA_V14, 8) == 0;
     bool schema13 = s.ok && memcmp(magic, WORLD_SCHEMA_V13, 8) == 0;
     bool schema12 = s.ok && memcmp(magic, WORLD_SCHEMA_V12, 8) == 0;
@@ -244,14 +247,15 @@ bool World::loadGame(FILE* f) {
     bool schema8 = s.ok && memcmp(magic, "RA2WRLD8", 8) == 0;
     bool schema7 = s.ok && memcmp(magic, "RA2WRLD7", 8) == 0;
     bool schema6 = s.ok && memcmp(magic, "RA2WRLD6", 8) == 0;
-    if (!schema14 && !schema13 && !schema12 && !schema11 && !schema10 && !schema9 && !schema8 && !schema7 && !schema6) return false;
-    const bool schemaAtLeast7 = schema14 || schema13 || schema12 || schema11 || schema10 || schema9 || schema8 || schema7;
-    const bool schemaAtLeast8 = schema14 || schema13 || schema12 || schema11 || schema10 || schema9 || schema8;
-    const bool schemaAtLeast9 = schema14 || schema13 || schema12 || schema11 || schema10 || schema9;
-    const bool schemaAtLeast11 = schema14 || schema13 || schema12 || schema11;
-    const bool schemaAtLeast12 = schema14 || schema13 || schema12;
-    const bool schemaAtLeast13 = schema14 || schema13;
-    const bool schemaAtLeast14 = schema14;
+    if (!schema15 && !schema14 && !schema13 && !schema12 && !schema11 && !schema10 && !schema9 && !schema8 && !schema7 && !schema6) return false;
+    const bool schemaAtLeast7 = schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9 || schema8 || schema7;
+    const bool schemaAtLeast8 = schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9 || schema8;
+    const bool schemaAtLeast9 = schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9;
+    const bool schemaAtLeast11 = schema15 || schema14 || schema13 || schema12 || schema11;
+    const bool schemaAtLeast12 = schema15 || schema14 || schema13 || schema12;
+    const bool schemaAtLeast13 = schema15 || schema14 || schema13;
+    const bool schemaAtLeast14 = schema15 || schema14;
+    const bool schemaAtLeast15 = schema15;
     s.r(tick); s.r(numPlayers); s.r(rng.s);
     s.r(cratesEnabled); s.r(aiAlliance);
     if (!s.ok || numPlayers <= 0 || numPlayers > MAX_PLAYERS || rng.s == 0) return false;
@@ -364,6 +368,8 @@ bool World::loadGame(FILE* f) {
             if (st > (uint8_t)UState::Boarding) return false;
             s.r(e.atkCd); s.r(e.target); s.r(e.goalX); s.r(e.goalY);
             s.r(e.oreLoad); s.r(e.gemLoad); s.r(e.oreCell.x); s.r(e.oreCell.y); s.r(e.dockRefinery); s.r(e.digTimer);
+            if (schemaAtLeast15) s.r(e.autoHarvest);
+            else e.autoHarvest = true;
             s.r(e.invuln);
             s.r(e.ammo); s.r(e.rearmTimer); s.r(e.airbase); s.r(e.orbitA);
             s.r(e.rallyX); s.r(e.rallyY); s.r(e.bldAnim); s.r(e.undeploy); s.r(e.guard);
@@ -486,7 +492,10 @@ bool World::loadGame(FILE* f) {
         s.r(n);
         if (!s.ok || n > 1024) return false;
         timedBombs.assign(n, TimedBomb{});
-        for (TimedBomb& b : timedBombs) { s.r(b.x); s.r(b.y); s.r(b.timer); s.r(b.player); s.r(b.attachedTo); s.r(b.dmg); s.r(b.radius); }
+        for (TimedBomb& b : timedBombs) {
+            s.r(b.x); s.r(b.y); s.r(b.timer); s.r(b.player); s.r(b.attachedTo); s.r(b.dmg); s.r(b.radius);
+            if (schemaAtLeast15) s.r(b.rockVehicles); else b.rockVehicles = false;
+        }
     }
     {
         uint32_t n = 0;
@@ -729,7 +738,7 @@ uint32_t World::checksum() const {
         h.i32(e.walkFrame); h.i32(e.walkAnim); h.i32(e.fireAnim); h.i32(e.constructAnim); h.i32(e.deployAnim);
         h.u8((uint8_t)e.state); h.i32(e.atkCd); h.i32(e.target); h.fp(e.goalX); h.fp(e.goalY);
         h.i32(e.oreLoad); h.i32(e.gemLoad); h.i32(e.oreCell.x); h.i32(e.oreCell.y);
-        h.i32(e.dockRefinery); h.i32(e.digTimer); h.i32(e.invuln);
+        h.i32(e.dockRefinery); h.i32(e.digTimer); h.boolean(e.autoHarvest); h.i32(e.invuln);
         h.i32(e.ammo); h.i32(e.rearmTimer); h.i32(e.airbase); h.fp(e.orbitA);
         h.i32(e.rallyX); h.i32(e.rallyY); h.i32(e.bldAnim); h.i32(e.undeploy); h.boolean(e.guard);
         h.boolean(e.repairing);
@@ -774,7 +783,7 @@ uint32_t World::checksum() const {
     h.size(timedBombs.size());
     for (const TimedBomb& b : timedBombs) {
         h.fp(b.x); h.fp(b.y); h.i32(b.timer); h.i32(b.player); h.i32(b.attachedTo);
-        h.i32(b.dmg); h.fp(b.radius);
+        h.i32(b.dmg); h.fp(b.radius); h.boolean(b.rockVehicles);
     }
     return h.value;
 }

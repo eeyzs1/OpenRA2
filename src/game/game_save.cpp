@@ -201,7 +201,7 @@ int Game::statePersistenceTest() {
         }
         fclose(f);
     }
-    check(bytes.size() > 8 && memcmp(bytes.data(), "RA2WRLDE", 8) == 0,
+    check(bytes.size() > 8 && memcmp(bytes.data(), "RA2WRLDF", 8) == 0,
           "current schema is explicit v14");
     auto loadBytes = [](const std::vector<uint8_t>& data, World& out) {
         FILE* f = tmpfile();
@@ -266,6 +266,7 @@ int Game::statePersistenceTest() {
     check(differs([](World& w) { w.mcvRepacks = !w.mcvRepacks; }), "checksum covers MCV Repacks option");
     check(differs([](World& w) { w.rng.next(); }), "checksum covers full RNG state");
     check(differs([](World& w) { ++w.timedBombs[0].timer; }), "checksum covers timed simulation objects");
+    check(differs([](World& w) { w.ents[0].autoHarvest = !w.ents[0].autoHarvest; }), "checksum covers autoHarvest");
 
     TraceLog(failures == 0 ? LOG_INFO : LOG_ERROR, "STATE TEST SUMMARY: failures=%d", failures);
     return failures;

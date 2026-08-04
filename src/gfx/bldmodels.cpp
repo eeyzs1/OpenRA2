@@ -208,30 +208,30 @@ bool buildBldModel3D(BldType t, M3Builder& mb) {
             b.flag(1.1f, 0.5f, 19.8f);
             break;
         }
-        case BldType::TeslaReactor: { // 磁能反应堆（苏）：厂房 + 三绝缘支柱 + 发光磁球
-            b.slab(2, 2);
-            b.box(1.0f, 1.1f, 2.0f, 1.7f, 1.6f, 4.0f, S_WALL_D);      // 裙楼基座
-            b.box(1.0f, 1.1f, 6.0f, 1.5f, 1.4f, 9.0f, S_WALL);        // 主厂房
-            b.box(1.0f, 1.1f, 15.0f, 1.6f, 1.5f, 1.8f, S_ROOF);       // 檐口
-            b.parapet(1.0f, 1.1f, 16.8f, 1.5f, 1.4f, 1.2f, S_WALL_D); // 女儿墙
-            b.roofClutter(0.6f, 0.8f, 16.8f);                         // 屋顶设备
+        case BldType::TeslaReactor: { // 磁能反应堆（苏）：厂房 + 三绝缘支柱 + 发光磁球（占地 3×2）
+            b.slab(3, 2);
+            b.box(1.5f, 1.1f, 2.0f, 2.4f, 1.6f, 4.0f, S_WALL_D);      // 裙楼基座
+            b.box(1.5f, 1.1f, 6.0f, 2.2f, 1.4f, 9.0f, S_WALL);        // 主厂房
+            b.box(1.5f, 1.1f, 15.0f, 2.3f, 1.5f, 1.8f, S_ROOF);       // 檐口
+            b.parapet(1.5f, 1.1f, 16.8f, 2.2f, 1.4f, 1.2f, S_WALL_D); // 女儿墙
+            b.roofClutter(1.0f, 0.8f, 16.8f);                         // 屋顶设备
             // 南立面壁柱 + 窗带 + 大门
-            b.box(0.5f, 1.81f, 6.0f, 0.10f, 0.05f, 9.0f, S_WALL_D);
-            b.box(1.5f, 1.81f, 6.0f, 0.10f, 0.05f, 9.0f, S_WALL_D);
-            b.winRowX(0.75f, 1.82f, 9.0f, 2, 0.5f);
-            b.doorX(1.0f, 1.82f, 2.0f, 0.5f, 6.0f);
+            b.box(0.7f, 1.81f, 6.0f, 0.10f, 0.05f, 9.0f, S_WALL_D);
+            b.box(2.3f, 1.81f, 6.0f, 0.10f, 0.05f, 9.0f, S_WALL_D);
+            b.winRowX(1.0f, 1.82f, 9.0f, 3, 0.5f);
+            b.doorX(1.5f, 1.82f, 2.0f, 0.6f, 6.0f);
             // 东侧散热管（苏系重工业感）
-            b.cyl(1.92f, 0.7f, 2.0f, 0.09f, 13.0f, PIPE, SEG_LO);
-            b.cyl(1.92f, 1.5f, 2.0f, 0.09f, 13.0f, PIPE, SEG_LO);
+            b.cyl(2.85f, 0.7f, 2.0f, 0.09f, 13.0f, PIPE, SEG_LO);
+            b.cyl(2.85f, 1.5f, 2.0f, 0.09f, 13.0f, PIPE, SEG_LO);
             // 磁球塔：基座环 + 三绝缘支柱 + 发光磁球
-            b.cyl(1.0f, 1.1f, 16.8f, 0.34f, 2.0f, PIPE, SEG_HI);
+            b.cyl(1.5f, 1.1f, 16.8f, 0.34f, 2.0f, PIPE, SEG_HI);
             for (int i = 0; i < 3; i++) {
                 float a = i * 2.094f + 0.5f;
-                b.box(1.0f + cosf(a) * 0.22f, 1.1f + sinf(a) * 0.22f, 18.8f, 0.10f, 0.10f, 4.5f, Pal::GUN);
+                b.box(1.5f + cosf(a) * 0.22f, 1.1f + sinf(a) * 0.22f, 18.8f, 0.10f, 0.10f, 4.5f, Pal::GUN);
             }
-            b.ellip(1.0f, 1.1f, 25.5f, 0.32f, 0.32f, 5.5f, E_ORANGE);  // 磁球（发光）
-            b.ellip(1.0f, 1.1f, 25.5f, 0.17f, 0.17f, 7.5f, E_WHITE);   // 内芯亮核
-            b.flag(0.45f, 0.5f, 16.8f);
+            b.ellip(1.5f, 1.1f, 25.5f, 0.32f, 0.32f, 5.5f, E_ORANGE);  // 磁球（发光）
+            b.ellip(1.5f, 1.1f, 25.5f, 0.17f, 0.17f, 7.5f, E_WHITE);   // 内芯亮核
+            b.flag(0.55f, 0.5f, 16.8f);
             break;
         }
         case BldType::NuclearReactor: { // 核子反应堆：主厂房 + 安全壳高塔 + 警示灯
@@ -431,15 +431,15 @@ bool buildBldModel3D(BldType t, M3Builder& mb) {
             break;
         }
         // ---------- 高级经济 ----------
-        case BldType::OrePurifier: { // 矿石精炼器：厂房 + 双提纯塔 + 输矿管
-            b.slab(2, 2);
-            b.box(0.85f, 1.05f, 2.0f, 1.2f, 1.4f, 11.0f, A_WALL);
-            b.box(0.85f, 1.05f, 13.0f, 1.3f, 1.5f, 1.6f, A_ROOF);
-            b.cyl(1.6f, 0.6f, 2.0f, 0.24f, 18.0f, PIPE, 10);
-            b.cyl(1.6f, 1.3f, 2.0f, 0.24f, 15.0f, PIPE, 10);
-            b.box(1.6f, 0.95f, 12.0f, 0.10f, 0.8f, 1.0f, Pal::REMAP, M3FACE_ALL); // 管联色带
-            b.winRowX(0.5f, 1.76f, 8.0f, 3, 0.35f);
-            b.flag(0.4f, 0.5f, 14.6f);
+        case BldType::OrePurifier: { // 矿石精炼器：厂房 + 双提纯塔 + 输矿管（占地 3×3）
+            b.slab(3, 3);
+            b.box(1.2f, 1.6f, 2.0f, 1.8f, 2.0f, 11.0f, A_WALL);
+            b.box(1.2f, 1.6f, 13.0f, 1.9f, 2.1f, 1.6f, A_ROOF);
+            b.cyl(2.4f, 0.8f, 2.0f, 0.28f, 18.0f, PIPE, 10);
+            b.cyl(2.4f, 1.8f, 2.0f, 0.28f, 15.0f, PIPE, 10);
+            b.box(2.4f, 1.3f, 12.0f, 0.10f, 1.1f, 1.0f, Pal::REMAP, M3FACE_ALL); // 管联色带
+            b.winRowX(0.6f, 2.61f, 8.0f, 4, 0.4f);
+            b.flag(0.5f, 0.6f, 14.6f);
             break;
         }
         case BldType::IndustrialPlant: { // 工业工厂：锯齿顶厂房 + 双烟囱
@@ -455,17 +455,17 @@ bool buildBldModel3D(BldType t, M3Builder& mb) {
             break;
         }
         // ---------- 超武 ----------
-        case BldType::NukeSilo: { // 核弹井：圆形井盖 + 导弹尖 + 警示灯环
-            b.slab(2, 2);
-            b.cyl(1.0f, 1.0f, 2.0f, 0.75f, 3.0f, CONC, 14);
-            b.cyl(1.0f, 1.0f, 5.0f, 0.60f, 1.2f, Pal::GUN, 14);
-            b.cyl(1.0f, 1.0f, 6.2f, 0.16f, 6.0f, E_WHITE, 10);         // 弹体尖
-            b.cyl(1.0f, 1.0f, 12.2f, 0.10f, 2.0f, E_RED, 8, false, true);
+        case BldType::NukeSilo: { // 核弹井：圆形井盖 + 导弹尖 + 警示灯环（占地 3×3）
+            b.slab(3, 3);
+            b.cyl(1.5f, 1.5f, 2.0f, 0.95f, 3.0f, CONC, 14);
+            b.cyl(1.5f, 1.5f, 5.0f, 0.75f, 1.2f, Pal::GUN, 14);
+            b.cyl(1.5f, 1.5f, 6.2f, 0.18f, 6.0f, E_WHITE, 10);         // 弹体尖
+            b.cyl(1.5f, 1.5f, 12.2f, 0.12f, 2.0f, E_RED, 8, false, true);
             for (int i = 0; i < 4; i++) { // 警示灯
                 float a = i * 1.5708f;
-                b.box(1.0f + cosf(a) * 0.85f, 1.0f + sinf(a) * 0.85f, 4.0f, 0.08f, 0.08f, 1.6f, E_RED, 0, M3FACE_ALL);
+                b.box(1.5f + cosf(a) * 1.1f, 1.5f + sinf(a) * 1.1f, 4.0f, 0.08f, 0.08f, 1.6f, E_RED, 0, M3FACE_ALL);
             }
-            b.flag(0.35f, 0.5f, 5.0f);
+            b.flag(0.45f, 0.55f, 5.0f);
             break;
         }
         case BldType::WeatherDevice: { // 天气控制器：主控楼 + 三极水晶阵
@@ -482,30 +482,30 @@ bool buildBldModel3D(BldType t, M3Builder& mb) {
             b.flag(0.5f, 1.5f, 13.6f);
             break;
         }
-        case BldType::IronCurtain: { // 铁幕装置：门式拱架 + 赤红力场核
-            b.slab(2, 2);
-            b.box(0.5f, 1.0f, 2.0f, 0.5f, 1.2f, 18.0f, S_WALL_D);     // 双柱
-            b.box(1.5f, 1.0f, 2.0f, 0.5f, 1.2f, 18.0f, S_WALL_D);
-            b.box(1.0f, 1.0f, 20.0f, 1.6f, 1.3f, 3.0f, S_ROOF);       // 顶梁
-            b.box(1.0f, 1.0f, 23.0f, 0.5f, 0.5f, 1.2f, Pal::REMAP, M3FACE_ALL);
-            b.ellip(1.0f, 1.0f, 12.0f, 0.34f, 0.34f, 5.5f, E_RED);    // 力场核
-            b.ellip(1.0f, 1.0f, 12.0f, 0.17f, 0.17f, 7.0f, E_WHITE);  // 核内亮芯
-            b.doorX(1.0f, 1.61f, 2.0f, 0.5f, 5.0f);
+        case BldType::IronCurtain: { // 铁幕装置：门式拱架 + 赤红力场核（占地 3×3）
+            b.slab(3, 3);
+            b.box(0.7f, 1.5f, 2.0f, 0.55f, 1.8f, 18.0f, S_WALL_D);     // 双柱
+            b.box(2.3f, 1.5f, 2.0f, 0.55f, 1.8f, 18.0f, S_WALL_D);
+            b.box(1.5f, 1.5f, 20.0f, 2.2f, 1.9f, 3.0f, S_ROOF);       // 顶梁
+            b.box(1.5f, 1.5f, 23.0f, 0.55f, 0.55f, 1.2f, Pal::REMAP, M3FACE_ALL);
+            b.ellip(1.5f, 1.5f, 12.0f, 0.42f, 0.42f, 5.5f, E_RED);    // 力场核
+            b.ellip(1.5f, 1.5f, 12.0f, 0.20f, 0.20f, 7.0f, E_WHITE);  // 核内亮芯
+            b.doorX(1.5f, 2.41f, 2.0f, 0.7f, 5.0f);
             break;
         }
-        case BldType::ChronoSphere: { // 超时空传送仪：三支柱 + 时空球
-            b.slab(3, 2);
-            b.box(0.7f, 1.0f, 2.0f, 0.45f, 0.9f, 15.0f, A_WALL);
-            b.box(2.3f, 1.0f, 2.0f, 0.45f, 0.9f, 15.0f, A_WALL);
-            b.box(1.5f, 0.6f, 2.0f, 0.9f, 0.45f, 15.0f, A_WALL_D);
-            b.box(1.5f, 1.0f, 17.0f, 2.2f, 1.1f, 2.0f, A_ROOF);       // 顶环梁
-            b.ellip(1.5f, 1.0f, 11.0f, 0.34f, 0.34f, 6.5f, E_CYAN);   // 时空球
-            b.ellip(1.5f, 1.0f, 11.0f, 0.16f, 0.16f, 8.0f, E_WHITE);
-            b.flag(0.5f, 1.5f, 19.0f);
+        case BldType::ChronoSphere: { // 超时空传送仪：三支柱 + 时空球（占地 4×3）
+            b.slab(4, 3);
+            b.box(0.9f, 1.5f, 2.0f, 0.55f, 1.4f, 15.0f, A_WALL);
+            b.box(3.1f, 1.5f, 2.0f, 0.55f, 1.4f, 15.0f, A_WALL);
+            b.box(2.0f, 0.7f, 2.0f, 1.3f, 0.55f, 15.0f, A_WALL_D);
+            b.box(2.0f, 1.5f, 17.0f, 3.0f, 1.6f, 2.0f, A_ROOF);       // 顶环梁
+            b.ellip(2.0f, 1.5f, 11.0f, 0.45f, 0.45f, 6.5f, E_CYAN);   // 时空球
+            b.ellip(2.0f, 1.5f, 11.0f, 0.20f, 0.20f, 8.0f, E_WHITE);
+            b.flag(0.55f, 2.3f, 19.0f);
             break;
         }
         // ---------- 中立科技 ----------
-        case BldType::OilDerrick: { // 油井：井架塔 + 横担 + 储油罐
+        case BldType::OilDerrick: { // 油井：井架塔 + 横担 + 储油罐（占地 2×2）
             b.slab(2, 2);
             b.box(0.65f, 0.65f, 2.0f, 0.13f, 0.13f, 24.0f, PIPE);     // 井架四柱
             b.box(1.05f, 0.65f, 2.0f, 0.13f, 0.13f, 24.0f, PIPE);
@@ -514,13 +514,16 @@ bool buildBldModel3D(BldType t, M3Builder& mb) {
             b.box(0.85f, 0.85f, 11.0f, 0.55f, 0.55f, 1.0f, PIPE);      // 横担
             b.box(0.85f, 0.85f, 19.0f, 0.48f, 0.48f, 1.0f, PIPE);
             b.box(0.85f, 0.85f, 25.5f, 0.45f, 0.38f, 2.0f, Pal::GUN);  // 塔顶
+            b.box(0.85f, 0.85f, 26.8f, 0.55f, 0.55f, 0.8f, Pal::REMAP, M3FACE_ALL); // 阵营环（占领后变色）
             b.box(0.85f, 0.85f, 27.5f, 0.08f, 0.08f, 2.0f, E_RED, 0, M3FACE_ALL);
             b.cyl(1.6f, 1.5f, 2.0f, 0.36f, 7.0f, N_WALL_D, 14);        // 储油罐
+            b.box(1.6f, 1.5f, 8.5f, 0.38f, 0.38f, 0.6f, Pal::REMAP, M3FACE_ALL);
             break;
         }
-        case BldType::Hospital: { // 医院：白楼 + 红十字
+        case BldType::Hospital: { // 医院：白楼 + 红十字（占地 2×2，与模型一致）
             b.slab(2, 2);
             b.box(1.0f, 1.0f, 2.0f, 1.5f, 1.5f, 15.0f, Color{208, 210, 214, 255});
+            b.box(1.0f, 1.0f, 16.5f, 1.55f, 1.55f, 0.6f, Pal::REMAP, M3FACE_ALL); // 阵营沿
             b.box(1.0f, 1.0f, 17.0f, 1.6f, 1.6f, 1.8f, A_ROOF);
             b.winRowX(0.6f, 1.76f, 8.0f, 3, 0.4f);
             b.winRowX(0.6f, 1.76f, 12.0f, 3, 0.4f);
@@ -529,7 +532,7 @@ bool buildBldModel3D(BldType t, M3Builder& mb) {
             b.box(1.0f, 1.0f, 18.8f, 0.14f, 0.5f, 0.9f, E_RED, 0, M3FACE_ALL);
             break;
         }
-        case BldType::MachineShop: { // 机械商店：车库 + 排气塔
+        case BldType::MachineShop: { // 机械商店：车库 + 排气塔（占地 2×2）
             b.slab(2, 2);
             b.box(1.0f, 1.0f, 2.0f, 1.5f, 1.5f, 11.0f, N_WALL);
             b.box(1.0f, 1.0f, 13.0f, 1.6f, 1.6f, 1.8f, N_ROOF);
@@ -747,7 +750,7 @@ bool buildBldModel3D(BldType t, M3Builder& mb) {
             b.box(1.55f, 1.05f, 16.8f, 0.4f, 0.3f, 1.0f, E_ORANGE, 0, M3FACE_ALL); // 顶标识
             break;
         }
-        case BldType::TechOutpost: { // 科技前哨站（中立）：堡垒 + 四角堡 + 维修吊臂
+        case BldType::TechOutpost: { // 科技前哨站（中立）：堡垒 + 四角堡 + 维修吊臂（占地 3×2）
             b.slab(3, 2);
             b.box(1.2f, 1.0f, 2.0f, 1.6f, 1.4f, 10.0f, N_WALL);          // 主堡
             b.box(1.2f, 1.0f, 12.0f, 1.7f, 1.5f, 1.6f, N_ROOF);

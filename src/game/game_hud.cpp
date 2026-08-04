@@ -1428,7 +1428,10 @@ void Game::drawHUD() {
             const CmdBtn& b = btns[i];
             Rectangle r{(float)b.x, (float)by + 1, (float)b.w, (float)BOTTOM_BAR_H - 2};
             bool isTeam = (b.action == 0 || b.action == 1);
-            bool en = isTeam || hasSel;
+            bool canPackYard = world.valid(selBuilding) && world.ents[selBuilding].player == localPlayer
+                && world.ents[selBuilding].btype == BldType::ConYard && world.mcvRepacks;
+            bool canUngarrison = world.valid(selBuilding) && !world.ents[selBuilding].garrison.empty();
+            bool en = isTeam || hasSel || (b.action == 3 && (canUngarrison || canPackYard));
             bool hov = en && CheckCollisionPointRec(mp, r);
             bool press = hov && mDown(MOUSE_LEFT_BUTTON);
             bool active = (b.action == 5 && waypointLatch);
@@ -1478,7 +1481,7 @@ void Game::drawHUD() {
                 Color kc = en ? Color{200, 200, 190, 220} : Color{90, 90, 90, 140};
                 drawTextS(font, keyName(b.key), (int)(r.x + r.width - 10), (int)(r.y + r.height - 11), 9, kc);
             }
-            bool btnEn = en || (b.action == 3 && world.valid(selBuilding) && !world.ents[selBuilding].garrison.empty());
+            bool btnEn = en;
             bool btnHov = btnEn && CheckCollisionPointRec(mp, r);
             if (btnHov) {
                 tip = TR(b.name);

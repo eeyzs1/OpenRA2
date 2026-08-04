@@ -436,6 +436,10 @@ private:
     void checkDefeat();
     bool stepTo(Ent& e, EID id, int nx, int ny);
     bool boardGoal(const Ent& t, int domain, int& gx, int& gy) const; // 登船寻路目标：运输船不可走时取附近最近可走格
+    bool buildingApproachGoal(const Ent& b, int domain, int& gx, int& gy) const; // 靠近建筑占地外缘的最近可走格
+    bool nearBuildingFootprint(float x, float y, const Ent& b, float pad = 1.75f) const; // 是否贴近建筑占地（占领/停靠）
+    bool insideBuildingFootprint(float x, float y, const Ent& b) const; // 是否已走进建筑占地（工程师进入）
+    void evacuateGarrison(EID bldId); // 驻军撤出到周围（重伤民房 / 手动撤军共用）
     bool chronoJump(Ent& e, float gx, float gy); // 超时空传送：瞬移至目标点附近空格，按距离产生相位不适
     void placeNeutralTechs();                   // 地图生成后放置中立科技建筑（油井/医院/机械店/科技机场/秘密实验室/民房）
     bool loadHandMap(const char* path, int numPlayers, std::vector<Vec2i>& spawns,

@@ -99,13 +99,8 @@ int SkirmishAI::attackThreshold() const {
 }
 
 float SkirmishAI::resourceBonus() const {
-    switch (difficulty) {
-        case AIDiff::Easy:   return 1.0f;
-        case AIDiff::Normal: return 1.0f;
-        case AIDiff::Hard:   return 1.0f;
-        case AIDiff::Brutal: return 1.35f;  // Brutal 采矿多 35%
-        default: return 1.0f;
-    }
+    // 不再用思考间隔复利刷钱；Brutal 仅在采矿结算等处可接此倍率（当前不主动加钱）
+    return 1.0f;
 }
 
 // ===================== 主更新 =====================
@@ -123,12 +118,6 @@ void SkirmishAI::update(World& w) {
     // 思考间隔按难度分级
     if (++thinkTimer < thinkInterval()) return;
     thinkTimer = 0;
-
-    // Brutal 资源加成：每次思考 +2% 复利（模拟采矿加成而不改采矿逻辑）
-    if (resourceBonus() > 1.0f) {
-        int bonus = (int)(p.money * 0.02);
-        if (bonus > 0) p.money += bonus;
-    }
 
     // 基地车立即展开（仅当基地丢失时重建；扩张用 MCV 由 doExpansion 处理移动与部署）
     for (size_t i = 0; i < w.ents.size(); i++) {
@@ -215,38 +204,49 @@ bool SkirmishAI::tryPlaceBld(World& w, BldType t) {
         if (bx < 0) return false;
         return w.placeBuilding(player, t, bx, by);
     }
-    // 围绕建造厂螺旋搜索可放置位置
-    int ccx = -1, ccy = -1;
+    // 围绕建造厂螺旋搜索可放置位置（以建造厂中心为原点）
+    int ccx = -1, ccy = -1, yardW = 3, yardH = 3;
     for (const World::Ent& e : w.ents)
         if (e.alive && e.isBuilding && e.player == player && e.btype == BldType::ConYard) {
-            ccx = (int)e.x; ccy = (int)e.y; break;
+            const BldDef& yd = bldDef(e.btype);
+            yardW = yd.w; yardH = yd.h;
+            ccx = (int)e.x + yardW / 2;
+            ccy = (int)e.y + yardH / 2;
+            break;
         }
     if (ccx < 0) return false;
-    // 超武反制：敌方有超武充能中/就绪时，建筑分散放置（跳过紧贴已有建筑的位置）
-    bool enemySW = false;
-    for (int i = 0; i < w.numPlayers; i++) {
-        if (i == player || w.players[i].defeated) continue;
-        if (!w.isEnemy(player, i)) continue;
-        for (int s = 0; s < (int)SWType::COUNT; s++)
-            if (w.players[i].swReady[s] || w.players[i].swCharge[s] > 0) { enemySW = true; break; }
-        if (enemySW) break;
-    }
-    int startR = enemySW ? 3 : 1; // 超武威胁时从更远处开始放置
-    for (int r = startR; r <= 14; r++)
+    // 占地外缘间距：至少空 1 格，避免贴边视觉重叠（围墙除外）
+    auto tooClose = [&](int bx, int by) {
+        if (t == BldType::Wall) return false;
+        const int gap = 1;
+        for (const World::Ent& e : w.ents) {
+            if (!e.alive || !e.isBuilding || e.player != player) continue;
+            if (e.btype == BldType::Wall) continue;
+            const BldDef& ed = bldDef(e.btype);
+            int sepX = std::max(0, std::max(bx - ((int)e.x + ed.w), (int)e.x - (bx + d.w)));
+            int sepY = std::max(0, std::max(by - ((int)e.y + ed.h), (int)e.y - (by + d.h)));
+            if (std::max(sepX, sepY) < gap) return true;
+        }
+        return false;
+    };
+    // 从建造厂外缘开始螺旋，避免塞进紧贴西北角
+    int startR = std::max(2, (std::max(yardW, yardH) + 1) / 2);
+    for (int r = startR; r <= 18; r++)
         for (int dy = -r; dy <= r; dy++)
             for (int dx = -r; dx <= r; dx++) {
                 if (std::max(abs(dx), abs(dy)) != r) continue;
-                int bx = ccx + dx, by = ccy + dy;
+                int bx = ccx + dx - d.w / 2, by = ccy + dy - d.h / 2;
                 if (!w.canPlace(t, bx, by, player)) continue;
-                if (enemySW) {
-                    // 检查是否紧贴已有建筑（间距 <2 格则跳过，保持分散）
-                    bool tooClose = false;
-                    for (const World::Ent& e : w.ents) {
-                        if (!e.alive || !e.isBuilding || e.player != player) continue;
-                        if (std::max(abs((int)e.x - bx), abs((int)e.y - by)) < 2) { tooClose = true; break; }
-                    }
-                    if (tooClose) continue;
-                }
+                if (tooClose(bx, by)) continue;
+                return w.placeBuilding(player, t, bx, by);
+            }
+    // 回退：间距放宽仍放不下时允许贴边（保证能落成）
+    for (int r = 1; r <= 18; r++)
+        for (int dy = -r; dy <= r; dy++)
+            for (int dx = -r; dx <= r; dx++) {
+                if (std::max(abs(dx), abs(dy)) != r) continue;
+                int bx = ccx + dx - d.w / 2, by = ccy + dy - d.h / 2;
+                if (!w.canPlace(t, bx, by, player)) continue;
                 return w.placeBuilding(player, t, bx, by);
             }
     return false;
@@ -647,6 +647,8 @@ void SkirmishAI::doAttack(World& w) {
         if (!e.alive || !w.isEnemy(player, e.player)) continue;
         float ex = e.x, ey = e.y;
         if (e.isBuilding) { ex += 1.5f; ey += 1.5f; }
+        int fx = (int)ex, fy = (int)ey;
+        if (w.map.fogAt(player, fx, fy) == FOG_UNSEEN) continue; // no omniscience
         float d = distf((float)ac.x, (float)ac.y, ex, ey);
         if (d < bd) { bd = d; targetB = (int)i; }
     }

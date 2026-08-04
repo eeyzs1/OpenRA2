@@ -1071,17 +1071,7 @@ PixBuf SpriteBank::baseUnitTurret(UnitType t, int dir) {
 }
 
 bool SpriteBank::hasTurret(UnitType t) const {
-    t = spriteAliasUnit(t);
-    switch (t) {
-        case UnitType::Grizzly: case UnitType::Rhino: case UnitType::Type99:
-        case UnitType::Apocalypse: case UnitType::PrismTank: case UnitType::TeslaTank:
-        case UnitType::IFV: case UnitType::FlakTrack: case UnitType::MirageTank:
-        case UnitType::RobotTank:
-        case UnitType::LasherTank: case UnitType::GatlingTank:
-        case UnitType::Magnetron: case UnitType::MasterMind:
-            return true;
-        default: return false;
-    }
+    return unitHasTurret(spriteAliasUnit(t));
 }
 
 // ---------------- 建筑 ----------------

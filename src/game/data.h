@@ -280,6 +280,9 @@ struct BldDef {
 const UnitDef& unitDef(UnitType t);
 const BldDef& bldDef(BldType t);
 
+// 独立炮塔（车体朝移动方向、炮塔朝目标）：模拟层边走边打用，勿依赖 gfx
+bool unitHasTurret(UnitType t);
+
 // ===================== 外部规则加载（素材外置化） =====================
 // 启动时读取 assets/rules/rules.ini，逐项覆盖内置数值；文件/键缺失保持内置默认。
 // INI 节格式：[Unit.Grizzly] [Bld.ConYard] [SW.Nuke] [DeployWeapon.GI]，键见 assets/README.txt。
@@ -297,7 +300,7 @@ struct GameRules {
     float veteranArmorBonus[3] = {1.0f, 0.8f, 0.6f};  // 承伤倍率
     float veteranSpeedBonus[3] = {1.0f, 1.2f, 1.4f};  // 移速倍率
     float veteranRofBonus[3] = {1.0f, 0.8f, 0.6f};    // ROF 间隔倍率
-    int veteranSelfHeal[3] = {0, 1, 2};                // 每次自愈量
+    int veteranSelfHeal[3] = {0, 0, 2};                // 每次自愈量（仅精英/三级）
     float veteranRatio = 3.0f;                         // 每级所需摧毁价值 / 自身价值
     int bioReactorPowerPerOccupant = 100;
     float grinderRefund = 1.0f;

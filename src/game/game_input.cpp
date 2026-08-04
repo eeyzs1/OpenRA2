@@ -41,26 +41,48 @@ EID Game::pickUnit(int mx, int my) const {
 
 EID Game::pickBuilding(int mx, int my) const {
     float vx = (float)mx / camZoom, vy = (float)my / camZoom;
-    for (int i = (int)world.ents.size() - 1; i >= 0; i--) {
+    float wx, wy;
+    screenToWorld(mx, my, wx, wy);
+    int tx, ty;
+    screenToTile(wx, wy, tx, ty);
+
+    EID best = INVALID_EID;
+    float bestScore = 1e30f;
+    for (size_t i = 0; i < world.ents.size(); i++) {
         const World::Ent& e = world.ents[i];
         if (!e.alive || !e.isBuilding) continue;
         if (e.player != localPlayer && world.map.fogAt(localPlayer, (int)e.x, (int)e.y) != FOG_VISIBLE) continue;
-        Vector2 p = bldScreenPos(e);
+        const BldDef& d = bldDef(e.btype);
+        int bx = (int)e.x, by = (int)e.y;
+        bool footHit = (tx >= bx && tx < bx + d.w && ty >= by && ty < by + d.h);
+
+        // 占领后用阵营色；中立科技保留原色（cid=-2 跳过 remap）
         int cid;
-        if (e.btype == BldType::OilDerrick || e.btype == BldType::Hospital
-            || e.btype == BldType::TechAirport || e.btype == BldType::GapGenerator
-            || e.btype == BldType::PrismTower || e.btype == BldType::TeslaCoil)
+        if (e.player >= 0)
+            cid = world.players[e.player].colorId;
+        else if (e.btype == BldType::OilDerrick || e.btype == BldType::Hospital
+                 || e.btype == BldType::TechAirport)
             cid = -2;
         else
-            cid = e.player >= 0 ? world.players[e.player].colorId : -1;
+            cid = -1;
+        Vector2 p = bldScreenPos(e);
         const Sprite& s = g_sprites.building(e.btype, cid, false);
-        // 点选用内容区（去掉 finishBldSprite 的 6,4 / +14,+10 阴影垫），与线框占地更一致
         float x0 = p.x - s.ox + 6, y0 = p.y - s.oy + 4;
         float x1 = x0 + (float)(s.tex.width - 14), y1 = y0 + (float)(s.tex.height - 10);
-        if (vx >= x0 && vx <= x1 && vy >= y0 && vy <= y1)
-            return (int)i;
+        bool sprHit = (vx >= x0 && vx <= x1 && vy >= y0 && vy <= y1);
+        if (!footHit && !sprHit) continue;
+
+        // 占地命中优先；同条件下选更小占地，再比距占地中心屏幕距离
+        float area = (float)(std::max(1, d.w) * std::max(1, d.h));
+        float scx = (x0 + x1) * 0.5f, scy = (y0 + y1) * 0.5f;
+        float dist = distf(scx, scy, vx, vy);
+        float score = area * 80.0f + dist + (footHit ? 0.0f : 400.0f);
+        if (score < bestScore) {
+            bestScore = score;
+            best = (int)i;
+        }
     }
-    return INVALID_EID;
+    return best;
 }
 
 void Game::doSelect(int mx, int my, bool additive) {
@@ -100,6 +122,16 @@ void Game::cmdDeploySel() {
         message(TR(S::MsgUngarrison));
         return;
     }
+    // MCV Repacks：选中建造厂 → 打包回基地车
+    if (sel.empty() && world.valid(selBuilding) && world.ents[selBuilding].isBuilding
+        && world.ents[selBuilding].player == localPlayer
+        && world.ents[selBuilding].btype == BldType::ConYard && world.mcvRepacks) {
+        World::Cmd c; c.type = World::Cmd::Deploy; c.ids.push_back(selBuilding);
+        issueCmd(c);
+        selBuilding = INVALID_EID;
+        message(TR(S::MsgDeployed));
+        return;
+    }
     for (EID id : sel) {
         if (!world.valid(id) || world.ents[id].utype != UnitType::MCV) continue;
         if (!world.canDeployMcv(id)) {
@@ -136,12 +168,10 @@ void Game::issueSmartOrder(int mx, int my) {
     EID eu = pickUnit(mx, my);
     EID eb = pickBuilding(mx, my);
     EID enemy = INVALID_EID;
-    if (eu != INVALID_EID && world.ents[eu].player != localPlayer) enemy = eu;
+    if (eu != INVALID_EID && world.isEnemy(localPlayer, world.ents[eu].player)) enemy = eu;
     // 中立可进驻建筑不当「敌人」（优先进驻；见下方 Garrison）
-    if (enemy == INVALID_EID && eb != INVALID_EID && world.ents[eb].player != localPlayer) {
-        const World::Ent& b = world.ents[eb];
-        bool neutGar = b.player < 0 && bldDef(b.btype).garrisonCap > 0 && garrisonDomain(b.btype) != 0;
-        if (!neutGar) enemy = eb;
+    if (enemy == INVALID_EID && eb != INVALID_EID && world.isEnemy(localPlayer, world.ents[eb].player)) {
+        enemy = eb;
     }
 
     bool hasEngineer = false, hasHarvester = false;
@@ -175,13 +205,18 @@ void Game::issueSmartOrder(int mx, int my) {
                 return;
             }
         }
-        // 己方维修厂：受损/被寄生车辆右键 → 开往维修
-        if (b.btype == BldType::ServiceDepot && b.player == localPlayer) {
+        // 己方维修厂 / 已占领机械商店 / 科技前哨：受损/被寄生车辆右键 → 开往维修
+        if (b.player == localPlayer
+            && (b.btype == BldType::ServiceDepot || b.btype == BldType::MachineShop
+                || b.btype == BldType::TechOutpost)) {
             std::vector<EID> veh;
             for (EID id : sel) {
                 if (!world.valid(id) || world.ents[id].isBuilding) continue;
                 const UnitDef& ud = unitDef(world.ents[id].utype);
-                if (!ud.isInfantry() && !ud.isAir() && ud.pathDomain() == 0 && !ud.canHarvet()) veh.push_back(id);
+                if (!ud.isInfantry() && !ud.isAir() && ud.pathDomain() == 0 && !ud.canHarvet()) {
+                    const World::Ent& u = world.ents[id];
+                    if (u.hp < ud.hp || u.parasite != INVALID_EID) veh.push_back(id);
+                }
             }
             if (!veh.empty()) {
                 World::Cmd c; c.type = World::Cmd::Service; c.ids = veh; c.a = eb;
@@ -351,8 +386,15 @@ void Game::handleInput() {
                         World::Cmd c; c.type = World::Cmd::SellBuilding; c.ids.push_back(b);
                         issueCmd(c);
                         message(TR(S::MsgSold));
+                    } else if (world.mcvRepacks) {
+                        // 建造厂不可出售；开启 MCV Repacks 时出售光标改为打包回基地车
+                        World::Cmd c; c.type = World::Cmd::Deploy; c.ids.push_back(b);
+                        issueCmd(c);
+                        if (selBuilding == b) selBuilding = INVALID_EID;
+                        message(TR(S::MsgDeployed));
+                    } else {
+                        message(TR(S::MsgConYardNoSell));
                     }
-                    else message(TR(S::MsgConYardNoSell));
                 } else {
                     const BldDef& bd = bldDef(world.ents[b].btype);
                     // 持续维修开关：只要受损即可切换（费用在 tick 中按 RepairPercent 扣除）
@@ -566,13 +608,19 @@ void Game::handleInput() {
     // 快速存档 / 快速读档（联机禁用：lockstep 下存读档无法同步）
     if (!netGame && ka(KA_QuickSave)) message(saveGameFile(QUICKSAVE_PATH) ? TR(S::MsgSaved) : TR(S::MsgSaveFail));
     if (!netGame && ka(KA_QuickLoad)) message(loadGameFile(QUICKSAVE_PATH) ? TR(S::MsgLoaded) : TR(S::MsgLoadFail));
-    // 出售选中建筑（默认 Del）
-    if (ka(KA_Sell) && world.valid(selBuilding) && world.ents[selBuilding].player == localPlayer
-        && world.ents[selBuilding].btype != BldType::ConYard) {
-        World::Cmd c; c.type = World::Cmd::SellBuilding; c.ids.push_back(selBuilding);
-        issueCmd(c);
-        selBuilding = INVALID_EID;
-        message(TR(S::MsgSold));
+    // 出售选中建筑（默认 Del）；建造厂在 MCV Repacks 开启时改为打包
+    if (ka(KA_Sell) && world.valid(selBuilding) && world.ents[selBuilding].player == localPlayer) {
+        if (world.ents[selBuilding].btype != BldType::ConYard) {
+            World::Cmd c; c.type = World::Cmd::SellBuilding; c.ids.push_back(selBuilding);
+            issueCmd(c);
+            selBuilding = INVALID_EID;
+            message(TR(S::MsgSold));
+        } else if (world.mcvRepacks) {
+            World::Cmd c; c.type = World::Cmd::Deploy; c.ids.push_back(selBuilding);
+            issueCmd(c);
+            selBuilding = INVALID_EID;
+            message(TR(S::MsgDeployed));
+        }
     }
     if (ka(KA_ViewBase)) {
         for (auto& e : world.ents)

@@ -39,17 +39,31 @@ void World::updateBuilding(Ent& e, EID id) {
             // 医院：全体己方步兵持续回血
             for (Ent& o : ents)
                 if (o.alive && !o.isBuilding && o.player == e.player && unitDef(o.utype).isInfantry())
-                    o.hp = std::min(unitDef(o.utype).hp, o.hp + 3);
+                    o.hp = std::min(maxHpFor(o, unitDef(o.utype)), o.hp + 3);
         } else if (e.btype == BldType::MachineShop && e.bldAnim % 60 == 0) {
             // 机械商店：全体己方车辆/舰船持续维修
             for (Ent& o : ents)
                 if (o.alive && !o.isBuilding && o.player == e.player && !unitDef(o.utype).isInfantry())
-                    o.hp = std::min(unitDef(o.utype).hp, o.hp + 4);
+                    o.hp = std::min(maxHpFor(o, unitDef(o.utype)), o.hp + 4);
         } else if (e.btype == BldType::TechOutpost && e.bldAnim % 60 == 0) {
             // 科技前哨站：全体己方单位持续维修+回血（医院+机械商店合体）
             for (Ent& o : ents)
                 if (o.alive && !o.isBuilding && o.player == e.player)
-                    o.hp = std::min(unitDef(o.utype).hp, o.hp + 3);
+                    o.hp = std::min(maxHpFor(o, unitDef(o.utype)), o.hp + 3);
+        }
+    }
+    // 破损民房：半血以下冒烟燃烧
+    if (e.btype == BldType::CivHouse && e.hp * 2 <= bldDef(e.btype).hp && tick % 18 == (uint64_t)(id % 18)) {
+        Effect sm;
+        sm.kind = 1;
+        sm.x = e.x + bldDef(e.btype).w * 0.5f + (rng.unit() - 0.5f) * 0.8f;
+        sm.y = e.y + bldDef(e.btype).h * 0.5f + (rng.unit() - 0.5f) * 0.8f;
+        sm.maxAge = 36;
+        effects.push_back(sm);
+        if (tick % 36 == (uint64_t)(id % 36)) {
+            Effect flame; flame.kind = 0; // 小爆炸火光
+            flame.x = sm.x; flame.y = sm.y; flame.maxAge = 10;
+            effects.push_back(flame);
         }
     }
     // 磁暴线圈：附近磁暴步兵为其充电（RA2 原作：充电后伤害+50%，低电仍可开火）
@@ -113,7 +127,7 @@ void World::updateBuilding(Ent& e, EID id) {
                 float tx = t.x, ty = t.y;
                 if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
                 float mult = weaponMultiplier(bd.weapon, t);
-                int dmg = (int)(bd.weapon.damage * mult * (1.0f + 0.75f * sup));
+                int dmg = scaledWeaponDamage(bd.weapon.damage, mult * (1.0f + 0.75f * sup));
                 damage(e.target, dmg, e.player, id);
                 // 主光束 + 各支援塔汇聚光束
                 Effect ef; ef.kind = 3; ef.x = cx; ef.y = cy; ef.x2 = tx; ef.y2 = ty; ef.maxAge = 12;

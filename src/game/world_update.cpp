@@ -112,7 +112,10 @@ void World::update() {
             float speed = rate * std::min(2.5f, 1.0f + 0.5f * std::max(0, fac - 1));
             int totalCost = pr.totalCost;
             int totalTicks = std::max(1, (int)ceilf(u.buildTime / speed));
-            int need = std::min(totalCost - pr.paid, (int)ceilf((float)totalCost / totalTicks));
+            int remTicks = std::max(1, totalTicks - pr.progress);
+            int need = (remTicks <= 1) ? (totalCost - pr.paid)
+                                       : (totalCost - pr.paid) / remTicks;
+            if (need < 0) need = 0;
             if (p.money < need) continue; // 资金不足暂停（RA2：缺钱停产，不允许负值）
             p.money -= need;
             pr.paid += need;
@@ -140,7 +143,10 @@ void World::update() {
                     && b.drainedBy != INVALID_EID) { yardDrained = true; break; }
             if (yardDrained) return;
             int totalTicks = std::max(1, (int)ceilf(d.buildTime / rate));
-            int need = std::min(pr.totalCost - pr.paid, (int)ceilf((float)pr.totalCost / totalTicks));
+            int remTicks = std::max(1, totalTicks - pr.progress);
+            int need = (remTicks <= 1) ? (pr.totalCost - pr.paid)
+                                       : (pr.totalCost - pr.paid) / remTicks;
+            if (need < 0) need = 0;
             if (p.money >= need) {
                 p.money -= need;
                 pr.paid += need;
@@ -212,8 +218,7 @@ void World::update() {
                 for (size_t i = 0; i < ents.size(); i++) {
                     Ent& o = ents[i];
                     if (!o.alive || (int)i == pr.target) continue;
-                    if (o.player == pr.player) continue; // 不误伤己方
-                    // 溅射同样尊重防空/对地射界
+                    // 溅射同样尊重防空/对地射界（RA2：溅射可伤己方）
                     bool oAir = !o.isBuilding && unitDef(o.utype).isAir() && o.state != UState::Landed;
                     if (oAir && !pr.w.antiAir) continue;
                     if (!oAir && !pr.w.antiGround) continue;
@@ -491,7 +496,7 @@ void World::updateUnit(Ent& e, EID id) {
             else {
                 e.state = UState::Attacking;
                 e.turretDir = dirFromVec(tx - e.x, ty - e.y);
-                if (!g_sprites.hasTurret(e.utype)) e.dir = e.turretDir;
+                if (!unitHasTurret(e.utype)) e.dir = e.turretDir;
                 if (e.atkCd <= 0) { fireWeapon(e, id, e.target); e.atkCd = cw.cooldown; }
             }
         } else {
@@ -592,8 +597,26 @@ void World::updateUnit(Ent& e, EID id) {
         case UState::AttackMoving: {
             const WeaponDef ew = effWeapon(e);
             if (e.state == UState::AttackMoving && ew.damage > 0) {
-                EID en = findNearestEnemy(e.player, e.x, e.y, (float)(ew.range + 1), true, &ew, e.utype);
-                if (en != INVALID_EID) { e.target = en; e.state = UState::Chasing; break; }
+                // 有炮塔：边走边打；无炮塔：进入追击停下开火
+                if (unitHasTurret(e.utype)) {
+                    EID en = findNearestEnemy(e.player, e.x, e.y, (float)ew.range, true, &ew, e.utype);
+                    if (en != INVALID_EID) {
+                        e.target = en;
+                        const Ent& t = ents[en];
+                        float tx = t.x, ty = t.y;
+                        if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
+                        int wantTur = dirFromVec(tx - e.x, ty - e.y);
+                        if (e.turretDir != wantTur)
+                            e.turretDir = rotStepDir(e.turretDir, wantTur);
+                        if (rotDistDir(e.turretDir, wantTur) <= 1 && e.atkCd <= 0) {
+                            fireWeapon(e, id, en);
+                            e.atkCd = ew.cooldown;
+                        }
+                    }
+                } else {
+                    EID en = findNearestEnemy(e.player, e.x, e.y, (float)(ew.range + 1), true, &ew, e.utype);
+                    if (en != INVALID_EID) { e.target = en; e.state = UState::Chasing; break; }
+                }
             }
             moveAlongPath(e, id);
             if (e.pathIdx >= (int)e.path.size()) {
@@ -617,6 +640,21 @@ void World::updateUnit(Ent& e, EID id) {
             // C4 爆破手攻击建筑需贴脸（2.5 格），而非武器射程
             float effR = (ud.hasC4() && t.isBuilding) ? 2.5f : (float)ew.range;
             if (d <= effR) {
+                bool hasTur = unitHasTurret(e.utype);
+                if (hasTur) {
+                    int wantTur = dirFromVec(tx - e.x, ty - e.y);
+                    if (e.turretDir != wantTur)
+                        e.turretDir = rotStepDir(e.turretDir, wantTur);
+                    if (rotDistDir(e.turretDir, wantTur) <= 1 && e.atkCd <= 0) {
+                        fireWeapon(e, id, e.target);
+                        e.atkCd = ew.cooldown;
+                    }
+                    if (!e.path.empty() && e.pathIdx < (int)e.path.size()
+                        && d > std::min(2.0f, effR * 0.5f)) {
+                        moveAlongPath(e, id);
+                        break;
+                    }
+                }
                 e.path.clear();
                 e.state = UState::Attacking;
             } else {
@@ -636,7 +674,7 @@ void World::updateUnit(Ent& e, EID id) {
                 }
                 moveAlongPath(e, id);
                 // 追击中：车体朝移动方向，炮塔朝目标
-                if (g_sprites.hasTurret(e.utype)) {
+                if (unitHasTurret(e.utype)) {
                     int wantTur = dirFromVec(tx - e.x, ty - e.y);
                     if (e.turretDir != wantTur)
                         e.turretDir = rotStepDir(e.turretDir, wantTur);
@@ -789,12 +827,15 @@ void World::updateUnit(Ent& e, EID id) {
             }
             // C4 爆破手不对建筑开枪：等待下次爆破冷却（RA2 原作：谭雅/海豹对建筑仅用 C4）
             if (ud.hasC4() && t.isBuilding) break;
+            // 有炮塔且仍有路径：边走边打（车体沿路径，炮塔对敌）
+            bool hasTur = unitHasTurret(e.utype);
+            if (hasTur && !e.path.empty() && e.pathIdx < (int)e.path.size())
+                moveAlongPath(e, id);
             // 面向目标：有炮塔则仅转炮塔（车体保持移动朝向）；无炮塔转车体
             int wantDir = dirFromVec(tx - e.x, ty - e.y);
             {
                 int turPace = 1; // 炮塔：每 tick 最多转 45°
                 int hullPace = ud.isInfantry() ? 1 : (ud.isNaval() ? 3 : 2);
-                bool hasTur = g_sprites.hasTurret(e.utype);
                 if (hasTur) {
                     if (e.turretDir != wantDir && (tick % turPace) == 0)
                         e.turretDir = rotStepDir(e.turretDir, wantDir);
@@ -953,6 +994,7 @@ void World::updateAircraft(Ent& e, EID id) {
                 if (en != INVALID_EID) { e.target = en; e.state = UState::Chasing; break; }
             }
             if (flyToward(e, e.goalX, e.goalY) || distf(e.x, e.y, e.goalX, e.goalY) < 0.4f) {
+                if (e.state == UState::AttackMoving) e.guard = true; // 攻击移动到达后警戒索敌
                 e.state = UState::Circling; // 到达后待命（空艇悬停 / 战机盘旋）
             }
             break;
@@ -1056,7 +1098,7 @@ void World::updateAircraft(Ent& e, EID id) {
                 e.orbitA += 0.10f;
                 flyToward(e, e.goalX + cosf(e.orbitA) * 1.5f, e.goalY + sinf(e.orbitA) * 1.5f);
             }
-            if (ud.weapon.damage > 0 && (ud.ammo == 0 || e.ammo > 0)) {
+            if (e.guard && ud.weapon.damage > 0 && (ud.ammo == 0 || e.ammo > 0)) {
                 EID en = findNearestEnemy(e.player, e.x, e.y, (float)(ud.weapon.range + 3), true, &ud.weapon, e.utype);
                 if (en != INVALID_EID) { e.target = en; e.state = UState::Chasing; }
             }
