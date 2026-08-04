@@ -82,8 +82,29 @@ void World::updateBuilding(Ent& e, EID id) {
             effects.push_back(arc);
         }
     }
+    // 心灵控制塔：维护多控列表；低电释放全部（官方容量 3）
+    if (e.btype == BldType::PsychicTower) {
+        e.mindTargets.erase(std::remove_if(e.mindTargets.begin(), e.mindTargets.end(),
+            [&](EID t) { return !valid(t) || ents[t].mindBy != id; }), e.mindTargets.end());
+        if (e.player >= 0 && players[e.player].lowPower()) {
+            for (EID tid : e.mindTargets) {
+                if (!valid(tid)) continue;
+                Ent& t = ents[tid];
+                if (t.mindBy == id && !t.permaControlled) {
+                    t.player = t.origPlayer;
+                    t.mindBy = INVALID_EID;
+                    t.origPlayer = -1;
+                    t.state = UState::Idle; t.target = INVALID_EID; t.path.clear();
+                }
+            }
+            e.mindTargets.clear();
+            e.mindTarget = INVALID_EID;
+        }
+    }
     bool bldCanFire = bd.weapon.damage > 0 && e.player >= 0 && e.drainedBy == INVALID_EID
         && (!players[e.player].lowPower() || (e.btype == BldType::TeslaCoil && e.teslaCharge > 0));
+    // 心灵塔满控后无火力
+    if (e.btype == BldType::PsychicTower && e.mindTargets.size() >= 3) bldCanFire = false;
     if (bldCanFire) {
         float cx = e.x + bd.w / 2.0f, cy = e.y + bd.h / 2.0f;
         auto bldTargetOk = [&](EID tid) {
@@ -101,12 +122,17 @@ void World::updateBuilding(Ent& e, EID id) {
             if (e.target == INVALID_EID) e.target = findNearestEnemy(e.player, cx, cy, (float)bd.weapon.range, true, &bd.weapon);
         }
         if (valid(e.target) && e.atkCd <= 0) {
-            // 心灵控制塔：直接心灵控制目标（不发射弹道，与尤里步兵同机制）
+            // 心灵控制塔：多槽心控，硬顶 3（对齐 MasterMind 前三稳定槽，无过载）
             if (e.btype == BldType::PsychicTower) {
                 Ent& t = ents[e.target];
                 if (!t.isBuilding && !psychicImmune(t.utype) && !t.permaControlled && t.mindBy == INVALID_EID
-                    && t.player >= 0 && isEnemy(e.player, t.player)) {
-                    mindControlTake(e, id, e.target);
+                    && t.player >= 0 && isEnemy(e.player, t.player) && e.mindTargets.size() < 3) {
+                    Ent& controlled = ents[e.target];
+                    controlled.origPlayer = controlled.player;
+                    controlled.player = e.player;
+                    controlled.mindBy = id;
+                    controlled.state = UState::Idle; controlled.target = INVALID_EID; controlled.path.clear();
+                    e.mindTargets.push_back(e.target);
                     Effect ef; ef.kind = 2; ef.x = t.x; ef.y = t.y; ef.x2 = cx; ef.y2 = cy; ef.maxAge = 15;
                     effects.push_back(ef);
                     g_sfx.playAt(Sfx::Tesla, cx, cy);

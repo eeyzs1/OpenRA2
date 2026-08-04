@@ -6,6 +6,7 @@
 #include "sfx/sound.h"
 #include <ctime>
 #include <algorithm>
+#include <vector>
 
 void drawTextM(Font f, const char* s, int x, int y, int size, Color c) {
     DrawTextEx(f, s, {(float)x, (float)y}, (float)size, 1, c);
@@ -187,42 +188,48 @@ void Game::drawMissionSelect() {
     int cx = SCREEN_W / 2;
     Vector2 m = mousePos();
 
-    // 阵营页签（32 关 = 中国/盟军/苏军/尤里 各 8 关，单页 2x4 网格避免超出屏幕）
-    static int campTab = 0; // 0 中国 1 盟军 2 苏军 3 尤里（与任务表分段一致）
+    // 页签：融合四阵营 + 官方原型轨
+    static int campTab = 0; // 0-3 融合阵营 4 官方
     const auto& tbl = missionTable();
     const int perCamp = 8;
     const Faction campFac[4] = {Faction::China, Faction::Allies, Faction::Soviet, Faction::Yuri};
-    int tabW = 130, tabH = 40, tabGap = 10;
-    int tabsX = cx - (4 * tabW + 3 * tabGap) / 2, tabsY = 108;
-    for (int t = 0; t < 4; t++) {
+    int tabW = 108, tabH = 40, tabGap = 8;
+    int tabsX = cx - (5 * tabW + 4 * tabGap) / 2, tabsY = 108;
+    for (int t = 0; t < 5; t++) {
         Rectangle r{(float)(tabsX + t * (tabW + tabGap)), (float)tabsY, (float)tabW, (float)tabH};
         bool sel = campTab == t;
         bool hover = CheckCollisionPointRec(m, r);
-        // 金属凸起标签：选中金色调，未选中冷钢灰
         Color top = sel ? Color{92, 76, 40, 255} : (hover ? Color{60, 64, 72, 255} : Color{40, 42, 48, 255});
         Color bot = sel ? Color{52, 42, 22, 255} : (hover ? Color{36, 38, 44, 255} : Color{22, 24, 28, 255});
         DrawRectangleGradientV((int)r.x, (int)r.y, (int)r.width, (int)r.height, top, bot);
         guiBevel(r, false);
         DrawRectangleLinesEx(r, 1, sel ? GUI_GOLD_HI : (hover ? GUI_GOLD : Color{80, 76, 56, 255}));
-        const char* fn = factName(campFac[t]);
-        drawTextS(font, fn, (int)r.x + tabW / 2 - textW(font, fn, 19) / 2, (int)r.y + 10, 19,
+        const char* fn = t < 4 ? factName(campFac[t]) : (g_lang ? "Official" : "官方");
+        drawTextS(font, fn, (int)r.x + tabW / 2 - textW(font, fn, 17) / 2, (int)r.y + 11, 17,
                   sel ? Color{255, 226, 130, 255} : Color{190, 194, 200, 255});
         if (hover && mPressed(MOUSE_LEFT_BUTTON)) { g_sfx.play(Sfx::Click, 0.6f); campTab = t; }
     }
 
-    // 任务卡片（4 列网格）：名称 + 简报 + 目标
+    // 任务卡片：融合轨按阵营分段；官方轨筛选 Track=1
     const int cols = 4;
     int cardW = 320, cardH = 168, gapX = 24, gapY = 20;
     int totalW = cols * cardW + (cols - 1) * gapX;
     int x0 = cx - totalW / 2, y0 = 180;
-    int begin = campTab * perCamp, end = std::min(begin + perCamp, (int)tbl.size());
-    for (int i = begin; i < end; i++) {
+    std::vector<int> indices;
+    if (campTab < 4) {
+        int begin = campTab * perCamp, end = std::min(begin + perCamp, (int)tbl.size());
+        for (int i = begin; i < end; i++)
+            if (tbl[i].track == 0) indices.push_back(i);
+    } else {
+        for (int i = 0; i < (int)tbl.size(); i++)
+            if (tbl[i].track == 1) indices.push_back(i);
+    }
+    for (int j = 0; j < (int)indices.size(); j++) {
+        int i = indices[j];
         const MissionDef& md = tbl[i];
-        int j = i - begin;
         int gx = x0 + (j % cols) * (cardW + gapX), gy = y0 + (j / cols) * (cardH + gapY);
         Rectangle r{(float)gx, (float)gy, (float)cardW, (float)cardH};
         bool hover = CheckCollisionPointRec(m, r);
-        // 金属卡片：冷钢灰渐变 + 棱台 + 金线（悬停加亮）
         Color top = hover ? Color{48, 52, 60, 255} : Color{32, 34, 40, 255};
         Color bot = hover ? Color{30, 32, 38, 255} : Color{20, 22, 26, 255};
         DrawRectangleGradientV((int)r.x, (int)r.y, (int)r.width, (int)r.height, top, bot);

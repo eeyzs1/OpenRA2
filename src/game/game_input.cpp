@@ -174,10 +174,11 @@ void Game::issueSmartOrder(int mx, int my) {
         enemy = eb;
     }
 
-    bool hasEngineer = false, hasHarvester = false;
+    bool hasEngineer = false, hasHarvester = false, hasSpy = false;
     for (EID id : sel) {
         if (!world.valid(id)) continue;
         if (world.ents[id].utype == UnitType::Engineer) hasEngineer = true;
+        if (world.ents[id].utype == UnitType::Spy) hasSpy = true;
         if (unitDef(world.ents[id].utype).canHarvet()) hasHarvester = true;
     }
 
@@ -202,6 +203,26 @@ void Game::issueSmartOrder(int mx, int my) {
                 World::Cmd c; c.type = World::Cmd::Garrison; c.ids = fit; c.a = eb;
                 issueCmd(c);
                 message(TR(S::MsgGarrison));
+                return;
+            }
+        }
+        // 工程师占领：敌方或中立可占领建筑（油井/机场等 player=-1 原先被 isEnemy 挡掉）
+        if (hasEngineer && bd.capturable && b.player != localPlayer
+            && (b.player < 0 || world.isEnemy(localPlayer, b.player))) {
+            std::vector<EID> engs;
+            for (EID id : sel) if (world.valid(id) && world.ents[id].utype == UnitType::Engineer) engs.push_back(id);
+            World::Cmd c; c.type = World::Cmd::Capture; c.ids = engs; c.a = eb;
+            issueCmd(c);
+            message(TR(S::MsgEngCapture));
+            return;
+        }
+        // 间谍渗透敌方建筑
+        if (hasSpy && b.player >= 0 && world.isEnemy(localPlayer, b.player)) {
+            std::vector<EID> spies;
+            for (EID id : sel) if (world.valid(id) && world.ents[id].utype == UnitType::Spy) spies.push_back(id);
+            if (!spies.empty()) {
+                World::Cmd c; c.type = World::Cmd::Attack; c.ids = spies; c.a = eb;
+                issueCmd(c);
                 return;
             }
         }

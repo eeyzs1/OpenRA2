@@ -14,7 +14,9 @@ assets/music/*.wav
 # RA2 原版游戏文件：版权素材+超大文件（RA2.MIX 269MB 等），仅作本地素材提取源，绝不入库
 tools/ra2pack/game/
 tools/ra2pack/full-pack.7z
+tools/ra2pack/dl/
 __pycache__/
+launch_log.txt
 # Agent/playtest scratch (screenshots, dumps, probes)
 tools/_scratch/**
 !tools/_scratch/README.txt

@@ -144,6 +144,10 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"伞兵已空降", "Paratroopers dropped"},
     {"秘密实验室：解锁%s特色科技", "Secret Lab: %s special tech unlocked"},
     {"科技机场：伞兵支援开始充能", "Tech Airport: paradrop support charging"},
+    {"侦察机", "Spy Plane"},
+    {"选择侦察机航线目标（右键取消）", "Select spy plane target (right-click to cancel)"},
+    {"心灵揭示", "Psychic Reveal"},
+    {"选择心灵揭示中心（右键取消）", "Select psychic reveal center (right-click to cancel)"},
     // EVA 播报
     {"警告：侦测到敌方%s", "Warning: enemy %s detected"},
     {"卸载完成", "Unload complete"},
@@ -274,6 +278,7 @@ static const char* kSKey[(int)S::COUNT] = {
     "MsgSaved", "MsgSaveFail", "MsgLoaded", "MsgLoadFail", "MsgRallySet", "MsgSWLaunchedFmt", "MsgSelectTargetSW",
     "MsgGarrison", "MsgUngarrison", "MsgService", "MsgWaypointOn", "MsgWaypointOff",
     "Paradrop", "MsgParadropTarget", "EvaParadropDrop", "EvaSecretLabFmt", "EvaAirportCaptured",
+    "SpyPlane", "MsgSpyPlaneTarget", "PsychicReveal", "MsgPsychicRevealTarget",
     "EvaDetectEnemySWFmt", "EvaUnloadDone", "EvaUnloadFail", "EvaNukeLaunched", "EvaStormComing", "EvaChronoStart",
     "EvaSWReadyFmt", "EvaUnitLost", "EvaBldCapturedFmt", "EvaCapturedFmt", "EvaEngRepairedFmt",
     "EvaBaseAttack", "EvaHarvAttack", "EvaBldDestroyedFmt", "EvaPromoteVetFmt", "EvaPromoteEliteFmt",
@@ -332,6 +337,7 @@ static const char* UNIT_EN[(int)UnitType::COUNT] = {
     "Magnetron", "Master Mind", "Floating Disc", "Boomer",
     "Boris", "Siege Chopper", "Chaos Drone",
     "Slave", "Slave Miner",
+    "Yuri Prime", "Chrono Ivan",
 };
 
 static const char* BLD_EN[(int)BldType::COUNT] = {
@@ -354,12 +360,12 @@ static const char* BLD_EN[(int)BldType::COUNT] = {
     "Battle Bunker", "Tank Bunker",
     "Tech Airport", "Secret Lab", "Civilian House",
     "Bio Reactor", "Gatling Cannon", "Grinder", "Genetic Mutator", "Psychic Dominator",
-    "Psychic Tower", "Tech Power Plant", "Tech Outpost",
+    "Psychic Tower", "Robot Control Center", "Tech Power Plant", "Tech Outpost",
 };
 
 static const char* SW_EN[(int)SWType::COUNT] = {
     "Nuclear Missile", "Lightning Storm", "Iron Curtain", "Chrono Shift",
-    "Genetic Mutator", "Psychic Dominator",
+    "Genetic Mutator", "Psychic Dominator", "Force Shield",
 };
 
 static const char* FACTION_EN[4] = {"Allies", "Soviet", "China", "Yuri"};

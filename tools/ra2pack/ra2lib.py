@@ -67,7 +67,10 @@ def name_db() -> dict:
                       "isolun.mix", "isogen.mix", "neutral.mix", "audio.mix", "sounds.mix",
                       "speech.mix", "taunts.mix", "sidec01.mix", "sidec02.mix", "sidenc01.mix",
                       "sidenc02.mix", "sno.mix", "tem.mix", "urb.mix", "load.mix", "rules.ini",
-                      "art.ini", "unittem.pal", "unitsno.pal", "uniturb.pal", "cameo.pal"]:
+                      "art.ini", "unittem.pal", "unitsno.pal", "uniturb.pal", "cameo.pal",
+                      # Yuri's Revenge top/nested mixes (drop RA2MD.MIX / LANGMD.MIX into game/)
+                      "ra2md.mix", "langmd.mix", "expandmd01.mix", "localmd.mix", "conqmd.mix",
+                      "genmd.mix", "cameomd.mix", "isogenmd.mix", "audiomd.mix"]:
             _NAME_DB.setdefault(name_hash(extra), extra)
     return _NAME_DB
 

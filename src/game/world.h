@@ -313,6 +313,8 @@ public:
     void orderUngarrison(const std::vector<EID>& sel);            // 建筑撤出驻军（U）
     void orderRadDeploy(const std::vector<EID>& sel); // 辐射工兵：部署/收起辐射区（D）
     void orderParadrop(int player, float x, float y);  // 伞兵空投（美国空指部/科技机场）
+    void orderSpyPlane(int player, float x, float y);  // YR 侦察机揭雾
+    void orderPsychicReveal(int player, float x, float y); // YR 心灵揭示揭雾
     void orderService(const std::vector<EID>& sel, EID depotId); // 车辆开往维修厂（维修+摘除寄生）
 
     // ---- P8 联机：玩家命令抽象（lockstep 同步的最小单元） ----
@@ -379,6 +381,9 @@ public:
     static constexpr int PARADROP_TIME = 30 * 60 * 4;
     // 伞兵来源：美国空指部 或 已占领的科技机场
     bool hasParadropSource(int player) const;
+    // YR 支援：苏/中雷达→侦察机；尤里心灵传感器→心灵揭示（与伞兵共用充能字段）
+    bool hasSpyPlaneSource(int player) const;
+    bool hasPsychicRevealSource(int player) const;
 
     // 查询
     bool hasBld(int player, BldType t) const;

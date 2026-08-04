@@ -44,7 +44,7 @@ void World::fireWeapon(Ent& e, EID id, EID targetId) {
     if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
 
     // 疯狂伊文：攻击 = 在目标上安放定时炸弹（5 秒后爆炸，RA2 原作设定）
-    if (!e.isBuilding && e.utype == UnitType::CrazyIvan) {
+    if (!e.isBuilding && (e.utype == UnitType::CrazyIvan || e.utype == UnitType::ChronoIvan)) {
         TimedBomb b;
         b.x = tx; b.y = ty; b.timer = 30 * 5; b.player = e.player; b.attachedTo = targetId;
         timedBombs.push_back(b);
@@ -56,8 +56,8 @@ void World::fireWeapon(Ent& e, EID id, EID targetId) {
     }
     // 心灵波：控制效果在攻击状态机（mindControlTake）结算；对无效目标（建筑等）不发弹
     if (!e.isBuilding && unitDef(e.utype).isPsychic()) return;
-    // 台风潜艇开火后暴露 3 秒（可被反潜单位索敌）
-    if (!e.isBuilding && e.utype == UnitType::Typhoon) e.subReveal = 90;
+    // 台风/雷鸣潜艇开火后暴露 3 秒（可被反潜单位索敌）
+    if (!e.isBuilding && (e.utype == UnitType::Typhoon || e.utype == UnitType::Boomer)) e.subReveal = 90;
     const char* ps = w.projSprite;
     // 幻影坦克开火解除伪装
     if (!e.isBuilding && e.utype == UnitType::MirageTank) { e.camouflaged = false; e.camoTick = 0; }

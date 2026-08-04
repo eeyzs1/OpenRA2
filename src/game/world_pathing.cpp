@@ -102,7 +102,9 @@ void World::moveAlongPath(Ent& e, EID id) {
         e.x = tx; e.y = ty;
         e.pathIdx++;
         e.moveTick = 0;
-        if (e.camouflaged) { e.camouflaged = false; e.camoTick = 0; } // 幻影移动解除伪装
+        if (e.camouflaged && e.utype == UnitType::MirageTank) {
+            e.camouflaged = false; e.camoTick = 0; // 幻影移动解除伪装（间谍伪装不因移动解除）
+        }
         pickupCrates(e); // 驶入补给箱：拾取
     } else {
         e.x += (dx / dist) * step;

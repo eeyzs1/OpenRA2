@@ -611,7 +611,12 @@ void World::applyCmd(int player, const Cmd& c) {
         case Cmd::Garrison:    orderGarrison(own, c.a); break;
         case Cmd::Ungarrison:  orderUngarrison(own); break;
         case Cmd::RadDeploy:   orderRadDeploy(own); break;
-        case Cmd::Paradrop:    orderParadrop(player, c.x, c.y); break;
+        case Cmd::Paradrop:
+            // 优先级与 HUD/EVA 一致：伞兵 > 侦察机 > 心灵揭示（共用充能槽）
+            if (hasParadropSource(player)) orderParadrop(player, c.x, c.y);
+            else if (hasSpyPlaneSource(player)) orderSpyPlane(player, c.x, c.y);
+            else orderPsychicReveal(player, c.x, c.y);
+            break;
         case Cmd::Service:     orderService(own, c.a); break;
         case Cmd::StartUnitProd:
             if (c.a >= 0 && c.a < (int)UnitType::COUNT) startUnitProd(player, (UnitType)c.a);

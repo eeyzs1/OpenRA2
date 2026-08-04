@@ -641,6 +641,7 @@ static bool trigCondByName(const char* s, TrigCond& out) {
     if (!strcmp(s, "PlayerAllDead")) { out = TrigCond::PlayerAllDead; return true; }
     if (!strcmp(s, "UnitInRect")) { out = TrigCond::UnitInRect; return true; }
     if (!strcmp(s, "MoneyBelow")) { out = TrigCond::MoneyBelow; return true; }
+    if (!strcmp(s, "UnitLost")) { out = TrigCond::UnitLost; return true; }
     if (!strcmp(s, "Script")) { out = TrigCond::Script; return true; }
     return false;
 }
@@ -708,6 +709,7 @@ static bool loadMissionFile(const char* path, MissionDef& md) {
     md.objectiveTick = Ini::toInt(g->get("ObjectiveTick"), 0);
     if ((v = g->get("MapFile"))) md.mapFile = v;
     md.noStartForce = Ini::toBool(g->get("NoStartForce"), false);
+    md.track = Ini::toInt(g->get("Track"), 0); // 0=融合 1=官方原型
     for (const Ini::Section& sec : ini.sections) {
         if (sec.name.rfind("Wave.", 0) == 0) {
             MissionWave w{};
@@ -781,6 +783,7 @@ static const char* trigCondKey(TrigCond c) {
         case TrigCond::PlayerAllDead: return "PlayerAllDead";
         case TrigCond::UnitInRect: return "UnitInRect";
         case TrigCond::MoneyBelow: return "MoneyBelow";
+        case TrigCond::UnitLost: return "UnitLost";
         case TrigCond::Script: return "Script";
     }
     return "?";

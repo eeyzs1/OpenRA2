@@ -36,6 +36,7 @@ enum class S : int {
     MsgSaved, MsgSaveFail, MsgLoaded, MsgLoadFail, MsgRallySet, MsgSWLaunchedFmt, MsgSelectTargetSW,
     MsgGarrison, MsgUngarrison, MsgService, MsgWaypointOn, MsgWaypointOff,
     Paradrop, MsgParadropTarget, EvaParadropDrop, EvaSecretLabFmt, EvaAirportCaptured,
+    SpyPlane, MsgSpyPlaneTarget, PsychicReveal, MsgPsychicRevealTarget,
     // EVA 播报（world.cpp）
     EvaDetectEnemySWFmt, EvaUnloadDone, EvaUnloadFail, EvaNukeLaunched, EvaStormComing, EvaChronoStart,
     EvaSWReadyFmt, EvaUnitLost, EvaBldCapturedFmt, EvaCapturedFmt, EvaEngRepairedFmt,

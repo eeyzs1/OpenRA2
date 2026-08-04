@@ -781,7 +781,9 @@ void ScriptEngine::onSuperWeapon(int player, SWType sw, float x, float y) {
         lua_pushinteger(Ls, player);
         const char* name = "Nuke";
         switch (sw) { case SWType::Nuke: name="Nuke"; break; case SWType::Lightning: name="Lightning"; break;
-                      case SWType::IronCurtain: name="IronCurtain"; break; case SWType::ChronoShift: name="ChronoShift"; break; default: name="?"; }
+                      case SWType::IronCurtain: name="IronCurtain"; break; case SWType::ChronoShift: name="ChronoShift"; break;
+                      case SWType::GeneticMutator: name="GeneticMutator"; break; case SWType::PsychicDominator: name="PsychicDominator"; break;
+                      case SWType::ForceShield: name="ForceShield"; break; default: name="?"; }
         lua_pushstring(Ls, name);
         lua_pushnumber(Ls, x);
         lua_pushnumber(Ls, y);

@@ -137,6 +137,7 @@ const std::pair<const char*, UnitType> kUnit[] = {
     {"FloatingDisc", UnitType::FloatingDisc}, {"Boomer", UnitType::Boomer},
     {"Boris", UnitType::Boris}, {"SiegeChopper", UnitType::SiegeChopper}, {"ChaosDrone", UnitType::ChaosDrone},
     {"Slave", UnitType::Slave}, {"SlaveMiner", UnitType::SlaveMiner},
+    {"YuriPrime", UnitType::YuriPrime}, {"ChronoIvan", UnitType::ChronoIvan},
 };
 const std::pair<const char*, BldType> kBld[] = {
     {"ConYard", BldType::ConYard}, {"PowerPlant", BldType::PowerPlant}, {"TeslaReactor", BldType::TeslaReactor},
@@ -411,6 +412,31 @@ void World::kill(EID id) {
         recomputePower();
         // 驻军随建筑一同阵亡（RA2 原作设定）
         e.garrison.clear();
+        // 核电站熔毁：瞬时冲击 + 数波残留辐射
+        if (deadBtype == BldType::NuclearReactor) {
+            float cx = e.x + d.w / 2.0f, cy = e.y + d.h / 2.0f;
+            const float R = 4.5f;
+            for (size_t i = 0; i < ents.size(); i++) {
+                Ent& o = ents[i];
+                if (!o.alive || o.invuln > 0) continue;
+                if (!o.isBuilding && unitDef(o.utype).isAir() && o.state != UState::Landed) continue;
+                float ox = o.x, oy = o.y;
+                if (o.isBuilding) { ox += bldDef(o.btype).w / 2.0f; oy += bldDef(o.btype).h / 2.0f; }
+                float dist = distf(ox, oy, cx, cy);
+                if (dist > R) continue;
+                int dmg = (int)(350 * (1.0f - dist / (R + 1.0f)));
+                if (!o.isBuilding && unitDef(o.utype).isInfantry()) dmg = (int)(dmg * 1.6f);
+                damage((int)i, dmg, deadPlayer);
+            }
+            for (int wave = 0; wave < 4; wave++) {
+                TimedBomb b;
+                b.x = cx; b.y = cy; b.player = deadPlayer;
+                b.dmg = 80; b.radius = 3.5f; b.timer = 30 + wave * 45;
+                timedBombs.push_back(b);
+            }
+            Effect ef; ef.kind = 12; ef.x = cx; ef.y = cy; ef.maxAge = 90;
+            effects.push_back(ef);
+        }
     } else {
         // 步兵有序列死亡动画（art.ini Die1）：播放倒地序列；车辆/无素材单位保持爆炸
         const UnitAnimInfo& ai = g_sprites.animInfo(e.utype);

@@ -24,26 +24,57 @@ void World::updateParadrop() {
     for (int pi = 0; pi < numPlayers; pi++) {
         Player& p = players[pi];
         if (!p.active || p.defeated) continue;
-        if (!hasParadropSource(pi)) { p.paradropCharge = 0; p.paradropReady = false; continue; }
+        bool src = hasParadropSource(pi) || hasSpyPlaneSource(pi) || hasPsychicRevealSource(pi);
+        if (!src) { p.paradropCharge = 0; p.paradropReady = false; continue; }
         if (p.paradropReady) continue;
         if (++p.paradropCharge >= PARADROP_TIME) {
             p.paradropReady = true;
-            eva(pi, TextFormat(TR(S::EvaSWReadyFmt), TR(S::Paradrop)));
+            const char* nm = hasParadropSource(pi) ? TR(S::Paradrop)
+                           : (hasSpyPlaneSource(pi) ? TR(S::SpyPlane) : TR(S::PsychicReveal));
+            eva(pi, TextFormat(TR(S::EvaSWReadyFmt), nm));
             if (pi == 0) g_sfx.play(Sfx::Ready, 0.7f);
         }
     }
 }
 
-// 空投一波基础步兵到目标点周围（RA2 原作：8 名，按阵营给美国大兵/动员兵/解放军）
+bool World::hasSpyPlaneSource(int player) const {
+    if (player < 0 || player >= numPlayers) return false;
+    Faction f = players[player].faction;
+    if (f != Faction::Soviet && f != Faction::China) return false;
+    return hasBld(player, BldType::Radar);
+}
+
+bool World::hasPsychicRevealSource(int player) const {
+    if (player < 0 || player >= numPlayers) return false;
+    if (players[player].faction != Faction::Yuri) return false;
+    return hasBld(player, BldType::PsychicSensor);
+}
+
+// 空投一波基础步兵到目标点周围
+// 美国空指部：8 GI；科技机场：盟军 6 / 苏军 9 / 其他 6（form-plan 6/9/6）
 void World::orderParadrop(int player, float x, float y) {
     if (player < 0 || player >= numPlayers) return;
     Player& p = players[player];
     if (!p.paradropReady || !hasParadropSource(player)) return;
     if (!map.inBounds((int)x, (int)y) || map.at((int)x, (int)y).terrain == Terrain::Water) return;
     UnitType infT = p.faction == Faction::Allies ? UnitType::GI
-                  : p.faction == Faction::Soviet ? UnitType::Conscript : UnitType::PLA;
+                  : p.faction == Faction::Soviet ? UnitType::Conscript
+                  : p.faction == Faction::Yuri ? UnitType::Initiate : UnitType::PLA;
+    bool fromAirport = false;
+    for (const Ent& e : ents) {
+        if (!e.alive || !e.isBuilding || e.player != player) continue;
+        if (e.btype == BldType::TechAirport) { fromAirport = true; break; }
+    }
+    // 有空指部且美国：优先美国伞兵 8；仅机场时按阵营 6/9/6
+    int want = 8;
+    if (fromAirport && !countryHasParadrop(p.country)) {
+        want = (p.faction == Faction::Soviet) ? 9 : 6;
+    } else if (fromAirport && countryHasParadrop(p.country)) {
+        // 美国同时占有机场：仍按美国空指编制 8（独立冷却未拆分，共享充能槽）
+        want = 8;
+    }
     int dropped = 0;
-    for (int k = 0; k < 8; k++) {
+    for (int k = 0; k < want; k++) {
         bool ok = false;
         for (int r = 0; r <= 3 && !ok; r++)
             for (int dy = -r; dy <= r && !ok; dy++)
@@ -69,11 +100,48 @@ void World::orderParadrop(int player, float x, float y) {
     map.reveal(player, (int)x, (int)y, 6);
 }
 
+void World::orderSpyPlane(int player, float x, float y) {
+    if (player < 0 || player >= numPlayers) return;
+    Player& p = players[player];
+    if (!p.paradropReady || !hasSpyPlaneSource(player)) return;
+    int tx = (int)x, ty = (int)y;
+    if (!map.inBounds(tx, ty)) return;
+    // YR Spy Plane：沿水平带揭开迷雾（近似直线航线）
+    for (int dx = -24; dx <= 24; dx++) {
+        int gx = tx + dx;
+        if (!map.inBounds(gx, ty)) continue;
+        map.reveal(player, gx, ty, 2);
+    }
+    p.paradropReady = false;
+    p.paradropCharge = 0;
+    g_sfx.playAt(Sfx::Missile, x, y);
+    Effect ef; ef.kind = 8; ef.x = x; ef.y = y; ef.maxAge = 30;
+    effects.push_back(ef);
+}
+
+void World::orderPsychicReveal(int player, float x, float y) {
+    if (player < 0 || player >= numPlayers) return;
+    Player& p = players[player];
+    if (!p.paradropReady || !hasPsychicRevealSource(player)) return;
+    int tx = (int)x, ty = (int)y;
+    if (!map.inBounds(tx, ty)) return;
+    // YR Psychic Reveal：圆形揭雾
+    map.reveal(player, tx, ty, 10);
+    p.paradropReady = false;
+    p.paradropCharge = 0;
+    g_sfx.playAt(Sfx::Tesla, x, y);
+    Effect ef; ef.kind = 8; ef.x = x; ef.y = y; ef.maxAge = 35;
+    effects.push_back(ef);
+}
+
 // 工程师占领特殊效果（RA2 原作：科技机场给伞兵、秘密实验室随机解锁国家特色科技）
 void World::applyCaptureEffect(Ent& b, int newOwner) {
     if (newOwner < 0 || newOwner >= numPlayers) return;
     Player& p = players[newOwner];
-    if (b.btype == BldType::TechAirport) {
+    if (b.btype == BldType::OilDerrick) {
+        p.money = std::min(g_gameRules.maxMoney, p.money + 1000); // YR/手册：占领油田瞬间奖金
+        if (newOwner == 0) g_sfx.play(Sfx::Cash, 0.5f);
+    } else if (b.btype == BldType::TechAirport) {
         eva(newOwner, TR(S::EvaAirportCaptured)); // 伞兵充能由 updateParadrop 自动推进
     } else if (b.btype == BldType::SecretLab && p.secretLabUnlock == 0) {
         // 随机解锁一个本阵营其他国家（排除自身国家）的特色科技
@@ -137,7 +205,8 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
             if (victim >= 0) eva(victim, TR(S::SpyMoneyVictim));
             break;
         }
-        case BldType::PowerPlant: case BldType::TeslaReactor: case BldType::NuclearReactor: {
+        case BldType::PowerPlant: case BldType::TeslaReactor: case BldType::NuclearReactor:
+        case BldType::BioReactor: case BldType::TechPowerPlant: {
             if (victim >= 0) {
                 players[victim].powerSabotage = 30 * 30; // 断电 30 秒
                 eva(victim, TR(S::SpyPowerVictim));
@@ -145,11 +214,23 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
             eva(spy.player, TR(S::SpyPowerOk));
             break;
         }
-        case BldType::Radar: {
+        case BldType::Radar: case BldType::PsychicSensor: {
+            // 雷达/心灵探测器：获取全图视野；受害方迷雾回退
             sp.revealTimer = 30 * 60; // 全图视野 60 秒
             eva(spy.player, TR(S::SpyRadarOk));
             if (victim >= 0) {
-                // RA2 原作：雷达被渗透 → 受害方战争迷雾重置（已探索区域重新遮蔽）
+                for (auto& c : map.fog[victim])
+                    if (c == FOG_SEEN) c = FOG_UNSEEN;
+                eva(victim, TR(S::SpyRadarVictim));
+            }
+            break;
+        }
+        case BldType::AirForceCmd: {
+            // 空指部：揭雾 + 空军老兵
+            sp.revealTimer = 30 * 60;
+            sp.vetCat[2] = true;
+            eva(spy.player, TR(S::SpyRadarOk));
+            if (victim >= 0) {
                 for (auto& c : map.fog[victim])
                     if (c == FOG_SEEN) c = FOG_UNSEEN;
                 eva(victim, TR(S::SpyRadarVictim));
@@ -160,24 +241,45 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
             sp.vetCat[0] = true;
             eva(spy.player, TR(S::SpyBarracks));
             break;
-        case BldType::WarFactory: case BldType::AirForceCmd:
-            sp.vetCat[1] = true; sp.vetCat[2] = true;
+        case BldType::WarFactory:
+            sp.vetCat[1] = true;
             eva(spy.player, TR(S::SpyFactory));
             break;
         case BldType::NavalYard:
             sp.vetCat[3] = true;
             eva(spy.player, TR(S::SpyNavy));
             break;
+        case BldType::ConYard: {
+            // 建造厂：窃取部分资金
+            if (victim >= 0) {
+                int steal = std::min(2000, players[victim].money * 3 / 10);
+                players[victim].money -= steal;
+                sp.money += steal;
+                eva(spy.player, TextFormat(TR(S::SpyStealMoneyFmt), steal));
+                eva(victim, TR(S::SpyMoneyVictim));
+            }
+            break;
+        }
         case BldType::BattleLab: {
-            // 渗透高科：窃取 $1500 + RA2 原作偷科技 —— 盟高科→超时空突击队，苏/中高科→心灵突击队
+            // 渗透高科：窃取 $1500 + 偷科技 —— 盟高科→超时空突击队；苏/中高科→心灵突击队+超时空伊文
             if (victim >= 0) {
                 int steal = std::min(1500, players[victim].money);
                 players[victim].money -= steal;
                 sp.money += steal;
-                int bit = (players[victim].faction == Faction::Allies) ? 1 : 2;
-                if (!(sp.stolenTech & bit)) {
-                    sp.stolenTech |= bit;
-                    eva(spy.player, TR(bit == 1 ? S::SpyTechChrono : S::SpyTechPsi));
+                if (players[victim].faction == Faction::Allies) {
+                    if (!(sp.stolenTech & 1)) {
+                        sp.stolenTech |= 1;
+                        eva(spy.player, TR(S::SpyTechChrono));
+                    }
+                } else {
+                    if (!(sp.stolenTech & 2)) {
+                        sp.stolenTech |= 2;
+                        eva(spy.player, TR(S::SpyTechPsi));
+                    }
+                    if (!(sp.stolenTech & 4)) {
+                        sp.stolenTech |= 4; // Chrono Ivan
+                        eva(spy.player, g_lang ? "Tech stolen: Chrono Ivan" : "偷取科技：超时空伊文");
+                    }
                 }
                 eva(victim, TR(S::SpyLabVictim));
             }

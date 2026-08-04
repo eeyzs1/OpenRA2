@@ -115,6 +115,9 @@ enum class UnitType : uint8_t {
     // ---- 尤复：奴隶矿车经济 ----
     Slave,                       // 奴隶（步兵采矿，返回精炼厂/奴隶矿车）
     SlaveMiner,                   // 奴隶矿车（尤里采矿车；展开后作卸货点并自动产奴）
+    // ---- YR 补洞：英雄 / 渗透 ----
+    YuriPrime,                   // 尤里首脑（英雄；远程心控，可控建筑）
+    ChronoIvan,                  // 超时空伊文（渗透苏军实验室；炸弹+超时空机动）
     COUNT
 };
 
@@ -141,7 +144,7 @@ enum class BldType : uint8_t {
     Hospital,                                   // 医院：步兵持续回血
     MachineShop,                                // 机械商店：车辆持续维修
     // ---- RA2 补全：高级建筑 ----
-    CloningVat,                                 // 复制中心（苏，步兵产出时免费复制一个）
+    CloningVat,                                 // 复制中心（尤里，步兵产出时免费复制一个）
     ServiceDepot,                               // 维修厂（通用，车辆进场维修/解除寄生）
     GapGenerator,                               // 裂缝产生器（盟，大范围黑幕覆盖）
     SpySat,                                     // 间谍卫星（盟，建成后全图点亮）
@@ -160,13 +163,14 @@ enum class BldType : uint8_t {
     PsychicDominator,                           // 心灵控制仪（尤里超武2：范围心灵控制+伤害）
     // ---- 尤复补全：YR 新增建筑 ----
     PsychicTower,                               // 心灵控制塔（尤里防御，自动控制接近的敌方单位）
+    RobotControl,                               // 机器人指挥中心（YR 盟军；遥控坦克前置，断电则停摆）
     TechPowerPlant,                             // 科技电厂（中立，占领后提供 200 电力）
     TechOutpost,                                // 科技前哨站（中立，占领后维修/治疗周边单位）
     COUNT
 };
 
 // ===================== 超级武器 =====================
-enum class SWType : uint8_t { Nuke = 0, Lightning, IronCurtain, ChronoShift, GeneticMutator, PsychicDominator, COUNT };
+enum class SWType : uint8_t { Nuke = 0, Lightning, IronCurtain, ChronoShift, GeneticMutator, PsychicDominator, ForceShield, COUNT };
 
 struct SWDef {
     SWType type;
@@ -239,7 +243,8 @@ struct UnitDef {
     bool hasC4() const { return type == UnitType::Tanya || type == UnitType::NavySEAL
                           || type == UnitType::ChronoCommando || type == UnitType::PsiCommando; }
     // RA2 原作：心灵控制者（尤里/心灵突击队）
-    bool isPsychic() const { return type == UnitType::Yuri || type == UnitType::PsiCommando; }
+    bool isPsychic() const { return type == UnitType::Yuri || type == UnitType::PsiCommando
+                                 || type == UnitType::YuriPrime; }
     // 寻路域：0 陆地 1 水面 2 两栖
     int pathDomain() const { return canSwim() ? 2 : (isNaval() ? 1 : (isAmphib() ? 2 : 0)); }
     // 生产队列类别：0 步兵 1 车辆 2 空军 3 海军（各自独立排队）
@@ -323,7 +328,7 @@ struct GameRules {
 extern GameRules g_gameRules;
 
 inline bool isHero(UnitType t) {
-    return t == UnitType::Tanya || t == UnitType::Boris;
+    return t == UnitType::Tanya || t == UnitType::Boris || t == UnitType::YuriPrime;
 }
 
 // 民房可进驻步兵（RA2/YR：大兵系；中国解放军=动员兵对位；尤里新兵；重装大兵）
@@ -453,10 +458,22 @@ inline bool isDefenseBld(BldType t) {
     }
 }
 
+// 每玩家限一（精炼器 / 克隆缸 / 各超武建筑）
+inline bool isUniqueBld(BldType t) {
+    switch (t) {
+        case BldType::OrePurifier: case BldType::CloningVat:
+        case BldType::NukeSilo: case BldType::WeatherDevice: case BldType::IronCurtain:
+        case BldType::ChronoSphere: case BldType::GeneticMutator: case BldType::PsychicDominator:
+            return true;
+        default: return false;
+    }
+}
+
 // 心灵控制免疫（RA2 原作）：军犬/心灵单位/机器人（恐怖机器人/遥控坦克）/采矿车/英雄（谭雅）/战斗要塞
 inline bool psychicImmune(UnitType t) {
     switch (t) {
         case UnitType::AttackDog: case UnitType::Yuri: case UnitType::PsiCommando:
+        case UnitType::YuriPrime:
         case UnitType::TerrorDrone: case UnitType::RobotTank:
         case UnitType::Harvester: case UnitType::ChronoMiner: case UnitType::WarMiner:
         case UnitType::SlaveMiner: case UnitType::Slave:
@@ -468,9 +485,10 @@ inline bool psychicImmune(UnitType t) {
 }
 
 // 偷科技单位（渗透敌作战实验室解锁，见 Player::stolenTech）
-// bit0=超时空突击队（盟高科） bit1=心灵突击队（苏/中高科）
+// bit0=超时空突击队（盟高科） bit1=心灵突击队（苏/中高科） bit2=超时空伊文（苏高科）
 inline int stolenTechBit(UnitType t) {
     if (t == UnitType::ChronoCommando) return 1;
     if (t == UnitType::PsiCommando) return 2;
+    if (t == UnitType::ChronoIvan) return 4;
     return 0;
 }

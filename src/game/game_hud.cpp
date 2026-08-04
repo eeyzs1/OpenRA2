@@ -746,6 +746,12 @@ static void swGlyph(int swIdx, Rectangle r, Color tint) {
             DrawLineEx({cx + 5, cy - 9}, {cx - 5, cy + 9}, 1.5f, dim);
             break;
         }
+        case SWType::ForceShield: { // 力场护盾：青白盾弧
+            DrawRing({cx, cy}, 6, 11, 200, 340, 18, tint);
+            DrawRing({cx, cy}, 8, 10, 20, 160, 14, dim);
+            DrawRectangle((int)cx - 3, (int)cy - 2, 6, 10, tint);
+            break;
+        }
         default: { // 心灵控制：紫同心弧 + 瞳
             DrawRing({cx, cy}, 4, 6, 0, 360, 16, tint);
             DrawRing({cx, cy}, 8, 9, 0, 360, 16, tint);
@@ -762,6 +768,18 @@ static void paradropGlyph(Rectangle r) {
     DrawLineEx({cx, cy - 2}, {cx, cy + 10}, 1.2f, Color{200, 200, 200, 255});
     DrawLineEx({cx + 10, cy - 2}, {cx, cy + 10}, 1.2f, Color{200, 200, 200, 255});
     DrawCircle((int)cx, (int)cy + 12, 3, Color{140, 200, 120, 255}); // 伞兵
+}
+static void spyPlaneGlyph(Rectangle r) {
+    float cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+    DrawEllipse((int)cx, (int)cy, 14, 4, Color{180, 190, 210, 255});
+    DrawTriangle({cx - 4, cy}, {cx + 10, cy - 6}, {cx + 10, cy + 6}, Color{90, 120, 180, 255});
+    DrawLineEx({cx - 12, cy}, {cx + 12, cy}, 1.5f, Color{220, 230, 245, 255});
+}
+static void psychicRevealGlyph(Rectangle r) {
+    float cx = r.x + r.width / 2, cy = r.y + r.height / 2;
+    DrawRing({cx, cy}, 4, 6, 0, 360, 16, Color{200, 120, 255, 255});
+    DrawRing({cx, cy}, 9, 11, 0, 360, 16, Color{160, 80, 220, 200});
+    DrawCircle((int)cx, (int)cy, 2.5f, Color{255, 180, 255, 255});
 }
 
 // RA2 式金属按钮（菜单/局内菜单用）：竖向渐变面 + 棱台斜面 + 金框
@@ -798,6 +816,7 @@ std::vector<BldType> Game::tabBuildings() const {
             BldType::WarFactory, BldType::Radar, BldType::AirForceCmd, BldType::NavalYard, BldType::BattleLab,
             BldType::NuclearReactor, BldType::OrePurifier, BldType::IndustrialPlant,
             BldType::CloningVat, BldType::ServiceDepot, BldType::Grinder, BldType::GapGenerator, BldType::SpySat, BldType::PsychicSensor,
+            BldType::RobotControl,
         };
         for (BldType t : mainB)
             if (world.modeAllowsBuilding(localPlayer, t)) v.push_back(t);
@@ -827,15 +846,17 @@ std::vector<UnitType> Game::tabUnits() const {
         UnitType::Chrono, UnitType::GuardianGI, UnitType::CrazyIvan, UnitType::Rocketeer, UnitType::Terrorist,
         UnitType::NavySEAL, UnitType::Yuri, UnitType::ChronoCommando, UnitType::PsiCommando,
         UnitType::Initiate, UnitType::Brute, UnitType::Virus, UnitType::Boris, UnitType::Slave,
+        UnitType::YuriPrime, UnitType::ChronoIvan,
     };
     static const UnitType vehicleOrder[] = {
+        // 空军置顶：造了空指部后一眼可见（原混在坦克/海军后面需长滚）
+        UnitType::Intruder, UnitType::MiG, UnitType::BlackEagle, UnitType::Nighthawk,
+        UnitType::SiegeChopper, UnitType::FloatingDisc, UnitType::Kirov,
         UnitType::MCV, UnitType::Harvester, UnitType::ChronoMiner, UnitType::WarMiner, UnitType::SlaveMiner,
         UnitType::Grizzly, UnitType::Rhino, UnitType::Type99, UnitType::FlakTrack, UnitType::IFV,
         UnitType::PrismTank, UnitType::TeslaTank, UnitType::MirageTank, UnitType::V3Launcher, UnitType::Apocalypse,
         UnitType::TerrorDrone, UnitType::TankDestroyer, UnitType::DemoTruck, UnitType::RobotTank, UnitType::BattleFortress,
         UnitType::LasherTank, UnitType::GatlingTank, UnitType::Magnetron, UnitType::MasterMind, UnitType::ChaosDrone,
-        UnitType::Intruder, UnitType::MiG, UnitType::BlackEagle, UnitType::Kirov, UnitType::Nighthawk, UnitType::SiegeChopper,
-        UnitType::FloatingDisc,
         UnitType::Destroyer, UnitType::Typhoon, UnitType::Aegis, UnitType::SeaScorpion, UnitType::Dreadnought,
         UnitType::AircraftCarrier, UnitType::AmphTransport, UnitType::Dolphin, UnitType::Squid, UnitType::Boomer,
     };
@@ -1068,7 +1089,10 @@ void Game::drawHUD() {
             if (!world.hasBld(localPlayer, sd.fromBld)) continue;
             items[nItems++] = {2, i};
         }
-        if (world.hasParadropSource(localPlayer)) items[nItems++] = {3, 0};
+        if (world.hasParadropSource(localPlayer)
+            || world.hasSpyPlaneSource(localPlayer)
+            || world.hasPsychicRevealSource(localPlayer))
+            items[nItems++] = {3, 0};
     }
     if (uiTab <= 1) {
         for (BldType t : tabBuildings()) items[nItems++] = {0, (int)t};
@@ -1120,16 +1144,21 @@ void Game::drawHUD() {
             GItem it = items[drawn + idx];
             bool hov = CheckCollisionPointRec(mousePos(), r);
 
-            if (it.kind == 2 || it.kind == 3) { // ---- 超武 / 伞兵 cameo ----
+            if (it.kind == 2 || it.kind == 3) { // ---- 超武 / 支援（伞兵/侦察机/心灵揭示）cameo ----
                 bool isPara = it.kind == 3;
                 bool ready = isPara ? me.paradropReady : me.swReady[it.idx];
                 bool targeting = isPara ? targetingParadrop : (targetingSW == (SWType)it.idx);
+                const bool paraSrc = isPara && world.hasParadropSource(localPlayer);
+                const bool spySrc = isPara && !paraSrc && world.hasSpyPlaneSource(localPlayer);
                 slotShell(r, ready, false, targeting);
                 if (!orig) // 贴图槽已含深色底；程序化槽需补底
                     DrawRectangle((int)r.x + 2, (int)r.y + 2, (int)r.width - 4, (int)r.height - 16,
                                   Color{22, 26, 34, 255});
-                if (isPara) paradropGlyph(r);
-                else swGlyph(it.idx, r, ready ? Color{255, 120, 90, 255} : Color{150, 90, 80, 255});
+                if (isPara) {
+                    if (paraSrc) paradropGlyph(r);
+                    else if (spySrc) spyPlaneGlyph(r);
+                    else psychicRevealGlyph(r);
+                } else swGlyph(it.idx, r, ready ? Color{255, 120, 90, 255} : Color{150, 90, 80, 255});
                 int chargeT = isPara ? World::PARADROP_TIME : swDef((SWType)it.idx).chargeTime;
                 int charge = isPara ? me.paradropCharge : me.swCharge[it.idx];
                 if (!ready) {
@@ -1143,7 +1172,9 @@ void Game::drawHUD() {
                     drawTextS(font, TR(S::Ready), (int)(r.x + r.width / 2 - rw / 2), (int)r.y + 3, 12,
                               Color{160, 255, 160, 255});
                 }
-                const char* nm = isPara ? TR(S::Paradrop) : swName((SWType)it.idx);
+                const char* nm = !isPara ? swName((SWType)it.idx)
+                               : paraSrc ? TR(S::Paradrop)
+                               : spySrc ? TR(S::SpyPlane) : TR(S::PsychicReveal);
                 nameStrip(r, nm, ready);
                 if (hov) {
                     if (!tipSet) {
@@ -1156,7 +1187,11 @@ void Game::drawHUD() {
                         if (isPara) {
                             targetingParadrop = !targetingParadrop;
                             targetingSW = SWType::COUNT;
-                            if (targetingParadrop) message(TR(S::MsgParadropTarget));
+                            if (targetingParadrop) {
+                                message(paraSrc ? TR(S::MsgParadropTarget)
+                                      : spySrc ? TR(S::MsgSpyPlaneTarget)
+                                               : TR(S::MsgPsychicRevealTarget));
+                            }
                         } else {
                             targetingSW = targeting ? SWType::COUNT : (SWType)it.idx;
                             chronoSourceSel.clear();
@@ -1194,6 +1229,8 @@ void Game::drawHUD() {
                     else if (d.countryReq != Country::None)
                         reason = TextFormat(TR(S::TipRequireFmt), countryName(d.countryReq));
                 }
+                if (canBuild && isUniqueBld((BldType)typeIdx) && world.countBlds(localPlayer, (BldType)typeIdx) > 0)
+                    canBuild = false;
                 // 缺钱仍可开工（RA2 按 tick 扣款）；仅提示，不阻断
                 if (canBuild && me.money < d.cost) reason = TR(S::TipNoMoney);
             } else {
@@ -1694,6 +1731,7 @@ bool Game::radarOnline() const {
     if (me.lowPower()) return false;
     return world.hasBld(localPlayer, BldType::Radar)
         || world.hasBld(localPlayer, BldType::AirForceCmd)
+        || world.hasBld(localPlayer, BldType::PsychicSensor)
         || world.hasBld(localPlayer, BldType::SpySat);
 }
 

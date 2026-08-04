@@ -19,6 +19,7 @@ enum class TrigCond : uint8_t {
     UnitInRect,     // 玩家 c0 的任一单位进入矩形 (c1,c2)-(c3,c4)
     MoneyBelow,     // 玩家 c0 资金 < c1
     Script,         // 调用 Lua OnTriggerCond(tag) 返回 bool；tag 见 c 字符串
+    UnitLost,       // 玩家 c0 的 UnitType(c1) 曾存在且现已全灭（英雄死亡失败等）
 };
 
 // 动作类型
@@ -44,7 +45,7 @@ struct Trigger {
     std::string tag;                  // Script 条件/动作的 Lua 标识
     bool once = true;                 // 仅触发一次
     bool fired = false;               // 运行时状态（Game 副本上修改）
-    bool armed = false;               // PlayerBldLost 用：目标建筑曾存在过才允许触发（防开局即误判）
+    bool armed = false;               // PlayerBldLost/UnitLost 用：目标曾存在过才允许触发（防开局即误判）
 };
 
 struct MissionDef {
@@ -63,6 +64,7 @@ struct MissionDef {
     std::string mapFile;             // 手工地图（maps/xxx.txt）；空则程序生成
     bool noStartForce = false;       // true=不刷初始基地车部队（全部由地图文件放置）
     std::vector<Trigger> triggers;   // 触发器脚本
+    int track = 0;                   // 0=融合自制 1=官方原型轨
 };
 
 // 战役任务表：首次调用时加载 assets/campaigns/（campaign.ini 列表 + 每关一个 INI），

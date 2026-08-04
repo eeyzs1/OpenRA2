@@ -237,6 +237,9 @@ void World::update() {
                     }
                 }
             }
+            // 海豚音波命中：短暂声呐揭雾（反潜探测）
+            if (valid(pr.src) && !ents[pr.src].isBuilding && ents[pr.src].utype == UnitType::Dolphin)
+                map.reveal(pr.player, (int)tx, (int)ty, 4);
             if (pr.kind != ProjKind::Bullet) explodeAt(tx, ty, pr.kind == ProjKind::Missile ? 1 : 0);
             pr.alive = false;
         } else {
@@ -299,6 +302,16 @@ void World::updateUnit(Ent& e, EID id) {
     if (e.utype == UnitType::GatlingTank) {
         if (e.gatlingHeat > 0 && e.state != UState::Attacking) e.gatlingHeat = std::max(0, e.gatlingHeat - 2);
         e.gatlingStage = e.gatlingHeat >= 120 ? 2 : (e.gatlingHeat >= 50 ? 1 : 0);
+    }
+    // YR：遥控坦克依赖通电的机器人指挥中心；断电或无 RCC 则停摆
+    if (e.utype == UnitType::RobotTank) {
+        bool rccOnline = e.player >= 0 && hasBld(e.player, BldType::RobotControl) && !players[e.player].lowPower();
+        if (!rccOnline) {
+            e.path.clear();
+            e.target = INVALID_EID;
+            e.state = UState::Idle;
+            return;
+        }
     }
     // 心灵控制链接维护：被控单位消失（运输装载/进驻等消耗路径）则清空控制者链接
     if (e.mindTarget != INVALID_EID && !valid(e.mindTarget)) e.mindTarget = INVALID_EID;
@@ -463,6 +476,27 @@ void World::updateUnit(Ent& e, EID id) {
         if (e.atkCd <= 0) { fireWeapon(e, id, e.target); e.atkCd = dw.cooldown; }
         return;
     }
+    // V3：部署后固定发射；最小射程 5（过近拒射）
+    if (e.utype == UnitType::V3Launcher && e.deployed) {
+        const WeaponDef& dw = ud.weapon;
+        constexpr float V3_MIN = 5.0f;
+        if (!valid(e.target)) {
+            e.target = findNearestEnemy(e.player, e.x, e.y, (float)dw.range, true, &dw, e.utype);
+            if (e.target == INVALID_EID) { e.state = UState::Idle; return; }
+        }
+        const Ent& t = ents[e.target];
+        float tx = t.x, ty = t.y;
+        if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
+        float d = distf(e.x, e.y, tx, ty);
+        if (d > dw.range + 1 || d < V3_MIN) {
+            e.target = INVALID_EID;
+            e.state = UState::Idle;
+            return;
+        }
+        e.turretDir = dirFromVec(tx - e.x, ty - e.y);
+        if (e.atkCd <= 0) { fireWeapon(e, id, e.target); e.atkCd = dw.cooldown; }
+        return;
+    }
     // 奴隶矿车已部署：固定为卸货点，不移动（产奴在 World::update）
     if (e.utype == UnitType::SlaveMiner && e.deployed) {
         e.path.clear();
@@ -538,10 +572,12 @@ void World::updateUnit(Ent& e, EID id) {
     // 工程师到达目标建筑：占领
     if (e.utype == UnitType::Engineer && e.target != INVALID_EID && valid(e.target)) {
         Ent& b = ents[e.target];
-        if (b.isBuilding && b.player != e.player) {
+        if (b.isBuilding && b.player != e.player && bldDef(b.btype).capturable) {
             const BldDef& bd = bldDef(b.btype);
             float bx = b.x + bd.w / 2.0f, by = b.y + bd.h / 2.0f;
-            if (distf(e.x, e.y, bx, by) < std::max(bd.w, bd.h) / 2.0f + 1.5f) {
+            // 贴边抵达：半径按脚印对角线放宽，避免大建筑占不到
+            float reach = std::max(bd.w, bd.h) / 2.0f + 2.5f;
+            if (distf(e.x, e.y, bx, by) < reach) {
                 eva(b.player, TextFormat(TR(S::EvaBldCapturedFmt), bldName(b.btype)));
                 eva(e.player, TextFormat(TR(S::EvaCapturedFmt), bldName(b.btype)));
                 b.player = e.player;
@@ -557,7 +593,7 @@ void World::updateUnit(Ent& e, EID id) {
         if (b.isBuilding && b.player == e.player && b.hp < bldDef(b.btype).hp) {
             const BldDef& bd = bldDef(b.btype);
             float bx = b.x + bd.w / 2.0f, by = b.y + bd.h / 2.0f;
-            if (distf(e.x, e.y, bx, by) < std::max(bd.w, bd.h) / 2.0f + 1.5f) {
+            if (distf(e.x, e.y, bx, by) < std::max(bd.w, bd.h) / 2.0f + 2.5f) {
                 b.hp = bd.hp;
                 eva(e.player, TextFormat(TR(S::EvaEngRepairedFmt), bldName(b.btype)));
                 g_sfx.playAt(Sfx::Place, bx, by);
@@ -574,7 +610,7 @@ void World::updateUnit(Ent& e, EID id) {
         if (b.isBuilding && isEnemy(e.player, b.player)) {
             const BldDef& bd = bldDef(b.btype);
             float bx = b.x + bd.w / 2.0f, by = b.y + bd.h / 2.0f;
-            if (distf(e.x, e.y, bx, by) < std::max(bd.w, bd.h) / 2.0f + 1.5f) {
+            if (distf(e.x, e.y, bx, by) < std::max(bd.w, bd.h) / 2.0f + 2.5f) {
                 applySpyEffect(e, b, id);
                 return;
             }
@@ -659,7 +695,8 @@ void World::updateUnit(Ent& e, EID id) {
                 e.state = UState::Attacking;
             } else {
                 // 超时空军团兵/超时空突击队追击：直接传送至目标射程边缘
-                if (e.utype == UnitType::Chrono || e.utype == UnitType::ChronoCommando) {
+                if (e.utype == UnitType::Chrono || e.utype == UnitType::ChronoCommando
+                    || e.utype == UnitType::ChronoIvan) {
                     float nx = tx - (tx - e.x) / d * (effR * 0.8f);
                     float ny = ty - (ty - e.y) / d * (effR * 0.8f);
                     chronoJump(e, nx, ny);
@@ -696,8 +733,25 @@ void World::updateUnit(Ent& e, EID id) {
             if (d > ew.range + 1) { e.state = UState::Chasing; break; }
             // C4 爆破手：建筑目标超出贴脸距离 → 重新贴近
             if (ud.hasC4() && t.isBuilding && d > 2.5f) { e.state = UState::Chasing; break; }
-            // 尤里无法控制建筑：放弃目标
+            // 尤里无法控制建筑：放弃目标（尤里首脑除外）
             if (e.utype == UnitType::Yuri && t.isBuilding) { e.target = INVALID_EID; e.state = UState::Idle; break; }
+            // 尤里首脑：心控敌方建筑/防御（改归属）
+            if (e.utype == UnitType::YuriPrime && t.isBuilding && e.atkCd <= 0) {
+                if (t.player >= 0 && isEnemy(e.player, t.player) && t.btype != BldType::ConYard) {
+                    evacuateGarrison(e.target);
+                    Ent& b = ents[e.target];
+                    b.player = e.player;
+                    b.state = UState::Idle; b.target = INVALID_EID;
+                    recomputePower();
+                    Effect ef; ef.kind = 2; ef.x = e.x; ef.y = e.y; ef.x2 = tx; ef.y2 = ty; ef.maxAge = 16;
+                    effects.push_back(ef);
+                    g_sfx.playAt(Sfx::Tesla, tx, ty);
+                    if (e.player == 0) eva(0, TR(S::EvaMindGain));
+                }
+                e.atkCd = ew.cooldown;
+                e.target = INVALID_EID; e.state = UState::Idle;
+                break;
+            }
             // 航空母舰：放飞舰载机空袭（RA2 原作：大黄蜂起飞→投弹→返航整备）
             if (e.utype == UnitType::AircraftCarrier) {
                 if (e.atkCd <= 0 && !e.cargo.empty()) {
@@ -810,6 +864,14 @@ void World::updateUnit(Ent& e, EID id) {
             }
             // 鲍里斯对建筑仅用空袭：不发射 AK（AK 反步兵，对建筑几乎无效）
             if (e.utype == UnitType::Boris && t.isBuilding) break;
+            // V3 未部署：进入射程后自动升起发射架（不可未部署开火）
+            if (e.utype == UnitType::V3Launcher && !e.deployed) {
+                e.deployed = true;
+                e.path.clear();
+                e.state = UState::Idle;
+                g_sfx.playAt(Sfx::Deploy, e.x, e.y);
+                break;
+            }
             // C4 爆破手（谭雅/海豹/超时空突击队/心灵突击队）：近身建筑安放 C4；会游泳的还可炸舰船
             if (ud.hasC4() && e.atkCd <= 0) {
                 bool navalTgt = !t.isBuilding && (unitDef(t.utype).isNaval() || unitDef(t.utype).isAmphib());
@@ -1135,10 +1197,9 @@ void World::updateAircraft(Ent& e, EID id) {
                     }
                 }
                 if (e.airbase == INVALID_EID) {
-                    // 无家可归：原地盘旋
-                    e.goalX = e.x; e.goalY = e.y;
-                    e.state = UState::Circling;
-                    break;
+                    // 无家可归：无空指部落地 → 坠毁（RA2：战机需母港）
+                    kill(id);
+                    return;
                 }
             }
             Vec2f pad = airPadPos(ents[e.airbase], id);

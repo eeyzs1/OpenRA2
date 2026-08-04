@@ -112,6 +112,7 @@ bool World::startBldProd(int player, BldType t) {
     if (pr.active || !modeAllowsBuilding(player, t)) return false;
     if (!hasBld(player, BldType::ConYard)) return false;
     if (!prereqMet(player, d)) return false;
+    if (isUniqueBld(t) && countBlds(player, t) > 0) return false;
     // RA2：建筑/防御双队列可并行；缺钱也可开工，按 tick 扣款
     pr.active = true;
     pr.isUnit = false;

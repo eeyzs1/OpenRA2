@@ -124,6 +124,8 @@ inline const char* unitAssetName(UnitType t) {
         case UnitType::ChaosDrone: return "chaosdrone";
         case UnitType::Slave: return "slave";
         case UnitType::SlaveMiner: return "slaveminer";
+        case UnitType::YuriPrime: return "yuriprime";
+        case UnitType::ChronoIvan: return "chronoivan";
         default: return "unknown";
     }
 }
@@ -176,6 +178,7 @@ inline const char* bldAssetName(BldType t) {
         case BldType::GeneticMutator: return "geneticmutator";
         case BldType::PsychicDominator: return "psychicdominator";
         case BldType::PsychicTower: return "psychictower";
+        case BldType::RobotControl: return "robotcontrol";
         case BldType::TechPowerPlant: return "techpowerplant";
         case BldType::TechOutpost: return "techoutpost";
         default: return "unknown";

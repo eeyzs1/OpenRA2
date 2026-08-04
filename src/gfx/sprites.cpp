@@ -299,9 +299,10 @@ PixBuf SpriteBank::baseUnitBody(UnitType t, int dir, int frame) {
                       : d.type == UnitType::CrazyIvan ? Color{110, 60, 52, 255}    // 疯狂伊文：暗红工装
                       : d.type == UnitType::Terrorist ? Color{196, 188, 168, 255}  // 恐怖分子：灰白长袍
                       : d.type == UnitType::NavySEAL ? Color{46, 62, 84, 255}      // 海豹部队：深蓝作战服
-                      : d.type == UnitType::Yuri ? Color{96, 84, 110, 255}         // 尤里：暗紫长袍
+                      : d.type == UnitType::Yuri || d.type == UnitType::YuriPrime ? Color{96, 84, 110, 255} // 尤里/首脑：暗紫长袍
                       : d.type == UnitType::ChronoCommando ? Color{60, 84, 116, 255} // 超时空突击队：蓝黑
                       : d.type == UnitType::PsiCommando ? Color{84, 76, 108, 255}  // 心灵突击队：紫黑
+                      : d.type == UnitType::ChronoIvan ? Color{90, 70, 100, 255}   // 超时空伊文：紫红工装
                       : d.type == UnitType::Initiate ? Color{150, 50, 50, 255}    // 尤里新兵：暗红长袍（心灵火焰）
                       : d.type == UnitType::Brute ? Color{120, 90, 70, 255}       // 狂兽人：棕色肌肉皮甲
                       : d.type == UnitType::Virus ? Color{60, 100, 60, 255}       // 病毒狙击手：绿色生化服
@@ -449,14 +450,22 @@ PixBuf SpriteBank::baseUnitBody(UnitType t, int dir, int frame) {
             } else if (facing == 1) {
                 p.fillRect(cx + 4, by - 15, 6, 2, Pal::GUN);
             }
-        } else if (d.type == UnitType::Yuri) {
-            // 尤里：光头（无头盔）+ 心灵头环 + 长袍下摆
+        } else if (d.type == UnitType::Yuri || d.type == UnitType::YuriPrime) {
+            // 尤里/尤里首脑：光头 + 心灵头环 + 长袍；首脑环更亮
             int hx = cx + (facing == 0 ? 1 : 0);
-            p.fillEllipse(hx, by - 23, 3, 2, Pal::SKIN);                 // 盖住阵营头盔→光头
-            p.hline(hx - 3, hx + 3, by - 22, Color{200, 170, 60, 255});  // 金头环
-            p.set(hx - 1, by - 23, Color{150, 90, 220, 255});            // 心灵宝石
-            p.fillRect(cx - 4, by - 10, 8, 9, uniform);                  // 长袍盖腿
+            p.fillEllipse(hx, by - 23, 3, 2, Pal::SKIN);
+            Color ring = d.type == UnitType::YuriPrime ? Color{255, 210, 80, 255} : Color{200, 170, 60, 255};
+            p.hline(hx - 3, hx + 3, by - 22, ring);
+            p.set(hx - 1, by - 23, Color{150, 90, 220, 255});
+            if (d.type == UnitType::YuriPrime) p.set(hx + 1, by - 24, Color{255, 120, 255, 255});
+            p.fillRect(cx - 4, by - 10, 8, 9, uniform);
             p.hline(cx - 4, cx + 4, by - 2, Color{60, 50, 74, 255});
+        } else if (d.type == UnitType::ChronoIvan) {
+            // 超时空伊文：炸弹背包 + 时空背包灯
+            p.fillRect(cx - 5, by - 18, 5, 7, Color{70, 50, 40, 255});
+            p.set(cx - 3, by - 19, Color{160, 220, 255, 255});
+            p.fillEllipse(cx + 2, by - 16, 3, 3, Color{50, 40, 36, 255});
+            p.set(cx + 3, by - 18, Color{255, 150, 70, 255});
         } else if (d.type == UnitType::ChronoCommando) {
             // 超时空突击队：贝雷帽 + 小型超时空背包 + 消音冲锋枪
             p.fillEllipse(cx + (facing == 0 ? 1 : 0), by - 23, 3, 2, Color{40, 90, 60, 255}); // 贝雷帽
@@ -1152,6 +1161,7 @@ PixBuf SpriteBank::baseBuilding(BldType t, bool constructing) {
         case BldType::IndustrialPlant:  bp.wallL={136,118,94,255};  bp.wallR={98,84,64,255};    bp.roof={70,60,48,255};  bp.roofIn={54,46,36,255};  break;
         case BldType::NuclearReactor:   bp.wallL={138,136,130,255}; bp.wallR={100,98,94,255};   bp.roof={72,70,66,255};  bp.roofIn={56,54,50,255};  break;
         case BldType::CloningVat:       bp.wallL={128,140,124,255}; bp.wallR={92,104,88,255};   bp.roof={64,72,60,255};  bp.roofIn={48,56,44,255};  break;
+        case BldType::RobotControl:     bp.wallL={140,148,158,255}; bp.wallR={100,108,118,255}; bp.roof={68,74,84,255};  bp.roofIn={52,58,68,255};  break;
         case BldType::ServiceDepot:     bp.wallL={140,134,112,255}; bp.wallR={102,96,78,255};   bp.roof={72,68,56,255};  bp.roofIn={56,52,42,255};  break;
         case BldType::GapGenerator:     bp.wallL={134,140,152,255}; bp.wallR={96,102,114,255};  bp.roof={66,70,82,255};  bp.roofIn={50,54,66,255};  break;
         case BldType::SpySat:           bp.wallL={142,148,156,255}; bp.wallR={102,108,116,255}; bp.roof={68,72,80,255};  bp.roofIn={52,56,64,255};  break;

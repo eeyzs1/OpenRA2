@@ -47,6 +47,23 @@ void Game::updateTriggers() {
                 cond = p >= 0 && p < world.numPlayers && world.players[p].money < t.c[1];
                 break;
             }
+            case TrigCond::UnitLost: {
+                int p = t.c[0];
+                UnitType ut = (UnitType)t.c[1];
+                if (p < 0 || p >= world.numPlayers) break;
+                int n = 0;
+                for (const auto& e : world.ents)
+                    if (e.alive && !e.isBuilding && e.player == p && e.utype == ut) n++;
+                // 货舱/驻军中的英雄也算存活
+                for (const auto& e : world.ents) {
+                    if (!e.alive || e.player != p) continue;
+                    for (const auto& g : e.garrison) if (g.type == ut) n++;
+                    for (const auto& g : e.cargo) if (g.type == ut) n++;
+                }
+                if (n > 0) t.armed = true;
+                cond = t.armed && n == 0;
+                break;
+            }
             case TrigCond::Script:
                 cond = g_script.onTriggerCond(t.tag);
                 break;

@@ -374,8 +374,9 @@ void SkirmishAI::doBuildOrder(World& w) {
         BldType::TeslaCoil,
         BldType::BattleLab,
         BldType::ServiceDepot,   // 维修厂（通用，前置=重工，自动修理车辆）
+        BldType::RobotControl,   // 机器人指挥中心（盟，遥控坦克前置）
         BldType::Grinder,        // 回收炉（尤里专属，前置=重工，回收单位换钱；其他阵营自动跳过）
-        BldType::CloningVat,     // 复制中心（苏，盟军 factionMask 自动跳过）
+        BldType::CloningVat,     // 复制中心（尤里；其他阵营 factionMask 自动跳过）
         BldType::GapGenerator,   // 裂缝产生器（盟，苏军自动跳过）
         BldType::SpySat,         // 间谍卫星（盟）
         BldType::PsychicSensor,  // 心灵探测器（苏）
@@ -402,7 +403,8 @@ void SkirmishAI::doBuildOrder(World& w) {
         if (t == BldType::BattleLab && skipBattleLab) continue;
         bool isLateTech = (t == BldType::Grinder || t == BldType::CloningVat || t == BldType::GapGenerator
                         || t == BldType::SpySat || t == BldType::PsychicSensor
-                        || t == BldType::BattleBunker || t == BldType::TankBunker);
+                        || t == BldType::BattleBunker || t == BldType::TankBunker
+                        || t == BldType::RobotControl);
         if (isLateTech && skipLateTech) continue;
 
         const BldDef& d = bldDef(rt);
@@ -597,7 +599,7 @@ void SkirmishAI::doProduction(World& w) {
                 if (roll == 0) {
                     // 阵营英雄/特种步兵：盟军谭雅/苏军尤里/中国辐射工兵/尤里狂兽人
                     if (p.faction == Faction::Allies) sp = UnitType::Tanya;
-                    else if (p.faction == Faction::Soviet) sp = UnitType::Yuri;
+                    else if (p.faction == Faction::Soviet) sp = UnitType::Boris; // YR：苏军英雄鲍里斯（尤里归 FY）
                     else if (p.faction == Faction::Yuri) sp = UnitType::Brute;
                     else sp = UnitType::Desolator;
                 } else if (roll == 1 && p.faction == Faction::Allies) {
@@ -965,10 +967,19 @@ void SkirmishAI::doSuperWeapon(World& w) {
     for (int i = 0; i < (int)SWType::COUNT; i++) {
         if (!p.swReady[i]) continue;
         SWType t = (SWType)i;
-        if (t == SWType::IronCurtain) {
-            // 铁幕：套在己方部队中心（有部队时才用）
-            if (countArmy(w) < 6) continue;
+        if (t == SWType::IronCurtain || t == SWType::ForceShield) {
+            // 铁幕/力场：套在己方部队或基地中心
+            if (t == SWType::IronCurtain && countArmy(w) < 6) continue;
             Vec2i ac = findArmyCenter(w);
+            if (t == SWType::ForceShield) {
+                // 优先罩己方建造厂
+                for (const World::Ent& e : w.ents) {
+                    if (e.alive && e.isBuilding && e.player == player && e.btype == BldType::ConYard) {
+                        ac = {(int)(e.x + 1), (int)(e.y + 1)};
+                        break;
+                    }
+                }
+            }
             w.launchSW(player, t, (float)ac.x, (float)ac.y);
         } else {
             // 核弹/闪电：炸敌方建筑密集区（优先建造厂/高科）
@@ -1031,7 +1042,7 @@ void SkirmishAI::doSupport(World& w) {
             if (!recycle.empty()) w.orderGarrison(recycle, grinder);
         }
     }
-    // 1. 伞兵：空投到敌方建造厂附近（骚扰敌后）
+    // 1. 支援能力（伞兵 / 侦察机 / 心灵揭示）：对敌建造厂附近释放
     if (p.paradropReady) {
         float bx = -1, by = -1;
         for (const World::Ent& e : w.ents)
@@ -1041,15 +1052,24 @@ void SkirmishAI::doSupport(World& w) {
             for (const World::Ent& e : w.ents)
                 if (e.alive && e.isBuilding && e.player >= 0 && w.isEnemy(player, e.player)) { bx = e.x + 2; by = e.y + 3; break; }
         if (bx >= 0) {
-            // 落点须为可站立陆地：向外找最近可通行格
-            for (int r = 0; r < 8 && p.paradropReady; r++) {
-                for (int dy = -r; dy <= r && p.paradropReady; dy++)
-                    for (int dx = -r; dx <= r && p.paradropReady; dx++) {
-                        int nx = (int)bx + dx, ny = (int)by + dy;
-                        if (!w.map.inBounds(nx, ny) || !w.map.passable(nx, ny)) continue;
-                        if (w.map.at(nx, ny).terrain == Terrain::Water) continue;
-                        w.orderParadrop(player, nx + 0.5f, ny + 0.5f);
-                    }
+            auto fireSupport = [&](float x, float y) {
+                if (w.hasParadropSource(player)) w.orderParadrop(player, x, y);
+                else if (w.hasSpyPlaneSource(player)) w.orderSpyPlane(player, x, y);
+                else if (w.hasPsychicRevealSource(player)) w.orderPsychicReveal(player, x, y);
+            };
+            if (w.hasParadropSource(player)) {
+                // 伞兵：落点须为可站立陆地
+                for (int r = 0; r < 8 && p.paradropReady; r++) {
+                    for (int dy = -r; dy <= r && p.paradropReady; dy++)
+                        for (int dx = -r; dx <= r && p.paradropReady; dx++) {
+                            int nx = (int)bx + dx, ny = (int)by + dy;
+                            if (!w.map.inBounds(nx, ny) || !w.map.passable(nx, ny)) continue;
+                            if (w.map.at(nx, ny).terrain == Terrain::Water) continue;
+                            fireSupport(nx + 0.5f, ny + 0.5f);
+                        }
+                }
+            } else {
+                fireSupport(bx, by);
             }
         }
     }

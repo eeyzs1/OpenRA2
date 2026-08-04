@@ -482,15 +482,17 @@ bool buildBldModel3D(BldType t, M3Builder& mb) {
             b.flag(0.5f, 1.5f, 13.6f);
             break;
         }
-        case BldType::IronCurtain: { // 铁幕装置：门式拱架 + 赤红力场核（占地 3×3）
+        case BldType::IronCurtain: { // 铁幕装置：门式拱架（镂空）+ 中央赤红力场球（占地 3×3）
             b.slab(3, 3);
-            b.box(0.7f, 1.5f, 2.0f, 0.55f, 1.8f, 18.0f, S_WALL_D);     // 双柱
-            b.box(2.3f, 1.5f, 2.0f, 0.55f, 1.8f, 18.0f, S_WALL_D);
-            b.box(1.5f, 1.5f, 20.0f, 2.2f, 1.9f, 3.0f, S_ROOF);       // 顶梁
-            b.box(1.5f, 1.5f, 23.0f, 0.55f, 0.55f, 1.2f, Pal::REMAP, M3FACE_ALL);
-            b.ellip(1.5f, 1.5f, 12.0f, 0.42f, 0.42f, 5.5f, E_RED);    // 力场核
-            b.ellip(1.5f, 1.5f, 12.0f, 0.20f, 0.20f, 7.0f, E_WHITE);  // 核内亮芯
-            b.doorX(1.5f, 2.41f, 2.0f, 0.7f, 5.0f);
+            // 两侧立柱（不封门面，保持拱门通透）
+            b.box(0.55f, 1.5f, 2.0f, 0.40f, 1.6f, 20.0f, S_WALL_D);
+            b.box(2.45f, 1.5f, 2.0f, 0.40f, 1.6f, 20.0f, S_WALL_D);
+            b.box(1.5f, 0.55f, 2.0f, 1.5f, 0.35f, 8.0f, S_WALL);     // 北侧矮背墙
+            b.box(1.5f, 1.5f, 22.0f, 2.4f, 1.7f, 3.5f, S_ROOF);       // 顶梁横跨
+            b.box(1.5f, 1.5f, 25.5f, 0.60f, 0.60f, 1.4f, Pal::REMAP, M3FACE_ALL);
+            // 中央悬浮力场核（明显红色球体，区别于厂房）
+            b.ellip(1.5f, 1.5f, 14.0f, 0.55f, 0.55f, 8.0f, E_RED);
+            b.ellip(1.5f, 1.5f, 14.0f, 0.28f, 0.28f, 10.0f, E_WHITE);
             break;
         }
         case BldType::ChronoSphere: { // 超时空传送仪：三支柱 + 时空球（占地 4×3）
@@ -602,12 +604,16 @@ bool buildBldModel3D(BldType t, M3Builder& mb) {
             b.box(0.5f, 0.5f, 11.0f, 0.14f, 0.14f, 0.8f, Pal::REMAP, M3FACE_ALL);
             break;
         }
-        case BldType::TankBunker: { // 坦克碉堡：U 型矮墙（坦克进驻）
+        case BldType::TankBunker: { // 坦克碉堡 1×1：开口朝南的 U 型矮混凝土壕（与维修厂棚顶完全不同）
             b.slab(1, 1, 0.06f);
-            b.box(0.15f, 0.5f, 2.0f, 0.2f, 0.9f, 5.0f, CONC);         // 西墙
-            b.box(0.85f, 0.5f, 2.0f, 0.2f, 0.9f, 5.0f, CONC);         // 东墙
-            b.box(0.5f, 0.12f, 2.0f, 0.9f, 0.2f, 5.0f, CONC);         // 北墙
-            b.box(0.15f, 0.5f, 7.0f, 0.22f, 0.92f, 0.8f, Pal::REMAP, M3FACE_ALL); // 檐色
+            b.box(0.12f, 0.5f, 2.0f, 0.18f, 0.88f, 5.5f, CONC);         // 西墙
+            b.box(0.88f, 0.5f, 2.0f, 0.18f, 0.88f, 5.5f, CONC);         // 东墙
+            b.box(0.5f, 0.12f, 2.0f, 0.88f, 0.18f, 5.5f, CONC);         // 北墙（封闭）
+            // 南侧开口无墙；顶沿色带
+            b.box(0.12f, 0.5f, 7.5f, 0.20f, 0.90f, 0.9f, Pal::REMAP, M3FACE_ALL);
+            b.box(0.88f, 0.5f, 7.5f, 0.20f, 0.90f, 0.9f, Pal::REMAP, M3FACE_ALL);
+            b.box(0.5f, 0.12f, 7.5f, 0.90f, 0.20f, 0.9f, Pal::REMAP, M3FACE_ALL);
+            b.box(0.5f, 0.55f, 2.0f, 0.45f, 0.35f, 1.0f, Color{90, 88, 82, 255}); // 内底垫
             break;
         }
         // ---------- RA2 补全：中立 ----------
@@ -662,16 +668,18 @@ bool buildBldModel3D(BldType t, M3Builder& mb) {
             b.flag(0.4f, 0.5f, 13.6f);
             break;
         }
-        case BldType::GatlingCannon: { // 盖特机炮（尤）：基座 + 双联盖特炮管（防空对地）
+        case BldType::GatlingCannon: { // 盖特机炮（尤）：六角基座 + 旋转盖特鼓 + 三管（与苏高射炮明显区分）
             b.slab(1, 1, 0.08f);
-            b.cyl(0.5f, 0.5f, 2.0f, 0.36f, 3.0f, YURI_WALL_D, 8);
-            b.box(0.5f, 0.5f, 5.0f, 0.55f, 0.5f, 3.5f, YURI_WALL);
-            b.box(0.5f, 0.5f, 8.5f, 0.30f, 0.52f, 1.0f, Pal::REMAP, M3FACE_ALL);
-            { // 双联盖特炮管（上下并列，模型空间朝东南）
-                float c[3]; b.map(0.72f, 0.5f, 8.0f, c);
-                mb.cylXY(c[0], c[1], c[2] - 2.0f, 1.8f, 14.0f, 0, Pal::GUN, 8);
-                mb.cylXY(c[0], c[1], c[2] + 2.0f, 1.8f, 14.0f, 0, Pal::GUN, 8);
+            b.box(0.5f, 0.5f, 2.0f, 0.70f, 0.70f, 2.5f, YURI_WALL_D); // 六角感方座
+            b.cyl(0.5f, 0.5f, 4.5f, 0.28f, 4.0f, YURI_WALL, 10);       // 旋转鼓
+            b.box(0.5f, 0.5f, 8.5f, 0.36f, 0.36f, 1.2f, Pal::REMAP, M3FACE_ALL);
+            { // 三联盖特管（更长、更粗，与苏高射双管区分）
+                float c[3]; b.map(0.85f, 0.5f, 9.2f, c);
+                mb.cylXY(c[0], c[1], c[2] - 3.5f, 1.6f, 16.0f, 0, Pal::GUN, 8);
+                mb.cylXY(c[0], c[1], c[2],       1.8f, 18.0f, 0, Pal::GUN, 8);
+                mb.cylXY(c[0], c[1], c[2] + 3.5f, 1.6f, 16.0f, 0, Pal::GUN, 8);
             }
+            b.ellip(0.5f, 0.5f, 10.5f, 0.10f, 0.10f, 2.0f, YURI_GLOW); // 尤里紫辉光（小，不挡炮管）
             break;
         }
         case BldType::Grinder: { // 回收炉（尤）：粉碎厂房 + 进料口 + 齿轮传动
@@ -729,25 +737,41 @@ bool buildBldModel3D(BldType t, M3Builder& mb) {
             b.flag(0.5f, 0.5f, 23.5f);
             break;
         }
-        case BldType::PsychicTower: { // 心灵控制塔（尤）：塔身 + 顶部心灵穹顶（自动心控）
+        case BldType::PsychicTower: { // 心灵控制塔（尤）：细高塔 + 漂浮紫颅骨球（与心灵探测器矮塔区分）
             b.slab(1, 1, 0.08f);
-            b.box(0.5f, 0.5f, 2.0f, 0.5f, 0.5f, 6.0f, YURI_WALL);        // 基座
-            b.box(0.5f, 0.5f, 8.0f, 0.40f, 0.40f, 10.0f, YURI_WALL_D);   // 塔柱
-            b.box(0.5f, 0.5f, 18.0f, 0.46f, 0.46f, 1.2f, Pal::REMAP, M3FACE_ALL);
-            // 顶部心灵穹顶（半球辉光）
-            b.ellip(0.5f, 0.5f, 22.0f, 0.30f, 0.30f, 5.5f, YURI_GLOW);
-            b.ellip(0.5f, 0.5f, 22.0f, 0.14f, 0.14f, 7.0f, E_WHITE);
+            b.box(0.5f, 0.5f, 2.0f, 0.42f, 0.42f, 4.0f, YURI_WALL);
+            b.box(0.5f, 0.5f, 6.0f, 0.28f, 0.28f, 16.0f, YURI_WALL_D);  // 细高柱
+            b.box(0.5f, 0.5f, 22.0f, 0.40f, 0.40f, 1.4f, Pal::REMAP, M3FACE_ALL);
+            // 悬浮心灵球（明显大于探测器）
+            b.ellip(0.5f, 0.5f, 26.0f, 0.38f, 0.38f, 6.5f, YURI_GLOW);
+            b.ellip(0.5f, 0.5f, 26.0f, 0.18f, 0.18f, 8.5f, E_WHITE);
+            // 环绕小刺
+            for (int i = 0; i < 4; i++) {
+                float a = i * 1.5708f;
+                b.box(0.5f + cosf(a) * 0.32f, 0.5f + sinf(a) * 0.32f, 24.0f, 0.06f, 0.06f, 3.0f, YURI_WALL_D);
+            }
             break;
         }
-        case BldType::TechPowerPlant: { // 科技电厂（中立）：厂房 + 双烟囱
+        case BldType::RobotControl: { // 机器人指挥中心（盟）：机房 + 碟形天线
             b.slab(2, 2);
-            b.box(0.8f, 1.0f, 2.0f, 1.1f, 1.5f, 13.0f, N_WALL);
-            b.box(0.8f, 1.0f, 15.0f, 1.2f, 1.6f, 1.8f, N_ROOF);
-            b.winRowX(0.45f, 1.76f, 9.0f, 3, 0.35f);
-            b.doorY(1.36f, 1.3f, 2.0f, 0.4f, 6.0f);
-            b.stack(1.55f, 0.6f, 2.0f, 0.24f, 22.0f, N_WALL_D);          // 双烟囱
-            b.stack(1.55f, 1.5f, 2.0f, 0.24f, 18.0f, N_WALL_D);
-            b.box(1.55f, 1.05f, 16.8f, 0.4f, 0.3f, 1.0f, E_ORANGE, 0, M3FACE_ALL); // 顶标识
+            b.box(1.0f, 1.0f, 2.0f, 1.4f, 1.4f, 10.0f, A_WALL);
+            b.box(1.0f, 1.0f, 12.0f, 1.5f, 1.5f, 1.6f, A_ROOF);
+            b.doorX(1.0f, 1.71f, 2.0f, 0.55f, 5.5f);
+            b.winRowX(0.5f, 1.71f, 6.0f, 3, 0.35f);
+            b.cyl(1.0f, 1.0f, 13.5f, 0.35f, 3.0f, A_WALL_D, 12);
+            b.ellip(1.0f, 1.0f, 17.0f, 0.55f, 0.55f, 2.5f, A_ROOF);
+            b.flag(0.4f, 0.4f, 14.0f);
+            break;
+        }
+        case BldType::TechPowerPlant: { // 科技电厂（中立）：黄黑警戒涂装厂房 + 粗烟囱（区别盟军电厂）
+            b.slab(2, 2);
+            b.box(1.0f, 1.0f, 2.0f, 1.5f, 1.5f, 12.0f, N_WALL);
+            b.box(1.0f, 1.0f, 14.0f, 1.6f, 1.6f, 2.0f, N_ROOF);
+            b.box(1.0f, 1.76f, 6.0f, 1.0f, 0.08f, 2.0f, Color{220, 180, 40, 255}, 0, M3FACE_ALL); // 警戒条
+            b.winRowX(0.5f, 1.76f, 9.0f, 3, 0.35f);
+            b.doorY(1.76f, 1.2f, 2.0f, 0.5f, 6.0f);
+            b.stack(1.6f, 0.55f, 2.0f, 0.30f, 26.0f, N_WALL_D);         // 单粗烟囱
+            b.cyl(1.6f, 0.55f, 28.0f, 0.34f, 1.2f, E_ORANGE, 8, false, true);
             break;
         }
         case BldType::TechOutpost: { // 科技前哨站（中立）：堡垒 + 四角堡 + 维修吊臂（占地 3×2）

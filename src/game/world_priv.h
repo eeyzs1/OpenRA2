@@ -29,3 +29,29 @@ inline int rotDistDir(int a, int b) {
     int d = std::abs(a - b) & 7;
     return std::min(d, 8 - d);
 }
+
+// 建筑贴边可站格：脚印外围最近可通行点（工程师/间谍贴边抵达，避免寻路进占地中心失败）
+inline bool approachBuildingCell(const World& w, int sx, int sy, const World::Ent& b, int domain,
+                                 int& ox, int& oy) {
+    if (!b.isBuilding) return false;
+    const BldDef& bd = bldDef(b.btype);
+    const int bx = (int)b.x, by = (int)b.y;
+    auto walkable = [&](int x, int y) {
+        if (!w.map.inBounds(x, y) || w.map.cellBlocked(x, y)) return false;
+        const Cell& c = w.map.at(x, y);
+        if (domain == 1) return c.terrain == Terrain::Water;
+        if (domain == 2) return c.passable() || c.terrain == Terrain::Water;
+        return c.passable();
+    };
+    float best = 1e30f;
+    bool found = false;
+    for (int y = by - 1; y <= by + bd.h; ++y) {
+        for (int x = bx - 1; x <= bx + bd.w; ++x) {
+            if (x >= bx && x < bx + bd.w && y >= by && y < by + bd.h) continue;
+            if (!walkable(x, y)) continue;
+            float d = distf((float)sx, (float)sy, (float)x + 0.5f, (float)y + 0.5f);
+            if (d < best) { best = d; ox = x; oy = y; found = true; }
+        }
+    }
+    return found;
+}

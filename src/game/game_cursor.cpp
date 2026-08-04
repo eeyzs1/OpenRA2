@@ -52,18 +52,45 @@ void Game::updateHoverCursor(int mx, int my) {
         return;
     }
 
-    bool hasHarvester = false, hasEngineer = false, hasInf = false, hasMcv = false, hasDeployable = false;
+    bool hasHarvester = false, hasEngineer = false, hasInf = false, hasMcv = false, hasDeployable = false, hasSpy = false;
     for (EID id : sel) {
         if (!world.valid(id) || world.ents[id].isBuilding) continue;
         UnitType ut = world.ents[id].utype;
         const UnitDef& ud = unitDef(ut);
         if (ud.canHarvet()) hasHarvester = true;
         if (ut == UnitType::Engineer) hasEngineer = true;
+        if (ut == UnitType::Spy) hasSpy = true;
         if (ud.isInfantry()) hasInf = true;
         if (ut == UnitType::MCV) hasMcv = true;
         if (ut == UnitType::GI || ut == UnitType::GuardianGI || ut == UnitType::Desolator
-            || ut == UnitType::SiegeChopper || ut == UnitType::SlaveMiner)
+            || ut == UnitType::SiegeChopper || ut == UnitType::SlaveMiner
+            || ut == UnitType::V3Launcher)
             hasDeployable = true;
+    }
+
+    // 工程师占领：敌方或中立可占领建筑（优先于进驻/攻击光标）
+    if (hasEngineer && eb != INVALID_EID) {
+        const World::Ent& b = world.ents[eb];
+        if (bldDef(b.btype).capturable && b.player != localPlayer
+            && (b.player < 0 || world.isEnemy(localPlayer, b.player))) {
+            cursorKind = CursorKind::Enter;
+            return;
+        }
+    }
+    // 间谍渗透敌方建筑 → 进入；点敌方步兵 → 伪装（攻击光标）
+    if (hasSpy && eb != INVALID_EID) {
+        const World::Ent& b = world.ents[eb];
+        if (b.player >= 0 && world.isEnemy(localPlayer, b.player)) {
+            cursorKind = CursorKind::Enter;
+            return;
+        }
+    }
+    if (hasSpy && eu != INVALID_EID) {
+        const World::Ent& u = world.ents[eu];
+        if (u.player >= 0 && world.isEnemy(localPlayer, u.player) && unitDef(u.utype).isInfantry()) {
+            cursorKind = CursorKind::Attack; // 伪装指令（攻击目标兵种）
+            return;
+        }
     }
 
     // 敌方 → 攻击（工程师对可占领建筑 → 进入）；中立/盟友不当敌人
@@ -156,7 +183,8 @@ void Game::updateHoverCursor(int mx, int my) {
     if (hasDeployable && eu != INVALID_EID && world.ents[eu].player == localPlayer) {
         UnitType ut = world.ents[eu].utype;
         if (ut == UnitType::GI || ut == UnitType::GuardianGI || ut == UnitType::Desolator
-            || ut == UnitType::SiegeChopper || ut == UnitType::SlaveMiner) {
+            || ut == UnitType::SiegeChopper || ut == UnitType::SlaveMiner
+            || ut == UnitType::V3Launcher) {
             cursorKind = CursorKind::Deploy;
             return;
         }

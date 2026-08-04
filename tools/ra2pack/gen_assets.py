@@ -20,7 +20,13 @@ for a in sys.argv[1:]:
 
 t0 = time.time()
 T = MixTree()
-_, _r = T.find("rules.ini"); _, _a = T.find("art.ini")
+# Prefer YR (rulesmd/artmd) when RA2MD.MIX is present; fall back to RA2.
+_, _r = T.find("rulesmd.ini")
+if not _r:
+    _, _r = T.find("rules.ini")
+_, _a = T.find("artmd.ini")
+if not _a:
+    _, _a = T.find("art.ini")
 RT = _r.decode("latin-1", "replace"); AT = _a.decode("latin-1", "replace")
 
 def parse_ini(txt):
@@ -44,9 +50,8 @@ _, _p = T.find("cameo.pal"); PAL_C = load_pal(_p)
 def has(n): return T.find(n)[1] is not None
 def get(n): return T.find(n)[1]
 
-# engine 单位/建筑 -> RA2 rules id 候选
-# 注：本 MIX 为 RA2 原版（无尤复）。尤复/中国特有单位用最相似的原版素材近亲渲染，
-# 保证全单位视觉质量统一（真实 VXL/SHP 光影），替代粗糙程序占位。
+# engine 单位/建筑 -> RA2/YR rules id 候选
+# YR 建筑要求本机 game/ 有 RA2MD.MIX；无对应 SHP 时跳过（禁止近亲冒充，避免两建筑同一贴图）。
 UNITS = {
     "gi": ["E1"], "conscript": ["E2"], "engineer": ["ENGINEER"],
     "attackdog": ["ADOG", "DOG"], "spy": ["SPY"], "flaktrooper": ["FLAKT"],
@@ -103,28 +108,31 @@ BLDS = {
     "airforcecmd": ["GAAIRC"], "navalyard": ["GAYARD"], "pillbox": ["GAPILL"],
     "sentrygun": ["NALASR"], "prismtower": ["ATESLA"], "teslacoil": ["TESLA"],
     "flakcannon": ["NAFLAK"], "grandcannon": ["GTGCAN"], "patriotmissile": ["NASAM"],
-    "wall": ["GAWALL"], "orepurifier": ["GAOREP"], "industrialplant": ["NAINDP", "NAREFN"],
-    "techpowerplant": ["CAPOWR", "GAPOWR"], "nukesilo": ["NAMISL"],
+    "wall": ["GAWALL"], "orepurifier": ["GAOREP"], "industrialplant": ["NAINDP"],
+    "techpowerplant": ["CAPOWR"], "nukesilo": ["NAMISL"],
     "weatherdevice": ["GAWEAT"], "ironcurtain": ["NAIRON"], "chronosphere": ["GACSPH"],
-    "oilderrick": ["CAOILD"], "hospital": ["CAHOSP", "CATHOSP"], "machineshop": ["CAOUTP", "CAMACH"],
+    "oilderrick": ["CAOILD"], "hospital": ["CAHOSP", "CATHOSP"], "machineshop": ["CAMACH"],
     "cloningvat": ["NACLON"], "servicedepot": ["GADEPT"], "gapgenerator": ["GAGAP"],
     "spysat": ["GASPYSAT"], "psychicsensor": ["NAPSIS"], "techairport": ["CAAIRP"],
     "secretlab": ["CASLAB", "CALAB"], "civhouse": ["CAHSE01"], "techoutpost": ["CAOUTP"],
-    # ---- YR/尤里建筑：本 MIX 无 SHP，用最相似原版建筑近亲渲染 ----
-    "battlebunker": ["NABNKR", "GAPILL"],       # 战斗碉堡 -> 机枪碉堡
-    "tankbunker": ["NATBNK", "GADEPT"],         # 坦克碉堡 -> 维修厂平台
-    "bioreactor": ["YAPOWR", "NAPOWR"],         # 生化反应炉 -> 磁能反应炉
-    "gatlingcannon": ["YAGGUN", "NAFLAK"],      # 盖特机炮 -> 防空炮
-    "grinder": ["YAGRND", "NAWEAP"],            # 研磨机 -> 苏军战车工厂
-    "geneticmutator": ["YAGNTC", "NACLON"],     # 基因突变器 -> 复制中心（生物科技）
-    "psychicdominator": ["YAPSYC", "NAIRON"],   # 心灵控制器 -> 铁幕装置（大型装置）
-    "psychictower": ["YAPSYT", "NAPSIS"],       # 心灵控制塔 -> 心灵探测器
+    # ---- YR/尤里建筑：仅用真实 Image id；无 SHP 时跳过（禁止近亲冒充，避免两建筑同一贴图）----
+    "battlebunker": ["NABNKR"],
+    "tankbunker": ["NATBNK"],
+    "bioreactor": ["YAPOWR"],
+    "gatlingcannon": ["YAGGUN"],
+    "grinder": ["YAGRND"],
+    "geneticmutator": ["YAGNTC"],
+    "psychicdominator": ["YAPPET"],  # rulesmd: Yuri Puppet Master / Psychic Dominator SW
+    "psychictower": ["YAPSYT"],
+    "robotcontrol": ["GAROBO"],
 }
 # 主 SHP 只是基坑/埋地状态，完整建筑在 mk 建造动画（帧位置自动选最大不透明帧）
 BLD_FROM_MK = {"grandcannon": "gagcanmk", "nukesilo": "namislmk", "sentrygun": "nalasrmk",
-               "flakcannon": "naflakmk", "gatlingcannon": "naflakmk",
-               "servicedepot": "gadeptmk", "tankbunker": "gadeptmk",
-               "battlebunker": "gapillmk"}
+               "flakcannon": "naflakmk",
+               "servicedepot": "gadeptmk",
+               "battlebunker": "nabnkrmk",
+               # NATBNK 主 SHP 全空；完整坦克碉堡在 mk（+ SpecialAnim 层，静态取 mk 即可）
+               "tankbunker": "ngtbnkmk"}
 # 墙体：f0 是孤立门柱，f5 是连续墙段
 BLD_FRAME0 = {"wall": 5}
 # 建造动画关键帧数（mk 均采 + 完整帧）

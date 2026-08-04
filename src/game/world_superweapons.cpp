@@ -38,7 +38,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
             break;
         }
         case SWType::IronCurtain: {
-            // 目标点 3 格内己方单位/建筑无敌 20 秒；步兵无法承受铁幕能量直接死亡（RA2 原作设定）
+            // 目标点 3 格内己方单位/建筑无敌（官方 ~750@15fps → 1500@30fps）；步兵无法承受铁幕能量直接死亡
             for (size_t i = 0; i < ents.size(); i++) {
                 Ent& e = ents[i];
                 if (!e.alive) continue;
@@ -46,7 +46,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
                 if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
                 if (distf(ex, ey, tx, ty) > 3.0f) continue;
                 if (!e.isBuilding && unitDef(e.utype).isInfantry()) { kill((int)i); continue; }
-                if (e.player == player) e.invuln = 30 * 20;
+                if (e.player == player) e.invuln = 1500;
             }
             g_sfx.playAt(Sfx::IronCurtain, tx, ty);
             // 铁幕扩散特效
@@ -79,15 +79,20 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
             break;
         }
         case SWType::GeneticMutator: {
-            // 基因突变：目标点 5 格内所有步兵变为狂兽人（尤里玩家控制）
+            // 基因突变：范围内可变异步兵→己方狂兽人；英雄/犬/奴隶杀死不变异；跳过非步兵
             std::vector<std::pair<float, float>> positions;
             for (size_t i = 0; i < ents.size(); i++) {
                 Ent& e = ents[i];
                 if (!e.alive || e.isBuilding) continue;
                 if (!unitDef(e.utype).isInfantry()) continue;
                 if (distf(e.x, e.y, tx, ty) > 5.0f) continue;
-                positions.push_back({e.x, e.y});
+                UnitType ut = e.utype;
+                bool killOnly = isHero(ut) || ut == UnitType::AttackDog || ut == UnitType::Slave
+                             || ut == UnitType::Yuri || ut == UnitType::YuriPrime
+                             || ut == UnitType::PsiCommando || ut == UnitType::ChronoIvan;
+                float px = e.x, py = e.y;
                 kill((int)i);
+                if (!killOnly) positions.push_back({px, py});
             }
             for (auto& pos : positions)
                 spawnUnit(player, UnitType::Brute, pos.first, pos.second);
@@ -124,6 +129,23 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
             evaAll(TextFormat(TR(S::EvaMindGain)));
             g_sfx.playAt(Sfx::Tesla, tx, ty);
             Effect ef; ef.kind = 8; ef.x = tx; ef.y = ty; ef.maxAge = 50;
+            effects.push_back(ef);
+            break;
+        }
+        case SWType::ForceShield: {
+            // YR Force Shield：半径 4 内友方建筑无敌（500@15fps → 1000@30fps），随后整基断电（1000@15 → 2000@30）
+            for (size_t i = 0; i < ents.size(); i++) {
+                Ent& e = ents[i];
+                if (!e.alive || !e.isBuilding || e.player < 0) continue;
+                if (!isAllied(player, e.player)) continue;
+                float ex = e.x + bldDef(e.btype).w / 2.0f;
+                float ey = e.y + bldDef(e.btype).h / 2.0f;
+                if (distf(ex, ey, tx, ty) > 4.0f) continue;
+                e.invuln = 1000; // 覆盖已有铁幕保护
+            }
+            players[player].powerSabotage = 2000;
+            g_sfx.playAt(Sfx::IronCurtain, tx, ty);
+            Effect ef; ef.kind = 8; ef.x = tx; ef.y = ty; ef.maxAge = 45;
             effects.push_back(ef);
             break;
         }

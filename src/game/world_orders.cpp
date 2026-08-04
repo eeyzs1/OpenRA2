@@ -44,8 +44,9 @@ void World::orderMove(const std::vector<EID>& sel, float x, float y, bool attack
             e.state = attackMove ? UState::AttackMoving : UState::Moving;
             continue;
         }
-        if (e.utype == UnitType::Chrono) {
-            // 超时空军团兵：传送移动（RA2 原作设定）
+        if (e.utype == UnitType::Chrono || e.utype == UnitType::ChronoCommando
+            || e.utype == UnitType::ChronoIvan) {
+            // 超时空系：传送移动（RA2/YR：军团兵、突击队、超时空伊文）
             if (chronoJump(e, ox, oy)) e.guard = attackMove; // 传送后警戒=攻击移动等效
             continue;
         }
@@ -80,15 +81,28 @@ void World::orderAttack(const std::vector<EID>& sel, EID target) {
         const UnitDef& ud = unitDef(e.utype);
         e.wps.clear(); // 直接攻击指令取消路径点队列
         if (ud.weapon.damage == 0) {
-            // 间谍渗透（RA2 原作）：无武器但可指定敌方建筑为渗透目标
-            if (e.utype == UnitType::Spy && t.isBuilding && isEnemy(e.player, t.player)) {
-                e.target = target;
-                e.guard = false;
-                std::vector<Vec2i> path;
-                map.findPath((int)e.x, (int)e.y, (int)tx, (int)ty, path, 20000, ud.pathDomain());
-                e.path = std::move(path);
-                e.pathIdx = 0;
-                e.state = UState::Chasing;
+            // 间谍：点敌方步兵=伪装；点敌方建筑=渗透
+            if (e.utype == UnitType::Spy && isEnemy(e.player, t.player)) {
+                if (!t.isBuilding && unitDef(t.utype).isInfantry()) {
+                    // RA2：选中后「攻击」目标兵种 → 立刻变成该形象（含敌方色）
+                    e.camouflaged = true;
+                    int cid = (t.player >= 0 && t.player < numPlayers) ? players[t.player].colorId : 0;
+                    e.camoTick = (int)t.utype | ((cid & 0xFF) << 16);
+                    e.target = INVALID_EID;
+                    e.path.clear();
+                    e.state = UState::Idle;
+                    g_sfx.playAt(Sfx::Click, e.x, e.y);
+                } else if (t.isBuilding) {
+                    e.target = target;
+                    e.guard = false;
+                    int ax = (int)tx, ay = (int)ty;
+                    approachBuildingCell(*this, (int)e.x, (int)e.y, t, ud.pathDomain(), ax, ay);
+                    std::vector<Vec2i> path;
+                    map.findPath((int)e.x, (int)e.y, ax, ay, path, 20000, ud.pathDomain());
+                    e.path = std::move(path);
+                    e.pathIdx = 0;
+                    e.state = UState::Chasing;
+                }
             }
             continue;
         }
@@ -462,6 +476,16 @@ void World::orderRadDeploy(const std::vector<EID>& sel) {
                 e.state = UState::Idle;
                 g_sfx.playAt(Sfx::Deploy, e.x, e.y);
             }
+        } else if (e.utype == UnitType::V3Launcher) {
+            // V3 火箭发射车：须部署才可开火；部署后不可移动
+            e.deployed = !e.deployed;
+            if (e.deployed) {
+                e.path.clear();
+                e.target = INVALID_EID;
+                e.guard = false;
+                e.state = UState::Idle;
+                g_sfx.playAt(Sfx::Deploy, e.x, e.y);
+            }
         }
     }
 }
@@ -480,7 +504,8 @@ void World::evaAll(const std::string& text) {
 void World::orderDeploy(EID id) {
     if (!valid(id)) return;
     Ent& e = ents[id];
-    if (e.mindBy != INVALID_EID) return; // mind-controlled: no pack/deploy
+    // YR 1.001：普通/永久心控下的 MCV/建造厂不可展开或打包
+    if (e.mindBy != INVALID_EID || e.permaControlled) return;
     // 奴隶矿车：部署后成为移动卸货点并自动产奴（YR 奴隶经济主路径）
     if (e.utype == UnitType::SlaveMiner && !e.isBuilding) {
         e.deployed = !e.deployed;
@@ -526,9 +551,13 @@ void World::orderCapture(const std::vector<EID>& sel, EID bldId) {
         if (!valid(id) || ents[id].isBuilding) continue;
         Ent& e = ents[id];
         if (e.utype != UnitType::Engineer) continue;
-        // 走到建筑旁
+        if (e.player == b.player) continue; // 不可占己方
+        // 走到建筑贴边（非脚印中心，避免被占地挡死）
+        int ax = (int)b.x, ay = (int)b.y;
+        const UnitDef& ud = unitDef(e.utype);
+        approachBuildingCell(*this, (int)e.x, (int)e.y, b, ud.pathDomain(), ax, ay);
         std::vector<Vec2i> path;
-        map.findPath((int)e.x, (int)e.y, (int)b.x, (int)b.y, path);
+        map.findPath((int)e.x, (int)e.y, ax, ay, path, 20000, ud.pathDomain());
         e.path = std::move(path);
         e.pathIdx = 0;
         e.target = bldId;
@@ -546,8 +575,11 @@ void World::orderRepair(const std::vector<EID>& sel, EID bldId) {
         Ent& e = ents[id];
         if (e.utype != UnitType::Engineer) continue;
         if (e.player != b.player) continue;
+        int ax = (int)b.x, ay = (int)b.y;
+        const UnitDef& ud = unitDef(e.utype);
+        approachBuildingCell(*this, (int)e.x, (int)e.y, b, ud.pathDomain(), ax, ay);
         std::vector<Vec2i> path;
-        map.findPath((int)e.x, (int)e.y, (int)b.x, (int)b.y, path);
+        map.findPath((int)e.x, (int)e.y, ax, ay, path, 20000, ud.pathDomain());
         e.path = std::move(path);
         e.pathIdx = 0;
         e.target = bldId;

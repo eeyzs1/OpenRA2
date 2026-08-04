@@ -879,6 +879,383 @@ int Game::smokeTest(int frames) {
                              == g_gameRules.warheadVerses[(int)WeaponDef::Warhead::AP][(int)Armor::Heavy]
                              && weaponVsArmor(WeaponDef{}, Armor::Heavy, false, false) == 1.0f;
 
+            // ---- M2 YR 补洞：Force Shield / RCC / 克隆 / 心灵塔帽 / 限一 / 油田奖金 ----
+            Vec2i m2 = open(18, 8);
+            bool forceShieldOk = false, rccOk = false, cloningYuriOk = false;
+            bool psychicCapOk = false, uniqueBldOk = false, oilBonusOk = false;
+            if (m2.x >= 0) {
+                // Force Shield：友方建筑无敌，单位不受；发动后断电
+                EID lab = mech.spawnBuilding(0, BldType::BattleLab, m2.x, m2.y, true);
+                EID shieldBld = mech.spawnBuilding(0, BldType::PowerPlant, m2.x + 3, m2.y, true);
+                EID shieldUnit = mech.spawnUnit(0, UnitType::Grizzly, m2.x + 3.5f, m2.y + 3.5f);
+                (void)lab;
+                mech.players[0].swReady[(int)SWType::ForceShield] = true;
+                bool fsLaunch = mech.launchSW(0, SWType::ForceShield, m2.x + 3.5f, m2.y + 1.0f);
+                forceShieldOk = fsLaunch && mech.ents[shieldBld].invuln >= 1000
+                             && mech.ents[shieldUnit].invuln == 0
+                             && mech.players[0].powerSabotage >= 2000;
+                mech.players[0].powerSabotage = 0;
+
+                // Robot Control：无 RCC 不可造遥控坦克；有 RCC 且通电可动，断电停摆
+                mech.spawnBuilding(0, BldType::PowerPlant, m2.x + 6, m2.y + 3, true);
+                mech.spawnBuilding(0, BldType::PowerPlant, m2.x + 9, m2.y + 3, true);
+                mech.spawnBuilding(0, BldType::WarFactory, m2.x + 6, m2.y, true);
+                mech.players[0].money = 20000;
+                mech.players[0].powerSabotage = 0;
+                bool noRccBlocked = !mech.startUnitProd(0, UnitType::RobotTank);
+                EID rcc = mech.spawnBuilding(0, BldType::RobotControl, m2.x + 10, m2.y, true);
+                (void)rcc;
+                mech.update(); // 重算电力
+                bool rccUnlock = mech.unitPrereqMet(0, unitDef(UnitType::RobotTank)) && !mech.players[0].lowPower();
+                EID robot = mech.spawnUnit(0, UnitType::RobotTank, m2.x + 12.5f, m2.y + 4.5f);
+                mech.orderMove({robot}, m2.x + 16.5f, m2.y + 4.5f, false);
+                for (int i = 0; i < 5; ++i) mech.update();
+                bool movingOnline = mech.valid(robot)
+                    && (mech.ents[robot].state == UState::Moving || !mech.ents[robot].path.empty());
+                mech.players[0].powerSabotage = 100000;
+                mech.update();
+                bool frozenOffline = mech.valid(robot)
+                    && mech.ents[robot].state == UState::Idle && mech.ents[robot].path.empty();
+                mech.players[0].powerSabotage = 0;
+                rccOk = noRccBlocked && rccUnlock && movingOnline && frozenOffline;
+
+                // CloningVat 归尤里：苏军不可造，尤里可造
+                World cv;
+                cv.init(48, 48, 88, 2, 0, {Faction::Soviet, Faction::Yuri}, 0);
+                for (Cell& c : cv.map.cells)
+                    if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
+                Vec2i cvb{-1, -1};
+                for (int y = 6; y + 6 < cv.map.h - 6 && cvb.x < 0; ++y)
+                    for (int x = 6; x + 6 < cv.map.w - 6 && cvb.x < 0; ++x) {
+                        bool ok = true;
+                        for (int dy = 0; dy < 6 && ok; ++dy)
+                            for (int dx = 0; dx < 6 && ok; ++dx)
+                                if (!cv.map.passable(x + dx, y + dy) || cv.bldBlocked(x + dx, y + dy)) ok = false;
+                        if (ok) cvb = {x, y};
+                    }
+                if (cvb.x >= 0) {
+                    cv.spawnBuilding(0, BldType::ConYard, cvb.x, cvb.y, true);
+                    cv.spawnBuilding(0, BldType::Radar, cvb.x + 4, cvb.y, true);
+                    cv.spawnBuilding(0, BldType::BattleLab, cvb.x + 4, cvb.y + 3, true);
+                    cv.spawnBuilding(1, BldType::ConYard, cvb.x, cvb.y + 6, true);
+                    cv.spawnBuilding(1, BldType::Radar, cvb.x + 4, cvb.y + 6, true);
+                    cv.spawnBuilding(1, BldType::BattleLab, cvb.x + 4, cvb.y + 9, true);
+                    cv.players[0].money = cv.players[1].money = 20000;
+                    cloningYuriOk = !cv.startBldProd(0, BldType::CloningVat)
+                                 && cv.startBldProd(1, BldType::CloningVat);
+                }
+
+                // Psychic Tower 硬顶 3
+                mech.spawnBuilding(1, BldType::BioReactor, m2.x - 3, m2.y + 6, true);
+                mech.spawnBuilding(1, BldType::BioReactor, m2.x - 3, m2.y + 9, true);
+                EID tower = mech.spawnBuilding(1, BldType::PsychicTower, m2.x, m2.y + 6, true);
+                for (int i = 0; i < 4; ++i) {
+                    EID victim = mech.spawnUnit(0, UnitType::Conscript, m2.x + 2.5f + (float)i, m2.y + 6.5f);
+                    mech.ents[tower].target = victim;
+                    mech.ents[tower].atkCd = 0;
+                    mech.update();
+                }
+                psychicCapOk = mech.ents[tower].mindTargets.size() == 3;
+
+                // 限一：已有精炼器时不可再开工
+                mech.spawnBuilding(0, BldType::ConYard, m2.x + 6, m2.y + 6, true);
+                mech.spawnBuilding(0, BldType::OrePurifier, m2.x + 10, m2.y + 6, true);
+                mech.players[0].money = 20000;
+                uniqueBldOk = !mech.startBldProd(0, BldType::OrePurifier);
+
+                // 油田占领瞬间 +1000
+                EID oil = mech.spawnBuilding(-1, BldType::OilDerrick, m2.x, m2.y + 10, true);
+                EID eng = mech.spawnUnit(0, UnitType::Engineer, m2.x + 2.5f, m2.y + 10.5f);
+                int oilMoney0 = mech.players[0].money;
+                mech.orderCapture({eng}, oil);
+                for (int i = 0; i < 800 && mech.valid(oil) && mech.ents[oil].player != 0; ++i) mech.update();
+                oilBonusOk = mech.valid(oil) && mech.ents[oil].player == 0
+                          && mech.players[0].money >= oilMoney0 + 1000;
+            }
+
+            // ---- B5/B6/B7：YuriPrime / Genetic Mutator 矩阵 / Spy Plane·Psychic Reveal ----
+            bool yuriPrimeOk = false, mutatorMatrixOk = false, spyRevealOk = false;
+            {
+                World yr;
+                yr.init(48, 48, 0xB5B6B7u, 2, 0, {Faction::Yuri, Faction::Soviet}, 0);
+                for (Cell& c : yr.map.cells)
+                    if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
+                Vec2i b{-1, -1};
+                for (int y = 6; y + 8 < yr.map.h - 6 && b.x < 0; ++y)
+                    for (int x = 6; x + 10 < yr.map.w - 6 && b.x < 0; ++x) {
+                        bool ok = true;
+                        for (int dy = 0; dy < 8 && ok; ++dy)
+                            for (int dx = 0; dx < 10 && ok; ++dx)
+                                if (!yr.map.passable(x + dx, y + dy) || yr.bldBlocked(x + dx, y + dy)) ok = false;
+                        if (ok) b = {x, y};
+                    }
+                if (b.x >= 0) {
+                    yr.spawnBuilding(0, BldType::Barracks, b.x, b.y, true);
+                    yr.spawnBuilding(0, BldType::BattleLab, b.x + 3, b.y, true);
+                    yr.spawnBuilding(0, BldType::GeneticMutator, b.x + 6, b.y, true);
+                    yr.spawnBuilding(0, BldType::PsychicSensor, b.x, b.y + 3, true);
+                    yr.spawnBuilding(1, BldType::PowerPlant, b.x + 3, b.y + 3, true);
+                    yr.spawnBuilding(1, BldType::Radar, b.x + 6, b.y + 3, true);
+                    yr.players[0].money = yr.players[1].money = 20000;
+
+                    // B5：尤里首脑唯一 + 可控敌方建筑
+                    EID prime = yr.spawnUnit(0, UnitType::YuriPrime, b.x + 0.5f, b.y + 6.5f);
+                    bool primeUnique = !yr.startUnitProd(0, UnitType::YuriPrime);
+                    EID enemyBld = INVALID_EID;
+                    for (size_t i = 0; i < yr.ents.size(); ++i)
+                        if (yr.ents[i].alive && yr.ents[i].isBuilding && yr.ents[i].player == 1
+                            && yr.ents[i].btype == BldType::PowerPlant) { enemyBld = (int)i; break; }
+                    yr.ents[prime].atkCd = 0;
+                    yr.orderAttack({prime}, enemyBld);
+                    for (int i = 0; i < 400 && yr.valid(enemyBld) && yr.ents[enemyBld].player == 1; ++i) yr.update();
+                    yuriPrimeOk = primeUnique && yr.valid(enemyBld) && yr.ents[enemyBld].player == 0;
+
+                    // B6：基因突变器——英雄杀、普通步兵变狂兽人
+                    EID dog = yr.spawnUnit(1, UnitType::AttackDog, b.x + 1.5f, b.y + 7.5f);
+                    EID gi = yr.spawnUnit(1, UnitType::GI, b.x + 2.5f, b.y + 7.5f);
+                    EID hero = yr.spawnUnit(1, UnitType::Tanya, b.x + 3.5f, b.y + 7.5f);
+                    float mx = b.x + 2.5f, my = b.y + 7.5f;
+                    yr.players[0].swReady[(int)SWType::GeneticMutator] = true;
+                    bool mutLaunched = yr.launchSW(0, SWType::GeneticMutator, mx, my);
+                    // kill() 会把 EID 回收进 freeList，spawnUnit 可能复用旧 ID，故不能只看 valid(eid)
+                    bool dogAlive = false, heroAlive = false, giAlive = false, bruteSpawned = false;
+                    for (const auto& e : yr.ents) {
+                        if (!e.alive || e.isBuilding) continue;
+                        if (e.utype == UnitType::AttackDog && e.player == 1) dogAlive = true;
+                        if (e.utype == UnitType::Tanya && e.player == 1) heroAlive = true;
+                        if (e.utype == UnitType::GI && e.player == 1) giAlive = true;
+                        if (e.utype == UnitType::Brute && e.player == 0) bruteSpawned = true;
+                    }
+                    (void)dog; (void)gi; (void)hero;
+                    mutatorMatrixOk = mutLaunched && !dogAlive && !heroAlive && !giAlive && bruteSpawned;
+
+                    // B7：尤里心灵揭示；苏军侦察机（共用充能槽）
+                    yr.players[0].paradropReady = true;
+                    yr.players[0].paradropCharge = World::PARADROP_TIME;
+                    bool revealSrc = yr.hasPsychicRevealSource(0);
+                    int fogX = b.x + 20, fogY = b.y + 1;
+                    if (fogX >= yr.map.w - 2) fogX = yr.map.w / 2;
+                    if (!yr.map.fog.empty() && fogX < yr.map.w && fogY < yr.map.h)
+                        yr.map.fog[0][(size_t)fogY * yr.map.w + fogX] = FOG_UNSEEN;
+                    yr.orderPsychicReveal(0, fogX + 0.5f, fogY + 0.5f);
+                    bool revealed = revealSrc && !yr.players[0].paradropReady
+                                 && yr.map.fogAt(0, fogX, fogY) != FOG_UNSEEN;
+
+                    yr.players[1].paradropReady = true;
+                    yr.players[1].paradropCharge = World::PARADROP_TIME;
+                    bool spySrc = yr.hasSpyPlaneSource(1);
+                    int stripY = b.y + 4;
+                    int stripX = std::min(b.x + 12, yr.map.w - 3);
+                    if (!yr.map.fog.empty() && stripX < yr.map.w && stripY < yr.map.h)
+                        yr.map.fog[1][(size_t)stripY * yr.map.w + stripX] = FOG_UNSEEN;
+                    yr.orderSpyPlane(1, stripX + 0.5f, stripY + 0.5f);
+                    bool spied = spySrc && !yr.players[1].paradropReady
+                              && yr.map.fogAt(1, stripX, stripY) != FOG_UNSEEN;
+                    spyRevealOk = revealed && spied;
+                }
+            }
+
+            // ---- M3/B8：国家科技树 / 心控 MCV / 核电熔毁 / 超武冷却 ----
+            bool countryTechOk = false, permaMcvOk = false, meltdownOk = false, swChargeOk = false;
+            bool paradropCountOk = false, cloningDupOk = false, v3DeployOk = false, yuriFactionOk = false;
+            bool spyDisguiseOk = false;
+            {
+                World ct;
+                ct.init(48, 48, 0x00330001u, 2, 0, {Faction::Allies, Faction::Soviet}, 0);
+                for (Cell& c : ct.map.cells)
+                    if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
+                Vec2i b{-1, -1};
+                for (int y = 6; y + 8 < ct.map.h - 6 && b.x < 0; ++y)
+                    for (int x = 6; x + 10 < ct.map.w - 6 && b.x < 0; ++x) {
+                        bool ok = true;
+                        for (int dy = 0; dy < 8 && ok; ++dy)
+                            for (int dx = 0; dx < 10 && ok; ++dx)
+                                if (!ct.map.passable(x + dx, y + dy) || ct.bldBlocked(x + dx, y + dy)) ok = false;
+                        if (ok) b = {x, y};
+                    }
+                if (b.x >= 0) {
+                    ct.spawnBuilding(0, BldType::Barracks, b.x, b.y, true);
+                    ct.spawnBuilding(0, BldType::AirForceCmd, b.x + 3, b.y, true);
+                    ct.spawnBuilding(0, BldType::BattleLab, b.x + 6, b.y, true);
+                    ct.spawnBuilding(0, BldType::WarFactory, b.x, b.y + 3, true);
+                    ct.players[0].money = 50000;
+                    ct.players[0].country = Country::UK;
+                    bool ukSniper = ct.unitPrereqMet(0, unitDef(UnitType::Sniper));
+                    ct.players[0].country = Country::America;
+                    bool usNoSniper = !ct.unitPrereqMet(0, unitDef(UnitType::Sniper));
+                    bool usIntruder = ct.unitPrereqMet(0, unitDef(UnitType::Intruder));
+                    ct.players[0].country = Country::Korea;
+                    bool krNoHarrier = !ct.unitPrereqMet(0, unitDef(UnitType::Intruder));
+                    bool krEagle = ct.unitPrereqMet(0, unitDef(UnitType::BlackEagle));
+                    ct.players[0].country = Country::France;
+                    bool frCannon = ct.prereqMet(0, bldDef(BldType::GrandCannon));
+                    // 共和国之辉中国：空指部下可造入侵者+黑鹰
+                    World cn;
+                    cn.init(48, 48, 0x00330021u, 2, 0, {Faction::China, Faction::Allies}, 0);
+                    for (Cell& c : cn.map.cells)
+                        if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
+                    Vec2i cb{-1, -1};
+                    for (int y = 6; y + 8 < cn.map.h - 6 && cb.x < 0; ++y)
+                        for (int x = 6; x + 10 < cn.map.w - 6 && cb.x < 0; ++x) {
+                            bool ok = true;
+                            for (int dy = 0; dy < 8 && ok; ++dy)
+                                for (int dx = 0; dx < 10 && ok; ++dx)
+                                    if (!cn.map.passable(x + dx, y + dy) || cn.bldBlocked(x + dx, y + dy)) ok = false;
+                            if (ok) cb = {x, y};
+                        }
+                    bool chinaAir = false;
+                    if (cb.x >= 0) {
+                        cn.spawnBuilding(0, BldType::AirForceCmd, cb.x, cb.y, true);
+                        chinaAir = cn.unitPrereqMet(0, unitDef(UnitType::Intruder))
+                                && cn.unitPrereqMet(0, unitDef(UnitType::BlackEagle))
+                                && cn.hasFactoryFor(0, unitDef(UnitType::Intruder));
+                    }
+                    // 尤里可造心灵探测器；苏军不可（看 factionMask + prereqMet）
+                    bool yuriSensor = (bldDef(BldType::PsychicSensor).factionMask & (1 << (int)Faction::Yuri)) != 0
+                                   && (bldDef(BldType::PsychicSensor).factionMask & (1 << (int)Faction::Soviet)) == 0;
+                    bool radarSovietOnly = (bldDef(BldType::Radar).factionMask & (1 << (int)Faction::Soviet)) != 0
+                                        && (bldDef(BldType::Radar).factionMask & (1 << (int)Faction::Allies)) == 0;
+                    countryTechOk = ukSniper && usNoSniper && usIntruder && krNoHarrier && krEagle && frCannon
+                                 && yuriSensor && radarSovietOnly && chinaAir;
+
+                    // 永久心控 MCV 不可展开
+                    EID mcv = ct.spawnUnit(0, UnitType::MCV, b.x + 8.5f, b.y + 5.5f);
+                    ct.ents[mcv].permaControlled = true;
+                    ct.orderDeploy(mcv);
+                    permaMcvOk = ct.valid(mcv) && !ct.ents[mcv].isBuilding;
+
+                    // 核电熔毁：用坦克承伤
+                    EID nuke = ct.spawnBuilding(0, BldType::NuclearReactor, b.x + 3, b.y + 6, true);
+                    EID vic = ct.spawnUnit(1, UnitType::Rhino, b.x + 5.5f, b.y + 9.5f);
+                    bool nukeOk = ct.valid(nuke) && ct.ents[nuke].btype == BldType::NuclearReactor;
+                    int meltHp0 = nukeOk && ct.valid(vic) ? ct.ents[vic].hp : -1;
+                    if (nukeOk) ct.kill(nuke);
+                    meltdownOk = nukeOk && meltHp0 > 0 && (!ct.valid(vic) || ct.ents[vic].hp < meltHp0);
+
+                    swChargeOk = swDef(SWType::Nuke).chargeTime == 30 * 60 * 10
+                              && swDef(SWType::IronCurtain).chargeTime == 30 * 60 * 5
+                              && swDef(SWType::ChronoShift).chargeTime == 30 * 60 * 7
+                              && swDef(SWType::ForceShield).chargeTime == 30 * 60 * 5;
+
+                    // 伞兵编制：美国空指 8；科技机场盟军 6 / 苏军 9
+                    auto countInf = [](World& w, int pl, UnitType t) {
+                        int n = 0;
+                        for (size_t i = 0; i < w.ents.size(); ++i) {
+                            const World::Ent& e = w.ents[i];
+                            if (e.alive && !e.isBuilding && e.player == pl && e.utype == t) n++;
+                        }
+                        return n;
+                    };
+                    {
+                        World pa;
+                        pa.init(48, 48, 0x00330011u, 2, 0, {Faction::Allies, Faction::Soviet}, 0);
+                        for (Cell& c : pa.map.cells)
+                            if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
+                        pa.spawnBuilding(0, BldType::AirForceCmd, 10, 10, true);
+                        pa.players[0].country = Country::America;
+                        pa.players[0].paradropReady = true;
+                        pa.players[0].paradropCharge = World::PARADROP_TIME;
+                        int before = countInf(pa, 0, UnitType::GI);
+                        pa.orderParadrop(0, 20.5f, 20.5f);
+                        bool us8 = countInf(pa, 0, UnitType::GI) - before == 8;
+
+                        World ps;
+                        ps.init(48, 48, 0x00330012u, 2, 0, {Faction::Soviet, Faction::Allies}, 0);
+                        for (Cell& c : ps.map.cells)
+                            if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
+                        ps.spawnBuilding(0, BldType::TechAirport, 10, 10, true);
+                        ps.players[0].paradropReady = true;
+                        ps.players[0].paradropCharge = World::PARADROP_TIME;
+                        before = countInf(ps, 0, UnitType::Conscript);
+                        ps.orderParadrop(0, 20.5f, 20.5f);
+                        bool sov9 = countInf(ps, 0, UnitType::Conscript) - before == 9;
+
+                        World pf;
+                        pf.init(48, 48, 0x00330013u, 2, 0, {Faction::Allies, Faction::Soviet}, 0);
+                        for (Cell& c : pf.map.cells)
+                            if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
+                        pf.spawnBuilding(0, BldType::TechAirport, 10, 10, true);
+                        pf.players[0].country = Country::France;
+                        pf.players[0].paradropReady = true;
+                        pf.players[0].paradropCharge = World::PARADROP_TIME;
+                        before = countInf(pf, 0, UnitType::GI);
+                        pf.orderParadrop(0, 20.5f, 20.5f);
+                        bool fr6 = countInf(pf, 0, UnitType::GI) - before == 6;
+                        paradropCountOk = us8 && sov9 && fr6;
+                    }
+
+                    // 复制中心：兵营造步兵时免费复制一只
+                    {
+                        World cl;
+                        cl.init(48, 48, 0x00330014u, 2, 0, {Faction::Yuri, Faction::Allies}, 0);
+                        for (Cell& c : cl.map.cells)
+                            if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
+                        cl.spawnBuilding(0, BldType::Barracks, 8, 8, true);
+                        cl.spawnBuilding(0, BldType::CloningVat, 12, 8, true);
+                        cl.players[0].money = 50000;
+                        int before = countInf(cl, 0, UnitType::Initiate);
+                        bool started = cl.startUnitProd(0, UnitType::Initiate);
+                        for (int t = 0; t < 4000 && started; ++t) cl.update();
+                        cloningDupOk = started && countInf(cl, 0, UnitType::Initiate) - before >= 2;
+                    }
+
+                    // V3：部署切换；射程内自动升起；最小射程拒射贴脸目标
+                    {
+                        World v3;
+                        v3.init(48, 48, 0x00330015u, 2, 0, {Faction::Soviet, Faction::Allies}, 0);
+                        for (Cell& c : v3.map.cells)
+                            if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
+                        EID launcher = v3.spawnUnit(0, UnitType::V3Launcher, 10.5f, 10.5f);
+                        v3.orderRadDeploy({launcher});
+                        bool depToggle = v3.valid(launcher) && v3.ents[launcher].deployed;
+                        if (v3.valid(launcher)) {
+                            v3.ents[launcher].deployed = false;
+                            EID tgtFar = v3.spawnBuilding(1, BldType::Pillbox, 20, 10, true);
+                            v3.ents[launcher].target = tgtFar;
+                            v3.ents[launcher].state = UState::Attacking;
+                            v3.ents[launcher].path.clear();
+                        }
+                        for (int t = 0; t < 8; ++t) v3.update();
+                        bool autoDep = v3.valid(launcher) && v3.ents[launcher].deployed;
+                        // 清场后只留贴脸目标，验证最小射程
+                        for (size_t i = 0; i < v3.ents.size(); ++i) {
+                            if ((int)i == launcher) continue;
+                            if (v3.ents[i].alive) v3.kill((int)i);
+                        }
+                        EID tgtNear = v3.spawnUnit(1, UnitType::GI, 12.5f, 10.5f);
+                        if (v3.valid(launcher)) {
+                            v3.ents[launcher].deployed = true;
+                            v3.ents[launcher].atkCd = 0;
+                            v3.ents[launcher].target = tgtNear;
+                            v3.ents[launcher].state = UState::Idle;
+                            v3.ents[launcher].path.clear();
+                            v3.projs.clear();
+                        }
+                        int nearHp0 = v3.valid(tgtNear) ? v3.ents[tgtNear].hp : -1;
+                        for (int t = 0; t < 40; ++t) v3.update();
+                        bool minRange = nearHp0 > 0 && v3.valid(tgtNear) && v3.ents[tgtNear].hp == nearHp0
+                                     && v3.projs.empty();
+                        v3DeployOk = depToggle && autoDep && minRange;
+                    }
+
+                    yuriFactionOk = (unitDef(UnitType::Yuri).factionMask & (1 << (int)Faction::Yuri)) != 0
+                                 && (unitDef(UnitType::Yuri).factionMask & (1 << (int)Faction::Soviet)) == 0;
+
+                    // 间谍伪装：攻击敌方步兵立刻变成该兵种形象
+                    {
+                        World sd;
+                        sd.init(48, 48, 0x00330016u, 2, 0, {Faction::Allies, Faction::Soviet}, 0);
+                        for (Cell& c : sd.map.cells)
+                            if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
+                        EID spy = sd.spawnUnit(0, UnitType::Spy, 10.5f, 10.5f);
+                        EID cons = sd.spawnUnit(1, UnitType::Conscript, 14.5f, 10.5f);
+                        sd.orderAttack({spy}, cons);
+                        spyDisguiseOk = sd.valid(spy) && sd.ents[spy].camouflaged
+                                     && (sd.ents[spy].camoTick & 0xFFFF) == (int)UnitType::Conscript;
+                    }
+                }
+            }
+
             check(valueVeteran && valueElite, "veterancy accumulates destroyed target value at 3x thresholds");
             check(eliteArmor && rankBonuses, "veteran and elite armor, speed, ROF and self-heal bonuses are active");
             check(heroUnique && heroImmune, "heroes are unique in production and immune to Yuri control");
@@ -897,6 +1274,24 @@ int Game::smokeTest(int frames) {
             check(ifvPassenger && prismRefraction, "IFV passenger weapons and prism refraction are active");
             check(turretMoveFire, "turreted tanks fire while attack-moving");
             check(armorMatrix, "configurable warhead armor matrix preserves legacy fallback");
+            check(forceShieldOk, "force shield invulns ally buildings and blackouts the base");
+            check(rccOk, "robot control center gates and freezes robot tanks");
+            check(cloningYuriOk, "cloning vats belong to Yuri not Soviet");
+            check(psychicCapOk, "psychic tower hard-caps mind control at 3");
+            check(uniqueBldOk, "unique buildings cannot be started twice");
+            check(oilBonusOk, "oil derrick capture grants +1000");
+            check(yuriPrimeOk, "yuri prime is unique and can mind-control enemy buildings");
+            check(mutatorMatrixOk, "genetic mutator kills heroes/dogs and mutates infantry to brutes");
+            check(spyRevealOk, "spy plane and psychic reveal support powers clear fog");
+            check(countryTechOk, "country tech gates and psychic sensor faction are correct");
+            check(permaMcvOk, "permanently mind-controlled MCV cannot deploy");
+            check(meltdownOk, "nuclear reactor meltdown damages nearby units");
+            check(swChargeOk, "superweapon charge times match official minutes at 30fps");
+            check(paradropCountOk, "paradrop drops America-8 airport-Soviet-9 airport-Allies-6");
+            check(cloningDupOk, "cloning vat duplicates infantry on barracks completion");
+            check(v3DeployOk, "v3 auto-deploys to fire and respects min range");
+            check(yuriFactionOk, "yuri infantry is Yuri-faction not Soviet");
+            check(spyDisguiseOk, "spy disguise copies target infantry on attack order");
         }
     }
     // ---- 地图类型验证：岛屿水域占比应显著高于大陆，湖泊存在成片水域 ----
@@ -1011,7 +1406,10 @@ int Game::smokeTest(int frames) {
     }
     // ---- 战役验证：任务表 + 首波增援刷出 ----
     {
-        bool tblOk = missionTable().size() == 32;
+        bool tblOk = missionTable().size() >= 32;
+        int officialN = 0;
+        for (const auto& md : missionTable()) if (md.track == 1) officialN++;
+        bool officialOk = officialN >= 3;
         newCampaignGame(0);
         int before = 0;
         for (auto& e : world.ents) if (e.alive && e.player == 1 && !e.isBuilding) before++;
@@ -1019,9 +1417,10 @@ int Game::smokeTest(int frames) {
         int after = 0;
         for (auto& e : world.ents) if (e.alive && e.player == 1 && !e.isBuilding) after++;
         bool waveOk = nextWave >= 1 && after >= before + 2; // 首波 4 单位（途中可能战损，放宽）
-        TraceLog(LOG_INFO, "campaign verify: table=%d waveSpawn=%d (p1 units %d -> %d, nextWave=%zu)",
-                 (int)tblOk, (int)waveOk, before, after, nextWave);
-        check(tblOk, "campaign table contains 32 missions");
+        TraceLog(LOG_INFO, "campaign verify: table=%zu official=%d waveSpawn=%d (p1 units %d -> %d, nextWave=%zu)",
+                 missionTable().size(), officialN, (int)waveOk, before, after, nextWave);
+        check(tblOk, "campaign table contains fusion missions");
+        check(officialOk, "official campaign track has Lone Guardian class missions");
         check(waveOk, "campaign first reinforcement wave spawns");
     }
     TraceLog(failed == 0 ? LOG_INFO : LOG_ERROR,
@@ -1103,7 +1502,10 @@ int Game::campaignMatrixTest(int frames) {
         ok ? ++passed : ++failed;
     };
     const auto& table = missionTable();
-    check(table.size() == 32, 0, "mission table contains exactly 32 entries");
+    check(table.size() >= 32, 0, "mission table contains fusion + optional official tracks");
+    int officialN = 0;
+    for (const auto& md : table) if (md.track == 1) officialN++;
+    check(officialN >= 3, 0, "official track lists at least 3 Allied prototype missions");
     for (int mission = 0; mission < (int)table.size(); ++mission) {
         const MissionDef& md = table[mission];
         newCampaignGame(mission, false);

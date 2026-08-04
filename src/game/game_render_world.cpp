@@ -373,6 +373,23 @@ void Game::drawEntities() {
                 DrawEllipse((int)p.x, (int)p.y + 4, 6, 2, Color{0, 0, 0, 40});
             }
             if (flying) p.y -= AIR_ALT;
+            // 幻影坦克伪装：敌方视角画成树（己方仍见车体）
+            if (e.camouflaged && e.player != localPlayer) {
+                Overlay tree = (Overlay)(1 + (it.id % 3)); // Tree1..Tree3
+                const Sprite& ts = g_sprites.overlaySpr(tree);
+                DrawTexture(ts.tex, (int)p.x - ts.ox, (int)p.y - ts.oy, WHITE);
+                continue;
+            }
+            // 间谍伪装：已手动伪装则画成目标兵种+敌方色；未伪装画本体
+            UnitType drawType = e.utype;
+            int drawCid = cid;
+            if (e.utype == UnitType::Spy && e.camouflaged) {
+                int dt = e.camoTick & 0xFFFF;
+                if (dt >= 0 && dt < (int)UnitType::COUNT && unitDef((UnitType)dt).isInfantry()) {
+                    drawType = (UnitType)dt;
+                    drawCid = (e.camoTick >> 16) & 0xFF;
+                }
+            }
             // 被炸/寄生掀起：左右交替抬高一侧
             float rockDeg = 0.f;
             if (e.rockTilt > 0 && !flying) {
@@ -381,25 +398,25 @@ void Game::drawEntities() {
                 p.y -= 4;
             }
             // 动画状态机选择（art.ini 序列）：开火 > 行走 > 部署站姿 > 站立
-            const UnitAnimInfo& ai = g_sprites.animInfo(e.utype);
+            const UnitAnimInfo& ai = g_sprites.animInfo(drawType);
             const Sprite* bodyP;
             if (e.fireAnim > 0 && ai.fire > 0) {
                 int phase = (ai.fire * 2 - e.fireAnim) / 2; // 0..fire-1
-                bodyP = &g_sprites.unitAnim(e.utype, UAnim::Fire, e.dir, phase, cid);
-            } else if ((ud.isInfantry() || e.utype == UnitType::TerrorDrone) && ai.walk > 0
+                bodyP = &g_sprites.unitAnim(drawType, UAnim::Fire, e.dir, phase, drawCid);
+            } else if ((unitDef(drawType).isInfantry() || drawType == UnitType::TerrorDrone) && ai.walk > 0
                        && !e.path.empty() && e.pathIdx < (int)e.path.size()
                        && e.state != UState::Idle && e.state != UState::Attacking && e.state != UState::Landed) {
-                bodyP = &g_sprites.unitAnim(e.utype, UAnim::Walk, e.dir, e.walkFrame, cid);
+                bodyP = &g_sprites.unitAnim(drawType, UAnim::Walk, e.dir, e.walkFrame, drawCid);
             } else if (e.deployed && ai.dep) {
-                bodyP = &g_sprites.unitAnim(e.utype, UAnim::Dep, e.dir, 0, cid);
+                bodyP = &g_sprites.unitAnim(drawType, UAnim::Dep, e.dir, 0, drawCid);
             } else if (ud.canHarvet() && e.state == UState::HarvestUnload) {
-                bodyP = &g_sprites.unitUnload(e.utype, e.dir, cid);
+                bodyP = &g_sprites.unitUnload(drawType, e.dir, drawCid);
             } else {
                 // 站立：步兵/载具站立帧恒 f0；矿车 f0/f1=空/满（勿用 walkFrame，否则缺 f1 会掉回程序占位图）
                 int stf = ud.canHarvet()
                     ? ((e.oreLoad >= World::harvesterCapacity(e.utype)) ? 1 : 0)
                     : 0;
-                bodyP = &g_sprites.unitBody(e.utype, e.dir, stf, cid);
+                bodyP = &g_sprites.unitBody(drawType, e.dir, stf, drawCid);
             }
             const Sprite& body = *bodyP;
             Color tint = (e.player != localPlayer && fs == FOG_SEEN) ? Color{120, 120, 120, 255} : WHITE;
@@ -413,8 +430,8 @@ void Game::drawEntities() {
             } else {
                 DrawTexture(body.tex, drawX, drawY, tint);
             }
-            if (g_sprites.hasTurret(e.utype)) {
-                const Sprite& tur = g_sprites.unitTurret(e.utype, e.turretDir, cid);
+            if (g_sprites.hasTurret(drawType)) {
+                const Sprite& tur = g_sprites.unitTurret(drawType, e.turretDir, drawCid);
                 if (rockDeg != 0.f) {
                     Rectangle src{0, 0, (float)tur.tex.width, (float)tur.tex.height};
                     Rectangle dst{(float)p.x, (float)p.y, (float)tur.tex.width, (float)tur.tex.height};
@@ -536,7 +553,7 @@ void Game::drawEntities() {
             }
             const BldDef& d = bldDef(e.btype);
             const bool bldSelected = ((int)it.id == selBuilding);
-            // RA2 选中：贴地占地菱形黄色虚线框（与放置预览脚印一致），非立体笼
+            // RA2 选中：等距 3D 虚线笼（底面脚印 + 顶面抬高 + 竖棱）
             auto isoCorner = [&](int tx, int ty, int ox, int oy) {
                 int px = 0, py = 0;
                 tileToScreen(tx, ty, px, py);
@@ -560,8 +577,17 @@ void Game::drawEntities() {
             };
             if (bldSelected) {
                 Color edge{255, 240, 60, 235}; // RA2 选中黄
+                // 高度：贴图锚点 oy 即占地南尖到画布顶 → 立体笼顶贴合屋顶
+                float elev = (float)std::max(14, s.oy - TILE_H);
+                elev = std::min(elev, 110.0f);
+                Vector2 tn{bn.x, bn.y - elev}, te{be.x, be.y - elev};
+                Vector2 ts{bs.x, bs.y - elev}, tw{bw.x, bw.y - elev};
                 dashLine(bn, be, edge); dashLine(be, bs, edge);
                 dashLine(bs, bw, edge); dashLine(bw, bn, edge);
+                dashLine(tn, te, edge); dashLine(te, ts, edge);
+                dashLine(ts, tw, edge); dashLine(tw, tn, edge);
+                dashLine(bn, tn, edge); dashLine(be, te, edge);
+                dashLine(bs, ts, edge); dashLine(bw, tw, edge);
             }
             // 血条锚在建筑贴图顶缘（与精灵一致，避免立体线框高度错位）
             int barW = std::clamp((int)(distf(bw.x, bw.y, be.x, be.y) * 0.55f), 36, 96);
@@ -930,13 +956,18 @@ void Game::drawPlacement() {
         int px, py;
         tileToScreen(tx, ty, px, py);
         int sx = px - (int)camX, sy = py - (int)camY + TILE_H / 2;
-        float radius = targetingSW == SWType::Nuke ? 6.0f : (targetingSW == SWType::Lightning ? 5.5f : 3.0f);
+        float radius = targetingSW == SWType::Nuke ? 6.0f
+                     : (targetingSW == SWType::Lightning ? 5.5f
+                     : (targetingSW == SWType::ForceShield ? 4.0f : 3.0f));
         // 等距椭圆覆盖圈
         float ex = radius * TILE_W / 2.0f, ey = radius * TILE_H / 2.0f;
-        Color cc = targetingSW == SWType::IronCurtain ? Color{220, 60, 50, 200} : Color{255, 220, 80, 220};
+        Color cc = (targetingSW == SWType::IronCurtain || targetingSW == SWType::ForceShield)
+            ? Color{80, 180, 255, 200} : Color{255, 220, 80, 220};
+        if (targetingSW == SWType::IronCurtain) cc = Color{220, 60, 50, 200};
         if ((world.tick / 8) % 2) cc.a = 130;
         DrawEllipseLines(sx, sy, ex, ey, cc);
-        DrawEllipse(sx, sy, ex, ey, targetingSW == SWType::IronCurtain ? Color{220, 60, 50, 36} : Color{255, 220, 80, 30});
+        DrawEllipse(sx, sy, ex, ey, targetingSW == SWType::IronCurtain ? Color{220, 60, 50, 36}
+                    : (targetingSW == SWType::ForceShield ? Color{80, 180, 255, 36} : Color{255, 220, 80, 30}));
         // 中心准星
         DrawLine(sx - 10, sy, sx + 10, sy, cc);
         DrawLine(sx, sy - 6, sx, sy + 6, cc);
