@@ -47,11 +47,34 @@ R = parse_ini(RT); A = parse_ini(AT)
 _, _p = T.find("unittem.pal"); PAL_U = load_pal(_p)
 _, _p = T.find("cameo.pal"); PAL_C = load_pal(_p)
 
-def has(n): return T.find(n)[1] is not None
-def get(n): return T.find(n)[1]
+def has(n):
+    return T.find_theater(n)[1] is not None
+def get(n):
+    return T.find_theater(n)[1]
 
 # engine 单位/建筑 -> RA2/YR rules id 候选
-# YR 建筑要求本机 game/ 有 RA2MD.MIX；无对应 SHP 时跳过（禁止近亲冒充，避免两建筑同一贴图）。
+# YR 建筑要求本机 game/ 有 RA2MD.MIX；无对应 SHP 时跳过（禁止近亲冒充）。
+# Image 强制表：rules/art 写错或 Image 指向近亲时，用真实 MIX stem。
+FORCE_IMAGE = {
+    "guardiangi": "ggi",
+    "initiate": "init",
+    "brute": "brute",
+    "virus": "virus",
+    "boris": "boris",
+    "robottank": "robo",
+    "battlefortress": "bfrt",  # artmd 误标 SREF
+    "gatlingtank": "ytnk",
+    "magnetron": "tele",
+    "mastermind": "mind",
+    "chaosdrone": "caos",
+    "mig": "bpln",
+    "siegechopper": "schp",
+    "floatingdisc": "disk",
+    "boomer": "bsub",
+    "slaveminer": "smin",
+    # 官方 APOC.Image=MTNK（无独立 apoc.vxl）
+    "apocalypse": "mtnk",
+}
 UNITS = {
     "gi": ["E1"], "conscript": ["E2"], "engineer": ["ENGINEER"],
     "attackdog": ["ADOG", "DOG"], "spy": ["SPY"], "flaktrooper": ["FLAKT"],
@@ -69,31 +92,33 @@ UNITS = {
     "destroyer": ["DEST"], "typhoon": ["SUB"], "aegis": ["AEGIS"],
     "seascorpion": ["HYD"], "dreadnought": ["DRED"], "aircraftcarrier": ["CARRIER"],
     "amphtransport": ["SAPC"], "dolphin": ["DLPH"], "squid": ["SQD"],
-    # ---- 近亲替代（MIX 无此单位）----
-    "pla": ["E2"],               # 解放军 -> 动员兵（苏联系步兵）
-    "guardiangi": ["E1"],        # 重装大兵 -> 大兵
-    "initiate": ["E2"],          # 尤里新兵 -> 动员兵
-    "brute": ["DESO"],           # 狂兽人 -> 辐射工兵（大块头）
-    "virus": ["SNIPE"],          # 病毒狙击手 -> 狙击手
-    "boris": ["GHOST"],          # 鲍里斯 -> 海豹部队
-    "type99": ["HTNK"],          # 99式 -> 犀牛
-    "robottank": ["MTNK"],       # 遥控坦克 -> 灰熊
-    "battlefortress": ["APOC"],  # 战斗要塞 -> 天启（本 MIX Image=mtnk 大型战车）
-    "gatlingtank": ["HTK"],      # 盖特坦克 -> 防空履带车
-    "magnetron": ["TTNK"],       # 磁电坦克 -> 磁能坦克
-    "mastermind": ["APOC"],      # 主脑坦克 -> 天启（大型车体）
-    "chaosdrone": ["DRON"],      # 混乱无人机 -> 恐怖机器人
-    "mig": ["BEAG"],             # 米格 -> 黑鹰
-    "siegechopper": ["SHAD"],    # 攻城直升机 -> 夜鹰
-    "boomer": ["SUB"],           # 雷鸣潜艇 -> 台风
-    "floatingdisc": ["ZEP"],     # 镭射幽浮 -> 基洛夫（同为大型慢速空军，原版无飞碟素材）
-    "lashertank": ["LTNK"],      # 狂风坦克（本 MIX 有真实 ltnk.vxl）
+    # ---- YR 真实素材（localmd/conqmd）----
+    "guardiangi": ["GGI"],
+    "initiate": ["INIT"],
+    "brute": ["BRUTE"],
+    "virus": ["VIRUS"],
+    "boris": ["BORIS"],
+    "robottank": ["ROBO"],
+    "battlefortress": ["BFRT"],
+    "gatlingtank": ["YTNK"],
+    "magnetron": ["TELE"],
+    "mastermind": ["MIND"],
+    "chaosdrone": ["CAOS"],
+    "mig": ["BPLN"],
+    "siegechopper": ["SCHP"],
+    "floatingdisc": ["DISK"],
+    "boomer": ["BSUB"],
+    "lashertank": ["LTNK"],
+    "slaveminer": ["SMIN"],
+    # ---- 融合阵营：无官方 MIX 时 skip（禁止近亲冒充）----
+    "pla": ["PLA"],
+    "type99": ["TYPE99"],
 }
 INFANTRY = {"gi", "conscript", "engineer", "spy", "flaktrooper",
             "teslatrooper", "sniper", "tanya", "desolator", "chrono", "crazyivan",
             "terrorist", "navyseal", "yuri", "chronocommando", "psicommando",
             "rocketeer", "guardiangi", "pla", "initiate", "brute", "virus", "boris"}
-MINERS = {"harvester", "chronominer", "warminer"}
+MINERS = {"harvester", "chronominer", "warminer", "slaveminer"}
 # 卸货动画 VXL（HORV/CMON）：与车体 Image 不同
 MINER_UNLOAD_VXL = {"harvester": "horv", "chronominer": "cmon", "warminer": "horv"}
 # 引擎 MoveType（src/game/data.cpp）：空军/海军不烘地面投影，锚点=内容中心
@@ -106,23 +131,23 @@ BLDS = {
     "nuclearreactor": ["NANRCT"], "barracks": ["GAPILE"], "warfactory": ["GAWEAP"],
     "orerefinery": ["GAREFN"], "radar": ["GARADR", "NARADR"], "battlelab": ["GATECH"],
     "airforcecmd": ["GAAIRC"], "navalyard": ["GAYARD"], "pillbox": ["GAPILL"],
-    "sentrygun": ["NALASR"], "prismtower": ["ATESLA"], "teslacoil": ["TESLA"],
+    "sentrygun": ["NALASR"], "prismtower": ["GAPRIS"], "teslacoil": ["NATSLA"],
     "flakcannon": ["NAFLAK"], "grandcannon": ["GTGCAN"], "patriotmissile": ["NASAM"],
     "wall": ["GAWALL"], "orepurifier": ["GAOREP"], "industrialplant": ["NAINDP"],
     "techpowerplant": ["CAPOWR"], "nukesilo": ["NAMISL"],
     "weatherdevice": ["GAWEAT"], "ironcurtain": ["NAIRON"], "chronosphere": ["GACSPH"],
     "oilderrick": ["CAOILD"], "hospital": ["CAHOSP", "CATHOSP"], "machineshop": ["CAMACH"],
     "cloningvat": ["NACLON"], "servicedepot": ["GADEPT"], "gapgenerator": ["GAGAP"],
-    "spysat": ["GASPYSAT"], "psychicsensor": ["NAPSIS"], "techairport": ["CAAIRP"],
+    "spysat": ["GASPST", "GASPYSAT"], "psychicsensor": ["NAPSIS"], "techairport": ["CAAIRP"],
     "secretlab": ["CASLAB", "CALAB"], "civhouse": ["CAHSE01"], "techoutpost": ["CAOUTP"],
-    # ---- YR/尤里建筑：仅用真实 Image id；无 SHP 时跳过（禁止近亲冒充，避免两建筑同一贴图）----
+    # ---- YR/尤里建筑：仅用真实 Image id；无 SHP 时跳过（禁止近亲冒充）----
     "battlebunker": ["NABNKR"],
     "tankbunker": ["NATBNK"],
     "bioreactor": ["YAPOWR"],
     "gatlingcannon": ["YAGGUN"],
     "grinder": ["YAGRND"],
     "geneticmutator": ["YAGNTC"],
-    "psychicdominator": ["YAPPET"],  # rulesmd: Yuri Puppet Master / Psychic Dominator SW
+    "psychicdominator": ["YAPPET"],
     "psychictower": ["YAPSYT"],
     "robotcontrol": ["GAROBO"],
 }
@@ -131,12 +156,16 @@ BLD_FROM_MK = {"grandcannon": "gagcanmk", "nukesilo": "namislmk", "sentrygun": "
                "flakcannon": "naflakmk",
                "servicedepot": "gadeptmk",
                "battlebunker": "nabnkrmk",
-               # NATBNK 主 SHP 全空；完整坦克碉堡在 mk（+ SpecialAnim 层，静态取 mk 即可）
-               "tankbunker": "ngtbnkmk"}
+               "tankbunker": "ngtbnkmk",
+               # 主 SHP 仅雪地/残缺：用温带 MAKE 最大帧作成品
+               "teslacoil": "nttslamk",
+               "chronosphere": "gtcsphmk",
+               "spysat": "gaspstmk",
+               "prismtower": "gtprismk"}
 # 墙体：f0 是孤立门柱，f5 是连续墙段
 BLD_FRAME0 = {"wall": 5}
-# 建造动画关键帧数（mk 均采 + 完整帧）
-MK_KEYS = 6
+# 建造/出售倒放关键帧数（mk 均采 + 完整帧；原作 MAKE 常 50+ 帧，过稀会像程序动画）
+MK_KEYS = 20
 
 _size_cache = {}
 def ph_size(kind, name, default):
@@ -383,7 +412,7 @@ def render_seq_unit(img, eng, canvas):
 #  - 恐怖机器人 dron（176帧=22相位×8方向交错：帧=相位*8+方向）：相位0站立 相位1..6 行走
 #  - 海豚 dlph（48帧全圆）：f0=N f12=E f24=S f36=W（顺时针）→ f=(12+6e)%48
 #  - 乌贼 sqd（296帧=8方向×37帧动画）：各方向块内取平静帧(+9)
-DRONE_SHP = {"terrordrone", "chaosdrone"}
+DRONE_SHP = {"terrordrone"}  # CAOS 有真实 caos.vxl；仅 DRON 走 SHP
 NAVAL_ROUND48 = {"dolphin"}
 BLOCK_SHP = {"squid": 37}
 
@@ -449,11 +478,11 @@ def render_shp_unit(img, eng, canvas):
 # 近亲替代单位的炮塔跟随近亲（type99 用犀牛炮塔等）
 # 炮塔：与车体 Image stem 配对（*tur.vxl）；画布约为车体 55%，避免旧超大占位把炮塔撑满画布
 TURRETS = {
-    "grizzly": "gtnktur", "rhino": "htnktur", "type99": "htnktur",
+    "grizzly": "gtnktur", "rhino": "htnktur",
     "apocalypse": "mtnktur", "prismtank": "sreftur", "teslatank": "ttnktur",
     "ifv": "fvtur", "flaktrack": "htktur", "miragetank": "rtnktur",
-    "robottank": "gtnktur", "lashertank": "ltnktur", "gatlingtank": "htktur",
-    "magnetron": "ttnktur", "mastermind": "mtnktur",
+    "robottank": "robotur", "lashertank": "ltnktur", "gatlingtank": "ytnktur",
+    "magnetron": "teletur", "floatingdisc": "disktur", "slaveminer": "smintur",
 }
 
 def _merge_vxl(*vxls):
@@ -672,7 +701,7 @@ for eng, cands in UNITS.items():
     rid = next((c for c in cands if c in R), None)
     if not rid:
         report["units_skip"].append((eng, "no rules id")); continue
-    img = R[rid].get("Image", rid).lower()
+    img = FORCE_IMAGE.get(eng, R[rid].get("Image", rid).lower())
     ok = False
     layout = None
     if has(img + ".vxl"):
@@ -743,11 +772,7 @@ for eng, cands in UNITS.items():
             if tdirs:
                 for e in range(8):
                     save(tdirs[e], f"turret_{eng}_d{e}.png")
-    elif eng in TURRETS:
-        tdirs = render_turret_centered(TURRETS[eng], (48, 48))
-        if tdirs:
-            for e in range(8):
-                save(tdirs[e], f"turret_{eng}_d{e}.png")
+    # 禁止：车体失败时用近亲炮塔兜底
     # 图标
     asec = A.get(R[rid].get("Image", rid).upper(), {}) or A.get(rid, {})
     cameo = asec.get("Cameo", "").lower()
@@ -758,20 +783,7 @@ for eng, cands in UNITS.items():
                 save(ic, f"icon_unit_{eng}.png")
                 report["icons_ok"].append(("unit_" + eng, cand)); break
     else:
-        # cameo 缺失或损坏（中文包 comp==0）-> 用刚生成的本体 d2 帧合成图标
-        body = os.path.join(SPR, f"unit_{eng}_d2_f0.png")
-        if ok and os.path.exists(body):
-            with Image.open(body) as bm:
-                im = bm.convert("RGBA").copy()
-            w, ch = 108, 84
-            s = min((w - 16) / im.width, (ch - 16) / im.height)
-            im = im.resize((max(1, round(im.width * s)), max(1, round(im.height * s))), Image.LANCZOS)
-            cv = Image.new("RGBA", (w, ch), (96, 132, 168, 255))
-            cv.paste(im, ((w - im.width) // 2, (ch - im.height) // 2), im)
-            save(cv, f"icon_unit_{eng}.png")
-            report["icons_ok"].append(("unit_" + eng, "synth:body"))
-        else:
-            report["icons_skip"].append(("unit_" + eng, "no cameo"))
+        report["icons_skip"].append(("unit_" + eng, "no cameo (synth disabled)"))
 
 for eng, cands in BLDS.items():
     if ONLY and ("bld_" + eng) not in ONLY and eng not in ONLY:
@@ -873,13 +885,7 @@ for eng, cands in BLDS.items():
                 save(ic, f"icon_bld_{eng}.png")
                 report["icons_ok"].append(("bld_" + eng, cand)); break
     if not ic:
-        # cameo 缺失或损坏（中文包 comp==0）-> 用建筑本体合成
-        ic2 = synth_icon_from_bld(found[:-4], (108, 84)) if found else None
-        if ic2:
-            save(ic2, f"icon_bld_{eng}.png")
-            report["icons_ok"].append(("bld_" + eng, "synth:" + (found or "")))
-        else:
-            report["icons_skip"].append(("bld_" + eng, "no cameo"))
+        report["icons_skip"].append(("bld_" + eng, "no cameo (synth disabled)"))
 
 print(f"== done in {time.time()-t0:.1f}s ==")
 print("units_ok:", len(report["units_ok"]), report["units_ok"])

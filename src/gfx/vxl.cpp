@@ -499,27 +499,40 @@ static Stems stemsOf(UnitType t) {
     switch (t) {
         case UnitType::Grizzly:
             return {"gtnk", "gtnktur", "gtnkbarl", nullptr, false};
-        case UnitType::Rhino: case UnitType::Type99:
+        case UnitType::Rhino:
             return {"htnk", "htnktur", "htnkbarl", nullptr, false};
-        case UnitType::Apocalypse:
-            return {"mtnk", "mtnktur", "mtnkbarl", nullptr, false};
-        // YR 专属无本包 VXL：勿借用天启/灰熊模型，交给 PNG/程序化
-        case UnitType::RobotTank: case UnitType::BattleFortress: case UnitType::MasterMind:
+        // 99式：融合阵营自制 PNG（非官方 VXL）；勿共用犀牛体素
+        case UnitType::Type99:
             return {nullptr, nullptr, nullptr, nullptr, false};
-        case UnitType::Harvester: case UnitType::WarMiner: case UnitType::SlaveMiner:
+        case UnitType::Apocalypse:
+            // 官方 rules Image=MTNK（无独立 apoc.vxl）
+            return {"mtnk", "mtnktur", "mtnkbarl", nullptr, false};
+        case UnitType::RobotTank:
+            return {"robo", "robotur", nullptr, nullptr, false};
+        case UnitType::BattleFortress:
+            return {"bfrt", nullptr, nullptr, nullptr, false};
+        case UnitType::MasterMind:
+            return {"mind", nullptr, nullptr, nullptr, false};
+        case UnitType::Harvester: case UnitType::WarMiner:
             return {"harv", nullptr, nullptr, "horv", false};
+        case UnitType::SlaveMiner:
+            return {"smin", "smintur", nullptr, nullptr, false};
         case UnitType::ChronoMiner:
             return {"cmin", nullptr, nullptr, "cmon", false};
         case UnitType::MCV:
             return {"mcv", nullptr, nullptr, nullptr, false};
         case UnitType::IFV:
             return {"fv", "fvtur", nullptr, nullptr, false};
-        case UnitType::FlakTrack: case UnitType::GatlingTank:
+        case UnitType::FlakTrack:
             return {"htk", "htktur", "htkbarl", nullptr, false};
+        case UnitType::GatlingTank:
+            return {"ytnk", "ytnktur", nullptr, nullptr, false};
         case UnitType::PrismTank:
             return {"sref", "sreftur", nullptr, nullptr, false};
-        case UnitType::TeslaTank: case UnitType::Magnetron:
+        case UnitType::TeslaTank:
             return {"ttnk", "ttnktur", nullptr, nullptr, false};
+        case UnitType::Magnetron:
+            return {"tele", "teletur", nullptr, nullptr, false};
         case UnitType::MirageTank:
             return {"rtnk", "rtnktur", "rtnkbarl", nullptr, false};
         case UnitType::V3Launcher:
@@ -530,25 +543,33 @@ static Stems stemsOf(UnitType t) {
             return {"tnkd", nullptr, nullptr, nullptr, false};
         case UnitType::LasherTank:
             return {"ltnk", "ltnktur", "ltnkbarl", nullptr, false};
-        // 原作 Voxel=no，用 DRON.shp；勿走缺失的 dron.vxl
-        case UnitType::TerrorDrone: case UnitType::ChaosDrone:
+        // 原作 Voxel=no：恐怖机器人 DRON.shp；混乱无人机 CAOS.vxl
+        case UnitType::TerrorDrone:
             return {nullptr, nullptr, nullptr, nullptr, false};
+        case UnitType::ChaosDrone:
+            return {"caos", nullptr, nullptr, nullptr, false};
         case UnitType::Intruder:
             return {"falc", nullptr, nullptr, nullptr, true};
-        case UnitType::BlackEagle: case UnitType::MiG:
+        case UnitType::BlackEagle:
             return {"beag", nullptr, nullptr, nullptr, true};
+        case UnitType::MiG:
+            return {"bpln", nullptr, nullptr, nullptr, true};
         case UnitType::Kirov:
             return {"zep", nullptr, nullptr, nullptr, true};
-        case UnitType::FloatingDisc: // YR 飞碟 ≠ 基洛夫
-            return {nullptr, nullptr, nullptr, nullptr, true};
-        case UnitType::Nighthawk: case UnitType::SiegeChopper:
+        case UnitType::FloatingDisc:
+            return {"disk", "disktur", nullptr, nullptr, true};
+        case UnitType::Nighthawk:
             return {"shad", nullptr, nullptr, nullptr, true};
+        case UnitType::SiegeChopper:
+            return {"schp", nullptr, nullptr, nullptr, true};
         case UnitType::Hornet:
             return {"hornet", nullptr, nullptr, nullptr, true};
         case UnitType::Destroyer:
             return {"dest", nullptr, nullptr, nullptr, true};
-        case UnitType::Typhoon: case UnitType::Boomer:
+        case UnitType::Typhoon:
             return {"sub", nullptr, nullptr, nullptr, true};
+        case UnitType::Boomer:
+            return {"bsub", nullptr, nullptr, nullptr, true};
         case UnitType::Aegis:
             return {"aegis", nullptr, nullptr, nullptr, true};
         case UnitType::SeaScorpion:

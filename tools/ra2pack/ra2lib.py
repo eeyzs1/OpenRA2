@@ -247,6 +247,42 @@ class MixTree:
                 return mf.name, data
         return None, None
 
+    def find_all(self, filename: str):
+        """return list of (mixname, data) for every mix containing the file."""
+        out = []
+        for mf in self.mixes:
+            data = mf.get(filename)
+            if data is not None:
+                out.append((mf.name, data))
+        return out
+
+    def find_theater(self, filename: str, prefer_temperate: bool = True):
+        """Pick a theater-appropriate copy. Temperate preferred over snow/urban when available.
+        RA2 Chinese packs often leave only snow.mix G* SHPs; T* MAKE still lives in isotemp."""
+        hits = self.find_all(filename)
+        if not hits:
+            return None, None
+        if len(hits) == 1:
+            return hits[0]
+        prefer = ("isotemp", "isotemmd", "temperat", "/tem.", "tem.mix", "genmd", "conqmd",
+                  "localmd", "local.mix", "generic", "cameo", "cache")
+        depri = ("isosnow", "isosnomd", "snowmd", "/snow.", "snow.mix", "isourb", "urban")
+        best = None
+        for name, data in hits:
+            hl = name.lower()
+            score = 0
+            for p in prefer:
+                if p in hl:
+                    score += 10
+            for d in depri:
+                if d in hl:
+                    score -= 10
+            if not prefer_temperate:
+                score = -score
+            if best is None or score > best[0]:
+                best = (score, name, data)
+        return best[1], best[2]
+
 # ---------------------------------------------------------------- palette
 def load_pal(data: bytes):
     pal = []
