@@ -1,0 +1,14 @@
+# Fusion faction tank: Type99 (PNG path; no MagicaVoxel yet).
+# Prepare: python tools/asset_pipeline/prepare_fusion_units.py
+id: type99
+kind: vehicle_png
+canvas: [96, 96]
+facings: 8
+source_dir: fixtures
+sequences:
+  stand:
+    frames: 1
+qa:
+  not_identical_to: [rhino]
+  require_turret: true
+out_dir: tools/asset_pipeline/out/type99

@@ -1,0 +1,12 @@
+# Demo infantry for asset_pipeline dry-run (not a real game unit).
+id: pipedemo
+kind: infantry
+canvas: [24, 30]
+facings: 8
+source_dir: fixtures
+sequences:
+  stand:
+    frames: 1
+qa:
+  not_identical_to: [conscript, gi, pla]
+out_dir: tools/asset_pipeline/out/pipedemo

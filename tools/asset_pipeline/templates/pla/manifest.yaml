@@ -1,0 +1,21 @@
+# Fusion faction infantry: PLA (derived from Conscript via prepare_fusion_units.py).
+id: pla
+kind: infantry
+canvas: [24, 30]
+facings: 8
+source_dir: fixtures
+sequences:
+  stand:
+    frames: 2
+  walk:
+    frames: 6
+  fire:
+    frames: 6
+  die:
+    frames: 15
+    facings: 1
+  dep:
+    frames: 1
+qa:
+  not_identical_to: [conscript, gi]
+out_dir: tools/asset_pipeline/out/pla
