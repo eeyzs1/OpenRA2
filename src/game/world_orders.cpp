@@ -28,8 +28,8 @@ void World::orderMove(const std::vector<EID>& sel, float x, float y, bool attack
         }
         e.target = INVALID_EID;
         e.guard = false;
-        e.radDeployed = false; // 移动命令自动收起辐射部署
-        e.deployed = false;    // 移动命令自动收起重装大兵部署
+        // 部署态不可移动：须先收起（部署键）才能走
+        if (e.deployed || e.radDeployed) continue;
         if (ud.canHarvet()) e.autoHarvest = false; // 手动移动暂停自动寻矿
         e.goalX = lx; e.goalY = ly;
         // 目标点按单位散开（方阵）—— RA2 标准间距 1.5 格
@@ -116,8 +116,7 @@ void World::orderAttack(const std::vector<EID>& sel, EID target) {
         float d = distf(e.x, e.y, tx, ty);
         if (d <= ew.range) {
             e.state = UState::Attacking;
-            if (!unitHasTurret(e.utype))
-                e.path.clear();
+            e.path.clear(); // 射程内停步开火（含炮塔单位；RA2：到位再打）
         } else {
             if (ud.isAir()) {
                 e.state = UState::Chasing; // 战机直飞，无需寻路
@@ -194,7 +193,7 @@ void World::orderScatter(const std::vector<EID>& sel) {
             int dx = rng.range(-4, 4), dy = rng.range(-4, 4);
             if (abs(dx) < 2 && abs(dy) < 2) continue;
             int nx = (int)e.x + dx, ny = (int)e.y + dy;
-            if (!passableFor(nx, ny, dom) || bldBlocked(nx, ny) || unitAtCell(nx, ny) != INVALID_EID) continue;
+            if (!passableStep((int)e.x, (int)e.y, nx, ny, dom) || bldBlocked(nx, ny) || unitAtCell(nx, ny) != INVALID_EID) continue;
             std::vector<Vec2i> path;
             if (map.findPath((int)e.x, (int)e.y, nx, ny, path, 20000, dom)) {
                 e.path = std::move(path);

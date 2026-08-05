@@ -201,8 +201,8 @@ int Game::statePersistenceTest() {
         }
         fclose(f);
     }
-    check(bytes.size() > 8 && memcmp(bytes.data(), "RA2WRLDF", 8) == 0,
-          "current schema is explicit v14");
+    check(bytes.size() > 8 && memcmp(bytes.data(), "RA2WRLDH", 8) == 0,
+          "current schema is explicit v17");
     auto loadBytes = [](const std::vector<uint8_t>& data, World& out) {
         FILE* f = tmpfile();
         if (!f) return false;
@@ -262,6 +262,7 @@ int Game::statePersistenceTest() {
     check(differs([](World& w) { ++w.projs[0].w.damage; }), "checksum covers projectiles");
     check(differs([](World& w) { ++w.players[0].swCharge[0]; }), "checksum covers superweapons");
     check(differs([](World& w) { ++w.map.at(3, 4).ore; }), "checksum covers map resources");
+    check(differs([](World& w) { ++w.map.at(3, 4).height; }), "checksum covers map cell height");
     check(differs([](World& w) { w.skirmishMode = SkirmishMode::Megawealth; }), "checksum covers game mode");
     check(differs([](World& w) { w.mcvRepacks = !w.mcvRepacks; }), "checksum covers MCV Repacks option");
     check(differs([](World& w) { w.rng.next(); }), "checksum covers full RNG state");

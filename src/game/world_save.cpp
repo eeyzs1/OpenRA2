@@ -11,6 +11,8 @@ namespace {
 // 二进制序列化助手：任何一步读写失败即标记 ok=false（调用方整体放弃）
 // v11 是当前写入格式；读取器保留 v6-v10。新增字段只允许追加到对应结构的既定位置，
 // 并必须由 schema 分支提供旧版默认值，避免“结构体内存快照”式隐式 ABI。
+constexpr char WORLD_SCHEMA_V17[8] = {'R','A','2','W','R','L','D','H'}; // 'H' = 17: Cell.height
+constexpr char WORLD_SCHEMA_V16[8] = {'R','A','2','W','R','L','D','G'}; // 'G' = 16: Ent.selling
 constexpr char WORLD_SCHEMA_V15[8] = {'R','A','2','W','R','L','D','F'}; // 'F' = 15: autoHarvest + rockVehicles
 constexpr char WORLD_SCHEMA_V14[8] = {'R','A','2','W','R','L','D','E'}; // 'E' = 14：Player.defProd 防御队列
 constexpr char WORLD_SCHEMA_V13[8] = {'R','A','2','W','R','L','D','D'}; // 'D' = 13：ProdItem.held
@@ -89,17 +91,17 @@ bool World::saveGame(FILE* f) const {
     for (const Ent& e : ents)
         if (e.path.size() > 4096 || e.wps.size() > 4096 || e.cargo.size() > 64
             || e.garrison.size() > 64 || e.mindTargets.size() > 64) return false;
-    s.wbuf(WORLD_SCHEMA_V15, sizeof(WORLD_SCHEMA_V15));
+    s.wbuf(WORLD_SCHEMA_V17, sizeof(WORLD_SCHEMA_V17));
     s.w(tick); s.w(numPlayers); s.w(rng.s);
     s.w(cratesEnabled); s.w(aiAlliance);
     uint8_t mode = (uint8_t)skirmishMode;
     s.w(mode); s.w(sharedVision); s.w(shortGame); s.w(superweaponsEnabled);
     s.w(mcvRepacks);
-    // 地图（含矿石余量与迷雾）
+    // 地图（含矿石余量、格高度与迷雾）
     s.w(map.w); s.w(map.h);
     for (const Cell& c : map.cells) {
         uint8_t t = (uint8_t)c.terrain, o = (uint8_t)c.overlay;
-        s.w(t); s.w(o); s.w(c.variant); s.w(c.ore); s.w(c.oreMax);
+        s.w(t); s.w(o); s.w(c.variant); s.w(c.ore); s.w(c.oreMax); s.w(c.height);
     }
     for (int p = 0; p < numPlayers; p++)
         s.wbuf(map.fog[p].data(), map.fog[p].size());
@@ -155,7 +157,7 @@ bool World::saveGame(FILE* f) const {
             s.w(e.autoHarvest);
             s.w(e.invuln);
             s.w(e.ammo); s.w(e.rearmTimer); s.w(e.airbase); s.w(e.orbitA);
-            s.w(e.rallyX); s.w(e.rallyY); s.w(e.bldAnim); s.w(e.undeploy); s.w(e.guard); s.w(e.repairing);
+            s.w(e.rallyX); s.w(e.rallyY); s.w(e.bldAnim); s.w(e.undeploy); s.w(e.guard); s.w(e.repairing); s.w(e.selling);
             uint32_t cn = (uint32_t)e.cargo.size();
             s.w(cn);
             for (const Ent::GarrisonedUnit& cu : e.cargo) {
@@ -237,6 +239,8 @@ bool World::loadGame(FILE* f) {
     Ser s{f};
     char magic[8];
     s.rbuf(magic, 8);
+    bool schema17 = s.ok && memcmp(magic, WORLD_SCHEMA_V17, 8) == 0;
+    bool schema16 = s.ok && memcmp(magic, WORLD_SCHEMA_V16, 8) == 0;
     bool schema15 = s.ok && memcmp(magic, WORLD_SCHEMA_V15, 8) == 0;
     bool schema14 = s.ok && memcmp(magic, WORLD_SCHEMA_V14, 8) == 0;
     bool schema13 = s.ok && memcmp(magic, WORLD_SCHEMA_V13, 8) == 0;
@@ -247,15 +251,17 @@ bool World::loadGame(FILE* f) {
     bool schema8 = s.ok && memcmp(magic, "RA2WRLD8", 8) == 0;
     bool schema7 = s.ok && memcmp(magic, "RA2WRLD7", 8) == 0;
     bool schema6 = s.ok && memcmp(magic, "RA2WRLD6", 8) == 0;
-    if (!schema15 && !schema14 && !schema13 && !schema12 && !schema11 && !schema10 && !schema9 && !schema8 && !schema7 && !schema6) return false;
-    const bool schemaAtLeast7 = schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9 || schema8 || schema7;
-    const bool schemaAtLeast8 = schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9 || schema8;
-    const bool schemaAtLeast9 = schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9;
-    const bool schemaAtLeast11 = schema15 || schema14 || schema13 || schema12 || schema11;
-    const bool schemaAtLeast12 = schema15 || schema14 || schema13 || schema12;
-    const bool schemaAtLeast13 = schema15 || schema14 || schema13;
-    const bool schemaAtLeast14 = schema15 || schema14;
-    const bool schemaAtLeast15 = schema15;
+    if (!schema17 && !schema16 && !schema15 && !schema14 && !schema13 && !schema12 && !schema11 && !schema10 && !schema9 && !schema8 && !schema7 && !schema6) return false;
+    const bool schemaAtLeast7 = schema17 || schema16 || schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9 || schema8 || schema7;
+    const bool schemaAtLeast8 = schema17 || schema16 || schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9 || schema8;
+    const bool schemaAtLeast9 = schema17 || schema16 || schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9;
+    const bool schemaAtLeast11 = schema17 || schema16 || schema15 || schema14 || schema13 || schema12 || schema11;
+    const bool schemaAtLeast12 = schema17 || schema16 || schema15 || schema14 || schema13 || schema12;
+    const bool schemaAtLeast13 = schema17 || schema16 || schema15 || schema14 || schema13;
+    const bool schemaAtLeast14 = schema17 || schema16 || schema15 || schema14;
+    const bool schemaAtLeast15 = schema17 || schema16 || schema15;
+    const bool schemaAtLeast16 = schema17 || schema16;
+    const bool schemaAtLeast17 = schema17;
     s.r(tick); s.r(numPlayers); s.r(rng.s);
     s.r(cratesEnabled); s.r(aiAlliance);
     if (!s.ok || numPlayers <= 0 || numPlayers > MAX_PLAYERS || rng.s == 0) return false;
@@ -281,6 +287,7 @@ bool World::loadGame(FILE* f) {
     for (Cell& c : map.cells) {
         uint8_t t = 0, o = 0;
         s.r(t); s.r(o); s.r(c.variant); s.r(c.ore); s.r(c.oreMax);
+        if (schemaAtLeast17) s.r(c.height); else c.height = 0;
         if (t > (uint8_t)Terrain::Bridge || o > (uint8_t)Overlay::Rock2
             || c.ore < 0 || c.oreMax < 0 || c.ore > c.oreMax) return false;
         c.terrain = (Terrain)t; c.overlay = (Overlay)o;
@@ -375,6 +382,8 @@ bool World::loadGame(FILE* f) {
             s.r(e.rallyX); s.r(e.rallyY); s.r(e.bldAnim); s.r(e.undeploy); s.r(e.guard);
             if (schemaAtLeast11) s.r(e.repairing);
             else e.repairing = false;
+            if (schemaAtLeast16) s.r(e.selling);
+            else e.selling = false;
             uint32_t cn = 0;
             s.r(cn);
             if (cn > 64) { s.ok = false; break; }
@@ -697,7 +706,7 @@ uint32_t World::checksum() const {
     h.i32(map.w); h.i32(map.h); h.size(map.cells.size());
     for (const Cell& c : map.cells) {
         h.u8((uint8_t)c.terrain); h.u8((uint8_t)c.overlay); h.u8(c.variant);
-        h.i32(c.ore); h.i32(c.oreMax);
+        h.i32(c.ore); h.i32(c.oreMax); h.u8(c.height);
     }
     h.size(map.fog.size());
     for (const auto& fog : map.fog) {
@@ -746,7 +755,7 @@ uint32_t World::checksum() const {
         h.i32(e.dockRefinery); h.i32(e.digTimer); h.boolean(e.autoHarvest); h.i32(e.invuln);
         h.i32(e.ammo); h.i32(e.rearmTimer); h.i32(e.airbase); h.fp(e.orbitA);
         h.i32(e.rallyX); h.i32(e.rallyY); h.i32(e.bldAnim); h.i32(e.undeploy); h.boolean(e.guard);
-        h.boolean(e.repairing);
+        h.boolean(e.repairing); h.boolean(e.selling);
         h.size(e.cargo.size());
         for (const Ent::GarrisonedUnit& cu : e.cargo) {
             h.u8((uint8_t)cu.type); h.i32(cu.hp); h.i32(cu.kills);

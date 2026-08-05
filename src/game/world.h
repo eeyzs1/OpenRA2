@@ -178,6 +178,7 @@ public:
         int bldAnim = 0;
         int undeploy = 0;           // MCV 部署计时
         bool repairing = false;     // 建筑持续维修（RA2：按造价比例扣款回血）
+        bool selling = false;       // 建筑出售中：倒放建造动画，结束后无爆炸移除
         bool guard = false;         // 警戒模式：按视野半径索敌
         // 运输载具：货舱（保存类型/生命/军衔，与驻军同结构）
         std::vector<GarrisonedUnit> cargo;
@@ -291,7 +292,7 @@ public:
     // 创建
     EID spawnUnit(int player, UnitType t, float x, float y);
     EID spawnBuilding(int player, BldType t, int bx, int by, bool free_ = false);
-    void kill(EID id);
+    void kill(EID id, bool explode = true); // explode=false：出售等无爆炸拆除
 
     // 访问
     Ent& ent(EID id) { return ents[id]; }
@@ -423,6 +424,10 @@ public:
         if (domain == 1) return c.terrain == Terrain::Water;
         if (domain == 2) return c.passable() || c.terrain == Terrain::Water;
         return c.passable();
+    }
+    // 从 (fx,fy) 迈入 (x,y)：地形可走且爬升合法
+    bool passableStep(int fx, int fy, int x, int y, int domain) const {
+        return passableFor(x, y, domain) && map.climbOk(fx, fy, x, y, domain);
     }
 
 private:

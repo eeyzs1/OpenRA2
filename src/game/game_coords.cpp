@@ -12,13 +12,14 @@ void Game::screenToWorld(int sx, int sy, float& wx, float& wy) const {
 }
 
 Vector2 Game::unitScreenPos(const World::Ent& e) const {
-    // 瓦片浮点坐标 → 世界像素：sx=(x-y)*32, sy=(x+y)*16
-    // 渲染插值：逻辑 30Hz、渲染 60fps，在两帧逻辑位置间线性插值消除跳动感
-    // 注意：返回「未乘 zoom」的视口坐标；绘制包在 rlScalef(camZoom) 内
+    // 瓦片浮点坐标 → 世界像素：sx=(x-y)*32, sy=(x+y)*16 − height*16
     float ex = e.px + (e.x - e.px) * interpAlpha;
     float ey = e.py + (e.y - e.py) * interpAlpha;
     float wx = (ex - ey) * (TILE_W / 2.0f);
     float wy = (ex + ey) * (TILE_H / 2.0f);
+    int cx = (int)floorf(ex), cy = (int)floorf(ey);
+    if (world.map.inBounds(cx, cy))
+        wy -= (float)heightScreenY(world.map.at(cx, cy).height);
     return {wx - camX, wy - camY};
 }
 
@@ -49,9 +50,12 @@ Rectangle Game::unitScreenRect(const World::Ent& e) const {
 
 Vector2 Game::bldScreenPos(const World::Ent& e) const {
     const BldDef& d = bldDef(e.btype);
-    // 锚点 = 建筑占地东南角瓦片的南角点
+    // 锚点 = 建筑占地东南角瓦片的南角点（含格高度抬升）
     int px, py;
-    tileToScreen((int)e.x + d.w - 1, (int)e.y + d.h - 1, px, py);
+    int tx = (int)e.x + d.w - 1, ty = (int)e.y + d.h - 1;
+    tileToScreen(tx, ty, px, py);
+    if (world.map.inBounds(tx, ty))
+        py -= heightScreenY(world.map.at(tx, ty).height);
     return {(float)px - camX, (float)py + TILE_H - camY};
 }
 

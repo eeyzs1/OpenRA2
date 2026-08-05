@@ -52,6 +52,8 @@ void Game::editorPlace(int mx, int my) {
         case 0: // 地形刷
             c.terrain = terrainTypes[edTerrain];
             c.overlay = Overlay::None;
+            c.height = (c.terrain == Terrain::Water || c.terrain == Terrain::Bridge)
+                     ? 0 : (uint8_t)clampi(edHeight, 0, 3);
             if (c.terrain == Terrain::Ore) { c.ore = 1000; c.oreMax = 1000; }
             else if (c.terrain == Terrain::Gems) { c.ore = 2000; c.oreMax = 2000; }
             else { c.ore = 0; c.oreMax = 0; }
@@ -154,6 +156,7 @@ void Game::drawMapEditor() {
             const Cell& c = previewMap.at(tx, ty);
             int px, py;
             tileToScreen(tx, ty, px, py);
+            py -= heightScreenY(c.height);
             int sx = px - (int)camX, sy = py - (int)camY;
             if (sx < -TILE_W || sx > viewW + TILE_W || sy < -TILE_H || sy > SCREEN_H + TILE_H) continue;
             const Sprite& s = g_sprites.tile(c.terrain, c.variant & 7);
@@ -167,6 +170,7 @@ void Game::drawMapEditor() {
             if (c.overlay == Overlay::None) continue;
             int px, py;
             tileToScreen(tx, ty, px, py);
+            py -= heightScreenY(c.height);
             int sx = px - (int)camX, sy = py - (int)camY;
             if (sx < -64 || sx > viewW + 64 || sy < -96 || sy > SCREEN_H + 64) continue;
             const Sprite& s = g_sprites.overlaySpr(c.overlay);
@@ -202,7 +206,11 @@ void Game::drawMapEditor() {
                 if (ra2Button(f, m, mPressed(0), r, terrainNames[i], 14, true, edTerrain == i))
                     edTerrain = i;
             }
-            y0 += 6 * 24 + 10;
+            y0 += 6 * 24 + 4;
+            drawTextM(f, TextFormat("高度: %d  [ / ]", edHeight), 10, y0, 14, LIGHTGRAY);
+            if (IsKeyPressed(KEY_LEFT_BRACKET)) edHeight = clampi(edHeight - 1, 0, 3);
+            if (IsKeyPressed(KEY_RIGHT_BRACKET)) edHeight = clampi(edHeight + 1, 0, 3);
+            y0 += 24;
             break;
         case 1: // 装饰
             for (int i = 0; i < 5; i++) {

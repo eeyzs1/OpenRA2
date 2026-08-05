@@ -32,7 +32,12 @@ struct Rng {
     bool chance(float p) { return unit() < p; }
 };
 
-// 坐标换算：瓦片坐标 -> 屏幕像素（菱形地图）
+// RA2 式格高度：每级抬升半格屏幕 Y（绘制侧；tileToScreen 保持平面公式）
+inline int heightScreenY(uint8_t height) {
+    return (int)height * (TILE_H / 2);
+}
+
+// 坐标换算：瓦片坐标 -> 屏幕像素（菱形地图，不含高度抬升）
 inline void tileToScreen(int tx, int ty, int& sx, int& sy) {
     sx = (tx - ty) * (TILE_W / 2);
     sy = (tx + ty) * (TILE_H / 2);

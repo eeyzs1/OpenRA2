@@ -248,7 +248,8 @@ private:
     bool radarOnline() const; // 雷达类建筑在线且电力充足（RA2 小地图激活条件）
     void drawSidebar();
     void drawPlacement();
-    void drawHealthBar(int px, int py, int w, float frac, bool selected);
+    // pipCount<=0：按宽度估算格数；建筑修理逻辑用 20 格，宜显式传入
+    void drawHealthBar(int px, int py, int w, float frac, bool selected, int pipCount = 0);
 
     // 菜单
     void drawMainMenu();
@@ -261,6 +262,7 @@ private:
     // 地图编辑器（game_editor.cpp）
     int edTool = 0;          // 0 地形 1 装饰 2 单位 3 建筑 4 出生点 5 擦除
     int edTerrain = 0;       // 当前地形类型（0=clear 1=rough 2=water 3=ore 4=gems 5=bridge）
+    int edHeight = 0;        // 地形刷写入的格高度 0..3
     int edOverlay = 0;       // 当前装饰类型
     int edUnitIdx = 0;       // 当前单位类型索引
     int edBldIdx = 0;        // 当前建筑类型索引

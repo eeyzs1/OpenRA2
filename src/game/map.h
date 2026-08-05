@@ -24,12 +24,16 @@ struct Cell {
     Terrain terrain = Terrain::Clear;
     Overlay overlay = Overlay::None;
     uint8_t variant = 0;      // 瓦片贴图变体
+    uint8_t height = 0;       // RA2 式格高度（0..3 常见；绘制 Y 抬升，寻路限爬升）
     int16_t ore = 0;          // 剩余矿石量
     int16_t oreMax = 0;       // 矿石上限（生成时记录，用于矿脉缓慢再生）
     bool passable() const {
         return terrain != Terrain::Water && overlay != Overlay::Rock1 && overlay != Overlay::Rock2;
     }
 };
+
+// 地面/两栖邻格最大高度差；海军忽略
+constexpr int MAP_MAX_CLIMB = 1;
 
 // 战争迷雾状态
 enum FogState : uint8_t { FOG_UNSEEN = 0, FOG_SEEN = 1, FOG_VISIBLE = 2 };
@@ -49,6 +53,15 @@ public:
     inline const Cell& at(int x, int y) const { return cells[(size_t)y * w + x]; }
 
     bool passable(int x, int y) const { return inBounds(x, y) && cells[(size_t)y * w + x].passable(); }
+
+    // 邻格爬升：domain 1（海军）始终 true；地面/两栖要求 |Δheight| <= MAP_MAX_CLIMB
+    bool climbOk(int ax, int ay, int bx, int by, int domain) const {
+        if (domain == 1) return true;
+        if (!inBounds(ax, ay) || !inBounds(bx, by)) return false;
+        int dh = (int)at(ax, ay).height - (int)at(bx, by).height;
+        if (dh < 0) dh = -dh;
+        return dh <= MAP_MAX_CLIMB;
+    }
 
     // 采集矿石：返回采集到的量
     int harvestAt(int x, int y, int want);

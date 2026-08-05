@@ -32,7 +32,7 @@ void World::moveAlongPath(Ent& e, EID id) {
             if (o.player == e.player && o.state == UState::Idle && rng.chance(0.18f)) {
                 int dx = rng.range(-1, 1), dy = rng.range(-1, 1);
                 int nx = (int)o.x + dx, ny = (int)o.y + dy;
-                if ((dx || dy) && passableFor(nx, ny, od.pathDomain()) && !bldBlocked(nx, ny)
+                if ((dx || dy) && passableStep((int)o.x, (int)o.y, nx, ny, od.pathDomain()) && !bldBlocked(nx, ny)
                     && !cellHardBlockedForMove(nx, ny, occ)) {
                     o.x = nx + 0.5f; o.y = ny + 0.5f;
                 }
@@ -58,7 +58,7 @@ void World::moveAlongPath(Ent& e, EID id) {
             if (o.player == e.player && o.state == UState::Idle && rng.chance(0.08f)) {
                 int dx = rng.range(-1, 1), dy = rng.range(-1, 1);
                 int nx = (int)o.x + dx, ny = (int)o.y + dy;
-                if ((dx || dy) && passableFor(nx, ny, od.pathDomain()) && !bldBlocked(nx, ny)
+                if ((dx || dy) && passableStep((int)o.x, (int)o.y, nx, ny, od.pathDomain()) && !bldBlocked(nx, ny)
                     && !cellHardBlockedForMove(nx, ny, occ)) {
                     o.x = nx + 0.5f; o.y = ny + 0.5f;
                 }

@@ -80,7 +80,7 @@ Stop / Scatter 仅保留键盘（S / X），不占默认六键。Unload 走快�
 |----|------|------|
 | 瓦片 | 源 60×30 → 引擎 64×32 | `BLD_SCALE = 64/60` |
 | VXL | ~1 voxel ≈ 1 原作像素 | 渲染 `px_per_voxel = 64/60`，**禁止** fit×1.22 |
-| 地面 | TMP 模板 + 变体 + 岸线；**不做跨格糊边** | POINT；靠 TMP/岸线，非 lerp 糊缝 |
+| 地面 | TMP 模板 + 变体 + 岸线 + **Cell.height 抬升** + cliff/ramp 侧立面；**2.5D 等距，非 mesh 地形**；**不做跨格糊边** | POINT；`heightScreenY`；`tile_cliff_n*` / `tile_ramp_*`（`gen_terrain.py`）。见 [asset-pipeline.md](./asset-pipeline.md) |
 | audio.bag | mono IMA **ChunkSize=512** | `gen_audio.py` 读 flags/ChunkSize |
 | 开火 SFX | Report→专用样本；攻击音 ≤0.35s | `WeaponDef.report` + `gen_audio.py` |
 | 载具近亲占位 | 本 MIX 缺 VXL 时用近亲车体 | APOC→MTNK；MGTK→RTNK（见 §8） |
@@ -95,9 +95,28 @@ Stop / Scatter 仅保留键盘（S / X），不占默认六键。Unload 走快�
 | Apocalypse / BattleFortress / MasterMind | MTNK（APOC rules 指向 mtnk 系） | 天启级重坦共用大型车体 |
 | MirageTank | RTNK（MGTK rules；本 MIX 有 ltnk/mtnk，幻影用 MGTK→RTNK 表） | 伪装坦克 |
 | RobotTank | MTNK | 轻坦占位 |
-| Type99 | HTNK | 99 式→犀牛 |
+| Type99 | PNG 车体+炮塔（融合改款，非 HTNK VXL） | `make_fusion_units.py` / `vehicle_png`；见 [asset-pipeline.md](./asset-pipeline.md) |
 
 验收：占位仅影响 **贴图**；开火 Report/SFX、装甲、造价仍走引擎 `UnitType` 表。
+
+## 9. 血条 / 修理 / 出售
+
+| 项 | 原作 | 验收 |
+|----|------|------|
+| 血条 | 一格一格 pip；绿 / ≤50% 黄 / ≤25% 红 | 非连续长条 |
+| 建筑血格 | 与维修扣款格数一致（本引擎 20） | 选中/受伤可见 pip |
+| 修理叠绘 | `cache.mix/wrench.shp` 循环 | 非程序黄块 |
+| 出售动画 | 倒放 `Buildup`（*MK SHP） | 无击毁爆炸、无程序闪烁 |
+
+## 10. 选中虚线笼 / 素材来源
+
+| 项 | 原作 | 验收 |
+|----|------|------|
+| 笼底锚点 | 占地南尖（`bldScreenPos`） | 缩放不得挪动南尖 |
+| 笼宽/高 | 贴图**不透明**包围盒 | 非整幅透明画布；Z=`visElev` |
+| 单位/建筑贴图 | MIX VXL/SHP 提取 | **禁止**程序生成 fallback；缺则 `SPRITE-MISSING` |
+| YR 战车 | `localmd.mix` 真实 VXL（robo/bfrt/tele/…） | 非近亲灰熊/天启冒充 |
+| 融合 PLA / 99式 | 无官方 MIX；`make_fusion_units.py` 自动员兵/犀牛改款 | 可辨认橄榄作训 / 墨绿装甲；**非**原厂质量 |
 
 ## 验收记录（2026-08-03）
 

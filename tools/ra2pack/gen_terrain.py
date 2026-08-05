@@ -196,6 +196,50 @@ for mask, picks in SHORE_MASK_PICKS.items():
 montage(shore_frames, os.path.join(OUT, "gen_shore.png"), 6)
 print(f"shore variants: {len(shore_frames)} (15 masks x 2)")
 
+# ------------------------------------------------------------- cliff / ramp（高度差侧立面）
+# dir: 0=+x低 1=+y低 2=-x低 3=-y低；从 temperate cliff/ramp TMP 取代表性帧
+CLIFF_PICKS = {
+    0: [("cliff01.tem", 0), ("cliff08.tem", 0)],
+    1: [("cliff12.tem", 0), ("cliff15.tem", 0)],
+    2: [("cliff22.tem", 0), ("cliff25.tem", 0)],
+    3: [("cliff31.tem", 0), ("cliff36.tem", 0)],
+}
+cliff_frames = []
+for d, picks in CLIFF_PICKS.items():
+    for v, (fn, fi) in enumerate(picks):
+        im = tmp_frame(fn, fi)
+        if not im:
+            # 退化：用 rough 帧裁成侧立条
+            im = tmp_frame("rough01.tem", min(4 + d, 20))
+        if not im:
+            print(f"  MISS cliff n{d} {fn}#{fi}")
+            continue
+        img = im.resize((TILE_W, max(TILE_H, TILE_H + 16)), Image.NEAREST)
+        img = fill_diamond_edges(img) if img.size == (TILE_W, TILE_H) else img
+        outp = os.path.join(SPR, f"tile_cliff_n{d}_{v}.png")
+        img.save(outp, "PNG")
+        report.append(f"tile_cliff_n{d}_{v}")
+        cliff_frames.append((f"c{d}v{v}", im))
+montage(cliff_frames, os.path.join(OUT, "gen_cliff.png"), 4)
+print(f"cliff variants: {len(cliff_frames)}")
+
+RAMP_PICKS = [("ramp01.tem", 0), ("ramp02.tem", 0)]
+ramp_frames = []
+for v, (fn, fi) in enumerate(RAMP_PICKS):
+    im = tmp_frame(fn, fi)
+    if not im:
+        im = tmp_frame("shore01.tem", 0)
+    if not im:
+        print(f"  MISS ramp {fn}")
+        continue
+    img = im.resize((TILE_W, TILE_H), Image.NEAREST)
+    img = fill_diamond_edges(img)
+    img.save(os.path.join(SPR, f"tile_ramp_{v}.png"), "PNG")
+    report.append(f"tile_ramp_{v}")
+    ramp_frames.append((f"ramp{v}", im))
+montage(ramp_frames, os.path.join(OUT, "gen_ramp.png"), 4)
+print(f"ramp variants: {len(ramp_frames)}")
+
 # ------------------------------------------------------------- SHP 矿脉/彩矿
 def shp_frame(shp, i):
     fr = shp.frame_pixels(i)

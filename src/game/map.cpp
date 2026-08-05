@@ -171,6 +171,28 @@ void Map::generate(int w_, int h_, uint64_t seed, int numPlayers, std::vector<Ve
             want--;
         }
     }
+
+    // 6. 格高度（2.5D）：陆用 fbm 映射 0..3；水/桥强制 0；出生点整平为 0
+    for (int y = 0; y < h; y++)
+        for (int x = 0; x < w; x++) {
+            Cell& c = at(x, y);
+            if (c.terrain == Terrain::Water || c.terrain == Terrain::Bridge) {
+                c.height = 0;
+                continue;
+            }
+            float hv = fbm(x / 22.0f + 3.1f, y / 22.0f + 7.7f, seed ^ 0xA17E17u);
+            // 偏平地：约半数 0，其余 1..3
+            if (hv < 0.48f) c.height = 0;
+            else if (hv < 0.68f) c.height = 1;
+            else if (hv < 0.85f) c.height = 2;
+            else c.height = 3;
+        }
+    for (Vec2i sp : outSpawns)
+        for (int dy = -5; dy <= 5; dy++)
+            for (int dx = -5; dx <= 5; dx++) {
+                int x = sp.x + dx, y = sp.y + dy;
+                if (inBounds(x, y)) at(x, y).height = 0;
+            }
 }
 
 int Map::harvestAt(int x, int y, int want) {
@@ -263,8 +285,11 @@ bool Map::findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, 
         for (int d = 0; d < 8; d++) {
             int nx = cur.x + DX[d], ny = cur.y + DY[d];
             if (!walkable(nx, ny)) continue;
+            if (!climbOk(cur.x, cur.y, nx, ny, domain)) continue;
             if (d >= 4) { // 禁止穿对角障碍
                 if (!walkable(cur.x + DX[d], cur.y) || !walkable(cur.x, cur.y + DY[d])) continue;
+                if (!climbOk(cur.x, cur.y, cur.x + DX[d], cur.y, domain)
+                    || !climbOk(cur.x, cur.y, cur.x, cur.y + DY[d], domain)) continue;
             }
             int ni = ny * w + nx;
             if (closed[ni]) continue;
