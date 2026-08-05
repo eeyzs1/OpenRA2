@@ -391,7 +391,7 @@ EID World::spawnBuilding(int player, BldType t, int bx, int by, bool free_) {
     return id;
 }
 
-void World::kill(EID id) {
+void World::kill(EID id, bool explode) {
     if (!valid(id)) return;
     Ent& e = ents[id];
     // 脚本 hook：死亡事件（在 alive 置 false 前捕获类型/玩家）
@@ -399,6 +399,7 @@ void World::kill(EID id) {
     int deadPlayer = e.player;
     UnitType deadUtype = e.utype;
     BldType deadBtype = e.btype;
+    bool wasSelling = e.selling;
     e.alive = false;
     freeList.push_back(id);
     if (e.isBuilding) {
@@ -408,12 +409,12 @@ void World::kill(EID id) {
                 int cx = (int)e.x + dx, cy = (int)e.y + dy;
                 if (map.inBounds(cx, cy)) bldOcc[cellIdx(cx, cy)] = -1;
             }
-        explodeAt(e.x + d.w / 2.0f, e.y + d.h / 2.0f, 2);
+        if (explode) explodeAt(e.x + d.w / 2.0f, e.y + d.h / 2.0f, 2);
         recomputePower();
-        // 驻军随建筑一同阵亡（RA2 原作设定）
+        // 驻军随建筑一同阵亡（RA2 原作设定）；出售拆除时驻军同样清空
         e.garrison.clear();
-        // 核电站熔毁：瞬时冲击 + 数波残留辐射
-        if (deadBtype == BldType::NuclearReactor) {
+        // 核电站熔毁：仅击毁时触发（出售不熔毁）
+        if (explode && !wasSelling && deadBtype == BldType::NuclearReactor) {
             float cx = e.x + d.w / 2.0f, cy = e.y + d.h / 2.0f;
             const float R = 4.5f;
             for (size_t i = 0; i < ents.size(); i++) {

@@ -229,16 +229,20 @@ void World::setRally(EID factory, int x, int y) {
 void World::sellBuilding(EID id) {
     if (!valid(id) || !ents[id].isBuilding) return;
     Ent& e = ents[id];
-    if (e.player < 0) return; // 中立建筑不可出售
+    if (e.player < 0 || e.selling) return; // 中立/已在出售中不可再卖
+    e.repairing = false;
+    e.selling = true;
+    // 倒放建造动画（与起楼同帧率）；无 mk 序列时用固定时长
+    int mkf = g_sprites.bldMkFrames(e.btype);
+    e.constructAnim = mkf > 1 ? mkf * 5 : 40;
     players[e.player].money += bldDef(e.btype).cost / 2;
     g_sfx.playAt(Sfx::Sell, e.x, e.y);
-    kill(id);
 }
 
 bool World::repairBuilding(EID id) {
     if (!valid(id) || !ents[id].isBuilding) return false;
     Ent& e = ents[id];
-    if (e.player < 0) return false; // 中立建筑不可维修
+    if (e.player < 0 || e.selling) return false; // 中立/出售中不可维修
     const BldDef& d = bldDef(e.btype);
     if (e.hp >= d.hp) { e.repairing = false; return false; }
     // RA2：切换持续维修（每 tick 扣款回血），再次点击可取消

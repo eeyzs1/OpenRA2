@@ -396,12 +396,12 @@ void Game::handleInput() {
         return;
     }
 
-    // 维修/出售点击模式（侧边栏 RA2 标志性按钮；执行一次后自动退出）
+    // 维修/出售模式：保持至右键/Esc 取消（RA2：可连续点多座建筑）
     if (sideMode != 0) {
         if (mPressed(MOUSE_RIGHT_BUTTON) || kPressed(KEY_ESCAPE)) { sideMode = 0; return; }
         if (mPressed(MOUSE_LEFT_BUTTON) && !overUI) {
             EID b = pickBuilding((int)mouse.x, (int)mouse.y);
-            if (b != INVALID_EID && world.ents[b].player == localPlayer) {
+            if (b != INVALID_EID && world.ents[b].player == localPlayer && !world.ents[b].selling) {
                 if (sideMode == 2) {
                     if (world.ents[b].btype != BldType::ConYard) {
                         World::Cmd c; c.type = World::Cmd::SellBuilding; c.ids.push_back(b);
@@ -427,7 +427,6 @@ void Game::handleInput() {
                     else message(TR(S::MsgNoRepair));
                 }
             }
-            sideMode = 0;
         }
         return; // 该模式下屏蔽选择/框选
     }

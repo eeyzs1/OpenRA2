@@ -65,7 +65,7 @@ void World::update() {
     // 扳手模式逐步修，非工程师瞬间回满
     if (tick % 15 == 0) { // ~0.5s @ LOGIC_FPS=30
         for (Ent& e : ents) {
-            if (!e.alive || !e.isBuilding || !e.repairing || e.player < 0) continue;
+            if (!e.alive || !e.isBuilding || !e.repairing || e.selling || e.player < 0) continue;
             const BldDef& d = bldDef(e.btype);
             if (e.hp >= d.hp) { e.repairing = false; continue; }
             const int pips = 20;
@@ -676,6 +676,9 @@ void World::updateUnit(Ent& e, EID id) {
             // C4 爆破手攻击建筑需贴脸（2.5 格），而非武器射程
             float effR = (ud.hasC4() && t.isBuilding) ? 2.5f : (float)ew.range;
             if (d <= effR) {
+                // 进入射程：停步转入开火（炮塔单位也不再贴脸推进）
+                e.path.clear();
+                e.state = UState::Attacking;
                 bool hasTur = unitHasTurret(e.utype);
                 if (hasTur) {
                     int wantTur = dirFromVec(tx - e.x, ty - e.y);
@@ -685,21 +688,17 @@ void World::updateUnit(Ent& e, EID id) {
                         fireWeapon(e, id, e.target);
                         e.atkCd = ew.cooldown;
                     }
-                    if (!e.path.empty() && e.pathIdx < (int)e.path.size()
-                        && d > std::min(2.0f, effR * 0.5f)) {
-                        moveAlongPath(e, id);
-                        break;
-                    }
                 }
-                e.path.clear();
-                e.state = UState::Attacking;
             } else {
-                // 超时空军团兵/超时空突击队追击：直接传送至目标射程边缘
+                // 超时空军团兵/超时空突击队追击：直接传送至目标射程边缘后开火
                 if (e.utype == UnitType::Chrono || e.utype == UnitType::ChronoCommando
                     || e.utype == UnitType::ChronoIvan) {
                     float nx = tx - (tx - e.x) / d * (effR * 0.8f);
                     float ny = ty - (ty - e.y) / d * (effR * 0.8f);
+                    EID keepT = e.target;
                     chronoJump(e, nx, ny);
+                    e.target = keepT;
+                    e.state = UState::Attacking; // 传送到位后立即进入开火（相位不适结束后才真正开枪）
                     break;
                 }
                 // 每 30 帧重寻路
@@ -889,10 +888,13 @@ void World::updateUnit(Ent& e, EID id) {
             }
             // C4 爆破手不对建筑开枪：等待下次爆破冷却（RA2 原作：谭雅/海豹对建筑仅用 C4）
             if (ud.hasC4() && t.isBuilding) break;
-            // 有炮塔且仍有路径：边走边打（车体沿路径，炮塔对敌）
+            // 直接攻击：射程内停步；仅攻击移动才边走边打
             bool hasTur = unitHasTurret(e.utype);
-            if (hasTur && !e.path.empty() && e.pathIdx < (int)e.path.size())
-                moveAlongPath(e, id);
+            // 超时空军团兵：持续抹除期间保持开火姿势（neutron rifle 持续照射）
+            if (e.utype == UnitType::Chrono) {
+                const UnitAnimInfo& fai = g_sprites.animInfo(e.utype);
+                if (fai.fire > 0) e.fireAnim = fai.fire * 2;
+            }
             // 面向目标：有炮塔则仅转炮塔（车体保持移动朝向）；无炮塔转车体
             int wantDir = dirFromVec(tx - e.x, ty - e.y);
             {
@@ -1130,15 +1132,44 @@ void World::updateAircraft(Ent& e, EID id) {
                 }
                 break;
             }
-            // 其它空中单位：环绕目标盘旋投弹
-            e.orbitA += 0.10f;
-            float r = ud.weapon.range * 0.75f;
-            flyToward(e, tx + cosf(e.orbitA) * r, ty + sinf(e.orbitA) * r);
-            if (distf(e.x, e.y, tx, ty) <= ud.weapon.range && e.atkCd <= 0) {
-                fireWeapon(e, id, e.target);
-                if (ud.ammo > 0) e.ammo--;
-                e.atkCd = ud.weapon.cooldown;
-                if (ud.ammo > 0 && e.ammo <= 0) { e.target = INVALID_EID; e.state = UState::Returning; }
+            // 投弹型喷气机（入侵者/黑鹰/米格）：盘旋到射程内投弹后返航
+            const bool bombOrbit = e.utype == UnitType::Intruder
+                || e.utype == UnitType::BlackEagle
+                || e.utype == UnitType::MiG
+                || e.utype == UnitType::Hornet;
+            if (bombOrbit) {
+                e.orbitA += 0.10f;
+                float r = ud.weapon.range * 0.75f;
+                flyToward(e, tx + cosf(e.orbitA) * r, ty + sinf(e.orbitA) * r);
+                e.dir = dirFromVec(tx - e.x, ty - e.y);
+                e.turretDir = e.dir;
+                if (distf(e.x, e.y, tx, ty) <= ud.weapon.range && e.atkCd <= 0) {
+                    fireWeapon(e, id, e.target);
+                    if (ud.ammo > 0) e.ammo--;
+                    e.atkCd = ud.weapon.cooldown;
+                    if (ud.ammo > 0 && e.ammo <= 0) { e.target = INVALID_EID; e.state = UState::Returning; }
+                }
+                break;
+            }
+            // 持续空中攻击（火箭飞行兵/夜鹰/攻城直升机等）：保持射程悬停射击，不盘旋
+            {
+                float d = distf(e.x, e.y, tx, ty);
+                float holdR = std::max(1.0f, (float)ud.weapon.range * 0.85f);
+                if (d > ud.weapon.range) {
+                    flyToward(e, tx, ty);
+                } else if (d < holdR * 0.55f) {
+                    // 过近则略微拉开
+                    float ang = atan2f(e.y - ty, e.x - tx);
+                    flyToward(e, tx + cosf(ang) * holdR, ty + sinf(ang) * holdR);
+                }
+                e.dir = dirFromVec(tx - e.x, ty - e.y);
+                e.turretDir = e.dir;
+                if (d <= ud.weapon.range && e.atkCd <= 0) {
+                    fireWeapon(e, id, e.target);
+                    if (ud.ammo > 0) e.ammo--;
+                    e.atkCd = ud.weapon.cooldown;
+                    if (ud.ammo > 0 && e.ammo <= 0) { e.target = INVALID_EID; e.state = UState::Returning; }
+                }
             }
             break;
         }

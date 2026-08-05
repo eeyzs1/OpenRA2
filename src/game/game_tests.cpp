@@ -1909,13 +1909,18 @@ int Game::playTest() {
                 logic();
             check(world.ents[pbld].hp == bldDef(pt).hp && !world.ents[pbld].repairing,
                   "维修模式恢复建筑生命");
-            sideMode = 0; // 点击后已退出侧栏模式；显式清零防残留
+            sideMode = 0; // 显式清零：下面单独测出售模式保持
             int money0 = world.players[0].money;
             clickL(1380, 186); // “出售”按钮：orig 穹带右半中心 {1267,170,150x33}（1:1 布局 Y_MODE≈170）
             check(sideMode == 2, "点击[出售]进入出售模式");
             clickL(bp.x - ps.ox + ps.tex.width / 2.0f, bp.y - ps.oy + ps.tex.height / 2.0f); // 电厂贴图中心
-            check(world.countBlds(0, pt) == bcnt - 1 && world.players[0].money > money0 && sideMode == 0,
+            check(sideMode == 2, "出售后模式保持（右键才取消）");
+            check(world.ents[pbld].selling || !world.ents[pbld].alive, "出售开始倒放动画或已拆除");
+            for (int t = 0; t < 200 && world.ents[pbld].alive; t++) logic();
+            check(world.countBlds(0, pt) == bcnt - 1 && world.players[0].money > money0,
                   "出售模式点击建筑卖出");
+            clickR(bp.x, bp.y); // 右键退出出售模式
+            check(sideMode == 0, "右键取消出售模式");
         } else check(false, "出售模式点击建筑卖出");
         sel.clear(); // 出售后可能残留选中
     }

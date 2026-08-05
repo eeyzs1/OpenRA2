@@ -60,6 +60,15 @@ static BldType spriteAliasBld(BldType t) {
     return t; // 全部建筑均有专属图形
 }
 
+// 缺素材：禁止程序生成回退。返回 1×1 品红占位并 LOG_ERROR（调用方可见）。
+static PixBuf missingAssetPix(const char* kind, const char* name) {
+    TraceLog(LOG_ERROR, "SPRITE-MISSING %s=%s (no RA2 extract; procedural disabled)", kind, name);
+    fprintf(stderr, "SPRITE-MISSING %s=%s (no RA2 extract; procedural disabled)\n", kind, name);
+    PixBuf pb(1, 1);
+    pb.set(0, 0, Color{255, 0, 255, 255});
+    return pb;
+}
+
 Sprite SpriteBank::makeSprite(PixBuf&& pb, int ox, int oy) {
     Sprite s;
     s.tex = pb.toTexture();
@@ -1970,6 +1979,28 @@ const Sprite& SpriteBank::overlaySpr(Overlay o) {
     return cache.emplace(k, s).first->second;
 }
 
+const Sprite& SpriteBank::crateSpr() {
+    uint64_t k = keyOf(2, 100, 0, 0, 0); // 与 overlay 同槽族，id=100 专供箱子
+    auto it = cache.find(k);
+    if (it != cache.end()) return it->second;
+    PixBuf pb;
+    if (!loadSpr(pb, "assets/sprites/overlay_crate.png")) {
+        // 无提取素材时的程序兜底（等距木箱）
+        pb = PixBuf(36, 40);
+        Color wood{168, 124, 68, 255}, woodDark{118, 82, 42, 255}, band{220, 190, 70, 255};
+        pb.fillRect(8, 12, 20, 18, woodDark);
+        pb.fillRect(8, 8, 20, 8, wood);
+        pb.fillRect(8, 14, 20, 2, band);
+        pb.fillRect(8, 22, 20, 2, band);
+        pb.fillRect(17, 8, 2, 22, band);
+    }
+    Sprite s = makeSprite(std::move(pb), 0, 0);
+    // theater SHP 60×60：南触点约在内容底缘中心
+    s.ox = s.tex.width / 2;
+    s.oy = s.tex.height - 6;
+    return cache.emplace(k, s).first->second;
+}
+
 const Sprite& SpriteBank::finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, int player) {
     // RA2 风格地面投影：仅地面单位（空军/海军不烘投影）；文件素材与程序生成统一烘焙
     const UnitDef& ud = unitDef(t);
@@ -2024,13 +2055,7 @@ const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
                            || loadSpr(pb, "assets/sprites/unit_%s_d%d.png", unitAssetName(t), dir)));
     }
     if (!ext) {
-        static int missLog[512] = {}; // 每 (类型,方向,帧) 只报一次，避免刷屏
-        int mk = ((int)t * 8 + dir) * 4 + fKey;
-        if (mk >= 0 && mk < 512 && !missLog[mk]) {
-            missLog[mk] = 1;
-            fprintf(stderr, "SPRITE-FALLBACK unit=%s dir=%d f=%d (procedural)\n", unitAssetName(orig), dir, fKey);
-        }
-        pb = unitContentPix(t, dir, fKey);
+        pb = missingAssetPix("unit", unitAssetName(orig));
     }
     // 采矿车满载：VXL 无独立帧，货舱区域略提亮偏黄
     if (ext && isMiner && fKey == 1 && VxlRt::hasBody(t)) {
@@ -2080,7 +2105,7 @@ const Sprite& SpriteBank::unitTurret(UnitType t, int dir, int player) {
         ext = loadSpr(pb, "assets/sprites/turret_%s_d%d.png", unitAssetName(orig), dir)
             || (orig != t && loadSpr(pb, "assets/sprites/turret_%s_d%d.png", unitAssetName(t), dir));
     }
-    if (!ext) pb = turretContentPix(t, dir);
+    if (!ext) pb = missingAssetPix("turret", unitAssetName(orig));
     pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
     Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2;
@@ -2115,6 +2140,17 @@ const Sprite& SpriteBank::finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, 
     for (int x = 0; x < ow; x++)
         if (pb.get(x, tipY).a > 60) { tipSum += x; tipN++; }
     int contentOx = tipN > 0 ? (int)(tipSum / tipN) : ow / 2;
+    // 可见包围盒（内容坐标）— 虚线笼用，剔除透明顶/侧边
+    int visL = ow, visT = oh, visR = -1, visB = -1;
+    for (int y = 0; y < oh; y++)
+        for (int x = 0; x < ow; x++)
+            if (pb.get(x, y).a > 60) {
+                if (x < visL) visL = x;
+                if (x > visR) visR = x;
+                if (y < visT) visT = y;
+                if (y > visB) visB = y;
+            }
+    if (visR < 0) { visL = 0; visT = 0; visR = ow - 1; visB = oh - 1; }
     PixBuf canvas(ow + 14, oh + 10);
     if (withShadow) {
         // 阴影居中在南角锚点正下方（略偏南），勿再右偏，否则与占地菱形错位
@@ -2130,6 +2166,10 @@ const Sprite& SpriteBank::finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, 
     Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = contentOx + 6; // blit 左偏移 6 — 南角对齐占地菱形南尖
     s.oy = groundY + 4;   // blit 上偏移 4
+    s.visL = visL + 6;
+    s.visT = visT + 4;
+    s.visR = visR + 6;
+    s.visB = visB + 4;
     return cache.emplace(k, s).first->second;
 }
 
@@ -2142,10 +2182,17 @@ const Sprite& SpriteBank::building(BldType t, int player, bool constructing) {
     PixBuf pb;
     bool ext = loadSpr(pb, "assets/sprites/bld_%s%s.png", bldAssetName(orig), constructing ? "_scaffold" : "")
             || (orig != t && loadSpr(pb, "assets/sprites/bld_%s%s.png", bldAssetName(t), constructing ? "_scaffold" : ""));
+    // 建造中无独立 scaffold PNG：用 mk 首帧（地基）或成品（均为 MIX 提取），禁止程序脚手架
+    if (!ext && constructing) {
+        ext = loadSpr(pb, "assets/sprites/bld_%s_mk_f0.png", bldAssetName(orig))
+            || loadSpr(pb, "assets/sprites/bld_%s.png", bldAssetName(orig))
+            || (orig != t && (loadSpr(pb, "assets/sprites/bld_%s_mk_f0.png", bldAssetName(t))
+                             || loadSpr(pb, "assets/sprites/bld_%s.png", bldAssetName(t))));
+    }
     int groundY; // 内容画布中"占地菱形南角"的 y 坐标（绘制锚点契约，同 bldScreenPos）
     if (!ext) {
-        pb = bldContentPix(t, constructing);
-        groundY = bldGroundY_;
+        pb = missingAssetPix(constructing ? "bld_scaffold" : "bld", bldAssetName(orig));
+        groundY = 0;
     } else {
         // 外部 SHP 素材：落地点 = 最低不透明行（地基南角），勿用固定 h-4（透明底边会让建筑浮空/切脚）
         groundY = pb.h - 1;
@@ -2171,8 +2218,8 @@ const Sprite& SpriteBank::buildingGhost(BldType t, int player) {
             || (orig != t && loadSpr(pb, "assets/sprites/bld_%s.png", bldAssetName(t)));
     int groundY;
     if (!ext) {
-        pb = bldContentPix(t, false);
-        groundY = bldGroundY_;
+        pb = missingAssetPix("bld_ghost", bldAssetName(orig));
+        groundY = 0;
     } else {
         groundY = pb.h - 1;
         while (groundY > 0) {
@@ -2442,22 +2489,8 @@ const Sprite& SpriteBank::iconUnit(UnitType t, int player) {
         Sprite s = makeSprite(std::move(ext), 0, 0);
         return cache.emplace(k, s).first->second;
     }
-    t = spriteAliasUnit(t);
-    PixBuf body = unitContentPix(t, 2, 0);
-    if (hasTurret(t)) {
-        PixBuf tur = turretContentPix(t, 2); // 炮塔画布与车体同尺寸，对齐内容偏移 (2,2)
-        body.blit(tur, 2, 2);
-    }
-    body.remap(Pal::REMAP, HOUSE_COLORS[player]);
-    // 地面锚点：最低不透明像素行（履带/足底 = 地面接触线）
-    int gy = body.h - 1;
-    while (gy > 0) {
-        bool solid = false;
-        for (int x = 0; x < body.w && !solid; x++) solid = body.get(x, gy).a > 60;
-        if (solid) break;
-        gy--;
-    }
-    Sprite s = makeSprite(makeIcon(body, gy), 0, 0);
+    PixBuf miss = missingAssetPix("icon_unit", unitAssetName(t));
+    Sprite s = makeSprite(std::move(miss), 0, 0);
     return cache.emplace(k, s).first->second;
 }
 
@@ -2471,10 +2504,8 @@ const Sprite& SpriteBank::iconBld(BldType t, int player) {
         Sprite s = makeSprite(std::move(ext), 0, 0);
         return cache.emplace(k, s).first->second;
     }
-    t = spriteAliasBld(t);
-    PixBuf pb = bldContentPix(t, false);
-    pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
-    Sprite s = makeSprite(makeIcon(pb, bldGroundY_), 0, 0); // 锚点=基座南角，立于场景地面
+    PixBuf miss = missingAssetPix("icon_bld", bldAssetName(t));
+    Sprite s = makeSprite(std::move(miss), 0, 0);
     return cache.emplace(k, s).first->second;
 }
 

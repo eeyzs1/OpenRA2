@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include <algorithm>
 #include "raylib.h"
 
 // CPU 侧 RGBA 像素画布：程序化素材生成的绘制目标
@@ -95,5 +96,12 @@ namespace Pal {
 struct Sprite {
     Texture2D tex{};
     int ox = 0, oy = 0; // 绘制锚点偏移（像素坐标 = 逻辑点 + offset）
+    // 不透明内容包围盒（纹理像素坐标，含 finishBldSprite 的 6/4 边距）
+    // 用于选中虚线笼：宽/高贴合可见建筑，而非整幅透明画布
+    int visL = 0, visT = 0, visR = 0, visB = 0;
     bool valid() const { return tex.id != 0; }
+    int visW() const { return std::max(1, visR - visL + 1); }
+    int visH() const { return std::max(1, visB - visT + 1); }
+    // 南尖锚点到可见顶缘的屏幕高度（虚线笼 Z）
+    int visElev() const { return std::max(8, oy - visT); }
 };

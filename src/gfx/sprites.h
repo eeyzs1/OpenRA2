@@ -28,6 +28,8 @@ public:
     // 地形与装饰
     const Sprite& tile(Terrain t, int variant);
     const Sprite& overlaySpr(Overlay o);
+    const Sprite& crateSpr(); // 补给箱（RA2 crate.tem）
+
 
     // 单位：dir 0..7（0=东，顺时针），frame 步兵行走帧 0..1
     const Sprite& unitBody(UnitType t, int dir, int frame, int player);

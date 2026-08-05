@@ -120,11 +120,10 @@ int main(int argc, char** argv) {
         printf("dump-vxl: %d/%d ok\n", ok, (int)(sizeof(samples) / sizeof(samples[0])));
         return ok > 0 ? 0 : 1;
     }
-    // 离线素材生成：程序绘制/合成 → 落盘 PNG/WAV，不创建窗口与音频设备
+    // 已禁用：禁止程序生成 PNG 写入 assets（一律从 RA2 MIX 提取）
     if (argc > 1 && strcmp(argv[1], "--gen-assets") == 0) {
-        bool okS = g_sprites.genAssets("assets/sprites");
-        bool okA = g_sfx.genSfxAssets("assets/sfx");
-        return (okS && okA) ? 0 : 1;
+        fprintf(stderr, "--gen-assets disabled: use tools/ra2pack/gen_assets.py (MIX extract only)\n");
+        return 1;
     }
     // 元数据模板导出：rules.ini / 32 关战役 INI（中/盟/苏/尤里 各 8）/ 双语字符串 / 音乐播放列表，不创建窗口
     if (argc > 1 && strcmp(argv[1], "--export-assets") == 0) {

@@ -444,13 +444,14 @@ inline int garrisonDomain(BldType t) {
     }
 }
 
-// RA2：防御页签 / 独立防御建造队列（含超武建筑）
+// RA2：防御页签 / 独立防御建造队列（含支援防御与超武建筑）
 inline bool isDefenseBld(BldType t) {
     switch (t) {
         case BldType::Pillbox: case BldType::SentryGun: case BldType::FlakCannon:
         case BldType::GatlingCannon: case BldType::PrismTower: case BldType::TeslaCoil:
         case BldType::PsychicTower: case BldType::GrandCannon: case BldType::PatriotMissile:
         case BldType::Wall: case BldType::BattleBunker: case BldType::TankBunker:
+        case BldType::GapGenerator: case BldType::SpySat: case BldType::PsychicSensor:
         case BldType::NukeSilo: case BldType::WeatherDevice: case BldType::IronCurtain:
         case BldType::ChronoSphere: case BldType::GeneticMutator: case BldType::PsychicDominator:
             return true;

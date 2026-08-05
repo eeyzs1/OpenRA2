@@ -810,22 +810,22 @@ std::vector<BldType> Game::tabBuildings() const {
     std::vector<BldType> v;
     Faction f = world.players[localPlayer].faction;
     if (uiTab == 0) {
-        // 建筑栏：仅生产/经济/科技（不含防御）
+        // 建筑栏：仅生产/经济/科技（不含防御与支援防御）
         static const BldType mainB[] = {
             BldType::PowerPlant, BldType::TeslaReactor, BldType::BioReactor, BldType::OreRefinery, BldType::Barracks,
             BldType::WarFactory, BldType::Radar, BldType::AirForceCmd, BldType::NavalYard, BldType::BattleLab,
             BldType::NuclearReactor, BldType::OrePurifier, BldType::IndustrialPlant,
-            BldType::CloningVat, BldType::ServiceDepot, BldType::Grinder, BldType::GapGenerator, BldType::SpySat, BldType::PsychicSensor,
-            BldType::RobotControl,
+            BldType::CloningVat, BldType::ServiceDepot, BldType::Grinder, BldType::RobotControl,
         };
         for (BldType t : mainB)
             if (world.modeAllowsBuilding(localPlayer, t)) v.push_back(t);
     } else {
-        // 防御栏：战斗防御 + 超武建筑
+        // 防御栏：战斗防御 + 支援防御 + 超武建筑
         static const BldType defB[] = {
             BldType::Pillbox, BldType::SentryGun, BldType::FlakCannon, BldType::GatlingCannon,
             BldType::PrismTower, BldType::TeslaCoil, BldType::PsychicTower, BldType::GrandCannon,
             BldType::PatriotMissile, BldType::Wall, BldType::BattleBunker, BldType::TankBunker,
+            BldType::GapGenerator, BldType::SpySat, BldType::PsychicSensor,
             BldType::NukeSilo, BldType::WeatherDevice, BldType::IronCurtain, BldType::ChronoSphere,
             BldType::GeneticMutator, BldType::PsychicDominator,
         };
@@ -839,7 +839,7 @@ std::vector<BldType> Game::tabBuildings() const {
 std::vector<UnitType> Game::tabUnits() const {
     std::vector<UnitType> v;
     Faction f = world.players[localPlayer].faction;
-    // 声明序 = 内置 UnitType / rules 类型表序（禁止按造价 sort）
+    // 声明序 = 建设顺序：地面载具 → 空军 → 海军（有对应工厂才显示）
     static const UnitType infantryOrder[] = {
         UnitType::GI, UnitType::Conscript, UnitType::PLA, UnitType::Engineer, UnitType::AttackDog, UnitType::Spy,
         UnitType::FlakTrooper, UnitType::TeslaTrooper, UnitType::Sniper, UnitType::Tanya, UnitType::Desolator,
@@ -849,30 +849,43 @@ std::vector<UnitType> Game::tabUnits() const {
         UnitType::YuriPrime, UnitType::ChronoIvan,
     };
     static const UnitType vehicleOrder[] = {
-        // 空军置顶：造了空指部后一眼可见（原混在坦克/海军后面需长滚）
-        UnitType::Intruder, UnitType::MiG, UnitType::BlackEagle, UnitType::Nighthawk,
-        UnitType::SiegeChopper, UnitType::FloatingDisc, UnitType::Kirov,
-        UnitType::MCV, UnitType::Harvester, UnitType::ChronoMiner, UnitType::WarMiner, UnitType::SlaveMiner,
-        UnitType::Grizzly, UnitType::Rhino, UnitType::Type99, UnitType::FlakTrack, UnitType::IFV,
-        UnitType::PrismTank, UnitType::TeslaTank, UnitType::MirageTank, UnitType::V3Launcher, UnitType::Apocalypse,
-        UnitType::TerrorDrone, UnitType::TankDestroyer, UnitType::DemoTruck, UnitType::RobotTank, UnitType::BattleFortress,
-        UnitType::LasherTank, UnitType::GatlingTank, UnitType::Magnetron, UnitType::MasterMind, UnitType::ChaosDrone,
+        // 地面（战车工厂）：矿车靠前，再主战/特种
+        UnitType::Harvester, UnitType::ChronoMiner, UnitType::WarMiner, UnitType::SlaveMiner, UnitType::MCV,
+        UnitType::Grizzly, UnitType::Rhino, UnitType::Type99, UnitType::LasherTank, UnitType::FlakTrack, UnitType::IFV,
+        UnitType::GatlingTank, UnitType::TerrorDrone, UnitType::TankDestroyer, UnitType::RobotTank,
+        UnitType::V3Launcher, UnitType::DemoTruck, UnitType::PrismTank, UnitType::TeslaTank, UnitType::MirageTank,
+        UnitType::Magnetron, UnitType::Apocalypse, UnitType::BattleFortress, UnitType::MasterMind, UnitType::ChaosDrone,
+        UnitType::Nighthawk, UnitType::SiegeChopper, UnitType::Kirov, UnitType::FloatingDisc, // 直升机/飞艇/飞碟出自战车工厂
+        // 空军（空指部）
+        UnitType::Intruder, UnitType::MiG, UnitType::BlackEagle,
+        // 海军（船厂）
         UnitType::Destroyer, UnitType::Typhoon, UnitType::Aegis, UnitType::SeaScorpion, UnitType::Dreadnought,
         UnitType::AircraftCarrier, UnitType::AmphTransport, UnitType::Dolphin, UnitType::Squid, UnitType::Boomer,
     };
     const UnitType* order = (uiTab == 2) ? infantryOrder : vehicleOrder;
     const size_t n = (uiTab == 2) ? (sizeof(infantryOrder) / sizeof(infantryOrder[0]))
                                   : (sizeof(vehicleOrder) / sizeof(vehicleOrder[0]));
+    const Player& me = world.players[localPlayer];
     for (size_t i = 0; i < n; i++) {
         UnitType t = order[i];
         const UnitDef& u = unitDef(t);
         if (u.cost <= 0) continue;
         if (!world.modeAllowsUnit(localPlayer, t)) continue;
         int stBit = stolenTechBit(t);
-        if (stBit && !(world.players[localPlayer].stolenTech & stBit)) continue;
+        if (stBit && !(me.stolenTech & stBit)) continue;
         bool infTab = u.isInfantry() || t == UnitType::Rocketeer;
-        if (uiTab == 2 && infTab) v.push_back(t);
-        if (uiTab == 3 && !infTab) v.push_back(t);
+        if (uiTab == 2 && !infTab) continue;
+        if (uiTab == 3 && infTab) continue;
+        // RA2：有对应生产建筑才出现图标（正在生产中的保留可见）
+        bool facOk = world.hasFactoryFor(localPlayer, u);
+        bool inProd = false;
+        if (!facOk) {
+            int cat = u.prodCat();
+            if (me.unitProd[cat].active && me.unitProd[cat].typeIdx == (int)t) inProd = true;
+            for (int q : me.unitQueue[cat]) if (q == (int)t) { inProd = true; break; }
+        }
+        if (!facOk && !inProd) continue;
+        v.push_back(t);
     }
     (void)f;
     return v;

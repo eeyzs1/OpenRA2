@@ -16,6 +16,12 @@ void World::updateBuilding(Ent& e, EID id) {
         e.gatlingStage = e.gatlingHeat >= 120 ? 2 : (e.gatlingHeat >= 50 ? 1 : 0);
     }
     if (e.invuln > 0) e.invuln--;
+    // 出售：倒放建造动画，结束后无爆炸拆除
+    if (e.selling) {
+        if (e.constructAnim > 0) e.constructAnim--;
+        else { kill(id, false); return; }
+        return;
+    }
     if (e.constructAnim > 0) e.constructAnim--; // 建造动画推进
     // 建筑被超时空武器照射：冻结且累积抹除（中立建筑同样可被抹除）
     if (e.chrono > 0) {
