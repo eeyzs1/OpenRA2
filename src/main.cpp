@@ -193,6 +193,11 @@ int main(int argc, char** argv) {
         game.shutdown();
         return fails == 0 ? 0 : 1;
     }
+    if (argc > 1 && strcmp(argv[1], "--visual-audit") == 0) {
+        int fails = game.visualAudit();
+        game.shutdown();
+        return fails == 0 ? 0 : 1;
+    }
     // 临时诊断：战役真实渲染耗时（逻辑/渲染分离计时）
     if (argc > 1 && strcmp(argv[1], "--bench-campaign") == 0) {
         int mission = argc > 2 ? atoi(argv[2]) : 0;

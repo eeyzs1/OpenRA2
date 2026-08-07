@@ -1,0 +1,35 @@
+{
+  "note": "Cage overrides: foot only where art<<Foundation; offX from card bodyCx vs S.",
+  "buildings": {
+    "nuclearreactor": {
+      "footW": 3,
+      "footH": 3,
+      "elev": 120,
+      "offX": 19
+    },
+    "barracks_yuri": {
+      "footW": 2,
+      "footH": 2,
+      "elev": 148,
+      "offX": -32
+    },
+    "civhouse3": {
+      "footW": 2,
+      "footH": 2,
+      "elev": 118,
+      "offX": -24
+    },
+    "orerefinery": {
+      "offX": -4
+    },
+    "servicedepot": {
+      "offX": -13
+    },
+    "orerefinery_sov": {
+      "offX": -9
+    },
+    "warfactory_sov": {
+      "offX": -5
+    }
+  }
+}

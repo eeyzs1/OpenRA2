@@ -2,12 +2,85 @@
 #include "game/campaign.h"
 #include "game/script.h"
 #include "gfx/sprites.h"
+#include "gfx/assets.h"
 #include "sfx/sound.h"
 #include "rlgl.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
 #include <unordered_set>
+
+#include "gfx/bld_cage_data.inc"
+
+// Selection cage: Foundation parallelogram at geo SE (bldScreenPos), elev from fit.
+// Global nudge + N px toward S along both diamond edges (E→S and W→S).
+// Collision / place still use full tile Foundation (BldDef w×h).
+static constexpr float kCageNudgeX = -2.0f;
+static constexpr float kCageNudgeY = +1.0f;
+static constexpr float kCageEdgeNudgePx = 4.0f; // along E→S and W→S
+static constexpr float kCageDownNudgePx = 3.0f; // along Ts→S (screen +Y)
+struct BldCageParams { float eArmX, eArmY, wArmX, wArmY, elev, offX, offY; };
+// meas.footW/H > 0：仅选框占地（可小于 BldDef 碰撞占地）；0 = 跟 BldDef。
+static bool lookupBldCageMeas(const char* stem, float& elev, float& offX, float& offY,
+                              int& footW, int& footH) {
+    for (int i = 0; i < kBldCageMeasN; i++) {
+        if (std::strcmp(kBldCageMeas[i].stem, stem) == 0) {
+            elev = kBldCageMeas[i].elev;
+            offX = kBldCageMeas[i].offX;
+            offY = kBldCageMeas[i].offY;
+            if (kBldCageMeas[i].footW > 0 && kBldCageMeas[i].footH > 0) {
+                footW = kBldCageMeas[i].footW;
+                footH = kBldCageMeas[i].footH;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+static BldCageParams resolveBldCage(const char* stem, int footW, int footH, const Sprite& spr) {
+    footW = std::max(footW, 1);
+    footH = std::max(footH, 1);
+    float elev = (float)TILE_H, offX = 0.0f, offY = 0.0f;
+    bool haveMeas = lookupBldCageMeas(stem, elev, offX, offY, footW, footH);
+    footW = std::max(footW, 1);
+    footH = std::max(footH, 1);
+    // Iso Foundation from SE tip: E along h cells, W along w cells.
+    BldCageParams c{
+        (float)footH * (TILE_W / 2.0f),
+        -(float)footH * (TILE_H / 2.0f),
+        -(float)footW * (TILE_W / 2.0f),
+        -(float)footW * (TILE_H / 2.0f),
+        elev, offX, offY};
+    if (!haveMeas) {
+        float halfD = (float)(footW + footH) * (TILE_H / 4.0f);
+        c.elev = std::max((float)spr.visElev() - halfD, 8.0f);
+    }
+    // Soft roof cap only — never crush elev by full foundation depth.
+    float roof = std::max(8.0f, (float)spr.visElev() - 4.0f);
+    c.elev = std::min(c.elev, roof);
+    c.elev = std::clamp(c.elev, 8.0f, 280.0f);
+    c.offX += kCageNudgeX;
+    c.offY += kCageNudgeY;
+    // Along E→S and W→S (toward south tip on the ground diamond).
+    auto addAlong = [&](float dx, float dy) {
+        float len = sqrtf(dx * dx + dy * dy);
+        if (len > 1e-3f) {
+            c.offX += kCageEdgeNudgePx * dx / len;
+            c.offY += kCageEdgeNudgePx * dy / len;
+        }
+    };
+    addAlong(-c.eArmX, -c.eArmY); // E → S
+    addAlong(-c.wArmX, -c.wArmY); // W → S
+    // Ts → S is straight down in screen space (Ts = (S.x, S.y - elev)).
+    c.offY += kCageDownNudgePx;
+    return c;
+}
+
+static void footCorners(Vector2 bs, const BldCageParams& cage, Vector2& bn, Vector2& be, Vector2& bw) {
+    be = {bs.x + cage.eArmX, bs.y + cage.eArmY};
+    bw = {bs.x + cage.wArmX, bs.y + cage.wArmY};
+    bn = {bs.x + cage.eArmX + cage.wArmX, bs.y + cage.eArmY + cage.wArmY};
+}
 
 // 连续值噪声：晶格哈希 + 双线性插值（世界像素坐标 → 跨瓦片连续，无逐格重置）
 static inline uint32_t tHash(int x, int y, uint64_t seed) {
@@ -23,22 +96,23 @@ static float tNoise(float x, float y, int stride, uint64_t seed) {
     float a = h(gx, gy), b = h(gx + 1, gy), c = h(gx, gy + 1), d = h(gx + 1, gy + 1);
     return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
 }
+static uint8_t lerp8(int a, int b, float t) { return (uint8_t)(a + (int)((b - a) * t)); }
 
 void Game::bakeTerrain() {
     double bakeT0 = GetTime();
     int w = world.map.w, h = world.map.h;
     if (w <= 0 || h <= 0) return;
-    uint8_t maxH = 0;
-    for (const Cell& c : world.map.cells)
-        if (c.height > maxH) maxH = c.height;
     terrainOX = (float)(h - 1) * (TILE_W / 2);
     terrainW = (w + h - 2) * (TILE_W / 2) + TILE_W;
-    terrainH = (w + h - 2) * (TILE_H / 2) + TILE_H + heightScreenY(maxH);
-    // GPU 纹理上限钳制（常见上限 8192）：大地图超界时降到 8000 内
+    terrainH = (w + h - 2) * (TILE_H / 2) + TILE_H;
+    // GPU 纹理上限钳制（常见上限 8192）：128 大地图 8193px 超界，降到 8000 内
     terrainSC = std::min(TERRAIN_SC, std::min(8000.0f / terrainW, 8000.0f / terrainH));
     int bw = (int)(terrainW * terrainSC) + 1, bh = (int)(terrainH * terrainSC) + 1;
     PixBuf pb(bw, bh);
-    const uint64_t seed = 20260723;
+    const uint64_t seed = 20260723; // 固定种子：同一地形类型烘焙观感一致
+    // 真实 RA2 地形瓦片（gen_terrain.py 自 isotemp.mix 提取，64x32 菱形）：
+    // 文件存在则逐像素采样，缺失/采样到透明点回退程序化配色。
+    // Ore/Gems 不在此采样（烘焙层垫采空土地，矿脉瓦片动态绘制于上层）。
     PixBuf tilePx[6][8];
     bool tileOk[6][8] = {};
     {
@@ -53,6 +127,7 @@ void Game::bakeTerrain() {
             }
         }
     }
+    // 岸线过渡瓦片（RA2 shore 系列，按邻水 mask 索引；gen_terrain.py 自 isotemp.mix 扫描分类提取）
     PixBuf shorePx[16][2];
     bool shoreOk[16][2] = {};
     for (int m = 1; m < 16; m++)
@@ -62,23 +137,7 @@ void Game::bakeTerrain() {
             shoreOk[m][v] = shorePx[m][v].loadFromFile(path)
                          && shorePx[m][v].w == TILE_W && shorePx[m][v].h == TILE_H;
         }
-    // 悬崖侧立面：tile_cliff_n{0..3}_{0..1}.png（朝向更低邻格的边）
-    PixBuf cliffPx[4][2];
-    bool cliffOk[4][2] = {};
-    for (int d = 0; d < 4; d++)
-        for (int v = 0; v < 2; v++) {
-            char path[192];
-            snprintf(path, sizeof(path), "assets/sprites/tile_cliff_n%d_%d.png", d, v);
-            cliffOk[d][v] = cliffPx[d][v].loadFromFile(path)
-                         && cliffPx[d][v].w > 0 && cliffPx[d][v].h > 0;
-        }
-    PixBuf rampPx[2];
-    bool rampOk[2] = {};
-    for (int v = 0; v < 2; v++) {
-        char path[192];
-        snprintf(path, sizeof(path), "assets/sprites/tile_ramp_%d.png", v);
-        rampOk[v] = rampPx[v].loadFromFile(path) && rampPx[v].w > 0;
-    }
+    // 预计算每格邻水 mask（仅陆格：bit0 +x / bit1 +y / bit2 -x / bit3 -y 邻格为水）
     std::vector<uint8_t> shoreMask((size_t)w * h, 0);
     for (int ty = 0; ty < h; ty++)
         for (int tx = 0; tx < w; tx++) {
@@ -91,113 +150,130 @@ void Game::bakeTerrain() {
             if (world.map.inBounds(tx, ty - 1) && world.map.at(tx, ty - 1).terrain == Terrain::Water) m |= 8;
             shoreMask[(size_t)ty * w + tx] = m;
         }
-
-    auto atlasBlit = [&](const PixBuf& src, int worldPx, int worldPy) {
-        int tw = src.w, th = src.h;
-        if (terrainSC != 1.0f) {
-            tw = std::max(1, (int)(src.w * terrainSC));
-            th = std::max(1, (int)(src.h * terrainSC));
-            PixBuf scaled = src.scale(tw, th);
-            int ax = (int)((worldPx + terrainOX) * terrainSC) - tw / 2;
-            int ay = (int)(worldPy * terrainSC);
-            pb.blit(scaled, ax, ay);
-        } else {
-            int ax = (int)(worldPx + terrainOX) - tw / 2;
-            int ay = worldPy;
-            pb.blit(src, ax, ay);
-        }
-    };
-    auto proceduralDiamond = [&](Terrain t, int tx, int ty, int worldPx, int worldPy) {
-        float n = tNoise((float)worldPx, (float)worldPy, 15, seed);
-        Color c;
-        switch (t) {
-            case Terrain::Clear: c = Color{(uint8_t)(58 + n * 44), (uint8_t)(94 + n * 52), (uint8_t)(42 + n * 26), 255}; break;
-            case Terrain::Rough: c = Color{(uint8_t)(122 + n * 36), (uint8_t)(100 + n * 34), (uint8_t)(62 + n * 28), 255}; break;
-            case Terrain::Water: c = Color{(uint8_t)(16 + n * 22), (uint8_t)(50 + n * 46), (uint8_t)(96 + n * 62), 255}; break;
-            case Terrain::Bridge: c = Color{(uint8_t)(148 * (0.72f + n * 0.2f)), (uint8_t)(100 * (0.72f + n * 0.2f)), (uint8_t)(56 * (0.72f + n * 0.2f)), 255}; break;
-            default: c = Color{(uint8_t)(96 + n * 30), (uint8_t)(76 + n * 28), (uint8_t)(46 + n * 22), 255}; break;
-        }
-        PixBuf dia(TILE_W, TILE_H);
-        dia.diamond(TILE_W / 2, TILE_H / 2, TILE_W / 2, TILE_H / 2, c);
-        atlasBlit(dia, worldPx, worldPy);
-        (void)tx; (void)ty;
-    };
-    auto cliffFallback = [&](int worldPx, int worldPy, int levels) {
-        int stripH = std::max(TILE_H / 2, levels * (TILE_H / 2));
-        PixBuf strip(TILE_W / 2, stripH);
-        for (int y = 0; y < strip.h; y++)
-            for (int x = 0; x < strip.w; x++) {
-                float shade = 0.35f + 0.25f * (float)y / (float)strip.h;
-                strip.set(x, y, Color{(uint8_t)(70 * shade), (uint8_t)(78 * shade), (uint8_t)(48 * shade), 220});
+    for (int by = 0; by < bh; by++) {
+        float sy = by / terrainSC;
+        for (int bx = 0; bx < bw; bx++) {
+            float sx = bx / terrainSC - terrainOX; // 等距世界坐标（tileToScreen 域）
+            // 不做抖动：偏移会在菱形瓦片边缘制造可见缝（RA2 地面应一体）
+            float jx = sx, jy = sy;
+            float fx = jx / (TILE_W / 2.0f), fy = jy / (TILE_H / 2.0f);
+            int tx = (int)floorf((fx + fy) / 2.0f), ty = (int)floorf((fy - fx) / 2.0f);
+            if (!world.map.inBounds(tx, ty)) continue; // 地图外透明（显示黑底）
+            Terrain t = world.map.at(tx, ty).terrain;
+            Color c;
+            // 优先采样真实 RA2 瓦片：变体按 5x5 格块哈希选取（块内恒定 → 成片纹理；
+            // 88% 概率用主变体 0，降低格间硬跳变的棋盘感）；
+            int ti = (int)t;
+            uint32_t vh = tHash(tx / 5, ty / 5, seed + 13);
+            int tv = (vh % 100 < 94) ? 0 : 1 + (int)(vh % 7);
+            bool fromTile = false;
+            int ppx = 0, ppy = 0;
+            auto sampleTileAt = [&](int txi, int tyi, const PixBuf& src, float sxw, float syw) -> bool {
+                tileToScreen(txi, tyi, ppx, ppy);
+                int ix = (int)floorf(sxw - ppx) + TILE_W / 2, iy = (int)floorf(syw - ppy);
+                if ((unsigned)ix >= (unsigned)TILE_W || (unsigned)iy >= (unsigned)TILE_H) return false;
+                Color tc = src.px[(size_t)iy * TILE_W + ix];
+                if (tc.a < 16) return false; // 半透明边缘也算命中，减少菱形缝
+                c = tc; return true;
+            };
+            // 岸线瓦片：与 clear 同套 NEAREST 采样；变体跟块哈希，避免岸线逐格跳变
+            uint8_t sm = shoreMask[(size_t)ty * w + tx];
+            if (sm) {
+                int sv = (vh % 100 < 88) ? 0 : (int)((tHash(tx / 5, ty / 5, seed + 29) >> 4) & 1);
+                if (shoreOk[sm][sv]) {
+                    fromTile = sampleTileAt(tx, ty, shorePx[sm][sv], jx, jy)
+                            || sampleTileAt(tx, ty, shorePx[sm][sv], sx, sy);
+                }
+                // 岸线 miss 时试邻格同 mask，与 clear 邻格补采样一致
+                if (!fromTile) {
+                    static const int nob[][2] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
+                    for (auto& o : nob) {
+                        int nx = tx + o[0], ny = ty + o[1];
+                        if (!world.map.inBounds(nx, ny)) continue;
+                        if (shoreMask[(size_t)ny * w + nx] != sm) continue;
+                        if (shoreOk[sm][sv] && sampleTileAt(nx, ny, shorePx[sm][sv], sx, sy)) {
+                            fromTile = true; break;
+                        }
+                    }
+                }
             }
-        atlasBlit(strip, worldPx, worldPy + TILE_H / 4);
-    };
-
-    // 深度序 blit：tx+ty 升序；同深度先低后高，侧立面再顶面
-    std::vector<Vec2i> order;
-    order.reserve((size_t)w * h);
-    for (int ty = 0; ty < h; ty++)
-        for (int tx = 0; tx < w; tx++)
-            order.push_back({tx, ty});
-    std::sort(order.begin(), order.end(), [&](const Vec2i& a, const Vec2i& b) {
-        int da = a.x + a.y, db = b.x + b.y;
-        if (da != db) return da < db;
-        return world.map.at(a.x, a.y).height < world.map.at(b.x, b.y).height;
-    });
-
-    static const int NDX[4] = {1, 0, -1, 0};
-    static const int NDY[4] = {0, 1, 0, -1};
-
-    for (const Vec2i& cell : order) {
-        int tx = cell.x, ty = cell.y;
-        const Cell& c = world.map.at(tx, ty);
-        int px, py;
-        tileToScreen(tx, ty, px, py);
-        py -= heightScreenY(c.height);
-
-        // 朝更低邻格画悬崖/坡（本格更高）
-        for (int d = 0; d < 4; d++) {
-            int nx = tx + NDX[d], ny = ty + NDY[d];
-            if (!world.map.inBounds(nx, ny)) continue;
-            int dh = (int)c.height - (int)world.map.at(nx, ny).height;
-            if (dh < 1) continue;
-            uint32_t vh = tHash(tx / 5, ty / 5, seed + 41 + d);
-            int cv = (int)(vh & 1);
-            if (dh == 1 && rampOk[cv]) {
-                atlasBlit(rampPx[cv], px, py + TILE_H / 4);
-            } else if (cliffOk[d][cv]) {
-                atlasBlit(cliffPx[d][cv], px, py + TILE_H / 4);
-            } else {
-                cliffFallback(px, py, dh);
+            if (!fromTile && tileOk[ti][tv]) {
+                fromTile = sampleTileAt(tx, ty, tilePx[ti][tv], jx, jy)
+                        || sampleTileAt(tx, ty, tilePx[ti][tv], sx, sy);
+                // 菱形边缝：抖动采样 miss 时试邻格同类型瓦片
+                if (!fromTile) {
+                    static const int nob[][2] = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
+                    for (auto& o : nob) {
+                        int nx = tx + o[0], ny = ty + o[1];
+                        if (!world.map.inBounds(nx, ny)) continue;
+                        if (world.map.at(nx, ny).terrain != t) continue;
+                        if (sampleTileAt(nx, ny, tilePx[ti][tv], sx, sy)) { fromTile = true; break; }
+                    }
+                }
             }
-        }
-
-        Terrain t = c.terrain;
-        int ti = (int)t;
-        uint32_t vh = tHash(tx / 5, ty / 5, seed + 13);
-        int tv = (vh % 100 < 94) ? 0 : 1 + (int)(vh % 7);
-        uint8_t sm = shoreMask[(size_t)ty * w + tx];
-        bool blitted = false;
-        if (sm) {
-            int sv = (vh % 100 < 88) ? 0 : (int)((tHash(tx / 5, ty / 5, seed + 29) >> 4) & 1);
-            if (shoreOk[sm][sv]) {
-                atlasBlit(shorePx[sm][sv], px, py);
-                blitted = true;
+            if (!fromTile) {
+            // 连续噪声（回退配色用；真实瓦片采样成功时无需计算，省 ~40% 烘焙耗时）
+            float nBig = tNoise(sx, sy, 56, seed);
+            float nMid = tNoise(sx, sy, 15, seed + 5);
+            float n = nBig * 0.60f + nMid * 0.40f;
+            float grain = ((float)(tHash(bx, by, seed + 11) % 256) / 255.0f - 0.5f) * 8.0f;
+            switch (t) {
+                case Terrain::Clear: {
+                    // 草地：黄绿基调 + 大斑块；低频噪声处掺入泥土斑（RA2 地图常见的裸地）
+                    float patch = tNoise(sx, sy, 90, seed + 23);
+                    float dirt = std::clamp((patch - 0.60f) / 0.28f, 0.0f, 1.0f);
+                    dirt = dirt * dirt * (3.0f - 2.0f * dirt);
+                    c = Color{lerp8(58, 102, n), lerp8(94, 146, n), lerp8(42, 68, n), 255};
+                    if (nMid > 0.86f && nBig > 0.45f) { c.r = 116; c.g = 120; c.b = 56; } // 枯草点
+                    if (dirt > 0.0f) {
+                        Color d{lerp8(118, 154, nMid), lerp8(96, 128, nMid), lerp8(58, 84, nMid), 255};
+                        c.r = lerp8(c.r, d.r, dirt); c.g = lerp8(c.g, d.g, dirt); c.b = lerp8(c.b, d.b, dirt);
+                    }
+                    break;
+                }
+                case Terrain::Rough: {
+                    c = Color{lerp8(122, 158, n), lerp8(100, 134, n), lerp8(62, 90, n), 255};
+                    if (nMid < 0.14f) { c.r -= 24; c.g -= 22; c.b -= 16; } // 碎石暗斑
+                    break;
+                }
+                case Terrain::Water: {
+                    // 深水 + 横向波光条带（连续波形跨瓦片）
+                    float wv = sinf((sy + nMid * 9.0f) * 0.55f) * 0.5f + 0.5f;
+                    float m = n * 0.62f + wv * 0.38f;
+                    c = Color{lerp8(16, 38, m), lerp8(50, 96, m), lerp8(96, 158, m), 255};
+                    if (wv > 0.88f && nMid > 0.55f) { c.r += 20; c.g += 24; c.b += 24; } // 波峰高光
+                    break;
+                }
+                case Terrain::Ore:
+                case Terrain::Gems: {
+                    // 矿格下垫采空土地（矿脉瓦片动态绘制在上层；采空后地形变 Rough 与之一致）
+                    c = Color{lerp8(96, 126, n), lerp8(76, 104, n), lerp8(46, 68, n), 255};
+                    break;
+                }
+                case Terrain::Bridge: {
+                    float plank = (float)(((int)sy / 4) % 2) * 0.10f;
+                    float v = 0.72f + n * 0.38f - plank;
+                    c = Color{(uint8_t)(148 * v), (uint8_t)(100 * v), (uint8_t)(56 * v), 255};
+                    if ((int)sy % 4 == 0) { c.r = (uint8_t)(c.r * 0.55f); c.g = (uint8_t)(c.g * 0.55f); c.b = (uint8_t)(c.b * 0.55f); }
+                    break;
+                }
             }
+            c.r = (uint8_t)clampi(c.r + (int)grain, 0, 255);
+            c.g = (uint8_t)clampi(c.g + (int)grain, 0, 255);
+            c.b = (uint8_t)clampi(c.b + (int)grain, 0, 255);
+            } // !fromTile 回退配色（真实瓦片像素自带纹理，不再加颗粒噪）
+            // 直写像素数组：循环边界已保证不越界；且避免 set()/get() 内联函数的
+            // 分支模式在同循环读写同一缓冲区时触发 MSVC /O2 自动向量化错误（曾致一半写入丢失）
+            pb.px[(size_t)by * bw + bx] = c;
         }
-        if (!blitted && ti >= 0 && ti < 6 && tileOk[ti][tv]) {
-            atlasBlit(tilePx[ti][tv], px, py);
-            blitted = true;
-        }
-        if (!blitted)
-            proceduralDiamond(t, tx, ty, px, py);
     }
-
+    // 不做跨格糊边：RA2 靠 TMP/岸线/变体一体感，强糊只会脏且仍露格子
+    // （缝隙靠邻格采样与岸线模板；见 gen_terrain.py）
     if (terrainTex.id) UnloadTexture(terrainTex);
     terrainTex = pb.toTexture();
-    SetTextureFilter(terrainTex, TEXTURE_FILTER_POINT);
-    fogMaskTick = -1;
-    TraceLog(LOG_INFO, "bakeTerrain: %dx%d px maxH=%u in %.1f ms", bw, bh, (unsigned)maxH, (GetTime() - bakeT0) * 1000.0);
+    SetTextureFilter(terrainTex, TEXTURE_FILTER_POINT); // 点采样 = 原作锐利瓦片，非柔糊放大
+    fogMaskTick = -1; // 迷雾遮罩需按新地图重建
+    TraceLog(LOG_INFO, "bakeTerrain: %dx%d px in %.1f ms", bw, bh, (GetTime() - bakeT0) * 1000.0);
 }
 
 // ---- 迷雾软遮罩：1/4 分辨率 alpha + 盒模糊（UNSEEN 255 / SEEN 112 / VISIBLE 0）----
@@ -508,9 +584,11 @@ void Game::drawEntities() {
             int mkf = g_sprites.bldMkFrames(e.btype);
             if (e.constructAnim > 0 && mkf > 1) {
                 int total = mkf * 5;
+                // 建造：f0 地基 → f(mkf-1) 成型；出售：反向同序列
                 int frame = e.selling
-                    ? std::min(mkf - 1, std::max(0, (e.constructAnim - 1) / 5)) // 成品→地基
-                    : (total - e.constructAnim) / 5; // 0..mkf-1 起楼
+                    ? (e.constructAnim - 1) / 5
+                    : (total - e.constructAnim) / 5;
+                if (frame < 0) frame = 0;
                 if (frame >= mkf) frame = mkf - 1;
                 sp = &g_sprites.buildingMk(e.btype, frame, cid);
             } else {
@@ -572,57 +650,61 @@ void Game::drawEntities() {
             }
             const BldDef& d = bldDef(e.btype);
             const bool bldSelected = ((int)it.id == selBuilding);
-            // RA2 选中：等距 3D 虚线笼（底面脚印 + 顶面抬高 + 竖棱）
-            auto isoCorner = [&](int tx, int ty, int ox, int oy) {
-                int px = 0, py = 0;
-                tileToScreen(tx, ty, px, py);
-                return Vector2{(float)(px + ox - (int)camX), (float)(py + oy - (int)camY)};
-            };
-            const int bx0 = (int)e.x, by0 = (int)e.y;
-            Vector2 bn = isoCorner(bx0, by0, 0, 0);                              // 北
-            Vector2 be = isoCorner(bx0 + d.w - 1, by0, TILE_W / 2, TILE_H / 2);   // 东
-            Vector2 bs = isoCorner(bx0 + d.w - 1, by0 + d.h - 1, 0, TILE_H);      // 南 = bldScreenPos
-            Vector2 bw = isoCorner(bx0, by0 + d.h - 1, -TILE_W / 2, TILE_H / 2);  // 西
-            auto dashLine = [](Vector2 a, Vector2 b, Color c) {
+            // 选中笼：底面/高度/偏移按贴图拟合（fit_bld_cages.py），避免 art Height 过高、底面与画不对齐。
+            const Sprite& cageS = g_sprites.building(e.btype, cid, false);
+            auto dashLine = [](Vector2 a, Vector2 b, Color c, float thick = 1.75f) {
                 float dx = b.x - a.x, dy = b.y - a.y;
                 float len = sqrtf(dx * dx + dy * dy);
                 if (len < 1.0f) return;
+                if (len < 14.0f) {
+                    DrawLineEx(a, b, thick, c);
+                    return;
+                }
                 dx /= len; dy /= len;
                 const float dash = 5.0f, gap = 3.0f;
                 for (float t = 0; t < len; t += dash + gap) {
                     float t1 = t, t2 = std::min(len, t + dash);
-                    DrawLineEx({a.x + dx * t1, a.y + dy * t1}, {a.x + dx * t2, a.y + dy * t2}, 1.5f, c);
+                    DrawLineEx({a.x + dx * t1, a.y + dy * t1}, {a.x + dx * t2, a.y + dy * t2}, thick, c);
                 }
             };
-            if (bldSelected) {
-                Color edge{255, 240, 60, 235}; // RA2 选中黄
-                // 以南尖 bs(=bldScreenPos) 为锚；XY/Z 用精灵不透明包围盒，不用整幅画布
-                float footWE = distf(bw.x, bw.y, be.x, be.y);
-                float artW = (float)std::max(8, s.visW());
-                float scaleXZ = footWE > 1.0f ? artW / footWE : 1.0f;
-                scaleXZ = std::clamp(scaleXZ, 0.55f, 1.85f);
-                auto scl = [&](Vector2 v) {
-                    return Vector2{bs.x + (v.x - bs.x) * scaleXZ, bs.y + (v.y - bs.y) * scaleXZ};
+            auto drawIsoCuboid = [&](Vector2 bs, const BldCageParams& cage, Color edge) {
+                float elev = std::clamp(cage.elev, 8.0f, 400.0f);
+                Vector2 bn, be, bw;
+                footCorners(bs, cage, bn, be, bw);
+                Vector2 tn{bn.x, bn.y - elev}, te{be.x, be.y - elev};
+                Vector2 ts{bs.x, bs.y - elev}, tw{bw.x, bw.y - elev};
+                Color fill{edge.r, edge.g, edge.b, (unsigned char)22};
+                auto quad = [&](Vector2 a, Vector2 b, Vector2 c, Vector2 d) {
+                    DrawTriangle(a, b, c, fill);
+                    DrawTriangle(a, c, d, fill);
                 };
-                Vector2 sn = scl(bn), se = scl(be), ss = bs, sw = scl(bw);
-                // Z：地面锚点 → 可见顶缘（非透明画布顶）
-                float elev = (float)s.visElev();
-                elev = std::clamp(elev, 10.0f, 160.0f);
-                Vector2 tn{sn.x, sn.y - elev}, te{se.x, se.y - elev};
-                Vector2 ts{ss.x, ss.y - elev}, tw{sw.x, sw.y - elev};
-                dashLine(sn, se, edge); dashLine(se, ss, edge);
-                dashLine(ss, sw, edge); dashLine(sw, sn, edge);
+                quad(bw, bs, ts, tw);
+                quad(bs, be, te, ts);
+                dashLine(bn, be, edge); dashLine(be, bs, edge);
+                dashLine(bs, bw, edge); dashLine(bw, bn, edge);
                 dashLine(tn, te, edge); dashLine(te, ts, edge);
                 dashLine(ts, tw, edge); dashLine(tw, tn, edge);
-                dashLine(sn, tn, edge); dashLine(se, te, edge);
-                dashLine(ss, ts, edge); dashLine(sw, tw, edge);
-            }
-            // 血条锚在可见顶缘
-            // 建筑修理按 20 格扣款回血，血条也固定 20 pip
+                const float vt = 2.25f;
+                DrawLineEx(bn, tn, vt, edge);
+                DrawLineEx(be, te, vt, edge);
+                DrawLineEx(bs, ts, vt, edge);
+                DrawLineEx(bw, tw, vt, edge);
+                if (visualAuditMarkers) {
+                    DrawCircleV(bs, 3.0f, Color{255, 0, 255, 255});
+                    DrawCircleV(bn, 3.0f, Color{0, 255, 255, 255});
+                    DrawCircleV(be, 3.0f, Color{0, 200, 255, 255});
+                    DrawCircleV(ts, 3.0f, Color{0, 255, 0, 255});
+                }
+            };
+            BldCageParams cage = resolveBldCage(bldAssetName(e.btype), d.w, d.h, cageS);
+            Vector2 cageP{p.x + cage.offX, p.y + cage.offY};
+            if (bldSelected)
+                drawIsoCuboid(cageP, cage, Color{255, 240, 60, 245});
             const int bldPips = 20;
-            int barW = bldPips * 3 + (bldPips - 1) * 1; // 与 drawHealthBar 格宽一致
-            int barX = (int)p.x - barW / 2;
-            int barY = (int)p.y - s.visElev() - 2;
+            int barW = bldPips * 3 + (bldPips - 1) * 1;
+            float elevBar = cage.elev;
+            int barX = (int)cageP.x - barW / 2;
+            int barY = (int)(cageP.y - elevBar) - 4;
             if (bldSelected || e.hp < d.hp) {
                 drawHealthBar(barX, barY, barW, (float)e.hp / std::max(1, d.hp), bldSelected, bldPips);
             }
@@ -1054,47 +1136,46 @@ void Game::drawPlacement() {
     if (world.map.inBounds(bx + d.w - 1, by + d.h - 1))
         py -= heightScreenY(world.map.at(bx + d.w - 1, by + d.h - 1).height);
     Color tint = canAll ? Color{255, 255, 255, 170} : Color{255, 90, 90, 160};
-    DrawTexture(s.tex, px - (int)camX - s.ox, py + TILE_H - (int)camY - s.oy, tint);
-    // 与选中态同算法的虚线笼：按精灵视觉尺寸缩放，便于对照占地与贴图
+    Vector2 ghostP{(float)(px - (int)camX), (float)(py + TILE_H - (int)camY)};
+    DrawTexture(s.tex, (int)ghostP.x - s.ox, (int)ghostP.y - s.oy, tint);
+    // 放置预览笼：与选中态同一套贴图拟合参数
     {
-        auto isoCorner = [&](int tx, int ty, int ox, int oy) {
-            int ipx = 0, ipy = 0;
-            tileToScreen(tx, ty, ipx, ipy);
-            return Vector2{(float)(ipx + ox - (int)camX), (float)(ipy + oy - (int)camY)};
-        };
-        Vector2 bn = isoCorner(bx, by, 0, 0);
-        Vector2 be = isoCorner(bx + d.w - 1, by, TILE_W / 2, TILE_H / 2);
-        Vector2 bs = isoCorner(bx + d.w - 1, by + d.h - 1, 0, TILE_H);
-        Vector2 bw = isoCorner(bx, by + d.h - 1, -TILE_W / 2, TILE_H / 2);
-        float footWE = distf(bw.x, bw.y, be.x, be.y);
-        float artW = (float)std::max(8, s.visW());
-        float scaleXZ = footWE > 1.0f ? artW / footWE : 1.0f;
-        scaleXZ = std::clamp(scaleXZ, 0.55f, 1.85f);
-        auto scl = [&](Vector2 v) {
-            return Vector2{bs.x + (v.x - bs.x) * scaleXZ, bs.y + (v.y - bs.y) * scaleXZ};
-        };
-        Vector2 sn = scl(bn), se = scl(be), ss = bs, sw = scl(bw);
-        float elev = (float)std::clamp(s.visElev(), 10, 160);
-        Color edge = canAll ? Color{255, 240, 60, 200} : Color{255, 90, 90, 200};
-        auto dashLine = [](Vector2 a, Vector2 b, Color c) {
+        auto dashLine = [](Vector2 a, Vector2 b, Color c, float thick = 1.75f) {
             float dx = b.x - a.x, dy = b.y - a.y;
             float len = sqrtf(dx * dx + dy * dy);
             if (len < 1.0f) return;
+            if (len < 14.0f) { DrawLineEx(a, b, thick, c); return; }
             dx /= len; dy /= len;
             const float dash = 5.0f, gap = 3.0f;
             for (float t = 0; t < len; t += dash + gap) {
                 float t1 = t, t2 = std::min(len, t + dash);
-                DrawLineEx({a.x + dx * t1, a.y + dy * t1}, {a.x + dx * t2, a.y + dy * t2}, 1.5f, c);
+                DrawLineEx({a.x + dx * t1, a.y + dy * t1}, {a.x + dx * t2, a.y + dy * t2}, thick, c);
             }
         };
-        Vector2 tn{sn.x, sn.y - elev}, te{se.x, se.y - elev};
-        Vector2 ts{ss.x, ss.y - elev}, tw{sw.x, sw.y - elev};
-        dashLine(sn, se, edge); dashLine(se, ss, edge);
-        dashLine(ss, sw, edge); dashLine(sw, sn, edge);
+        BldCageParams cage = resolveBldCage(bldAssetName(t), d.w, d.h, s);
+        Vector2 bs{ghostP.x + cage.offX, ghostP.y + cage.offY};
+        float elev = cage.elev;
+        Vector2 bn, be, bw;
+        footCorners(bs, cage, bn, be, bw);
+        Vector2 tn{bn.x, bn.y - elev}, te{be.x, be.y - elev};
+        Vector2 ts{bs.x, bs.y - elev}, tw{bw.x, bw.y - elev};
+        Color edge = canAll ? Color{255, 240, 60, 220} : Color{255, 90, 90, 220};
+        Color fill{edge.r, edge.g, edge.b, (unsigned char)20};
+        auto quad = [&](Vector2 a, Vector2 b, Vector2 c, Vector2 d) {
+            DrawTriangle(a, b, c, fill);
+            DrawTriangle(a, c, d, fill);
+        };
+        quad(bw, bs, ts, tw);
+        quad(bs, be, te, ts);
+        dashLine(bn, be, edge); dashLine(be, bs, edge);
+        dashLine(bs, bw, edge); dashLine(bw, bn, edge);
         dashLine(tn, te, edge); dashLine(te, ts, edge);
         dashLine(ts, tw, edge); dashLine(tw, tn, edge);
-        dashLine(sn, tn, edge); dashLine(se, te, edge);
-        dashLine(ss, ts, edge); dashLine(sw, tw, edge);
+        const float vt = 2.25f;
+        DrawLineEx(bn, tn, vt, edge);
+        DrawLineEx(be, te, vt, edge);
+        DrawLineEx(bs, ts, vt, edge);
+        DrawLineEx(bw, tw, vt, edge);
     }
 }
 

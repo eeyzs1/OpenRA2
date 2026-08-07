@@ -172,27 +172,11 @@ void Map::generate(int w_, int h_, uint64_t seed, int numPlayers, std::vector<Ve
         }
     }
 
-    // 6. 格高度（2.5D）：陆用 fbm 映射 0..3；水/桥强制 0；出生点整平为 0
-    for (int y = 0; y < h; y++)
-        for (int x = 0; x < w; x++) {
-            Cell& c = at(x, y);
-            if (c.terrain == Terrain::Water || c.terrain == Terrain::Bridge) {
-                c.height = 0;
-                continue;
-            }
-            float hv = fbm(x / 22.0f + 3.1f, y / 22.0f + 7.7f, seed ^ 0xA17E17u);
-            // 偏平地：约半数 0，其余 1..3
-            if (hv < 0.48f) c.height = 0;
-            else if (hv < 0.68f) c.height = 1;
-            else if (hv < 0.85f) c.height = 2;
-            else c.height = 3;
-        }
-    for (Vec2i sp : outSpawns)
-        for (int dy = -5; dy <= 5; dy++)
-            for (int dx = -5; dx <= 5; dx++) {
-                int x = sp.x + dx, y = sp.y + dy;
-                if (inBounds(x, y)) at(x, y).height = 0;
-            }
+    // 6. 格高度：默认全 0（平坦 TMP）。高度字段保留存档/编辑器；随机丘陵会破坏 TMP 一体感，不做自动抬升。
+    for (Cell& c : cells) {
+        if (c.terrain == Terrain::Water || c.terrain == Terrain::Bridge) c.height = 0;
+        else c.height = 0;
+    }
 }
 
 int Map::harvestAt(int x, int y, int want) {

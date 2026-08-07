@@ -121,9 +121,9 @@ def montage(frames, path, cols=8):
     sheet = sheet.resize((sheet.width * 2, sheet.height * 2), Image.NEAREST)
     sheet.save(path)
 
-# rough: rough01.tem 真·泥草地面（28 帧，base=180 stride=1852），均匀采 8 帧
+# rough: rough01.tem 真·泥草地面；只用前段平坦帧（后段常是坡/坎，成片会像「蛋格小山」）
 d_r, base_r, nfr_r = tmp_base("rough01.tem")
-ROUGH_PICK = [0, 4, 8, 12, 16, 20, 24, 27]
+ROUGH_PICK = [0, 1, 2, 3, 4, 5, 6, 7]
 rough_frames = []
 for v, fi in enumerate(ROUGH_PICK):
     im = tmp_render(d_r, base_r + fi * 1852)
@@ -256,21 +256,24 @@ def shp_frame(shp, i):
     return img, (fr.x, fr.y)
 
 def last_frame_content(stem):
-    """SHP 最后一个有效帧（矿脉最满帧），返回裁剪内容"""
+    """SHP 中不透明像素最多的帧（矿脉最满），返回裁剪内容"""
     _, sd = T.find(stem + ".tem")
     if not sd:
         return None
     shp = Shp(sd)
-    best = None
+    best_img, best_a = None, -1
     for i in range(shp.nframes):
         r = shp_frame(shp, i)
-        if r:
-            best = r
-    if not best:
+        if not r:
+            continue
+        fim, _ = r
+        a = sum(1 for p in fim.getdata() if p[3] > 60)
+        if a > best_a:
+            best_img, best_a = fim, a
+    if not best_img:
         return None
-    fim, _ = best
-    bb = fim.getbbox()
-    return fim.crop(bb) if bb else None
+    bb = best_img.getbbox()
+    return best_img.crop(bb) if bb else None
 
 def save_crystal(content, terrain, variant):
     """晶体放入 64x32 画布：限缩放至钻石带内，底边对齐 y=26"""

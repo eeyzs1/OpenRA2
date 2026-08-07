@@ -1973,3 +1973,210 @@ int Game::playTest() {
     return fails;
 }
 
+// 目检截图：虚线笼 / 建造·出售 mk / 地形。输出 tools/visual_audit/out/*.png
+// 用法: ra2.exe --visual-audit（须在仓库根目录运行，以便落盘路径正确）
+int Game::visualAudit() {
+    namespace fs = std::filesystem;
+    const fs::path outDir = fs::path("tools") / "visual_audit" / "out";
+    fs::create_directories(outDir);
+    int fails = 0;
+    auto check = [&](bool ok, const char* name) {
+        TraceLog(ok ? LOG_INFO : LOG_ERROR, "VISUAL %s: %s", ok ? "PASS" : "FAIL", name);
+        if (!ok) fails++;
+    };
+
+    newGame(20260805);
+    phase = Phase::InGame;
+    paused = false;
+    showMenu = false;
+    placing = false;
+    visualAuditMarkers = false; // 正式目检截图不叠调试十字/青框
+    for (Cell& c : world.map.cells) c.height = 0;
+    bakeTerrain();
+    world.map.reveal(localPlayer, world.map.w / 2, world.map.h / 2, world.map.w);
+    fogMaskTick = -1;
+
+    // 开局只有 MCV：展开为建造厂，再围绕它摆测试建筑（与 play-test 一致）
+    Vec2i base{-1, -1};
+    EID cyId = INVALID_EID;
+    for (size_t i = 0; i < world.ents.size(); i++) {
+        auto& e = world.ents[i];
+        if (!e.alive || e.isBuilding || e.player != localPlayer || e.utype != UnitType::MCV) continue;
+        int bx = (int)e.x, by = (int)e.y;
+        e.alive = false;
+        cyId = world.spawnBuilding(localPlayer, BldType::ConYard, bx, by, true);
+        base = {bx, by};
+        break;
+    }
+    for (size_t i = 0; i < world.ents.size() && cyId == INVALID_EID; i++) {
+        auto& e = world.ents[i];
+        if (e.alive && e.isBuilding && e.player == localPlayer && e.btype == BldType::ConYard) {
+            base = {(int)e.x, (int)e.y};
+            cyId = (EID)i;
+        }
+    }
+    check(base.x >= 0 && world.valid(cyId), "has local ConYard");
+    if (base.x < 0 || !world.valid(cyId)) return fails + 1;
+
+    auto centerOn = [&](EID id, float zoom) {
+        if (!world.valid(id)) return;
+        const World::Ent& e = world.ents[id];
+        const BldDef& d = bldDef(e.btype);
+        camZoom = zoom;
+        int sx = 0, sy = 0;
+        tileToScreen((int)e.x + d.w / 2, (int)e.y + d.h / 2, sx, sy);
+        float visW = (float)(SCREEN_W - sidebarW) / camZoom;
+        float visH = (float)SCREEN_H / camZoom;
+        camX = (float)sx - visW / 2.0f;
+        camY = (float)sy - visH / 2.0f;
+        world.map.reveal(localPlayer, (int)e.x + d.w / 2, (int)e.y + d.h / 2, 14);
+        fogMaskTick = -1;
+    };
+    auto shoot = [&](const char* name) {
+        fs::path path = outDir / (std::string(name) + ".png");
+        shotFile = path.string();
+        render();
+        bool ok = fs::exists(path) && fs::file_size(path) > 1000;
+        check(ok, name);
+        TraceLog(LOG_INFO, "VISUAL wrote %s (%lld bytes)", path.string().c_str(),
+                 ok ? (long long)fs::file_size(path) : 0LL);
+    };
+    auto findPlace = [&](BldType t, int preferX, int preferY) -> Vec2i {
+        const BldDef& d = bldDef(t);
+        auto prep = [&](int x, int y) {
+            for (int dy = 0; dy < d.h; dy++)
+                for (int dx = 0; dx < d.w; dx++) {
+                    int cx = x + dx, cy = y + dy;
+                    if (!world.map.inBounds(cx, cy)) continue;
+                    Cell& c = world.map.at(cx, cy);
+                    c.terrain = Terrain::Clear;
+                    c.overlay = Overlay::None;
+                    c.height = 0;
+                    c.ore = 0;
+                }
+            for (auto& e : world.ents) {
+                if (!e.alive || e.isBuilding) continue;
+                if ((int)e.x >= x && (int)e.x < x + d.w && (int)e.y >= y && (int)e.y < y + d.h)
+                    e.alive = false;
+            }
+        };
+        for (int r = 0; r < 22; r++)
+            for (int dy = -r; dy <= r; dy++)
+                for (int dx = -r; dx <= r; dx++) {
+                    int x = preferX + dx, y = preferY + dy;
+                    if (!world.map.inBounds(x, y)) continue;
+                    prep(x, y);
+                    if (world.canPlace(t, x, y, localPlayer)) return {x, y};
+                }
+        return {preferX, preferY};
+    };
+
+    // 全景：确认平坦 TMP（无随机丘陵抬升）
+    sel.clear();
+    selBuilding = cyId;
+    centerOn(cyId, 1.0f);
+    shoot("00_terrain_base");
+
+    struct Case { BldType t; const char* tag; };
+    const Case cases[] = {
+        {BldType::PowerPlant, "powerplant"},
+        {BldType::TeslaCoil, "teslacoil"},
+        {BldType::WarFactory, "warfactory"},
+        {BldType::Barracks, "barracks"},
+        {BldType::Pillbox, "pillbox"},
+    };
+
+    // 逐建筑孤立拍摄：藏起其它建筑，避免基地杂讯干扰 bare/cage 对比
+    auto hideOthers = [&](EID keep) {
+        for (size_t i = 0; i < world.ents.size(); i++) {
+            if ((EID)i == keep) continue;
+            auto& e = world.ents[i];
+            if (!e.alive || !e.isBuilding) continue;
+            world.kill((EID)i, false);
+        }
+    };
+
+    for (int slot = 0; slot < (int)(sizeof(cases) / sizeof(cases[0])); slot++) {
+        const Case& cs = cases[slot];
+        char label[64];
+        // 远离开局基地，空地单栋拍摄
+        int preferX = base.x + 18 + (slot % 3) * 10;
+        int preferY = base.y + 14 + (slot / 3) * 10;
+        Vec2i pos = findPlace(cs.t, preferX, preferY);
+        world.players[localPlayer].money += 20000;
+        EID id = world.spawnBuilding(localPlayer, cs.t, pos.x, pos.y, true);
+        snprintf(label, sizeof(label), "spawn %s", cs.tag);
+        check(world.valid(id), label);
+        if (!world.valid(id)) continue;
+
+        hideOthers(id);
+        World::Ent& e = world.ents[id];
+        int mkf = g_sprites.bldMkFrames(cs.t);
+        snprintf(label, sizeof(label), "%s has mk frames", cs.tag);
+        check(mkf > 1, label);
+
+        centerOn(id, 1.6f);
+
+        // 建造中段
+        sel.clear();
+        selBuilding = id;
+        e.constructAnim = std::max(1, mkf * 5 / 2);
+        e.selling = false;
+        snprintf(label, sizeof(label), "01_%s_mk_mid", cs.tag);
+        shoot(label);
+
+        // 建造末段（接近成型）
+        e.constructAnim = 3;
+        snprintf(label, sizeof(label), "02_%s_mk_late", cs.tag);
+        shoot(label);
+
+        // 成品：先无框，再同机位有虚线笼——成对对比用
+        e.constructAnim = 0;
+        e.selling = false;
+        {
+            int cid = world.players[localPlayer].colorId;
+            const Sprite& cageS = g_sprites.building(cs.t, cid, false);
+            const BldDef& bd = bldDef(cs.t);
+            Vector2 p = bldScreenPos(e);
+            int npx = 0, npy = 0, spx = 0, spy = 0;
+            tileToScreen((int)e.x, (int)e.y, npx, npy);
+            tileToScreen((int)e.x + bd.w - 1, (int)e.y + bd.h - 1, spx, spy);
+            float footDepth = (float)(spy + TILE_H - npy);
+            float footHalfW = (float)(bd.w + bd.h) * (TILE_W / 4.0f);
+            float artHalfW = (float)cageS.visW() * 0.5f;
+            float cageHalfW = std::max(footHalfW, artHalfW);
+            float visElev = (float)cageS.visElev();
+            float halfD = std::clamp(std::min(footHalfW * 0.5f, visElev * 0.15f), 8.0f, 28.0f);
+            float cageElev = std::clamp(visElev - 2.f * halfD, 8.0f, 240.0f);
+            TraceLog(LOG_INFO,
+                     "VISUAL METRICS %s: foot=%dx%d visL=%d visT=%d visR=%d visB=%d "
+                     "visW=%d visElev=%d ox=%d oy=%d "
+                     "anchor=(%.1f,%.1f) footDepth≈%.0f cageHalfW=%.1f halfD=%.1f cageElev=%.1f",
+                     cs.tag, bd.w, bd.h, cageS.visL, cageS.visT, cageS.visR, cageS.visB,
+                     cageS.visW(), cageS.visElev(), cageS.ox, cageS.oy,
+                     p.x, p.y, footDepth, cageHalfW, halfD, cageElev);
+        }
+        sel.clear();
+        selBuilding = INVALID_EID;
+        snprintf(label, sizeof(label), "03_%s_bare", cs.tag);
+        shoot(label);
+        selBuilding = id;
+        snprintf(label, sizeof(label), "03_%s_cage", cs.tag);
+        shoot(label);
+
+        // 出售中段（倒放）
+        e.selling = true;
+        e.constructAnim = mkf * 5 / 2;
+        snprintf(label, sizeof(label), "04_%s_sell_mid", cs.tag);
+        shoot(label);
+
+        e.selling = false;
+        e.constructAnim = 0;
+        world.kill(id, false); // 拍完拆除并清占地
+        selBuilding = INVALID_EID;
+    }
+
+    TraceLog(LOG_INFO, "VISUAL AUDIT DONE: fails=%d out=%s", fails, outDir.string().c_str());
+    return fails;
+}
+

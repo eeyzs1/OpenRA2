@@ -344,7 +344,24 @@ def remap_index(idx: int):
         return (r, 0, 0, 255)
     return None
 
-def shp_frame_to_rgba(frame: ShpFrame, pal, canvas=None, remap=True):
+def civ_neutral_index(idx: int):
+    """民房：unittem 16..31 是阵营色阶，直接画会花成霓虹团；收成砖灰。"""
+    if 16 <= idx <= 31:
+        t = (idx - 16) / 15.0
+        g = int(100 + t * 70)
+        return (g + 8, g, g - 6, 255)
+    return None
+
+def tech_neutral_index(idx: int):
+    """中立科技建筑：16..31 → 带明暗的浅灰（避免一整块死白像贴图丢失）。"""
+    if 16 <= idx <= 31:
+        t = (idx - 16) / 15.0
+        g = int(130 + t * 100)
+        return (min(255, g + 12), g, max(0, g - 10), 255)
+    return None
+
+def shp_frame_to_rgba(frame: ShpFrame, pal, canvas=None, remap=True, civ_neutral=False,
+                      tech_neutral=False):
     """returns PIL image of the frame (not canvas), with remap applied.
     RA2 unittem.pal: index 0 = transparent; index 1 = shadow (palette RGB is
     bright blue and must never be drawn opaque — use translucent black)."""
@@ -360,6 +377,16 @@ def shp_frame_to_rgba(frame: ShpFrame, pal, canvas=None, remap=True):
             if v == 1:
                 out[xx, yy] = (0, 0, 0, 120)
                 continue
+            if tech_neutral:
+                tn = tech_neutral_index(v)
+                if tn:
+                    out[xx, yy] = tn
+                    continue
+            if civ_neutral:
+                cn = civ_neutral_index(v)
+                if cn:
+                    out[xx, yy] = cn
+                    continue
             rm = remap_index(v) if remap else None
             if rm:
                 out[xx, yy] = rm
@@ -612,9 +639,11 @@ def vxl_project(vxl: Vxl, hva, facing_phi_deg: float, hva_frame: int = 0):
         tf = sec.transform
         mins = getattr(sec, "mins", None)
         maxs = getattr(sec, "maxs", None)
-        sx, sy, sz = sec.size
+        # 截面网格尺寸：勿命名 sx/sy —— 后面 _proj 若写成 sx,sy= 会污染闭包，
+        # 导致第 2 个体素起 bounds 映射全错（巨炮 tur/bar 断开即此 bug）。
+        gsx, gsy, gsz = sec.size
         has_bounds = (
-            mins is not None and maxs is not None and sx > 0 and sy > 0 and sz > 0
+            mins is not None and maxs is not None and gsx > 0 and gsy > 0 and gsz > 0
             and (maxs[0] - mins[0]) > 0.01 and (maxs[1] - mins[1]) > 0.01 and (maxs[2] - mins[2]) > 0.01
         )
         # HVA：仅用于动画；静态定位靠 Voxel Bounds（ModEnc）。偏移过大则丢弃。
@@ -634,10 +663,9 @@ def vxl_project(vxl: Vxl, hva, facing_phi_deg: float, hva_frame: int = 0):
         def xform(lx, ly, lz, _m=m):
             # 网格 → 共享世界盒（炮塔叠车体、炮管在炮塔前）
             if has_bounds:
-                vx = mins[0] + lx * (maxs[0] - mins[0]) / sx
-                vy = mins[1] + ly * (maxs[1] - mins[1]) / sy
-                vz = mins[2] + lz * (maxs[2] - mins[2]) / sz
-                x1, y1, z1 = vx, vy, vz
+                x1 = mins[0] + lx * (maxs[0] - mins[0]) / gsx
+                y1 = mins[1] + ly * (maxs[1] - mins[1]) / gsy
+                z1 = mins[2] + lz * (maxs[2] - mins[2]) / gsz
             elif tf is not None:
                 x1, y1, z1 = _apply_mat(tf, lx, ly, lz)
             else:
@@ -663,8 +691,8 @@ def vxl_project(vxl: Vxl, hva, facing_phi_deg: float, hva_frame: int = 0):
                 face_list.append((corners, sh0 * _FACE_MUL[fi], col_lit))
             if not face_list:
                 continue
-            sx, sy = _proj(cx, cy, cz)
-            pts.append((sx, sy, cx + cy + cz, c & 255, 1.0, face_list))
+            scr_x, scr_y = _proj(cx, cy, cz)
+            pts.append((scr_x, scr_y, cx + cy + cz, c & 255, 1.0, face_list))
     return pts, (zmin if pts else 0.0)
 
 def _fill_tri(zbuf, W, H, p0, p1, p2, depth, col):
@@ -694,9 +722,12 @@ def _fill_quad(zbuf, W, H, corners, depth, col):
     _fill_tri(zbuf, W, H, corners[0], corners[1], corners[2], depth, col)
     _fill_tri(zbuf, W, H, corners[0], corners[2], corners[3], depth, col)
 
-def _rgb_of(c, shade, pal):
+def _rgb_of(c, shade, pal, tech_neutral=False):
     if 16 <= (c & 255) <= 31:
         t = (c - 16) / 15.0
+        if tech_neutral:
+            g = int(150 + 70 * max(0.0, min(1.0, t)) * max(0.55, min(1.0, shade)))
+            return (min(255, g + 10), g, max(0, g - 8), 255)
         r = int(140 + 100 * max(0.0, min(1.0, t)) * max(0.55, min(1.0, shade)))
         return (min(255, r), 0, 0, 255)
     r, g, b = pal[c & 255]
@@ -706,7 +737,7 @@ def _rgb_of(c, shade, pal):
     return (min(255, int(r * bmul)), min(255, int(g * bmul)), min(255, int(b * bmul)), 255)
 
 def render_pts(pts, pal, scale: float, org_x: float, org_y: float, canvas_w: int, canvas_h: int,
-               supersample: int = 2):
+               supersample: int = 2, tech_neutral=False):
     from PIL import Image
     ss = max(1, supersample)
     W, H = canvas_w * ss, canvas_h * ss
@@ -724,7 +755,7 @@ def render_pts(pts, pal, scale: float, org_x: float, org_y: float, canvas_w: int
         face_list = item[5] if len(item) >= 6 and isinstance(item[5], list) else None
         if not face_list:
             sx, sy, depth, c, shade = item[:5]
-            col = _rgb_of(c, shade, pal)
+            col = _rgb_of(c, shade, pal, tech_neutral=tech_neutral)
             cx = int(round(ox + sx * s)); cy = int(round(oy + sy * s))
             for yy in range(max(0, cy - 1), min(H, cy + 2)):
                 row = yy * W
@@ -734,7 +765,7 @@ def render_pts(pts, pal, scale: float, org_x: float, org_y: float, canvas_w: int
                         zbuf[i] = (depth, col)
             continue
         for fi, (corners, shade, col_i) in enumerate(face_list):
-            col = _rgb_of(col_i, shade, pal)
+            col = _rgb_of(col_i, shade, pal, tech_neutral=tech_neutral)
             scr = [P(*p) for p in corners]
             _fill_quad(zbuf, W, H, scr, depth + 0.001 * fi, col)
 

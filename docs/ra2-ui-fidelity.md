@@ -112,8 +112,9 @@ Stop / Scatter 仅保留键盘（S / X），不占默认六键。Unload 走快�
 
 | 项 | 原作 | 验收 |
 |----|------|------|
-| 笼底锚点 | 占地南尖（`bldScreenPos`） | 缩放不得挪动南尖 |
-| 笼宽/高 | 贴图**不透明**包围盒 | 非整幅透明画布；Z=`visElev` |
+| 笼底锚点 | geo + `(-2,+1)` + E→S/W→S 各 4px + Ts→S 3px | 整框平移，不改菱形形状 |
+| 笼底面 | **Foundation w×h** 等距平行四边形；碰撞同 `BldDef` | 禁 pad 臂缩放（会整体变形） |
+| 笼高 | 贴图主体顶（`fit_bld_cages.py` elev） | 禁止用满占地深度压 elev |
 | 单位/建筑贴图 | MIX VXL/SHP 提取 | **禁止**程序生成 fallback；缺则 `SPRITE-MISSING` |
 | YR 战车 | `localmd.mix` 真实 VXL（robo/bfrt/tele/…） | 非近亲灰熊/天启冒充 |
 | 融合 PLA / 99式 | 无官方 MIX；`make_fusion_units.py` 自动员兵/犀牛改款 | 可辨认橄榄作训 / 墨绿装甲；**非**原厂质量 |

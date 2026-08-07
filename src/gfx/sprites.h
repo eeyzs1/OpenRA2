@@ -107,7 +107,8 @@ private:
     // 单位身体精灵的公共收尾：地面投影烘焙 + 阵营色 remap + 锚点
     const Sprite& finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, int player);
     // 建筑精灵的公共收尾：地面投影烘焙 + 阵营色 remap + 锚点（groundY=内容画布地面y）
-    const Sprite& finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, int player, bool withShadow = true);
+    const Sprite& finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, int player,
+                                  bool withShadow = true, int footW = 0, int footH = 0);
 };
 
 extern SpriteBank g_sprites;

@@ -2118,7 +2118,8 @@ const Sprite& SpriteBank::unitTurret(UnitType t, int dir, int player) {
     return cache.emplace(k, s).first->second;
 }
 
-const Sprite& SpriteBank::finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, int player, bool withShadow) {
+const Sprite& SpriteBank::finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, int player,
+                                          bool withShadow, int footW, int footH) {
     // RA2 风格地面投影（底部偏右椭圆）；文件素材与程序生成统一烘焙、统一锚点
     int ow = pb.w, oh = pb.h;
     // 油井等 SHP 南角仅 1–2 像素细尖：阴影若钉在尖端，主体白地基会像悬空。
@@ -2131,15 +2132,24 @@ const Sprite& SpriteBank::finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, 
         if (n >= minSolid) break;
         shadowY--;
     }
-    // 南尖锚点 ox：最低不透明行（groundY）像素质心，勿盲目用画布水平中心
-    long long tipSum = 0;
-    int tipN = 0;
-    int tipY = groundY;
-    if (tipY < 0) tipY = 0;
-    if (tipY >= oh) tipY = oh - 1;
-    for (int x = 0; x < ow; x++)
-        if (pb.get(x, tipY).a > 60) { tipSum += x; tipN++; }
-    int contentOx = tipN > 0 ? (int)(tipSum / tipN) : ow / 2;
+    // 南尖 ox：西木 SHP 约定「地基北尖在画布水平中心」(PPM SHP Builder)。
+    // S = N + ((fw-fh)*TW/2, (fw+fh)*TH/2) → ox = cw/2 + (fw-fh)*TILE_W/2。
+    // 错误用 TILE_W/4 或不透明质心会让 3×2 等矩形建筑相对虚线笼左右偏。
+    int contentOx;
+    if (footW > 0 && footH > 0) {
+        contentOx = ow / 2 + (footW - footH) * (TILE_W / 2);
+        if (contentOx < 0) contentOx = 0;
+        if (contentOx >= ow) contentOx = ow - 1;
+    } else {
+        long long tipSum = 0;
+        int tipN = 0;
+        int tipY = groundY;
+        if (tipY < 0) tipY = 0;
+        if (tipY >= oh) tipY = oh - 1;
+        for (int x = 0; x < ow; x++)
+            if (pb.get(x, tipY).a > 60) { tipSum += x; tipN++; }
+        contentOx = tipN > 0 ? (int)(tipSum / tipN) : ow / 2;
+    }
     // 可见包围盒（内容坐标）— 虚线笼用，剔除透明顶/侧边
     int visL = ow, visT = oh, visR = -1, visB = -1;
     for (int y = 0; y < oh; y++)
@@ -2203,7 +2213,8 @@ const Sprite& SpriteBank::building(BldType t, int player, bool constructing) {
             groundY--;
         }
     }
-    return finishBldSprite(k, std::move(pb), groundY, player, true);
+    const BldDef& bd = bldDef(orig);
+    return finishBldSprite(k, std::move(pb), groundY, player, true, bd.w, bd.h);
 }
 
 const Sprite& SpriteBank::buildingGhost(BldType t, int player) {
@@ -2229,7 +2240,8 @@ const Sprite& SpriteBank::buildingGhost(BldType t, int player) {
             groundY--;
         }
     }
-    return finishBldSprite(k, std::move(pb), groundY, player, false);
+    const BldDef& bd = bldDef(orig);
+    return finishBldSprite(k, std::move(pb), groundY, player, false, bd.w, bd.h);
 }
 
 // ===================== 动画系统（art.ini 序列 + mk 建造动画） =====================
@@ -2356,7 +2368,8 @@ const Sprite& SpriteBank::buildingMk(BldType t, int frame, int player) {
         if (groundY >= pb.h) groundY = pb.h - 1;
     }
     const Sprite& mk = finishBldSprite(k, std::move(pb), groundY, player);
-    // 强制与成品同锚点（放置幽灵 / 建成后位置不跳）
+    // 与成品同地面锚点（避免建造逐帧跳脚）；可见包围盒保留本帧真实内容，
+    // 否则选中笼/血条按成品尺寸包住半成品，会出现「大空笼子里浮着一小块」
     const_cast<Sprite&>(mk).ox = fin.ox;
     const_cast<Sprite&>(mk).oy = fin.oy;
     return mk;

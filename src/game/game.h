@@ -35,6 +35,7 @@ public:
     int campaignMatrixTest(int frames); // 32 关启动/触发器/胜负静态与运行矩阵
     void benchCampaign(int mission, int warmTicks, int frames); // 临时诊断：战役真实渲染耗时（解除帧率上限）
     int playTest();             // 自动化完整游玩测试：脚本注入输入，真实窗口跑全流程，返回失败数
+    int visualAudit();          // 建筑虚线笼/建造出售动画/地形目检截图（人工或脚本审图）
     void debugMenuShot(const char* file, bool setup); // 菜单截图（验证用）
     void debugShot(int warmTicks, const char* file); // 遭遇战截图：预热出基地/电厂/单位后拍全屏（验证用）
     int netSelfTestDriver(int role, int frames); // P8 双进程自测：role 0=--net-host 1=--net-client（main 驱动）
@@ -170,6 +171,8 @@ private:
 
     // 建筑放置
     bool placing = false;
+    bool visualAuditMarkers = false; // --visual-audit：叠青框/锚点核对选中笼
+
 
     // 超武目标选择模式（COUNT = 无）
     SWType targetingSW = SWType::COUNT;

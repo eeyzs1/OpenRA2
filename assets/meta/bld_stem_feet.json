@@ -1,0 +1,293 @@
+{
+  "note": "art.ini/artmd Foundation per extract stem \u2014 source of truth for cage feet",
+  "buildings": {
+    "conyard": [
+      4,
+      4
+    ],
+    "powerplant": [
+      2,
+      2
+    ],
+    "teslareactor": [
+      3,
+      2
+    ],
+    "nuclearreactor": [
+      4,
+      4
+    ],
+    "barracks": [
+      3,
+      2
+    ],
+    "warfactory": [
+      5,
+      3
+    ],
+    "orerefinery": [
+      4,
+      3
+    ],
+    "radar": [
+      2,
+      2
+    ],
+    "battlelab": [
+      3,
+      2
+    ],
+    "airforcecmd": [
+      3,
+      2
+    ],
+    "navalyard": [
+      4,
+      4
+    ],
+    "pillbox": [
+      1,
+      1
+    ],
+    "sentrygun": [
+      1,
+      1
+    ],
+    "prismtower": [
+      1,
+      1
+    ],
+    "teslacoil": [
+      1,
+      1
+    ],
+    "flakcannon": [
+      1,
+      1
+    ],
+    "grandcannon": [
+      2,
+      2
+    ],
+    "patriotmissile": [
+      1,
+      1
+    ],
+    "wall": [
+      1,
+      1
+    ],
+    "orepurifier": [
+      3,
+      3
+    ],
+    "industrialplant": [
+      3,
+      3
+    ],
+    "techpowerplant": [
+      2,
+      2
+    ],
+    "nukesilo": [
+      3,
+      3
+    ],
+    "ironcurtain": [
+      3,
+      3
+    ],
+    "chronosphere": [
+      4,
+      3
+    ],
+    "oilderrick": [
+      2,
+      2
+    ],
+    "hospital": [
+      6,
+      4
+    ],
+    "machineshop": [
+      3,
+      3
+    ],
+    "cloningvat": [
+      2,
+      2
+    ],
+    "servicedepot": [
+      3,
+      3
+    ],
+    "gapgenerator": [
+      1,
+      1
+    ],
+    "spysat": [
+      2,
+      2
+    ],
+    "psychicsensor": [
+      2,
+      2
+    ],
+    "techairport": [
+      3,
+      3
+    ],
+    "secretlab": [
+      3,
+      3
+    ],
+    "civhouse": [
+      3,
+      2
+    ],
+    "techoutpost": [
+      4,
+      3
+    ],
+    "battlebunker": [
+      2,
+      2
+    ],
+    "tankbunker": [
+      2,
+      2
+    ],
+    "bioreactor": [
+      2,
+      2
+    ],
+    "gatlingcannon": [
+      1,
+      1
+    ],
+    "grinder": [
+      3,
+      3
+    ],
+    "geneticmutator": [
+      3,
+      3
+    ],
+    "psychicdominator": [
+      3,
+      3
+    ],
+    "psychictower": [
+      1,
+      1
+    ],
+    "robotcontrol": [
+      2,
+      2
+    ],
+    "barracks_sov": [
+      2,
+      2
+    ],
+    "barracks_yuri": [
+      2,
+      3
+    ],
+    "warfactory_sov": [
+      5,
+      3
+    ],
+    "warfactory_yuri": [
+      5,
+      3
+    ],
+    "navalyard_sov": [
+      4,
+      4
+    ],
+    "navalyard_yuri": [
+      4,
+      4
+    ],
+    "wall_sov": [
+      1,
+      1
+    ],
+    "civhouse2": [
+      3,
+      2
+    ],
+    "civhouse3": [
+      3,
+      4
+    ],
+    "civhouse4": [
+      3,
+      2
+    ],
+    "civhouse5": [
+      1,
+      2
+    ],
+    "civhouse6": [
+      2,
+      1
+    ],
+    "civhouse7": [
+      2,
+      3
+    ],
+    "civwash": [
+      4,
+      4
+    ],
+    "civbarn": [
+      2,
+      2
+    ],
+    "civwatertower": [
+      1,
+      1
+    ],
+    "civchurch": [
+      3,
+      2
+    ],
+    "conyard_sov": [
+      4,
+      4
+    ],
+    "battlelab_sov": [
+      3,
+      3
+    ],
+    "orerefinery_sov": [
+      4,
+      3
+    ],
+    "servicedepot_sov": [
+      4,
+      3
+    ],
+    "helipad_sov": [
+      2,
+      2
+    ],
+    "sandbags": [
+      1,
+      1
+    ],
+    "psychicbeacon": [
+      4,
+      4
+    ],
+    "psychicbeacon2": [
+      2,
+      2
+    ],
+    "techarmory": [
+      4,
+      4
+    ]
+  }
+}

@@ -135,11 +135,12 @@ BLDS = {
     "flakcannon": ["NAFLAK"], "grandcannon": ["GTGCAN"], "patriotmissile": ["NASAM"],
     "wall": ["GAWALL"], "orepurifier": ["GAOREP"], "industrialplant": ["NAINDP"],
     "techpowerplant": ["CAPOWR"], "nukesilo": ["NAMISL"],
-    "weatherdevice": ["GAWEAT"], "ironcurtain": ["NAIRON"], "chronosphere": ["GACSPH"],
+    "weatherdevice": ["GAWEAT"],  # rules Image=GAWETH
+    "ironcurtain": ["NAIRON"], "chronosphere": ["GACSPH"],
     "oilderrick": ["CAOILD"], "hospital": ["CAHOSP", "CATHOSP"], "machineshop": ["CAMACH"],
     "cloningvat": ["NACLON"], "servicedepot": ["GADEPT"], "gapgenerator": ["GAGAP"],
     "spysat": ["GASPST", "GASPYSAT"], "psychicsensor": ["NAPSIS"], "techairport": ["CAAIRP"],
-    "secretlab": ["CASLAB", "CALAB"], "civhouse": ["CAHSE01"], "techoutpost": ["CAOUTP"],
+    "secretlab": ["CASLAB", "CALAB"], "civhouse": ["CTHSE01", "CAHSE01"], "techoutpost": ["CAOUTP"],
     # ---- YR/尤里建筑：仅用真实 Image id；无 SHP 时跳过（禁止近亲冒充）----
     "battlebunker": ["NABNKR"],
     "tankbunker": ["NATBNK"],
@@ -150,20 +151,92 @@ BLDS = {
     "psychicdominator": ["YAPPET"],
     "psychictower": ["YAPSYT"],
     "robotcontrol": ["GAROBO"],
+    # ---- 阵营变体 / 民用（审核+地图用；引擎可按需映射）----
+    "barracks_sov": ["NAHAND"],
+    "barracks_yuri": ["YABRCK"],
+    "warfactory_sov": ["NAWEAP"],
+    "warfactory_yuri": ["YAWEAP"],
+    "navalyard_sov": ["NAYARD"],
+    "navalyard_yuri": ["YAYARD"],
+    "wall_sov": ["NAWALL"],
+    "civhouse2": ["CTHSE02", "CAHSE02"],
+    "civhouse3": ["CTHSE03", "CAHSE03"],
+    "civhouse4": ["CAHSE04"],
+    "civhouse5": ["CAHSE05"],
+    "civhouse6": ["CAHSE06"],
+    "civhouse7": ["CAHSE07"],
+    "civwash": ["CAWASH01", "CTWASH01"],
+    "civbarn": ["CABARN02"],
+    "civwatertower": ["CAWT01"],
+    "civchurch": ["CACHIG01", "CACHURCH"],
+    # ---- 阵营对称 / 科技补充（审核用；引擎可按需映射）----
+    "conyard_sov": ["NACNST"],
+    "battlelab_sov": ["NATECH"],
+    "orerefinery_sov": ["NAREFN"],
+    "servicedepot_sov": ["NADEPT"],
+    "helipad_sov": ["NAHPAD"],
+    "airforcecmd_usa": ["AMRADR"],
+    "sandbags": ["GASAND"],
+    "psychicbeacon": ["NAPSYA"],
+    "psychicbeacon2": ["NAPSYB"],
+    "techarmory": ["CAARMR"],
 }
 # 主 SHP 只是基坑/埋地状态，完整建筑在 mk 建造动画（帧位置自动选最大不透明帧）
-BLD_FROM_MK = {"grandcannon": "gagcanmk", "nukesilo": "namislmk", "sentrygun": "nalasrmk",
-               "flakcannon": "naflakmk",
+# 弹出式炮塔 mk 末帧常是高仰角：哨戒/巨炮成品走底座 SHP + VXL，勿用 mk 峰值当 idle
+BLD_FROM_MK = {"flakcannon": "naflakmk",
                "servicedepot": "gadeptmk",
                "battlebunker": "nabnkrmk",
                "tankbunker": "ngtbnkmk",
-               # 主 SHP 仅雪地/残缺：用温带 MAKE 最大帧作成品
                "teslacoil": "nttslamk",
-               "chronosphere": "gtcsphmk",
-               "spysat": "gaspstmk",
-               "prismtower": "gtprismk"}
+               # chronosphere：主图用静态；就绪态另存 SuperAnim（勿用 mk 峰值冒充实闲）
+               "spysat": "gaspstmk"}
 # 墙体：f0 是孤立门柱，f5 是连续墙段
-BLD_FRAME0 = {"wall": 5}
+BLD_FRAME0 = {"wall": 5, "wall_sov": 5, "sandbags": 5}
+# 成品强制用指定 mk 帧
+BLD_FORCE_FRAME = {}
+# 建筑炮塔 VXL：name, yaw(0..7), ox, oy[, barrel_stem]
+# 巨炮：底座 gagcan + gtgcantur + gtgcanbarl（rules TurretAnim）；勿按底座宽度压扁炮管
+BLD_TURRET_VXL = {
+    "sentrygun": ("laser", 0, 0, -6),
+    # yaw=7：炮口右上，接近原作 idle / cameo 朝向
+    "grandcannon": ("gtgcantur", 7, 3, 0, "gtgcanbarl"),
+    # 前哨：rules TurretAnimX/Y≈-30,14；落座用柱顶 + 主体底（忽略 VXL 长颈）
+    "techoutpost": ("outp", 1, 0, 2),
+}
+# 巨炮等：VXL 缩放与落座（oy 用 seat_frac 时忽略 tuple 的 oy）
+BLD_TURRET_FIT = {
+    "grandcannon": {"scale": 1.15, "seat_frac": 0.18, "expand": True},
+    # OUTP 投影带长颈：anchor_bulk_frac 坐在碟身底；柱顶须近白检测
+    "techoutpost": {
+        "scale": 1.65,
+        "expand": True,
+        "auto_seat_pillars": True,
+        "anchor_bulk_frac": 0.72,
+    },
+}
+# 光棱：ActiveAnim=GAPRIS_B 是待机带电头（常在）；SpecialAnim=GAPRIS_A 才是开火
+# 不要 skip ActiveAnim，否则只剩无头基座
+BLD_SKIP_OVERLAY = set()
+# ActiveAnim 指定帧（保留钩子）
+# ActiveAnim=CAOUTP_F 是塔顶黄旗（非雷达碟）；取挥舞较实的帧
+BLD_OVERLAY_FRAME = {
+    "techoutpost": {"CAOUTP_F": 12, "CTOUTP_F": 12},
+}
+# SpecialAnim* 多数是开火/烟雾；少数是建筑本体缺块（须叠）
+BLD_SPECIAL_IS_BODY = {"techoutpost"}
+# 超级武器建筑：idle=未就绪；ready=SuperAnim* 叠层（原作充电完成才显示）
+# 核弹井本包 namisl 仅垫层，闭合空井用 NAMISL_E 顶上
+BLD_SW_IDLE_EXTRA = {
+    "nukesilo": ["NAMISL_E"],
+    # 超时空主 SHP 仅左半底座；GACSPH_E 是未充能也该有的环架/右半结构
+    "chronosphere": ["GACSPH_E"],
+}
+BLD_SW_READY_LAYERS = {
+    "nukesilo": ["NAMISL_E", "NAMISL_F", "NAMISL_G", "NAMISL_H"],
+    "ironcurtain": ["NAIRON_A", "NAIRON_F", "NAIRON_G", "NAIRON_H"],
+    "chronosphere": ["GACSPH_E", "GACSPH_F", "GACSPH_G", "GACSPH_H"],
+    "weatherdevice": ["GAWETH_E", "GAWETH_F", "GAWETH_G", "GAWETH_H"],
+}
 # 建造/出售倒放关键帧数（mk 均采 + 完整帧；原作 MAKE 常 50+ 帧，过稀会像程序动画）
 MK_KEYS = 20
 
@@ -242,11 +315,12 @@ def render_voxel_unit(img, canvas, eng=""):
     return out, layout
 
 # ------------------------------------------------------------- SHP 工具
-def shp_frame_img(shp, i, pal, remap=True):
+def shp_frame_img(shp, i, pal, remap=True, civ_neutral=False, tech_neutral=False):
     fr = shp.frame_pixels(i)
     if fr.w == 0 or fr.h == 0:
         return None
-    return shp_frame_to_rgba(fr, pal, remap=remap), (fr.x, fr.y, fr.w, fr.h)
+    return shp_frame_to_rgba(fr, pal, remap=remap, civ_neutral=civ_neutral,
+                             tech_neutral=tech_neutral), (fr.x, fr.y, fr.w, fr.h)
 
 def composite_frames(shp, idxs, pal, remap=True):
     """把若干帧按各自 (x,y) 画到 SHP 大画布，返回自动裁剪后的 (img, bbox)"""
@@ -555,6 +629,8 @@ def bib_shp_candidates(bibshape: str):
     b = bibshape.lower().strip()
     if not b:
         return []
+    if b.endswith(".shp"):
+        b = b[:-4]
     out = []
     if len(b) >= 3:
         for c in "gtuas":
@@ -563,19 +639,198 @@ def bib_shp_candidates(bibshape: str):
     seen = set()
     return [x for x in out if not (x in seen or seen.add(x))]
 
-def render_building(img, canvas=None, frame0=0, single=True, bib=None, active_anim=None, remap=True):
+
+# art.ini 常缺 BibShape；原作按 Image+"BB"。本包多数电厂 bib 不在 MIX，resolve 会跳过。
+BLD_DEFAULT_BIB = {
+    "conyard": "GACNSTBB",
+    "powerplant": "GAPOWRBB",
+    "teslareactor": "NAPOWRBB",
+    "nuclearreactor": "NANRCTBB",
+    "bioreactor": "YAPOWRBB",
+    "techpowerplant": "CAPOWRBB",
+    "barracks": "GAPILEBB",
+    "warfactory": "GAWEAPBB",
+    "orerefinery": "GAREFNBB",
+    "radar": "GARADRBB",
+    "battlelab": "GATECHBB",
+    "airforcecmd": "GAAIRCBB",
+    "navalyard": "GAYARDBB",
+    "servicedepot": "GADEPTBB",
+}
+
+
+def resolve_bib_shape(eng: str, asec: dict, rid: str, img: str):
+    """Return BibShape string if any candidate SHP has real bytes; else None."""
+    bib = asec.get("BibShape") or A.get(rid, {}).get("BibShape")
+    if not bib:
+        bib = BLD_DEFAULT_BIB.get(eng) or ((img.upper() + "BB") if img else None)
+    if not bib:
+        return None
+    for stem in bib_shp_candidates(bib):
+        data = get(stem + ".shp")
+        if data:
+            return bib
+    return None
+
+def shp_frame0_opaque(stem_shp: str) -> int:
+    """frame0 不透明像素数；缺失或空帧返回 0。"""
+    if not has(stem_shp):
+        return 0
+    try:
+        shp = Shp(get(stem_shp))
+        fr = shp.frame_pixels(0)
+        if not fr:
+            return 0
+        return sum(1 for v in fr.pixels if v != 0)
+    except Exception:
+        return 0
+
+def pick_bld_shp(tries):
+    """按候选顺序选第一个「非空」SHP（跳过 generic 空壳 ngmisl 等）。"""
+    for x in tries:
+        if shp_frame0_opaque(x) > 32:
+            return x
+    return next((x for x in tries if has(x)), None)
+
+def paste_shp_frame(big, stem, frame=0, remap=True, civ_neutral=False, tech_neutral=False):
+    """把 stem.shp 的 frame 按原偏移叠到 big（必要时扩画布）。成功返回 big。"""
+    if not has(stem + ".shp"):
+        return big
+    ash = Shp(get(stem + ".shp"))
+    if frame < 0 or frame >= ash.nframes:
+        return big
+    fr = ash.frame_pixels(frame)
+    if not fr or fr.w <= 0:
+        return big
+    r = shp_frame_img(ash, frame, PAL_U, remap=remap, civ_neutral=civ_neutral,
+                      tech_neutral=tech_neutral)
+    if not r:
+        return big
+    fi, (x, y, w, h) = r
+    if x + fi.width > big.width or y + fi.height > big.height or x < 0 or y < 0:
+        nw = max(big.width, x + fi.width, ash.w)
+        nh = max(big.height, y + fi.height, ash.h)
+        bigger = Image.new("RGBA", (nw, nh), (0, 0, 0, 0))
+        bigger.paste(big, (0, 0), big)
+        big = bigger
+    big.paste(fi, (max(0, x), max(0, y)), fi)
+    return big
+
+
+def lower_grandcannon_barrel(img, deg=-52, pivot_y_frac=0.70, right_pad=110, blend=8):
+    """gtgcanmk 峰值炮管仰角约 64°（建造结束姿），原作待机约 15–20°（略上扬）。
+    只旋转枢轴以上炮管/炮塔顶，底座原样保留；deg≈-52 → 炮口仰角约 18°。"""
+    import math
+    bb = img.getbbox()
+    if not bb:
+        return img
+    px = (bb[0] + bb[2]) / 2.0
+    py = bb[1] + (bb[3] - bb[1]) * pivot_y_frac
+    rad = math.radians(deg)
+    cosr, sinr = math.cos(rad), math.sin(rad)
+    W = img.width + right_pad
+    H = img.height
+    res = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    sp = img.load()
+    dp = res.load()
+
+    def sample(sx, sy):
+        x0 = int(math.floor(sx))
+        y0 = int(math.floor(sy))
+        x1, y1 = x0 + 1, y0 + 1
+        if x0 < 0 or y0 < 0 or x1 >= img.width or y1 >= img.height:
+            return (0, 0, 0, 0)
+        fx, fy = sx - x0, sy - y0
+        p00, p10 = sp[x0, y0], sp[x1, y0]
+        p01, p11 = sp[x0, y1], sp[x1, y1]
+        if p00[3] + p10[3] + p01[3] + p11[3] < 8:
+            return (0, 0, 0, 0)
+
+        def lerp(a, b, t):
+            return tuple(int(a[i] * (1 - t) + b[i] * t) for i in range(4))
+
+        return lerp(lerp(p00, p10, fx), lerp(p01, p11, fx), fy)
+
+    # 底座（腿+平台+炮塔下半）原样
+    for y in range(max(0, int(py) - blend), img.height):
+        for x in range(img.width):
+            p = sp[x, y]
+            if p[3] > 8:
+                dp[x, y] = p
+
+    # 枢轴以上：逆变换采样放倒炮管
+    for y in range(0, int(py) + blend + 2):
+        for x in range(W):
+            rx = x - px
+            ry = y - py
+            sx = px + rx * cosr - ry * sinr
+            sy = py + rx * sinr + ry * cosr
+            if sy >= py + 1:
+                continue
+            p = sample(sx, sy)
+            if p[3] <= 16:
+                continue
+            if y >= int(py) - blend and dp[x, y][3] > 8:
+                t = (int(py) + blend - y) / max(1.0, 2.0 * blend)
+                t = max(0.0, min(1.0, t))
+                dst = dp[x, y]
+                dp[x, y] = tuple(int(p[i] * t + dst[i] * (1 - t)) for i in range(4))
+            else:
+                dp[x, y] = p
+    return res
+
+
+def find_bright_pillar_seat(im, ox_hint=0, oy_hint=0):
+    """前哨 remap 白柱顶中心。只认近白（避免浅灰屋顶/米色壳体误检偏高）。"""
+    bb = im.getbbox()
+    if not bb:
+        return None
+    px = im.load()
+    x0, y0, x1, y1 = bb
+    # 左上：排除右下黄黑警戒垫与橙色吊臂
+    x1 = x0 + max(8, int((x1 - x0) * 0.55))
+    y1 = y0 + max(8, int((y1 - y0) * 0.62))
+    bright = []
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            r, g, b, a = px[x, y]
+            if a < 220:
+                continue
+            mx, mn = max(r, g, b), min(r, g, b)
+            # tech_neutral 柱顶接近纯白；排除 180..210 的浅灰壳体
+            if mn >= 225 and (mx - mn) <= 30:
+                bright.append((x, y))
+    if len(bright) < 24:
+        return None
+    top_y = min(y for _, y in bright)
+    band = [p for p in bright if p[1] <= top_y + 5]
+    if len(band) < 6:
+        band = bright
+    cx = sum(x for x, _ in band) / len(band) + ox_hint
+    cy = top_y + oy_hint
+    return cx, cy
+
+
+def render_building(img, canvas=None, frame0=0, single=True, bib=None, active_anim=None,
+                    overlay_anims=None, remap=True, turret_vxl=None, turret_yaw=0,
+                    turret_ox=0, turret_oy=0, civ_neutral=False, overlay_frames=None,
+                    post_process=None, turret_barrel=None, turret_fit=None,
+                    tech_neutral=False):
     """保留 SHP 原画布与帧偏移（地基对齐关键），再按 64/60 放大到引擎瓦片。
     禁止 crop+居中：会剪掉地基留白，建成后地面缺角、比例错位。
-    bib：art.ini BibShape；active_anim：ActiveAnim（油田泵机等补全缺块）。
-    Remapable=no 的科技建筑必须 remap=False，否则 16..31 被画成亮红。"""
+    bib：art.ini BibShape；active_anim / overlay_anims：Idle/Active/Special 等补全缺块。
+    Remapable=no 的科技建筑必须 remap=False，否则 16..31 被画成亮红。
+    civ_neutral：民房 16..31 收成砖灰；tech_neutral：中立科技→浅灰白。
+    overlay_frames：{anim名大写: frameIdx}；炮塔 VXL 在 SHP 原像素坐标叠（scale=1）。
+    post_process：scale 前对原像素画布的可选处理。
+    turret_barrel：分体炮管 VXL stem；turret_fit：{scale, seat_frac, expand}。"""
     sd = get(img + ".shp")
     if not sd:
         return None
     shp = Shp(sd)
     n = shp.nframes
     if frame0 < 0:
-        # mk 建造动画：完整建筑帧位置不一（弹出式防御炮在中段，核弹井在后段），
-        # 取最大不透明像素帧（完整建筑像素最多，火花特效帧像素少）
+        # mk 建造动画：完整建筑帧位置不一，取最大不透明像素帧
         best, besta = 0, -1
         for i in range(n):
             fr = shp.frame_pixels(i)
@@ -583,15 +838,23 @@ def render_building(img, canvas=None, frame0=0, single=True, bib=None, active_an
             if a > besta:
                 best, besta = i, a
         frame0 = best
-    # 基帧 + 后续小覆盖帧（旗帜/天线等）；最多叠 3 层以免特效帧污染
     idxs = [frame0]
-    f0 = shp_frame_img(shp, frame0, PAL_U, remap=remap)
+    f0 = shp_frame_img(shp, frame0, PAL_U, remap=remap, civ_neutral=civ_neutral,
+                       tech_neutral=tech_neutral)
     if not f0:
         return None
     a0 = f0[1][2] * f0[1][3]
     if not single:
         for i in range(frame0 + 1, n):
-            fi = shp_frame_img(shp, i, PAL_U, remap=remap)
+            frp = shp.frame_pixels(i)
+            if not frp:
+                continue
+            # 跳过损坏/占位帧：unittem 204..239 是品红废色，叠上去会花屏
+            bad = sum(1 for v in frp.pixels if 204 <= v <= 239)
+            if bad > 24:
+                continue
+            fi = shp_frame_img(shp, i, PAL_U, remap=remap, civ_neutral=civ_neutral,
+                              tech_neutral=tech_neutral)
             if not fi:
                 continue
             area = fi[1][2] * fi[1][3]
@@ -600,52 +863,147 @@ def render_building(img, canvas=None, frame0=0, single=True, bib=None, active_an
                 if len(idxs) >= 4:
                     break
     big = Image.new("RGBA", (shp.w, shp.h), (0, 0, 0, 0))
-    # BibShape：南侧地基垫，必须在主体之下，否则精炼厂/战车厂看起来“缺半截”
     if bib:
         for stem in bib_shp_candidates(bib):
-            if not has(stem + ".shp"):
+            data = get(stem + ".shp")
+            if not data:
                 continue
-            bshp = Shp(get(stem + ".shp"))
-            fr0 = bshp.frame_pixels(0)
-            if fr0 and fr0.w > 0:
-                r = shp_frame_img(bshp, 0, PAL_U, remap=False)
-                if r:
-                    fi, (x, y, w, h) = r
-                    if x + fi.width > big.width or y + fi.height > big.height or x < 0 or y < 0:
-                        nw = max(big.width, x + fi.width, bshp.w)
-                        nh = max(big.height, y + fi.height, bshp.h)
-                        bigger = Image.new("RGBA", (nw, nh), (0, 0, 0, 0))
-                        bigger.paste(big, (0, 0), big)
-                        big = bigger
-                    big.paste(fi, (max(0, x), max(0, y)), fi)
+            big = paste_shp_frame(big, stem, 0, remap=False, civ_neutral=False)
             break
     for i in idxs:
-        r = shp_frame_img(shp, i, PAL_U, remap=remap)
+        r = shp_frame_img(shp, i, PAL_U, remap=remap, civ_neutral=civ_neutral,
+                          tech_neutral=tech_neutral)
         if r:
             fi, (x, y, w, h) = r
-            big.paste(fi, (x, y), fi)
-    # ActiveAnim 静态取帧0（油田泵机/动画层补全主体缺块）
+            if x + fi.width > big.width or y + fi.height > big.height or x < 0 or y < 0:
+                nw = max(big.width, x + fi.width)
+                nh = max(big.height, y + fi.height)
+                bigger = Image.new("RGBA", (nw, nh), (0, 0, 0, 0))
+                bigger.paste(big, (0, 0), big)
+                big = bigger
+            big.paste(fi, (max(0, x), max(0, y)), fi)
+    # 兼容旧参数 + 多层 Idle/Active/Special
+    anims = []
     if active_anim:
-        for stem in bib_shp_candidates(active_anim):  # 同 theater 字母替换
+        anims.append(active_anim)
+    if overlay_anims:
+        anims.extend(overlay_anims)
+    seen = set()
+    oframes = overlay_frames or {}
+    for anim in anims:
+        if not anim:
+            continue
+        key = anim.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        fr_i = oframes.get(anim.upper(), oframes.get(anim, 0))
+        for stem in bib_shp_candidates(anim):
             if not has(stem + ".shp"):
                 continue
-            ash = Shp(get(stem + ".shp"))
-            fr = ash.frame_pixels(0)
-            if not fr or fr.w <= 0:
-                break
-            r = shp_frame_img(ash, 0, PAL_U, remap=remap)
-            if r:
-                fi, (x, y, w, h) = r
-                if x + fi.width > big.width or y + fi.height > big.height or x < 0 or y < 0:
-                    nw = max(big.width, x + fi.width, ash.w)
-                    nh = max(big.height, y + fi.height, ash.h)
-                    bigger = Image.new("RGBA", (nw, nh), (0, 0, 0, 0))
-                    bigger.paste(big, (0, 0), big)
-                    big = bigger
-                big.paste(fi, (max(0, x), max(0, y)), fi)
+            # 跳过画布远大于当前 big 的层（本包 ggcsph_h 误成 432x304，会撑破合成）
+            try:
+                ash = Shp(get(stem + ".shp"))
+                if ash.w > big.width * 1.6 or ash.h > big.height * 1.6:
+                    continue
+            except Exception:
+                pass
+            fr_use = oframes.get(stem.upper(), fr_i)
+            big = paste_shp_frame(big, stem, fr_use, remap=remap, civ_neutral=civ_neutral,
+                                 tech_neutral=tech_neutral)
             break
+    # 建筑炮塔 VXL：在 SHP 原像素坐标叠（勿乘 BLD_SCALE，后面统一放大）
+    if turret_vxl and has(turret_vxl + ".vxl"):
+        try:
+            fit = turret_fit or {}
+            scale = float(fit.get("scale", 1.0))
+            seat_frac = fit.get("seat_frac", None)
+            expand = bool(fit.get("expand", False))
+            phi = _phi_for_screen_alpha(45 * (turret_yaw % 8))
+            vtur = Vxl(get(turret_vxl + ".vxl"))
+            # 静态烘培：不用 HVA（与单位车体一致，避免节变换把炮管拧飞）
+            pts_tur, _z = vxl_project(vtur, None, phi)
+            pts = list(pts_tur) if pts_tur else []
+            if turret_barrel and has(turret_barrel + ".vxl"):
+                pts_bar, _ = vxl_project(Vxl(get(turret_barrel + ".vxl")), None, phi)
+                if pts_bar:
+                    pts.extend(pts_bar)
+            if pts:
+                xs = [p[0] for p in pts]
+                ys = [p[1] for p in pts]
+                span_x = max(xs) - min(xs)
+                span_y = max(ys) - min(ys)
+                if span_x < 500 and span_y < 500:
+                    bb = big.getbbox()
+                    if bb:
+                        # 默认：短炮塔可按底座略缩；巨炮 expand=True 时禁止压扁
+                        if not expand:
+                            base_w = max(8, bb[2] - bb[0])
+                            if span_x > 1 and span_x * scale > base_w * 0.95:
+                                scale = (base_w * 0.85) / span_x
+                        seat = None
+                        if fit.get("auto_seat_pillars"):
+                            seat = find_bright_pillar_seat(big, turret_ox, turret_oy)
+                        if seat:
+                            cx, cy = seat
+                        else:
+                            cx = (bb[0] + bb[2]) / 2 + turret_ox
+                            if seat_frac is not None:
+                                cy = bb[1] + (bb[3] - bb[1]) * float(seat_frac) + turret_oy
+                            else:
+                                cy = bb[1] + (bb[3] - bb[1]) * 0.32 + turret_oy
+                    else:
+                        cx = big.width / 2 + turret_ox
+                        cy = big.height / 2 + turret_oy
+                    # 锚点用炮塔本体（不含超长炮管），避免炮管把中心拽偏
+                    if pts_tur:
+                        txs = [p[0] for p in pts_tur]
+                        tys = [p[1] for p in pts_tur]
+                        gx = (min(txs) + max(txs)) / 2
+                        bulk = fit.get("anchor_bulk_frac")
+                        if bulk is not None:
+                            # 0..1 from turret top→bottom in screen Y；忽略底部细颈
+                            lo, hi = min(tys), max(tys)
+                            gy = lo + (hi - lo) * float(bulk)
+                        elif fit.get("anchor_bottom"):
+                            gy = max(tys)  # 炮塔底落在 seat（白柱顶）
+                        else:
+                            gy = min(tys) + (max(tys) - min(tys)) * 0.65
+                    else:
+                        gx = (min(xs) + max(xs)) / 2
+                        gy = (min(ys) + max(ys)) / 2
+                    orgx = cx - gx * scale
+                    orgy = cy - gy * scale
+                    # 画布不够装长炮管时向右/上扩
+                    need_w = int(max(big.width, orgx + max(xs) * scale + 8, -orgx + 8))
+                    need_h = int(max(big.height, orgy + max(ys) * scale + 8, -orgy + 8))
+                    # also account for min extents going negative relative to org
+                    left = orgx + min(xs) * scale
+                    top = orgy + min(ys) * scale
+                    pad_l = max(0, int(math.ceil(-left + 4)))
+                    pad_t = max(0, int(math.ceil(-top + 4)))
+                    pad_r = max(0, int(math.ceil(orgx + max(xs) * scale + 4 - big.width)))
+                    pad_b = max(0, int(math.ceil(orgy + max(ys) * scale + 4 - big.height)))
+                    if pad_l or pad_t or pad_r or pad_b:
+                        bigger = Image.new("RGBA", (big.width + pad_l + pad_r,
+                                                    big.height + pad_t + pad_b), (0, 0, 0, 0))
+                        bigger.paste(big, (pad_l, pad_t), big)
+                        big = bigger
+                        orgx += pad_l
+                        orgy += pad_t
+                    tur = render_pts(pts, PAL_U, scale, orgx, orgy, big.width, big.height,
+                                     supersample=2, tech_neutral=tech_neutral)
+                    if tur.getbbox():
+                        big = big.copy()
+                        big.alpha_composite(tur)
+        except Exception as ex:
+            print("turret vxl fail", turret_vxl, ex)
     if big.getbbox() is None:
         return None
+    if post_process:
+        big = post_process(big)
+        if big is None or big.getbbox() is None:
+            return None
     return scale_bld_canvas(big)
 
 # ------------------------------------------------------------- 图标
@@ -695,217 +1053,365 @@ report = {"units_ok": [], "units_skip": [], "blds_ok": [], "blds_skip": [],
 def save(img, name):
     img.save(os.path.join(SPR, name), "PNG")
 
-for eng, cands in UNITS.items():
-    if ONLY and ("unit_" + eng) not in ONLY and eng not in ONLY:
-        continue
-    rid = next((c for c in cands if c in R), None)
-    if not rid:
-        report["units_skip"].append((eng, "no rules id")); continue
-    img = FORCE_IMAGE.get(eng, R[rid].get("Image", rid).lower())
-    ok = False
-    layout = None
-    if has(img + ".vxl"):
-        # 采矿车加大画布，避免货舱被裁切；地面车辆随内容尺寸，勿强行 128（1:1 体素会显得过小）
-        default = (140, 140) if eng in MINERS else (72, 72)
-        canvas = ph_size("unit", eng, default)
-        # 强制采矿车升到至少 120；其它地面载具至少 64（旧超大占位会偏空）
-        if eng in MINERS:
-            canvas = (max(canvas[0], 140), max(canvas[1], 140))
-        elif eng not in AIR and eng not in NAVAL and eng not in INFANTRY:
-            canvas = (max(min(canvas[0], 96), 64), max(min(canvas[1], 96), 64))
-        dirs, layout = render_voxel_unit(img, canvas, eng)
-        if dirs:
-            for e in range(8):
-                save(dirs[e], f"unit_{eng}_d{e}_f0.png")
+def main():
+    for eng, cands in UNITS.items():
+        if ONLY and ("unit_" + eng) not in ONLY and eng not in ONLY:
+            continue
+        rid = next((c for c in cands if c in R), None)
+        if not rid:
+            report["units_skip"].append((eng, "no rules id")); continue
+        img = FORCE_IMAGE.get(eng, R[rid].get("Image", rid).lower())
+        ok = False
+        layout = None
+        if has(img + ".vxl"):
+            # 采矿车加大画布，避免货舱被裁切；地面车辆随内容尺寸，勿强行 128（1:1 体素会显得过小）
+            default = (140, 140) if eng in MINERS else (72, 72)
+            canvas = ph_size("unit", eng, default)
+            # 强制采矿车升到至少 120；其它地面载具至少 64（旧超大占位会偏空）
             if eng in MINERS:
+                canvas = (max(canvas[0], 140), max(canvas[1], 140))
+            elif eng not in AIR and eng not in NAVAL and eng not in INFANTRY:
+                canvas = (max(min(canvas[0], 96), 64), max(min(canvas[1], 96), 64))
+            dirs, layout = render_voxel_unit(img, canvas, eng)
+            if dirs:
                 for e in range(8):
-                    # 满载：货舱区域略提亮偏黄（VXL 无独立满载帧，用色调区分空/满）
-                    full = dirs[e].copy()
-                    px = full.load()
-                    w, h = full.size
-                    for y in range(h):
-                        for x in range(w):
-                            r, g, b, a = px[x, y]
-                            if a < 128: continue
-                            # 中后部货舱带：避开驾驶室 remap 红
-                            if r > 150 and g < 90 and b < 90: continue
-                            if x < w * 0.35:
-                                nr = min(255, int(r * 1.12 + 18))
-                                ng = min(255, int(g * 1.08 + 10))
-                                nb = min(255, int(b * 0.92))
-                                px[x, y] = (nr, ng, nb, a)
-                    save(full, f"unit_{eng}_d{e}_f1.png")
-            if eng in MINER_UNLOAD_VXL:
-                uvxl = MINER_UNLOAD_VXL[eng]
-                if has(uvxl + ".vxl"):
-                    udirs, _ = render_voxel_unit(uvxl, canvas, eng)
-                    if udirs:
-                        for e in range(8):
-                            save(udirs[e], f"unit_{eng}_unload_d{e}_f0.png")
-            ok = True
-    elif has(img + ".shp"):
-        canvas = ph_size("unit", eng, (24, 30) if eng in INFANTRY or eng == "attackdog" else (60, 60))
-        # 优先：art.ini 序列全套（stand/walk/fire/die/dep）；其次：机器人相位交错；兜底：方向帧
-        if render_seq_unit(img, eng, canvas):
-            ok = True
-        elif eng in DRONE_SHP and render_drone_unit(img, eng, canvas):
-            ok = True
-        else:
-            fr = render_shp_unit(img, eng, canvas)
-            if fr:
-                for (e, f), im in fr.items():
-                    save(im, f"unit_{eng}_d{e}_f{f}.png")
+                    save(dirs[e], f"unit_{eng}_d{e}_f0.png")
+                if eng in MINERS:
+                    for e in range(8):
+                        # 满载：货舱区域略提亮偏黄（VXL 无独立满载帧，用色调区分空/满）
+                        full = dirs[e].copy()
+                        px = full.load()
+                        w, h = full.size
+                        for y in range(h):
+                            for x in range(w):
+                                r, g, b, a = px[x, y]
+                                if a < 128: continue
+                                # 中后部货舱带：避开驾驶室 remap 红
+                                if r > 150 and g < 90 and b < 90: continue
+                                if x < w * 0.35:
+                                    nr = min(255, int(r * 1.12 + 18))
+                                    ng = min(255, int(g * 1.08 + 10))
+                                    nb = min(255, int(b * 0.92))
+                                    px[x, y] = (nr, ng, nb, a)
+                        save(full, f"unit_{eng}_d{e}_f1.png")
+                if eng in MINER_UNLOAD_VXL:
+                    uvxl = MINER_UNLOAD_VXL[eng]
+                    if has(uvxl + ".vxl"):
+                        udirs, _ = render_voxel_unit(uvxl, canvas, eng)
+                        if udirs:
+                            for e in range(8):
+                                save(udirs[e], f"unit_{eng}_unload_d{e}_f0.png")
                 ok = True
-    if ok:
-        report["units_ok"].append((eng, rid, img))
-    else:
-        report["units_skip"].append((eng, f"{rid}/{img} file missing"))
-    # 炮塔：与车体同一坐标系/画布叠绘（layout）；失败则居中兜底
-    if ok:
-        tur = img + "tur"
-        if not has(tur + ".vxl") and eng in TURRETS:
-            tur = TURRETS[eng]
-        if has(tur + ".vxl"):
-            tdirs = render_turret(tur, layout) if layout else None
-            if not tdirs:
-                tdirs = render_turret_centered(tur, (48, 48))
-            if tdirs:
-                for e in range(8):
-                    save(tdirs[e], f"turret_{eng}_d{e}.png")
-    # 禁止：车体失败时用近亲炮塔兜底
-    # 图标
-    asec = A.get(R[rid].get("Image", rid).upper(), {}) or A.get(rid, {})
-    cameo = asec.get("Cameo", "").lower()
-    for cand in ([cameo + ".shp"] if cameo else []) + [img + "icon.shp", rid.lower() + "icon.shp"]:
-        if has(cand):
-            ic = render_icon(cand[:-4], (108, 84))
-            if ic:
-                save(ic, f"icon_unit_{eng}.png")
-                report["icons_ok"].append(("unit_" + eng, cand)); break
-    else:
-        report["icons_skip"].append(("unit_" + eng, "no cameo (synth disabled)"))
-
-for eng, cands in BLDS.items():
-    if ONLY and ("bld_" + eng) not in ONLY and eng not in ONLY:
-        continue
-    rid = next((c for c in cands if c in R), None) or cands[0]
-    img = R.get(rid, {}).get("Image", rid).lower()
-    asec = A.get(img.upper(), {}) or A.get(rid, {})
-    # 温带地图优先：generic(G) 是本安装里真正的温带静态建筑；T 多为 mk；A 是雪地勿抢先
-    # NewTheater：第2字符 = T温 / A雪 / U城 / G通用
-    civ = img.startswith("c")
-    order = "gtuas"  # G 温带通用 → T → U → A雪 → S
-    tv = [img[0] + c + img[2:] + ".shp" for c in order] if len(img) >= 3 else []
-    tries = (tv + [img + ".shp", img + "_a.shp"]) if civ \
-        else ([img[0] + "g" + img[2:] + ".shp", img[0] + "t" + img[2:] + ".shp",
-               img + ".shp", img + "_a.shp"] + tv)
-    tries += [rid.lower() + ".shp", rid.lower() + "_a.shp"]
-    # 去重保序
-    seen = set(); tries = [x for x in tries if not (x in seen or seen.add(x))]
-    found = next((x for x in tries if has(x)), None)
-    # 完整建筑在 mk：优先温带 mk（gt*mk / nt*mk），再回退
-    mk_stem = BLD_FROM_MK.get(eng)
-    use_mk = bool(mk_stem) and has(mk_stem + ".shp")
-    if use_mk:
-        found = mk_stem + ".shp"
-    frame0 = -1 if use_mk else BLD_FRAME0.get(eng, 0)
-    bib = asec.get("BibShape") or A.get(rid, {}).get("BibShape")
-    active = asec.get("ActiveAnim") or A.get(rid, {}).get("ActiveAnim")
-    # Remapable 缺省 yes；科技/民用常 no —— 误 remap 会把屋顶/标识打成亮红
-    remap_s = (asec.get("Remapable") or A.get(rid, {}).get("Remapable") or "yes").lower()
-    do_remap = remap_s not in ("no", "false", "0")
-    if found:
-        b = render_building(found[:-4], frame0=frame0, single=use_mk, bib=bib,
-                            active_anim=active, remap=do_remap)
-        if b:
-            tag = found
-            if bib: tag += f"+bib:{bib}"
-            if active: tag += f"+anim:{active}"
-            if not do_remap: tag += "+noremap"
-            save(b, f"bld_{eng}.png")
-            report["blds_ok"].append((eng, rid, tag))
+        elif has(img + ".shp"):
+            canvas = ph_size("unit", eng, (24, 30) if eng in INFANTRY or eng == "attackdog" else (60, 60))
+            # 优先：art.ini 序列全套（stand/walk/fire/die/dep）；其次：机器人相位交错；兜底：方向帧
+            if render_seq_unit(img, eng, canvas):
+                ok = True
+            elif eng in DRONE_SHP and render_drone_unit(img, eng, canvas):
+                ok = True
+            else:
+                fr = render_shp_unit(img, eng, canvas)
+                if fr:
+                    for (e, f), im in fr.items():
+                        save(im, f"unit_{eng}_d{e}_f{f}.png")
+                    ok = True
+        if ok:
+            report["units_ok"].append((eng, rid, img))
         else:
-            report["blds_skip"].append((eng, f"{found} render fail"))
-    else:
-        report["blds_skip"].append((eng, f"{rid}/{img} shp missing"))
-    # ---- 建造动画关键帧：优先温带 mk（g* → t*mk） ----
-    mk_auto = mk_stem if use_mk else None
-    if not mk_auto and len(img) >= 3:
-        for letter in "gtua":
-            cand = img[0] + letter + img[2:] + "mk"
-            if has(cand + ".shp"):
-                mk_auto = cand
-                break
-    if not mk_auto:
-        for cand in [img + "mk", rid.lower() + "mk"]:
-            if has(cand + ".shp"):
-                mk_auto = cand
-                break
-    if mk_auto:
-        msd = get(mk_auto + ".shp")
-        mshp = Shp(msd)
-        mn = mshp.nframes
-        # 完整帧 = 最大不透明帧（与静态一致）；关键帧均采 [0, best] 区间
-        best, besta = 0, -1
-        for i in range(mn):
-            frp = mshp.frame_pixels(i)
-            a = sum(1 for v in frp.pixels if v != 0)
-            if a > besta:
-                best, besta = i, a
-        keys = []
-        for k in range(MK_KEYS - 1):
-            idx = round(best * k / (MK_KEYS - 1))
-            if idx not in keys:
-                keys.append(idx)
-        if best not in keys:
-            keys.append(best)
-        keys.sort()
-        got = 0
-        for p, idx in enumerate(keys):
-            # 整幅 mk 画布 + 原帧偏移（与成品同坐标系），禁止 crop/居中
-            big = Image.new("RGBA", (mshp.w, mshp.h), (0, 0, 0, 0))
-            r = shp_frame_img(mshp, idx, PAL_U)
-            if not r:
-                continue
-            fi, (fx, fy, fw, fh) = r
-            big.paste(fi, (fx, fy), fi)
-            if big.getbbox() is None:
-                continue
-            save(scale_bld_canvas(big), f"bld_{eng}_mk_f{p}.png")
-            got += 1
-        if got > 1:
-            ANIM_META["blds"][eng] = {"mk": got}
-    cameo = asec.get("Cameo", "").lower()
-    # 建筑图标常去掉两位剧场前缀（GACNST -> cnsticon.shp）
-    ic = None
-    for cand in ([cameo + ".shp"] if cameo else []) + [img + "icon.shp", img[2:] + "icon.shp", rid.lower() + "icon.shp"]:
-        if has(cand):
-            ic = render_icon(cand[:-4], (108, 84))
-            if ic:
-                save(ic, f"icon_bld_{eng}.png")
-                report["icons_ok"].append(("bld_" + eng, cand)); break
-    if not ic:
-        report["icons_skip"].append(("bld_" + eng, "no cameo (synth disabled)"))
+            report["units_skip"].append((eng, f"{rid}/{img} file missing"))
+        # 炮塔：与车体同一坐标系/画布叠绘（layout）；失败则居中兜底
+        if ok:
+            tur = img + "tur"
+            if not has(tur + ".vxl") and eng in TURRETS:
+                tur = TURRETS[eng]
+            if has(tur + ".vxl"):
+                tdirs = render_turret(tur, layout) if layout else None
+                if not tdirs:
+                    tdirs = render_turret_centered(tur, (48, 48))
+                if tdirs:
+                    for e in range(8):
+                        save(tdirs[e], f"turret_{eng}_d{e}.png")
+        # 禁止：车体失败时用近亲炮塔兜底
+        # 图标
+        asec = A.get(R[rid].get("Image", rid).upper(), {}) or A.get(rid, {})
+        cameo = asec.get("Cameo", "").lower()
+        for cand in ([cameo + ".shp"] if cameo else []) + [img + "icon.shp", rid.lower() + "icon.shp"]:
+            if has(cand):
+                ic = render_icon(cand[:-4], (108, 84))
+                if ic:
+                    save(ic, f"icon_unit_{eng}.png")
+                    report["icons_ok"].append(("unit_" + eng, cand)); break
+        else:
+            report["icons_skip"].append(("unit_" + eng, "no cameo (synth disabled)"))
 
-print(f"== done in {time.time()-t0:.1f}s ==")
-print("units_ok:", len(report["units_ok"]), report["units_ok"])
-print("units_skip:", len(report["units_skip"]), report["units_skip"])
-print("blds_ok:", len(report["blds_ok"]), report["blds_ok"])
-print("blds_skip:", len(report["blds_skip"]), report["blds_skip"])
-print("icons_ok:", len(report["icons_ok"]))
-print("icons_skip:", len(report["icons_skip"]), report["icons_skip"])
+    for eng, cands in BLDS.items():
+        if ONLY and ("bld_" + eng) not in ONLY and eng not in ONLY:
+            continue
+        rid = next((c for c in cands if c in R), None) or cands[0]
+        img = R.get(rid, {}).get("Image", rid).lower()
+        # art 段：优先 Image 名，再 rid
+        asec = A.get(img.upper(), {}) or A.get(rid, {})
+        # 温带地图优先：generic(G) 是本安装里真正的温带静态建筑；T 多为 mk；A 是雪地勿抢先
+        civ = img.startswith("c")
+        order = "gtuas"  # G 温带通用 → T → U → A雪 → S
+        tv = [img[0] + c + img[2:] + ".shp" for c in order] if len(img) >= 3 else []
+        tries = (tv + [img + ".shp", img + "_a.shp"]) if civ \
+            else ([img[0] + "g" + img[2:] + ".shp", img[0] + "t" + img[2:] + ".shp",
+                   img + ".shp", img + "_a.shp"] + tv)
+        tries += [rid.lower() + ".shp", rid.lower() + "_a.shp"]
+        seen = set(); tries = [x for x in tries if not (x in seen or seen.add(x))]
+        found = pick_bld_shp(tries)
+        # 强制帧 / mk 成品
+        force = BLD_FORCE_FRAME.get(eng)
+        mk_stem = BLD_FROM_MK.get(eng)
+        use_mk = bool(mk_stem) and has(mk_stem + ".shp") and not force
+        if force:
+            fstem, fidx = force
+            if has(fstem + ".shp"):
+                found = fstem + ".shp"
+                frame0 = fidx
+                use_mk = True  # 单帧，不叠小覆盖
+            else:
+                frame0 = BLD_FRAME0.get(eng, 0)
+        elif use_mk:
+            found = mk_stem + ".shp"
+            frame0 = -1
+        else:
+            frame0 = BLD_FRAME0.get(eng, 0)
+        bib = resolve_bib_shape(eng, asec, rid, img)
+        # Idle/Active* = 常态部件（雷达碟、船厂吊臂、光棱头）。Special* 默认是开火/烟雾，勿叠。
+        overlay_keys = [
+            "IdleAnim", "ActiveAnim", "ActiveAnimTwo", "ActiveAnimThree",
+        ]
+        if eng in BLD_SPECIAL_IS_BODY:
+            overlay_keys += ["SpecialAnim", "SpecialAnimTwo", "SpecialAnimThree"]
+        overlays = []
+        if eng not in BLD_SKIP_OVERLAY:
+            for k in overlay_keys:
+                v = asec.get(k) or A.get(rid, {}).get(k)
+                if v:
+                    overlays.append(v)
+        # Remapable 缺省 yes；科技/民用常 no —— 误 remap 会把屋顶/标识打成亮红
+        remap_s = (asec.get("Remapable") or A.get(rid, {}).get("Remapable") or "yes").lower()
+        do_remap = remap_s not in ("no", "false", "0")
+        # 前哨：静态预览用浅灰白（贴近未占领）；运行时 sprites 对中立已灰 remap，
+        # 但白像素无法再换阵营色——占领变色靠 skip 白、保留红占位？此处优先修「残头」观感。
+        tech_neutral = eng == "techoutpost"
+        if tech_neutral:
+            do_remap = False
+        # 民房：强制 civ_neutral（16..31→砖灰），避免 unittem 阵营色阶花屏
+        civ_neutral = eng.startswith("civhouse") or eng in ("civwash", "civbarn", "civwatertower", "civchurch")
+        if civ_neutral:
+            do_remap = False
+            tech_neutral = False
+        tur_info = BLD_TURRET_VXL.get(eng)
+        if tur_info:
+            tur_name, tur_yaw = tur_info[0], tur_info[1]
+            tur_ox = tur_info[2] if len(tur_info) > 2 else 0
+            tur_oy = tur_info[3] if len(tur_info) > 3 else 0
+            tur_barrel = tur_info[4] if len(tur_info) > 4 else None
+        else:
+            tur_name, tur_yaw, tur_ox, tur_oy, tur_barrel = None, 0, 0, 0, None
+        tur_fit = BLD_TURRET_FIT.get(eng)
+        oframes = BLD_OVERLAY_FRAME.get(eng, {})
+        # 超级武器：主图=未就绪；另存 bld_*_ready.png = SuperAnim 就绪态
+        sw_idle_extra = list(BLD_SW_IDLE_EXTRA.get(eng, []))
+        sw_ready = list(BLD_SW_READY_LAYERS.get(eng, []))
+        if eng == "nukesilo":
+            # 本包 namisl 仅垫层；闭合空井 = NAMISL_E；就绪有弹 = E+F+G+H
+            idle_layers = sw_idle_extra
+            empty = render_building(found[:-4], frame0=0, single=True, bib=None,
+                                    overlay_anims=idle_layers, remap=True) if found else None
+            if not empty and has("namisl_e.shp"):
+                empty = render_building("namisl_e", frame0=0, single=True, remap=True)
+            if empty:
+                save(empty, "bld_nukesilo.png")
+                report["blds_ok"].append((eng, rid, "idle_closed:" + ",".join(idle_layers or ["namisl_e"])))
+            if found and sw_ready:
+                ready = render_building(found[:-4], frame0=0, single=True, bib=None,
+                                        overlay_anims=sw_ready, remap=True)
+                if ready:
+                    save(ready, "bld_nukesilo_ready.png")
+                    report["blds_ok"].append(("nukesilo_ready", "NAMISL", "super:" + ",".join(sw_ready[:4])))
+        elif found:
+            idle_overlays = list(overlays) + sw_idle_extra
+            b = render_building(found[:-4], frame0=frame0, single=use_mk or bool(force), bib=bib,
+                                active_anim=None, overlay_anims=idle_overlays, remap=do_remap,
+                                turret_vxl=tur_name, turret_yaw=tur_yaw,
+                                turret_ox=tur_ox, turret_oy=tur_oy,
+                                civ_neutral=civ_neutral, overlay_frames=oframes,
+                                turret_barrel=tur_barrel, turret_fit=tur_fit,
+                                tech_neutral=tech_neutral)
+            if b:
+                tag = found
+                if bib: tag += f"+bib:{bib}"
+                if idle_overlays: tag += "+anims:" + ",".join(idle_overlays[:4])
+                if tur_name: tag += f"+vxl:{tur_name}"
+                if tur_barrel: tag += f"+barl:{tur_barrel}"
+                if oframes: tag += "+oframe"
+                if civ_neutral: tag += "+civ"
+                elif tech_neutral: tag += "+tech"
+                elif not do_remap: tag += "+noremap"
+                save(b, f"bld_{eng}.png")
+                report["blds_ok"].append((eng, rid, tag))
+            else:
+                report["blds_skip"].append((eng, f"{found} render fail"))
+            if sw_ready:
+                ready = render_building(found[:-4], frame0=0, single=True, bib=bib,
+                                        overlay_anims=list(overlays) + sw_ready, remap=do_remap,
+                                        civ_neutral=civ_neutral)
+                if ready:
+                    save(ready, f"bld_{eng}_ready.png")
+                    report["blds_ok"].append((eng + "_ready", rid, "super:" + ",".join(sw_ready[:4])))
+        else:
+            report["blds_skip"].append((eng, f"{rid}/{img} shp missing"))
+        # ---- 建造动画关键帧：优先温带 mk（g* → t*mk） ----
+        mk_auto = mk_stem if (use_mk and mk_stem) else None
+        if not mk_auto and force:
+            mk_auto = force[0] if has(force[0] + ".shp") else None
+        if eng == "nukesilo" and has("namislmk.shp"):
+            mk_auto = "namislmk"
+        if not mk_auto and len(img) >= 3:
+            for letter in "gtua":
+                cand = img[0] + letter + img[2:] + "mk"
+                if has(cand + ".shp"):
+                    mk_auto = cand
+                    break
+        if not mk_auto:
+            for cand in [img + "mk", rid.lower() + "mk"]:
+                if has(cand + ".shp"):
+                    mk_auto = cand
+                    break
+        if mk_auto:
+            msd = get(mk_auto + ".shp")
+            mshp = Shp(msd)
+            mn = mshp.nframes
+            # 完整帧 = 最大不透明帧（与静态一致）；关键帧均采 [0, best] 区间
+            best, besta = 0, -1
+            for i in range(mn):
+                frp = mshp.frame_pixels(i)
+                a = sum(1 for v in frp.pixels if v != 0)
+                if a > besta:
+                    best, besta = i, a
+            keys = []
+            for k in range(MK_KEYS - 1):
+                idx = round(best * k / (MK_KEYS - 1))
+                if idx not in keys:
+                    keys.append(idx)
+            if best not in keys:
+                keys.append(best)
+            keys.sort()
+            # 过滤：不透明度必须大致递增；在峰值处截断（RA2 MK 后半常有火花/回落帧）
+            areas = []
+            for idx in keys:
+                frp = mshp.frame_pixels(idx)
+                areas.append(sum(1 for v in frp.pixels if v != 0))
+            mono = [keys[0]]
+            mono_a = [areas[0]]
+            last_a = areas[0]
+            for idx, a in zip(keys[1:], areas[1:]):
+                if a + 8 >= last_a:  # 允许轻微抖动
+                    mono.append(idx)
+                    mono_a.append(a)
+                    last_a = max(last_a, a)
+                # 显著回落：停止（后面多半是火花/损坏循环）
+                elif a + max(32, last_a // 8) < last_a:
+                    break
+            # 截到峰值（含）：避免“先成型再塌一截”
+            peak_i = max(range(len(mono_a)), key=lambda i: mono_a[i])
+            mono = mono[: peak_i + 1]
+            mono_a = mono_a[: peak_i + 1]
+            # best 是全局最大不透明帧，应落在峰值处；若采样网格漏掉则补上
+            if best not in mono:
+                ba = sum(1 for v in mshp.frame_pixels(best).pixels if v != 0)
+                if not mono_a or ba >= mono_a[-1]:
+                    mono.append(best)
+            keys = mono
+            # 删掉旧 mk 帧，避免帧数减少时残留高序号 PNG
+            import glob as _glob
+            for old in _glob.glob(os.path.join(SPR, f"bld_{eng}_mk_f*.png")):
+                try:
+                    os.remove(old)
+                except OSError:
+                    pass
+            got = 0
+            saved_paths = []
+            for p, idx in enumerate(keys):
+                # 整幅 mk 画布 + 原帧偏移（与成品同坐标系），禁止 crop/居中
+                big = Image.new("RGBA", (mshp.w, mshp.h), (0, 0, 0, 0))
+                r = shp_frame_img(mshp, idx, PAL_U)
+                if not r:
+                    continue
+                fi, (fx, fy, fw, fh) = r
+                big.paste(fi, (fx, fy), fi)
+                if big.getbbox() is None:
+                    continue
+                out_name = f"bld_{eng}_mk_f{p}.png"
+                save(scale_bld_canvas(big), out_name)
+                saved_paths.append(os.path.join(SPR, out_name))
+                got += 1
+            # 最终以落盘 PNG 不透明度为准截到峰值（SHP 索引面积与 RGBA 不完全一致）
+            if got > 1:
+                opac = []
+                for path in saved_paths:
+                    im = Image.open(path).convert("RGBA")
+                    px = im.load()
+                    n = sum(1 for y in range(im.size[1]) for x in range(im.size[0]) if px[x, y][3] > 60)
+                    opac.append(n)
+                peak_i = max(range(len(opac)), key=lambda i: opac[i])
+                # 丢掉峰值之后的回落帧并重编号
+                keep = saved_paths[: peak_i + 1]
+                for path in saved_paths[peak_i + 1 :]:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+                for i, path in enumerate(keep):
+                    dest = os.path.join(SPR, f"bld_{eng}_mk_f{i}.png")
+                    if path != dest:
+                        try:
+                            if os.path.exists(dest):
+                                os.remove(dest)
+                            os.replace(path, dest)
+                        except OSError:
+                            pass
+                got = len(keep)
+                ANIM_META["blds"][eng] = {"mk": got}
+        cameo = asec.get("Cameo", "").lower()
+        # 建筑图标常去掉两位剧场前缀（GACNST -> cnsticon.shp）
+        ic = None
+        for cand in ([cameo + ".shp"] if cameo else []) + [img + "icon.shp", img[2:] + "icon.shp", rid.lower() + "icon.shp"]:
+            if has(cand):
+                ic = render_icon(cand[:-4], (108, 84))
+                if ic:
+                    save(ic, f"icon_bld_{eng}.png")
+                    report["icons_ok"].append(("bld_" + eng, cand)); break
+        if not ic:
+            report["icons_skip"].append(("bld_" + eng, "no cameo (synth disabled)"))
 
-# ---- 动画元数据（引擎 sprites.cpp 启动读取：walk/fire/die 帧数与速率、建筑 mk 帧数） ----
-with open(os.path.join(SPR, "anims.ini"), "w", encoding="utf-8") as f:
-    f.write("; OpenRA2 animation metadata (auto-generated by gen_assets.py)\n")
-    f.write("; unit: walk/fire/die=帧数 walkrate/firerate=帧间隔(tick) dep=有部署站姿\n")
-    f.write("; bld:  mk=建造动画关键帧数\n")
-    for eng, meta in ANIM_META["units"].items():
-        f.write(f"[{eng}]\n")
-        for k, v in meta.items():
-            f.write(f"{k}={v}\n")
-    for eng, meta in ANIM_META["blds"].items():
-        f.write(f"[bld_{eng}]\n")
-        for k, v in meta.items():
-            f.write(f"{k}={v}\n")
-print("anims.ini:", len(ANIM_META["units"]), "units,", len(ANIM_META["blds"]), "blds")
+    print(f"== done in {time.time()-t0:.1f}s ==")
+    print("units_ok:", len(report["units_ok"]), report["units_ok"])
+    print("units_skip:", len(report["units_skip"]), report["units_skip"])
+    print("blds_ok:", len(report["blds_ok"]), report["blds_ok"])
+    print("blds_skip:", len(report["blds_skip"]), report["blds_skip"])
+    print("icons_ok:", len(report["icons_ok"]))
+    print("icons_skip:", len(report["icons_skip"]), report["icons_skip"])
+
+    # ---- 动画元数据（引擎 sprites.cpp 启动读取：walk/fire/die 帧数与速率、建筑 mk 帧数） ----
+    with open(os.path.join(SPR, "anims.ini"), "w", encoding="utf-8") as f:
+        f.write("; OpenRA2 animation metadata (auto-generated by gen_assets.py)\n")
+        f.write("; unit: walk/fire/die=帧数 walkrate/firerate=帧间隔(tick) dep=有部署站姿\n")
+        f.write("; bld:  mk=建造动画关键帧数\n")
+        for eng, meta in ANIM_META["units"].items():
+            f.write(f"[{eng}]\n")
+            for k, v in meta.items():
+                f.write(f"{k}={v}\n")
+        for eng, meta in ANIM_META["blds"].items():
+            f.write(f"[bld_{eng}]\n")
+            for k, v in meta.items():
+                f.write(f"{k}={v}\n")
+    print("anims.ini:", len(ANIM_META["units"]), "units,", len(ANIM_META["blds"]), "blds")
+
+
+if __name__ == "__main__":
+    main()

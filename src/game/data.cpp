@@ -214,17 +214,18 @@ static UnitDef g_units[(int)UnitType::COUNT] = {
 // ===================== 建筑表 =====================
 static BldDef g_blds[(int)BldType::COUNT] = {
     // type, name, cost, btime, hp, w,h, power, sight, weapon, factions, prereq, capturable
-    {BldType::ConYard,      "建造厂",   3000, 600, 1000, 3,3, 0,    6, wNone(), ALLF, BldType::COUNT, true},
+    // w,h = art.ini Foundation（西木 SHP 北尖居中；勿缩小占地）
+    {BldType::ConYard,      "建造厂",   3000, 600, 1000, 4,4, 0,    6, wNone(), ALLF, BldType::COUNT, true},
     {BldType::PowerPlant,   "发电厂",   800,  160, 750,  2,2, 200,  4, wNone(), FA, BldType::COUNT, true},
     {BldType::TeslaReactor, "磁能反应堆",600,  130, 750,  3,2, 150,  4, wNone(), FS | FC, BldType::COUNT, true},
-    {BldType::NuclearReactor,"核子反应堆",1000, 220, 800, 3,3, 2000, 4, wNone(), FS | FC, BldType::BattleLab, true},
-    {BldType::Barracks,     "兵营",     500,  110, 500,  2,2, -20,  5, wNone(), ALLF, BldType::COUNT, true},
-    {BldType::WarFactory,   "战车工厂", 2000, 400, 1000, 3,3, -40,  5, wNone(), ALLF, BldType::Barracks, true},
-    {BldType::OreRefinery,  "矿石精炼厂",2000, 280, 1000,  3,2, -50,  5, wNone(), ALLF, BldType::COUNT, true},
+    {BldType::NuclearReactor,"核子反应堆",1000, 220, 800, 4,4, 2000, 4, wNone(), FS | FC, BldType::BattleLab, true},
+    {BldType::Barracks,     "兵营",     500,  110, 500,  3,2, -20,  5, wNone(), ALLF, BldType::COUNT, true},
+    {BldType::WarFactory,   "战车工厂", 2000, 400, 1000, 5,3, -40,  5, wNone(), ALLF, BldType::Barracks, true},
+    {BldType::OreRefinery,  "矿石精炼厂",2000, 280, 1000,  4,3, -50,  5, wNone(), ALLF, BldType::COUNT, true},
     {BldType::Radar,        "雷达站",   1000, 200, 1000,  2,2, -50,  10, wNone(), FSF, BldType::OreRefinery, true},
-    {BldType::BattleLab,    "作战实验室",2000, 400, 500,  2,2, -100, 6, wNone(), ALLF, BldType::Radar, true},
-    {BldType::AirForceCmd,  "空指部",   1000, 220, 600,  2,2, -50,  8, wNone(), ALLF, BldType::OreRefinery, true},
-    {BldType::NavalYard,    "海军船厂", 1000, 220, 1500, 3,3, -20,  5, wNone(), ALLF, BldType::WarFactory, true},
+    {BldType::BattleLab,    "作战实验室",2000, 400, 500,  3,2, -100, 6, wNone(), ALLF, BldType::Radar, true},
+    {BldType::AirForceCmd,  "空指部",   1000, 220, 600,  3,2, -50,  8, wNone(), ALLF, BldType::OreRefinery, true},
+    {BldType::NavalYard,    "海军船厂", 1000, 220, 1500, 4,4, -20,  5, wNone(), ALLF, BldType::WarFactory, true},
     {BldType::Pillbox,      "机枪碉堡",  500,  100, 400,  1,1, 0,   6, wHeavyRifle(), FA, BldType::Barracks, false},
     {BldType::SentryGun,    "哨戒炮",   500,  100, 400,  1,1, 0,   6, wHeavyRifle(), FS | FC, BldType::Barracks, false},
     {BldType::PrismTower,   "光棱塔",   1500, 280, 600,  1,1, -75, 8, wPrism(), FA, BldType::Radar, false},
@@ -234,39 +235,39 @@ static BldDef g_blds[(int)BldType::COUNT] = {
     {BldType::PatriotMissile,"爱国者飞弹",1000, 200, 900,  1,1, -50, 8, wPatriot(), FA, BldType::Radar, false},
     {BldType::Wall,         "围墙",     50,   20,  200,  1,1, 0,   1, wNone(), ALLF, BldType::COUNT, false},
     {BldType::OrePurifier,  "矿石精炼器",2500, 500, 900,  3,3, -200,5, wNone(), FA | FC, BldType::BattleLab, true},
-    {BldType::IndustrialPlant,"工业工厂",2500, 500, 900, 3,2, -200,5, wNone(), FS, BldType::BattleLab, true},
+    {BldType::IndustrialPlant,"工业工厂",2500, 500, 900, 3,3, -200,5, wNone(), FS, BldType::BattleLab, true},
     // 超武建筑：高耗电，建成后对应超武开始充能
     {BldType::NukeSilo,     "核弹发射井",5000, 600, 1000, 3,3, -200,5, wNone(), FS | FC, BldType::BattleLab, true},
-    {BldType::WeatherDevice,"天气控制器",5000, 600, 1000, 3,2, -200,5, wNone(), FA, BldType::BattleLab, true},
+    {BldType::WeatherDevice,"天气控制器",5000, 600, 1000, 3,3, -200,5, wNone(), FA, BldType::BattleLab, true},
     {BldType::IronCurtain,  "铁幕装置",  2500, 500, 750,  3,3, -200,5, wNone(), FS | FC, BldType::BattleLab, true},
     {BldType::ChronoSphere, "超时空传送仪",2500,500, 750,  4,3, -200,5, wNone(), FA, BldType::BattleLab, true},
     // 中立科技建筑：不由玩家建造（factionMask=0），工程师占领后生效
     {BldType::OilDerrick,   "科技油井",  0,   0,   1000, 2,2, 0,   4, wNone(), 0, BldType::COUNT, true},
-    {BldType::Hospital,     "医院",      0,   0,   800,  2,2, 0,   4, wNone(), 0, BldType::COUNT, true},
-    {BldType::MachineShop,  "机械商店",  0,   0,   800,  2,2, 0,   4, wNone(), 0, BldType::COUNT, true},
+    {BldType::Hospital,     "医院",      0,   0,   800,  6,4, 0,   4, wNone(), 0, BldType::COUNT, true},
+    {BldType::MachineShop,  "机械商店",  0,   0,   800,  3,3, 0,   4, wNone(), 0, BldType::COUNT, true},
     // ---- RA2 补全：高级建筑 ----
     {BldType::CloningVat,   "复制中心",  2500, 500, 800,  2,2, -100,5, wNone(), FY, BldType::BattleLab, false},
-    {BldType::ServiceDepot, "维修厂",    800,  180, 1200,  3,2, -25, 5, wNone(), ALLF, BldType::WarFactory, false},
+    {BldType::ServiceDepot, "维修厂",    800,  180, 1200,  3,3, -25, 5, wNone(), ALLF, BldType::WarFactory, false},
     {BldType::GapGenerator, "裂缝产生器",1600, 320, 600,  1,1, -100,6, wNone(), FA, BldType::BattleLab, false},
     {BldType::SpySat,       "间谍卫星",  1500, 300, 800,  2,2, -100,8, wNone(), FA, BldType::BattleLab, false},
     {BldType::PsychicSensor,"心灵探测器",1000, 200, 750,  2,2, -50, 10, wNone(), FY, BldType::OreRefinery, true},
-    {BldType::BattleBunker, "战斗碉堡",  500,  100, 700,  1,1, 0,   6, wNone(), FS, BldType::Barracks, false, 5},
-    {BldType::TankBunker,   "坦克碉堡",  400,  90,  900,  1,1, 0,   5, wNone(), FS, BldType::WarFactory, false, 1}, // 进驻 1 辆车辆对外射击
+    {BldType::BattleBunker, "战斗碉堡",  500,  100, 700,  2,2, 0,   6, wNone(), FS, BldType::Barracks, false, 5},
+    {BldType::TankBunker,   "坦克碉堡",  400,  90,  900,  2,2, 0,   5, wNone(), FS, BldType::WarFactory, false, 1}, // 进驻 1 辆车辆对外射击
     // ---- RA2 补全：中立科技建筑（工程师占领生效）----
-    {BldType::TechAirport,  "科技机场",  0,   0,   1000, 3,2, 0,   6, wNone(), 0, BldType::COUNT, true},
-    {BldType::SecretLab,    "秘密实验室",0,   0,   800,  2,2, 0,   5, wNone(), 0, BldType::COUNT, true},
-    {BldType::CivHouse,     "民房",      0,   0,   600,  2,2, 0,   3, wNone(), 0, BldType::COUNT, false, 8},
+    {BldType::TechAirport,  "科技机场",  0,   0,   1000, 3,3, 0,   6, wNone(), 0, BldType::COUNT, true},
+    {BldType::SecretLab,    "秘密实验室",0,   0,   800,  3,3, 0,   5, wNone(), 0, BldType::COUNT, true},
+    {BldType::CivHouse,     "民房",      0,   0,   600,  3,2, 0,   3, wNone(), 0, BldType::COUNT, false, 8},
     // ---- 尤复阵营：尤里专属建筑 ----
     {BldType::BioReactor,   "生化反应堆", 600,  130, 500,  2,2, 150,  4, wNone(), FY, BldType::COUNT, true, 5},
     {BldType::GatlingCannon,"盖特机炮",  1000, 200, 500,  1,1, -50,  8, wGatlingCannonGun(), FY, BldType::Radar, false},
-    {BldType::Grinder,      "回收炉",    1000, 200, 800,  2,2, -50,  5, wNone(), FY, BldType::WarFactory, false, 99},
-    {BldType::GeneticMutator,"基因突变器",2500, 500, 900,  2,2, -150, 5, wNone(), FY, BldType::BattleLab, true},
-    {BldType::PsychicDominator,"心灵控制仪",3000,600,1000, 3,2, -150, 5, wNone(), FY, BldType::BattleLab, true},
+    {BldType::Grinder,      "回收炉",    1000, 200, 800,  3,3, -50,  5, wNone(), FY, BldType::WarFactory, false, 99},
+    {BldType::GeneticMutator,"基因突变器",2500, 500, 900,  3,3, -150, 5, wNone(), FY, BldType::BattleLab, true},
+    {BldType::PsychicDominator,"心灵控制仪",3000,600,1000, 3,3, -150, 5, wNone(), FY, BldType::BattleLab, true},
     // ---- 尤复补全：YR 新增建筑 ----
     {BldType::PsychicTower, "心灵控制塔",  1500, 280, 900, 1,1, -75, 8, wPsychicTowerMC(), FY, BldType::Radar, false},
     {BldType::RobotControl, "机器人指挥中心",600, 140, 600, 2,2, -100, 5, wNone(), FA, BldType::Radar, true},
     {BldType::TechPowerPlant,"科技电厂",    0,   0,   600, 2,2, 200,  4, wNone(), 0, BldType::COUNT, true},
-    {BldType::TechOutpost,  "科技前哨站",   0,   0,   800, 3,2, 50,   6, wNone(), 0, BldType::COUNT, true},
+    {BldType::TechOutpost,  "科技前哨站",   0,   0,   800, 4,3, 50,   6, wNone(), 0, BldType::COUNT, true},
 };
 
 // ===================== 超武表 =====================

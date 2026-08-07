@@ -129,17 +129,8 @@ QA 硬失败：缺朝向、画布不对、无 remap、底锚全透明、与 `qa.
 
 因此：
 
-- **该改的**：更好的 TMP 提取/变体/岸线、**格高度 `Cell.height`** 与 cliff/ramp 侧立面——见 `tools/ra2pack/gen_terrain.py`、`bakeTerrain`、`docs/ra2-ui-fidelity.md` §7。
-- **不该改的**：把地表换成 heightmap mesh / 透视相机来“更像 3D”。那会偏离 RA2 呈现模型，并打碎现有 64×32 瓦片与建筑落点契约。
-
-### 格高度（引擎）
-
-- `Cell.height`（uint8）：存档 schema `RA2WRLDH`；参与 `checksum()`。
-- 绘制：`sy -= height * (TILE_H/2)`（`heightScreenY`）；`tileToScreen` 仍为平面公式。
-- 寻路：地面/两栖 `|Δheight| <= 1`（`Map::climbOk` / `World::passableStep`）；海军忽略。
-- 悬崖贴图：`tile_cliff_n{0..3}_{v}.png`、`tile_ramp_{v}.png`；缺失时烘焙用暗色竖条 fallback。
-
-单位侧的 VXL 仍是体素→精灵；与地形 TMP 是两套系统。
+- **该改的**：更好的 TMP 提取/变体/岸线；格高度字段已预留（存档 V17），**默认生成全 0**——随机丘陵 + blit 抬升会破坏 TMP 一体感，未作为默认观感。
+- **不该改的**：把地表换成 heightmap mesh / 透视相机来“更像 3D”。
 
 ### YR 站姿 PNG（无 MIX 全量时）
 
