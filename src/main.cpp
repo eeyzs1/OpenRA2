@@ -213,6 +213,12 @@ int main(int argc, char** argv) {
         game.shutdown();
         return 0;
     }
+    if (argc > 1 && strcmp(argv[1], "--gui-review") == 0) {
+        const char* dir = argc > 2 ? argv[2] : "gui_review";
+        game.debugGuiReview(dir);
+        game.shutdown();
+        return 0;
+    }
     if (argc > 1 && strcmp(argv[1], "--shot") == 0) {
         int warm = argc > 2 ? atoi(argv[2]) : 2400;
         game.debugShot(warm, "shot_game.png");

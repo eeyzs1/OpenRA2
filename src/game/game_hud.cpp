@@ -81,6 +81,7 @@ void guiSlot(Rectangle r) {
 }
 
 void guiPanel(int x, int y, int w, int h) {
+    if (drawMenuPanelChrome(x, y, w, h)) return;
     guiMetalFill(x, y, w, h);
     guiBevel({(float)x, (float)y, (float)w, (float)h}, false);
     DrawRectangleLinesEx({(float)x + 3, (float)y + 3, (float)w - 6, (float)h - 6}, 1, GUI_GOLD);
@@ -1659,44 +1660,49 @@ void Game::drawHUD() {
         int mw = 320, mh = 426;
         int mx = SCREEN_W / 2 - mw / 2, my = SCREEN_H / 2 - mh / 2;
         guiPanel(mx, my, mw, mh);
+        Vector2 mm = mousePos();
+        bool mpr = mPressed(MOUSE_LEFT_BUTTON);
         if (gameOver) {
             const char* t = victory ? TR(S::Victory) : TR(S::Defeat);
-            drawTextF(font, t, mx + mw / 2 - 40, my + 24, 34, victory ? Color{120, 255, 120, 255} : RED);
+            drawTextS(font, t, mx + mw / 2 - 40, my + 24, 34, victory ? Color{120, 255, 120, 255} : RED);
         } else {
-            drawTextF(font, TR(S::GameMenu), mx + mw / 2 - 40, my + 20, 22, WHITE);
+            drawTextS(font, TR(S::GameMenu), mx + mw / 2 - 40, my + 20, 22, WHITE);
         }
         auto restart = [&]() {
             if (campaignMission >= 0) newCampaignGame(campaignMission);
             else newGame((uint64_t)time(nullptr));
             showMenu = false;
         };
-        if (uiButton({(float)mx + 60, (float)my + 72, 200, 32}, gameOver ? TR(S::PlayAgain) : TR(S::Continue),
-                     !(gameOver && netGame))) {
+        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 72, 200, 32},
+                      gameOver ? TR(S::PlayAgain) : TR(S::Continue), 16, !(gameOver && netGame))) {
             if (gameOver) restart();
             else showMenu = false;
         }
-        if (uiButton({(float)mx + 60, (float)my + 114, 200, 32},
-                     TextFormat("%s (%s)", TR(S::SaveProgress), keyName(keyBind[KA_QuickSave])), !gameOver && !netGame)) {
+        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 114, 200, 32},
+                      TextFormat("%s (%s)", TR(S::SaveProgress), keyName(keyBind[KA_QuickSave])), 14,
+                      !gameOver && !netGame)) {
             message(saveGameFile(QUICKSAVE_PATH) ? TR(S::MsgSaved) : TR(S::MsgSaveFail));
             showMenu = false;
         }
-        if (uiButton({(float)mx + 60, (float)my + 156, 200, 32},
-                     TextFormat("%s (%s)", TR(S::LoadProgress), keyName(keyBind[KA_QuickLoad])), !gameOver && !netGame)) {
+        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 156, 200, 32},
+                      TextFormat("%s (%s)", TR(S::LoadProgress), keyName(keyBind[KA_QuickLoad])), 14,
+                      !gameOver && !netGame)) {
             message(loadGameFile(QUICKSAVE_PATH) ? TR(S::MsgLoaded) : TR(S::MsgLoadFail));
             showMenu = false;
         }
-        if (uiButton({(float)mx + 60, (float)my + 198, 200, 32}, TR(S::Settings), true)) {
+        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 198, 200, 32}, TR(S::Settings), 16)) {
             settingsFromGame = true;
             showMenu = false;
             phase = Phase::Settings;
         }
-        if (uiButton({(float)mx + 60, (float)my + 240, 200, 32}, TR(S::Restart), !netGame)) restart();
-        if (uiButton({(float)mx + 60, (float)my + 282, 200, 32}, TR(S::BackToMain), true)) {
+        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 240, 200, 32}, TR(S::Restart), 16, !netGame))
+            restart();
+        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 282, 200, 32}, TR(S::BackToMain), 16)) {
             if (netGame) netLeave();
             else phase = Phase::MainMenu;
             showMenu = false;
         }
-        if (uiButton({(float)mx + 60, (float)my + 324, 200, 32}, TR(S::ExitGame), true)) {
+        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 324, 200, 32}, TR(S::ExitGame), 16, true, true)) {
             CloseWindow();
             exit(0);
         }

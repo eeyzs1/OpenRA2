@@ -26,8 +26,7 @@ void Game::drawSettings() {
                   enabled ? Color{190, 194, 200, 255} : Color{110, 112, 116, 255});
         Rectangle r{(float)px + 292, (float)y, 300, 36};
         bool hover = CheckCollisionPointRec(m, r) && enabled;
-        guiSlot(r); // 凹陷金属槽
-        DrawRectangleLinesEx(r, 1, hover ? GUI_GOLD_HI : Color{80, 76, 56, 255});
+        drawMenuOptSlot(r, hover);
         drawTextS(font, value, (int)r.x + 150 - textW(font, value, 17) / 2, y + 9, 17,
                   enabled ? Color{255, 224, 130, 255} : Color{120, 122, 126, 255});
         return hover && pr;
@@ -84,8 +83,7 @@ void Game::drawSettings() {
                   armed ? Color{255, 226, 150, 255} : Color{200, 204, 210, 255});
         Rectangle kr{(float)kx + 458, (float)y, 200, 30};
         bool hover = CheckCollisionPointRec(m, kr);
-        guiSlot(kr); // 凹陷金属槽
-        DrawRectangleLinesEx(kr, 1, armed ? Color{255, 120, 90, 255} : (hover ? GUI_GOLD_HI : Color{80, 76, 56, 255}));
+        drawMenuOptSlot(kr, armed || hover);
         const char* kn = armed ? "…" : keyName(keyBind[i]);
         drawTextS(font, kn, (int)kr.x + 100 - textW(font, kn, 16) / 2, y + 7, 16, Color{255, 224, 130, 255});
         if (hover && pr && rebinding < 0) { rebinding = i; g_sfx.play(Sfx::Click, 0.5f); }

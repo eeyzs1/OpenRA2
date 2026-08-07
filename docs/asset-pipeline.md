@@ -9,6 +9,22 @@ OpenRA2 支持两条资产路径：
 
 二者最终都写入同一契约：`assets/sprites/`（PNG）与 `assets/voxels/`（VXL），引擎命名见 `gen_assets.py` / `vxl.cpp`。
 
+### 菜单 / 对话框 chrome（主菜单·遭遇战设置）
+
+从本机 MIX 抽出标题静帧与对话框按钮；主菜单视频解为 JPEG 帧序列（**不运行时解 BIK**）：
+
+```text
+python tools/ra2pack/gen_menu_gui.py
+```
+
+写出 `assets/gui/menu/`（含 `ra2ts_l/f####.jpg` + `sdbtnanm_*.png`）。缺素材时引擎回退程序化金属 GUI。
+
+审核截图：
+
+```text
+build\Release\ra2.exe --gui-review gui_review
+```
+
 ## 怎么用（最短路径）
 
 ### A. 融合阵营补齐（PLA / 99式）

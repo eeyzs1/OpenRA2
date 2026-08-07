@@ -20,3 +20,14 @@ launch_log.txt
 # Agent/playtest scratch (screenshots, dumps, probes)
 tools/_scratch/**
 !tools/_scratch/README.txt
+tools/visual_audit/**/_probe/
+tools/visual_audit/**/_probe/**
+tools/visual_audit/**/form_probe/
+tools/visual_audit/**/form_probe/**
+tools/visual_audit/bld_review/form_probe/
+tools/ra2pack/_*.py
+tools/ra2pack/probe_*.py
+# MIX-extracted menu chrome (regen via gen_menu_gui.py; copyrighted)
+assets/gui/menu/
+# Local GUI review dumps (ra2.exe --gui-review)
+gui_review/

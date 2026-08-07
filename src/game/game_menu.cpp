@@ -4,9 +4,17 @@
 #include "game/campaign.h"
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
+#include "rlgl.h"
 #include <ctime>
 #include <algorithm>
 #include <vector>
+#include <cstring>
+#include <cstdio>
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <sys/stat.h>
+#endif
 
 void drawTextM(Font f, const char* s, int x, int y, int size, Color c) {
     DrawTextEx(f, s, {(float)x, (float)y}, (float)size, 1, c);
@@ -16,30 +24,191 @@ int textW(Font f, const char* s, int size) {
     return (int)MeasureTextEx(f, s, (float)size, 1).x;
 }
 
-// RA2 式金属按钮：渐变底 + 棱台斜面 + 顶部高光线 + 金框（与 HUD uiButton 风格统一）
+// ===================== MIX 菜单 chrome（assets/gui/menu，gen_menu_gui.py） =====================
+struct MenuGui {
+    Texture2D titlelg{};   // 回退静帧
+    Texture2D fsbkg{};
+    Texture2D bkgdlg{};
+    Texture2D pudlg{};
+    Texture2D sdbtn{};
+    Texture2D optbtn{};
+    Texture2D optbtnHi{};
+    // sdbtnanm.shp：悬停循环动画
+    Texture2D sdbtnAnm[24]{};
+    int sdbtnAnmN = 0;
+    // ra2ts_l.bik → JPEG 序列（运行时单纹理轮播）
+    int bikN = 0;
+    int bikFps = 15;
+    Texture2D bikTex{};
+    int bikLast = -1;
+    int bikForce = -1; // >=0 强制帧（审核截图）
+    bool tried = false;
+    bool ok = false;
+};
+static MenuGui g_menu;
+
+static Texture2D menuLoadTex(const char* path) {
+    if (!FileExists(path)) return Texture2D{};
+    Image img = LoadImage(path);
+    if (!img.data) return Texture2D{};
+    Texture2D t = LoadTextureFromImage(img);
+    SetTextureFilter(t, TEXTURE_FILTER_POINT);
+    UnloadImage(img);
+    return t;
+}
+
+static void menuDrawTex(Texture2D t, Rectangle dst, Color tint = WHITE) {
+    if (!t.id) return;
+    DrawTexturePro(t, {0, 0, (float)t.width, (float)t.height}, dst, {0, 0}, 0, tint);
+}
+
+void menuSetBikForceFrame(int frame) { ensureMenuGui(); g_menu.bikForce = frame; }
+int menuBikFrameCount() { ensureMenuGui(); return g_menu.bikN; }
+
+static int menuCurrentBikFrame() {
+    if (g_menu.bikN <= 0) return 0;
+    if (g_menu.bikForce >= 0) return g_menu.bikForce % g_menu.bikN;
+    return ((int)(GetTime() * g_menu.bikFps) % g_menu.bikN + g_menu.bikN) % g_menu.bikN;
+}
+
+static void menuEnsureBikTex(int fi) {
+    if (g_menu.bikN <= 0) return;
+    if (fi < 0) fi = 0;
+    if (fi >= g_menu.bikN) fi = g_menu.bikN - 1;
+    if (fi == g_menu.bikLast && g_menu.bikTex.id) return;
+    // ffmpeg 输出 1-based：f0001.jpg …
+    const char* path = TextFormat("assets/gui/menu/ra2ts_l/f%04d.jpg", fi + 1);
+    Image img = LoadImage(path);
+    if (!img.data) return;
+    ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+    if (!g_menu.bikTex.id) {
+        g_menu.bikTex = LoadTextureFromImage(img);
+        SetTextureFilter(g_menu.bikTex, TEXTURE_FILTER_BILINEAR);
+    } else if (g_menu.bikTex.width == img.width && g_menu.bikTex.height == img.height) {
+        UpdateTexture(g_menu.bikTex, img.data);
+    } else {
+        UnloadTexture(g_menu.bikTex);
+        g_menu.bikTex = LoadTextureFromImage(img);
+        SetTextureFilter(g_menu.bikTex, TEXTURE_FILTER_BILINEAR);
+    }
+    UnloadImage(img);
+    g_menu.bikLast = fi;
+}
+
+static void menuDrawBikOrTitle() {
+    if (g_menu.bikN > 0) {
+        menuEnsureBikTex(menuCurrentBikFrame());
+        if (g_menu.bikTex.id) {
+            menuDrawTex(g_menu.bikTex, {0, 0, (float)SCREEN_W, (float)SCREEN_H});
+            return;
+        }
+    }
+    if (g_menu.titlelg.id)
+        menuDrawTex(g_menu.titlelg, {0, 0, (float)SCREEN_W, (float)SCREEN_H});
+}
+
+void ensureMenuGui() {
+    if (g_menu.tried) return;
+    g_menu.tried = true;
+    g_menu.titlelg = menuLoadTex("assets/gui/menu/titlelg.png");
+    g_menu.fsbkg = menuLoadTex("assets/gui/menu/fsbkgdlg_00.png");
+    g_menu.bkgdlg = menuLoadTex("assets/gui/menu/bkgdlg.png");
+    if (!g_menu.bkgdlg.id) g_menu.bkgdlg = menuLoadTex("assets/gui/menu/bkgdlg_00.png");
+    g_menu.pudlg = menuLoadTex("assets/gui/menu/pudlgbga_00.png");
+    g_menu.sdbtn = menuLoadTex("assets/gui/menu/sdbtnbkgd_00.png");
+    g_menu.optbtn = menuLoadTex("assets/gui/menu/optbtn_00.png");
+    g_menu.optbtnHi = menuLoadTex("assets/gui/menu/optbtn_01.png");
+    g_menu.sdbtnAnmN = 0;
+    for (int i = 0; i < 24; i++) {
+        Texture2D t = menuLoadTex(TextFormat("assets/gui/menu/sdbtnanm_%02d.png", i));
+        if (!t.id) break;
+        g_menu.sdbtnAnm[g_menu.sdbtnAnmN++] = t;
+    }
+    // BIK meta
+    g_menu.bikN = 0;
+    g_menu.bikFps = 15;
+    if (FileExists("assets/gui/menu/ra2ts_l/meta.ini")) {
+        // 轻量解析 frames=/fps=
+        FILE* f = fopen("assets/gui/menu/ra2ts_l/meta.ini", "rb");
+        if (f) {
+            char line[128];
+            while (fgets(line, sizeof line, f)) {
+                if (strncmp(line, "frames=", 7) == 0) g_menu.bikN = atoi(line + 7);
+                if (strncmp(line, "fps=", 4) == 0) g_menu.bikFps = atoi(line + 4);
+            }
+            fclose(f);
+        }
+    } else {
+        // 无 meta 时探测前几帧是否存在
+        for (int i = 1; i <= 512; i++) {
+            if (!FileExists(TextFormat("assets/gui/menu/ra2ts_l/f%04d.jpg", i))) break;
+            g_menu.bikN = i;
+        }
+    }
+    if (g_menu.bikFps <= 0) g_menu.bikFps = 15;
+    g_menu.ok = g_menu.titlelg.id || g_menu.fsbkg.id || g_menu.bkgdlg.id || g_menu.sdbtn.id || g_menu.bikN > 0;
+}
+
+bool drawMenuPanelChrome(int x, int y, int w, int h) {
+    ensureMenuGui();
+    Texture2D t = g_menu.pudlg.id ? g_menu.pudlg : (g_menu.bkgdlg.id ? g_menu.bkgdlg : g_menu.fsbkg);
+    if (!t.id) return false;
+    DrawRectangle(x + 6, y + 6, w - 12, h - 12, Color{8, 10, 14, 210});
+    menuDrawTex(t, {(float)x, (float)y, (float)w, (float)h}, Color{255, 255, 255, 230});
+    DrawRectangleLinesEx({(float)x, (float)y, (float)w, (float)h}, 1, GUI_GOLD);
+    return true;
+}
+
+void drawMenuOptSlot(Rectangle r, bool hover) {
+    ensureMenuGui();
+    Texture2D t = hover && g_menu.optbtnHi.id ? g_menu.optbtnHi : g_menu.optbtn;
+    if (t.id) {
+        menuDrawTex(t, r, WHITE);
+        DrawRectangleLinesEx(r, 1, hover ? GUI_GOLD_HI : Color{80, 76, 56, 255});
+    } else {
+        guiSlot(r);
+        DrawRectangleLinesEx(r, 1, hover ? GUI_GOLD_HI : Color{80, 76, 56, 255});
+    }
+}
+
+// RA2 式按钮：悬停播 sdbtnanm；idle 用 sdbtnbkgd；否则程序化金属
 bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size,
                bool enabled, bool danger) {
+    ensureMenuGui();
     bool hover = CheckCollisionPointRec(m, r) && enabled;
     bool press = hover && pressed;
-    // RA2 冷钢灰 → 悬停加亮为暖金灰；danger 用暗红底；按下斜面反相
-    Color top, bot;
-    if (!enabled) { top = Color{28, 30, 34, 255}; bot = Color{20, 22, 24, 255}; }
-    else if (danger) {
-        top = hover ? Color{100, 48, 38, 255} : Color{64, 34, 28, 255};
-        bot = hover ? Color{64, 28, 22, 255} : Color{40, 22, 18, 255};
+    if (!danger && enabled && (g_menu.sdbtnAnmN > 0 || g_menu.sdbtn.id)) {
+        Texture2D face = g_menu.sdbtn;
+        if (hover && g_menu.sdbtnAnmN > 0) {
+            // 悬停：约 12fps 循环扫光
+            int fi = ((int)(GetTime() * 12.0f) % g_menu.sdbtnAnmN + g_menu.sdbtnAnmN) % g_menu.sdbtnAnmN;
+            face = g_menu.sdbtnAnm[fi];
+        } else if (!hover && g_menu.sdbtnAnmN > 0 && !g_menu.sdbtn.id) {
+            face = g_menu.sdbtnAnm[0];
+        }
+        Color tint = press ? Color{200, 180, 140, 255} : WHITE;
+        if (face.id) menuDrawTex(face, r, tint);
+        else if (g_menu.sdbtn.id) menuDrawTex(g_menu.sdbtn, r, tint);
+        DrawRectangleLinesEx(r, 1, hover ? GUI_GOLD_HI : GUI_GOLD);
     } else {
-        top = hover ? Color{82, 86, 96, 255} : Color{54, 58, 64, 255};
-        bot = hover ? Color{50, 54, 60, 255} : Color{32, 34, 40, 255};
+        Color top, bot;
+        if (!enabled) { top = Color{28, 30, 34, 255}; bot = Color{20, 22, 24, 255}; }
+        else if (danger) {
+            top = hover ? Color{100, 48, 38, 255} : Color{64, 34, 28, 255};
+            bot = hover ? Color{64, 28, 22, 255} : Color{40, 22, 18, 255};
+        } else {
+            top = hover ? Color{82, 86, 96, 255} : Color{54, 58, 64, 255};
+            bot = hover ? Color{50, 54, 60, 255} : Color{32, 34, 40, 255};
+        }
+        DrawRectangleGradientV((int)r.x, (int)r.y, (int)r.width, (int)r.height, top, bot);
+        guiBevel(r, press);
+        DrawLine((int)r.x + 2, (int)r.y + 2, (int)(r.x + r.width - 2), (int)r.y + 2,
+                 press ? Color{20, 22, 26, 255} : Color{110, 116, 128, 255});
+        Color frame = !enabled ? Color{50, 52, 56, 255}
+                    : danger ? (hover ? Color{255, 100, 70, 255} : Color{180, 60, 40, 255})
+                    : (hover ? GUI_GOLD_HI : GUI_GOLD);
+        DrawRectangleLinesEx(r, 1, frame);
     }
-    DrawRectangleGradientV((int)r.x, (int)r.y, (int)r.width, (int)r.height, top, bot);
-    guiBevel(r, press); // 棱台斜面（按下时凹陷）
-    // 顶部高光线（RA2 标志性细节）：凸起时亮线，按下时暗线
-    DrawLine((int)r.x + 2, (int)r.y + 2, (int)(r.x + r.width - 2), (int)r.y + 2,
-             press ? Color{20, 22, 26, 255} : Color{110, 116, 128, 255});
-    Color frame = !enabled ? Color{50, 52, 56, 255}
-                : danger ? (hover ? Color{255, 100, 70, 255} : Color{180, 60, 40, 255})
-                : (hover ? GUI_GOLD_HI : GUI_GOLD);
-    DrawRectangleLinesEx(r, 1, frame);
     if (text && text[0]) {
         int tw = textW(font, text, size);
         drawTextS(font, text, (int)(r.x + r.width / 2 - tw / 2), (int)(r.y + r.height / 2 - size / 2), size,
@@ -51,65 +220,64 @@ bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const char* text
     return clicked;
 }
 
-// 菜单通用底板：深色 + 金属顶栏 + 红色分隔线（RA2 冷调）
 void drawMenuBackdrop(Font font, const char* title) {
-    ClearBackground(Color{10, 12, 16, 255});
-    for (int i = 0; i < 30; i++)
-        DrawLine(0, i * 30, SCREEN_W, i * 30 - 220, Color{18, 20, 26, 255});
-    // RA2 顶栏：拉丝金属底 + 棱台 + 金线 + 铆钉
-    guiMetalFill(0, 0, SCREEN_W, 64);
-    guiBevel({0, 0, (float)SCREEN_W, 64}, false);
-    DrawLine(0, 62, SCREEN_W, 62, Color{176, 40, 32, 255}); // 红色分隔线（RA2 标志色）
-    guiRivet(12, 12); guiRivet(SCREEN_W - 12, 12);
-    guiRivet(12, 52); guiRivet(SCREEN_W - 12, 52);
-    drawTextS(font, title, 42, 18, 30, Color{232, 210, 150, 255});
-    drawTextS(font, "OPENRA2", SCREEN_W - 40 - textW(font, "OPENRA2", 20), 22, 20, Color{150, 110, 80, 255});
+    ensureMenuGui();
+    if (g_menu.fsbkg.id || g_menu.bkgdlg.id) {
+        ClearBackground(Color{6, 8, 12, 255});
+        Texture2D bg = g_menu.fsbkg.id ? g_menu.fsbkg : g_menu.bkgdlg;
+        menuDrawTex(bg, {8, 8, (float)(SCREEN_W - 16), (float)(SCREEN_H - 16)});
+        DrawRectangle(0, 0, SCREEN_W, SCREEN_H, Color{0, 0, 0, 120});
+        DrawRectangle(0, 0, SCREEN_W, 56, Color{0, 0, 0, 160});
+        DrawLine(0, 56, SCREEN_W, 56, Color{176, 40, 32, 255});
+        drawTextS(font, title, 42, 14, 28, Color{232, 210, 150, 255});
+    } else {
+        ClearBackground(Color{10, 12, 16, 255});
+        for (int i = 0; i < 30; i++)
+            DrawLine(0, i * 30, SCREEN_W, i * 30 - 220, Color{18, 20, 26, 255});
+        guiMetalFill(0, 0, SCREEN_W, 64);
+        guiBevel({0, 0, (float)SCREEN_W, 64}, false);
+        DrawLine(0, 62, SCREEN_W, 62, Color{176, 40, 32, 255});
+        guiRivet(12, 12); guiRivet(SCREEN_W - 12, 12);
+        guiRivet(12, 52); guiRivet(SCREEN_W - 12, 52);
+        drawTextS(font, title, 42, 18, 30, Color{232, 210, 150, 255});
+        drawTextS(font, "OPENRA2", SCREEN_W - 40 - textW(font, "OPENRA2", 20), 22, 20, Color{150, 110, 80, 255});
+    }
 }
 
 // ===================== 主菜单 =====================
-// RA2 原作：雷达扫描视频背景(ra2ts_l.bik) + 大标题 + 竖排按钮(退出最底)
-// 程序化复刻：雷达扫描动画背景 + RA2 风格大按钮
+// RA2：ra2ts_l.bik 雷达动画（帧序列）+ sdbtnanm 按钮悬停动画
 void Game::drawMainMenu() {
-    // 背景：深蓝黑底 + 雷达扫描动画（RA2 主菜单标志特征）
+    ensureMenuGui();
     ClearBackground(Color{4, 6, 10, 255});
-    int cx = SCREEN_W / 2, cy = SCREEN_H / 2 - 40;
-    float time = (float)GetTime();
-    // 同心圆环（雷达网格）
-    for (int r = 80; r <= 320; r += 80)
-        DrawCircleLines(cx, cy, r, Color{20, 40, 50, 255});
-    // 十字线
-    DrawLine(cx - 340, cy, cx + 340, cy, Color{20, 40, 50, 255});
-    DrawLine(cx, cy - 300, cx, cy + 300, Color{20, 40, 50, 255});
-    // 雷达扫描扇形（旋转绿色扇区）
-    float angle = time * 2.0f; // 每秒旋转 2 rad
-    for (int i = 0; i < 40; i++) {
-        float a1 = angle - 0.6f + i * 0.015f;
-        float a2 = angle - 0.6f + (i + 1) * 0.015f;
-        float alpha = 80.0f * (1.0f - i / 40.0f);
-        DrawCircleSector({(float)cx, (float)cy}, 300, a1 * RAD2DEG, a2 * RAD2DEG, 12,
-                         Color{40, 180, 80, (uint8_t)alpha});
-    }
-    // 随机闪烁目标点（模拟雷达回波）
-    for (int i = 0; i < 8; i++) {
-        float fi = (float)i * 0.7f + time * 0.3f;
-        int px = cx + (int)(cosf(fi * 1.3f) * 200);
-        int py = cy + (int)(sinf(fi * 0.9f) * 160);
-        int blink = (int)(time * 3 + i) % 3;
-        if (blink == 0) DrawCircle(px, py, 3, Color{80, 255, 100, 200});
+    if (g_menu.bikN > 0 || g_menu.titlelg.id) {
+        menuDrawBikOrTitle();
+        DrawRectangle(SCREEN_W / 2 - 200, 280, 400, 420, Color{0, 0, 0, 110});
+    } else {
+        int cx = SCREEN_W / 2, cy = SCREEN_H / 2 - 40;
+        float time = (float)GetTime();
+        for (int r = 80; r <= 320; r += 80)
+            DrawCircleLines(cx, cy, (float)r, Color{20, 40, 50, 255});
+        DrawLine(cx - 340, cy, cx + 340, cy, Color{20, 40, 50, 255});
+        DrawLine(cx, cy - 300, cx, cy + 300, Color{20, 40, 50, 255});
+        float angle = time * 2.0f;
+        for (int i = 0; i < 40; i++) {
+            float a1 = angle - 0.6f + i * 0.015f;
+            float a2 = angle - 0.6f + (i + 1) * 0.015f;
+            float alpha = 80.0f * (1.0f - i / 40.0f);
+            DrawCircleSector({(float)cx, (float)cy}, 300, a1 * RAD2DEG, a2 * RAD2DEG, 12,
+                             Color{40, 180, 80, (uint8_t)alpha});
+        }
+        const char* title = TR(S::GameTitle);
+        drawTextS(font, title, cx - textW(font, title, 84) / 2, 100, 84, Color{216, 48, 40, 255});
+        DrawRectangle(cx - 260, 220, 520, 3, Color{168, 40, 32, 255});
+        const char* sub = TR(S::GameSub);
+        drawTextS(font, sub, cx - textW(font, sub, 18) / 2, 240, 18, Color{196, 170, 110, 255});
     }
 
-    // 标题（RA2 式：黑色投影 + 红色主体 + 金色副标）
-    const char* title = TR(S::GameTitle);
-    drawTextS(font, title, cx - textW(font, title, 84) / 2, 100, 84, Color{216, 48, 40, 255});
-    DrawRectangle(cx - 260, 220, 520, 3, Color{168, 40, 32, 255});
-    const char* sub = TR(S::GameSub);
-    drawTextS(font, sub, cx - textW(font, sub, 18) / 2, 240, 18, Color{196, 170, 110, 255});
-
-    // 按钮（RA2 风格：居中竖排大按钮，退出最底）
+    int cx = SCREEN_W / 2;
     Vector2 m = mousePos();
     bool pr = mPressed(MOUSE_LEFT_BUTTON);
     int bw = 300, bh = 48, bx = cx - bw / 2, by = 310, gap = 12;
-    // 主按钮组
     if (ra2Button(font, m, pr, {(float)bx, (float)by, (float)bw, (float)bh}, TR(S::Skirmish), 22)) phase = Phase::Setup;
     by += bh + gap;
     if (ra2Button(font, m, pr, {(float)bx, (float)by, (float)bw, (float)bh}, TR(S::Campaign), 22))
@@ -130,7 +298,6 @@ void Game::drawMainMenu() {
         editorNewMap();
         phase = Phase::MapEditor;
     }
-    // 退出按钮：最底部，与上方留额外间距，danger 红色风格
     by += bh + gap + 20;
     if (ra2Button(font, m, pr, {(float)bx, (float)by, (float)bw, (float)bh}, TR(S::ExitGame), 22, true, true)) {
         CloseWindow();
@@ -139,7 +306,6 @@ void Game::drawMainMenu() {
 
     const char* tip = TR(S::MainTip);
     drawTextS(font, tip, cx - textW(font, tip, 14) / 2, SCREEN_H - 22, 14, Color{110, 112, 120, 255});
-    // 构建时间戳（左下角暗色小字）：用于核对用户运行的 exe 是否最新构建
     drawTextS(font, "build " __DATE__ " " __TIME__, 8, SCREEN_H - 20, 11, Color{90, 96, 104, 200});
 }
 
@@ -155,6 +321,86 @@ void Game::debugMenuShot(const char* file, bool setup) {
     ImageFlipVertical(&img);
     ExportImage(img, file);
     UnloadImage(img);
+}
+
+void Game::debugGuiReview(const char* outDir) {
+    ensureMenuGui();
+    if (outDir && outDir[0]) {
+#ifdef _WIN32
+        _mkdir(outDir);
+#else
+        mkdir(outDir, 0755);
+#endif
+    }
+    const char* dir = (outDir && outDir[0]) ? outDir : "gui_review";
+    auto saveCanvas = [&](const char* name) {
+        Image img = LoadImageFromTexture(canvas.texture);
+        ImageFlipVertical(&img);
+        ExportImage(img, TextFormat("%s/%s.png", dir, name));
+        UnloadImage(img);
+        TraceLog(LOG_INFO, "gui_review: %s/%s.png", dir, name);
+    };
+    auto shotPhase = [&](Phase p, const char* name) {
+        phase = p;
+        if (p == Phase::Setup) refreshMapPreview();
+        if (p == Phase::MapEditor) editorNewMap();
+        BeginTextureMode(canvas);
+        ClearBackground(BLACK);
+        if (p == Phase::MainMenu) drawMainMenu();
+        else if (p == Phase::MissionSelect) drawMissionSelect();
+        else if (p == Phase::Settings) drawSettings();
+        else if (p == Phase::NetLobby) drawNetLobby();
+        else if (p == Phase::MapEditor) drawMapEditor();
+        else drawSetup();
+        EndTextureMode();
+        saveCanvas(name);
+    };
+
+    // 主菜单：BIK 首帧 / 中帧 / 末帧（证明动画素材已接入）
+    int bn = menuBikFrameCount();
+    menuSetBikForceFrame(0);
+    shotPhase(Phase::MainMenu, "01_mainmenu_bik0");
+    if (bn > 1) {
+        menuSetBikForceFrame(bn / 2);
+        shotPhase(Phase::MainMenu, "01b_mainmenu_bik_mid");
+        menuSetBikForceFrame(bn - 1);
+        shotPhase(Phase::MainMenu, "01c_mainmenu_bik_end");
+    }
+    menuSetBikForceFrame(-1);
+
+    shotPhase(Phase::Setup, "02_setup");
+    shotPhase(Phase::MissionSelect, "03_campaign");
+    shotPhase(Phase::Settings, "04_settings");
+    shotPhase(Phase::NetLobby, "05_netlobby");
+    shotPhase(Phase::MapEditor, "06_mapeditor");
+
+    // ESC 局内菜单：开一局后叠菜单
+    newGame(42);
+    phase = Phase::InGame;
+    showMenu = true;
+    paused = true;
+    updateMinimap();
+    BeginTextureMode(canvas);
+    ClearBackground(BLACK);
+    {
+        int viewW = SCREEN_W - sidebarW;
+        BeginScissorMode(0, 0, viewW, SCREEN_H);
+        rlPushMatrix();
+        rlScalef(camZoom, camZoom, 1.0f);
+        drawWorld();
+        drawEntities();
+        drawEffectsLayer();
+        drawFogLayer();
+        rlPopMatrix();
+        EndScissorMode();
+    }
+    drawHUD();
+    EndTextureMode();
+    saveCanvas("07_esc_menu");
+    showMenu = false;
+    paused = false;
+    phase = Phase::MainMenu;
+    TraceLog(LOG_INFO, "gui_review: done -> %s (bik_frames=%d)", dir, bn);
 }
 
 // 按像素宽度贪心换行绘制（中文按字、英文按词），返回行数
@@ -199,11 +445,8 @@ void Game::drawMissionSelect() {
         Rectangle r{(float)(tabsX + t * (tabW + tabGap)), (float)tabsY, (float)tabW, (float)tabH};
         bool sel = campTab == t;
         bool hover = CheckCollisionPointRec(m, r);
-        Color top = sel ? Color{92, 76, 40, 255} : (hover ? Color{60, 64, 72, 255} : Color{40, 42, 48, 255});
-        Color bot = sel ? Color{52, 42, 22, 255} : (hover ? Color{36, 38, 44, 255} : Color{22, 24, 28, 255});
-        DrawRectangleGradientV((int)r.x, (int)r.y, (int)r.width, (int)r.height, top, bot);
-        guiBevel(r, false);
-        DrawRectangleLinesEx(r, 1, sel ? GUI_GOLD_HI : (hover ? GUI_GOLD : Color{80, 76, 56, 255}));
+        drawMenuOptSlot(r, sel || hover);
+        if (sel) DrawRectangleLinesEx(r, 2, GUI_GOLD_HI);
         const char* fn = t < 4 ? factName(campFac[t]) : (g_lang ? "Official" : "官方");
         drawTextS(font, fn, (int)r.x + tabW / 2 - textW(font, fn, 17) / 2, (int)r.y + 11, 17,
                   sel ? Color{255, 226, 130, 255} : Color{190, 194, 200, 255});
@@ -321,8 +564,7 @@ void Game::drawSetup() {
         drawTextS(font, label, ix, y + 8, 18, Color{190, 194, 200, 255});
         Rectangle r{(float)ix + 150, (float)y, 190, 36};
         bool hover = CheckCollisionPointRec(m, r);
-        guiSlot(r); // 凹陷金属槽
-        DrawRectangleLinesEx(r, 1, hover ? GUI_GOLD_HI : Color{80, 76, 56, 255});
+        drawMenuOptSlot(r, hover);
         drawTextS(font, value, (int)r.x + 95 - textW(font, value, 17) / 2, y + 9, 17, Color{255, 224, 130, 255});
         return hover && pr;
     };
@@ -369,8 +611,7 @@ void Game::drawSetup() {
         // 国家按钮（RA2 原作：选国家即定阵营；循环 10 国 + 随机）
         Rectangle fr{(float)factX, (float)y + 6, 170, rowH - 16};
         bool fhover = CheckCollisionPointRec(m, fr);
-        guiSlot(fr);
-        DrawRectangleLinesEx(fr, 1, fhover ? GUI_GOLD_HI : Color{80, 76, 56, 255});
+        drawMenuOptSlot(fr, fhover);
         const char* fn = country >= (int)Country::COUNT ? TR(S::Random) : countryName((Country)country);
         drawTextS(font, fn, (int)fr.x + 85 - textW(font, fn, 17) / 2, y + 13, 17, Color{224, 218, 178, 255});
         if (fhover && pr) {
@@ -384,8 +625,7 @@ void Game::drawSetup() {
             static const char* diffNamesEn[] = {"Easy", "Normal", "Hard", "Brutal"};
             Rectangle dr2{(float)diffX, (float)y + 6, 80, rowH - 16};
             bool dhover = CheckCollisionPointRec(m, dr2);
-            guiSlot(dr2);
-            DrawRectangleLinesEx(dr2, 1, dhover ? GUI_GOLD_HI : Color{80, 76, 56, 255});
+            drawMenuOptSlot(dr2, dhover);
             const char* dn = g_lang ? diffNamesEn[diff] : diffNames[diff];
             drawTextS(font, dn, (int)dr2.x + 40 - textW(font, dn, 15) / 2, y + 13, 15,
                       diff >= 2 ? Color{255, 120, 90, 255} : diff == 0 ? Color{130, 200, 130, 255} : Color{220, 214, 180, 255});
@@ -396,8 +636,7 @@ void Game::drawSetup() {
             static const char* persNamesEn[] = {"Balanced", "Rusher", "Turtler", "Steamroller", "Tech"};
             Rectangle pr2{(float)persX, (float)y + 6, 100, rowH - 16};
             bool phover = CheckCollisionPointRec(m, pr2);
-            guiSlot(pr2);
-            DrawRectangleLinesEx(pr2, 1, phover ? GUI_GOLD_HI : Color{80, 76, 56, 255});
+            drawMenuOptSlot(pr2, phover);
             const char* pn = g_lang ? persNamesEn[pers] : persNames[pers];
             drawTextS(font, pn, (int)pr2.x + 50 - textW(font, pn, 15) / 2, y + 13, 15, Color{196, 200, 220, 255});
             if (phover && pr) { pers = (pers + 1) % 5; g_sfx.play(Sfx::Click, 0.5f); }
@@ -439,8 +678,7 @@ void Game::drawSetup() {
         int lx = x + textW(font, label, 18) + 16;
         Rectangle r{(float)lx, (float)y, (float)w, 36};
         bool hover = CheckCollisionPointRec(m, r);
-        guiSlot(r); // 凹陷金属槽
-        DrawRectangleLinesEx(r, 1, hover ? GUI_GOLD_HI : Color{80, 76, 56, 255});
+        drawMenuOptSlot(r, hover);
         drawTextS(font, value, lx + w / 2 - textW(font, value, 16) / 2, y + 10, 16, Color{255, 224, 130, 255});
         return hover && pr;
     };

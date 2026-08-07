@@ -38,6 +38,7 @@ public:
     int visualAudit();          // 建筑虚线笼/建造出售动画/地形目检截图（人工或脚本审图）
     void debugMenuShot(const char* file, bool setup); // 菜单截图（验证用）
     void debugShot(int warmTicks, const char* file); // 遭遇战截图：预热出基地/电厂/单位后拍全屏（验证用）
+    void debugGuiReview(const char* outDir); // 各 GUI 审核截图（含主菜单动画样帧）
     int netSelfTestDriver(int role, int frames); // P8 双进程自测：role 0=--net-host 1=--net-client（main 驱动）
     int statePersistenceTest(); // 存档 schema/边界/复杂状态 round-trip 与 checksum 覆盖
 
@@ -325,6 +326,11 @@ int textW(Font f, const char* s, int size);
 bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size = 20,
                bool enabled = true, bool danger = false);
 void drawMenuBackdrop(Font font, const char* title);
+void ensureMenuGui();                                 // 懒加载 assets/gui/menu
+bool drawMenuPanelChrome(int x, int y, int w, int h); // 原作对话框框；失败则 false
+void drawMenuOptSlot(Rectangle r, bool hover);        // 选项值槽（optbtn / 回退 guiSlot）
+void menuSetBikForceFrame(int frame);                 // 审核截图：强制 BIK 帧（-1=实时）
+int menuBikFrameCount();
 
 // RA2 金属 GUI 辅助（game_hud.cpp 实现，菜单/设置页共享复用，确保全 GUI 风格一致）
 void guiMetalFill(int x, int y, int w, int h);          // 平铺拉丝金属底
