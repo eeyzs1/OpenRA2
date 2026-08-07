@@ -1,5 +1,6 @@
 #include "gfx/vxl.h"
 #include "gfx/assets.h"
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -41,6 +42,15 @@ struct VxlFile {
     bool valid = false;
 };
 
+struct HvaFile {
+    int nframes = 0;
+    int nsec = 0;
+    std::vector<std::string> names;
+    // mats[frame][section] = 12 floats (row-major 3x4)
+    std::vector<std::vector<std::array<float, 12>>> mats;
+    bool valid = false;
+};
+
 struct PalRGB { uint8_t r, g, b; };
 static PalRGB gPal[256]{};
 static bool gPalOk = false;
@@ -49,6 +59,7 @@ static bool gVplOk = false;
 static bool gInited = false;
 
 static std::unordered_map<std::string, VxlFile> gVxlCache;
+static std::unordered_map<std::string, HvaFile> gHvaCache;
 
 static bool readFile(const char* path, std::vector<uint8_t>& out) {
     std::ifstream f(path, std::ios::binary);
@@ -193,10 +204,66 @@ static const VxlFile* getVxl(const char* stem) {
     return &slot;
 }
 
+static bool parseHva(const std::vector<uint8_t>& data, HvaFile& out) {
+    out = {};
+    if (data.size() < 24) return false;
+    uint32_t nframes = 0, nsec = 0;
+    memcpy(&nframes, data.data() + 16, 4);
+    memcpy(&nsec, data.data() + 20, 4);
+    if (nframes == 0 || nframes > 1024 || nsec == 0 || nsec > 64) return false;
+    size_t pos = 24;
+    if (pos + nsec * 16 > data.size()) return false;
+    out.names.resize(nsec);
+    for (uint32_t i = 0; i < nsec; i++) {
+        char nm[17]{};
+        memcpy(nm, data.data() + pos, 16);
+        out.names[i] = nm;
+        pos += 16;
+    }
+    size_t need = pos + (size_t)nframes * nsec * 48;
+    if (data.size() < need) return false;
+    out.nframes = (int)nframes;
+    out.nsec = (int)nsec;
+    out.mats.assign(nframes, std::vector<std::array<float, 12>>(nsec));
+    for (uint32_t f = 0; f < nframes; f++) {
+        for (uint32_t s = 0; s < nsec; s++) {
+            memcpy(out.mats[f][s].data(), data.data() + pos, 48);
+            pos += 48;
+        }
+    }
+    out.valid = true;
+    return true;
+}
+
+static const HvaFile* getHva(const char* stem) {
+    if (!stem || !stem[0]) return nullptr;
+    auto it = gHvaCache.find(stem);
+    if (it != gHvaCache.end()) return it->second.valid ? &it->second : nullptr;
+    char path[256];
+    snprintf(path, sizeof(path), "assets/voxels/%s.hva", stem);
+    std::vector<uint8_t> raw;
+    HvaFile hf;
+    if (!readFile(path, raw) || !parseHva(raw, hf)) {
+        gHvaCache.emplace(stem, HvaFile{});
+        return nullptr;
+    }
+    auto& slot = gHvaCache[stem];
+    slot = std::move(hf);
+    return &slot;
+}
+
 static void applyMat(const float* m, float x, float y, float z, float& ox, float& oy, float& oz) {
     ox = m[0] * x + m[1] * y + m[2] * z + m[3];
     oy = m[4] * x + m[5] * y + m[6] * z + m[7];
     oz = m[8] * x + m[9] * y + m[10] * z + m[11];
+}
+
+static void applyMatScaledT(const float* m, float hs, float x, float y, float z,
+                            float& ox, float& oy, float& oz) {
+    // 旋转用线性部；平移 × section.scale（与 Python ra2lib.vxl_project 一致）
+    ox = m[0] * x + m[1] * y + m[2] * z + m[3] * hs;
+    oy = m[4] * x + m[5] * y + m[6] * z + m[7] * hs;
+    oz = m[8] * x + m[9] * y + m[10] * z + m[11] * hs;
 }
 
 static float phiForScreenAlpha(float alphaDeg) {
@@ -275,13 +342,31 @@ static const float kFaceNrm[6][3] = {
 static const float kFaceMul[6] = {0.88f, 0.72f, 0.92f, 0.78f, 1.05f, 0.65f};
 
 static void projectVxl(const VxlFile& vxl, float facingPhiDeg, std::vector<Pt>& pts,
-                       float& mnx, float& mxx, float& mny, float& mxy) {
+                       float& mnx, float& mxx, float& mny, float& mxy,
+                       const HvaFile* hva = nullptr, int hvaFrame = 0) {
     pts.clear();
     mnx = 1e9f; mxx = -1e9f; mny = 1e9f; mxy = -1e9f;
     float cosf = std::cos(facingPhiDeg * (float)(3.14159265358979323846 / 180.0));
     float sinf = std::sin(facingPhiDeg * (float)(3.14159265358979323846 / 180.0));
+    int frame = 0;
+    if (hva && hva->valid && hva->nframes > 0)
+        frame = std::clamp(hvaFrame, 0, hva->nframes - 1);
 
     for (const Section& sec : vxl.sections) {
+        const float* hm = nullptr;
+        if (hva && hva->valid) {
+            for (int i = 0; i < hva->nsec; i++) {
+                if (hva->names[i] == sec.name) {
+                    hm = hva->mats[frame][i].data();
+                    break;
+                }
+            }
+            // 单节 VXL 与单条 HVA 名称偶发不一致（如 HTK tur: MDUMMY01 vs DUMMY01）
+            if (!hm && (int)vxl.sections.size() == 1 && hva->nsec == 1)
+                hm = hva->mats[frame][0].data();
+        }
+        float hs = (sec.scale > 1e-6f) ? sec.scale : 1.f;
+
         // 占用表（原网格面剔除）
         std::unordered_set<uint64_t> occ;
         occ.reserve(sec.voxels.size() * 2);
@@ -291,8 +376,7 @@ static void projectVxl(const VxlFile& vxl, float facingPhiDeg, std::vector<Pt>& 
         for (const Voxel& v : sec.voxels)
             occ.insert(key(v.x, v.y, v.z));
 
-        // 网格 → 共享世界盒（ModEnc Voxel Bounds）：炮塔 minZ≈车体 maxZ，炮管在炮塔前方。
-        // 西木忽略 tailer.scale；OpenRA 用 scale 且跳过 TF。我们按原作：只用 bounds，不用 1/12 scale。
+        // 网格 → 共享世界盒；再乘 HVA（平移 × scale）把旋翼等节抬到机身。
         auto xform = [&](float lx, float ly, float lz, float& ox, float& oy, float& oz) {
             float x1, y1, z1;
             if (sec.hasBounds) {
@@ -307,6 +391,7 @@ static void projectVxl(const VxlFile& vxl, float facingPhiDeg, std::vector<Pt>& 
             } else {
                 x1 = lx; y1 = ly; z1 = lz;
             }
+            if (hm) applyMatScaledT(hm, hs, x1, y1, z1, x1, y1, z1);
             rotZ(x1, y1, z1, cosf, sinf, ox, oy, oz);
         };
 
@@ -459,14 +544,14 @@ static Layout makeLayout(const std::vector<Pt>& pts, float mnx, float mxx, float
     L.floating = floating;
     float bw = (mxx - mnx) + 1.3f;
     float bh = (mxy - mny) + 1.3f;
-    int margin = 2;
+    int margin = 4;
     int needW = (int)(bw * L.scale) + 2 * margin;
     int needH = floating ? (int)(bh * L.scale) + 2 * margin
                          : std::max((int)(bh * L.scale / 0.72f) + margin, (int)(bh * L.scale) + 2 * margin);
     L.w = std::max(48, needW);
     L.h = std::max(48, needH);
-    if (L.w > 160) L.w = 160;
-    if (L.h > 160) L.h = 160;
+    if (L.w > 192) L.w = 192;
+    if (L.h > 192) L.h = 192;
     float anchorY = floating ? L.h / 2.f + 4.f : L.h * 0.72f;
     float gx, gy;
     if (floating) {
@@ -482,6 +567,21 @@ static Layout makeLayout(const std::vector<Pt>& pts, float mnx, float mxx, float
     }
     L.orgx = L.w / 2.f - gx * L.scale;
     L.orgy = anchorY - gy * L.scale + 0.5f * L.scale;
+    // 地面锚点偏心时扩边，避免车体顶穿画布（遥控坦克等）
+    float left = L.orgx + mnx * L.scale;
+    float right = L.orgx + mxx * L.scale;
+    float top = L.orgy + mny * L.scale;
+    float bottom = L.orgy + mxy * L.scale;
+    int padL = (int)std::ceil(std::max(0.f, (float)margin - left));
+    int padR = (int)std::ceil(std::max(0.f, right - (L.w - margin)));
+    int padT = (int)std::ceil(std::max(0.f, (float)margin - top));
+    int padB = (int)std::ceil(std::max(0.f, bottom - (L.h - margin)));
+    L.w += padL + padR;
+    L.h += padT + padB;
+    L.orgx += (float)padL;
+    L.orgy += (float)padT;
+    if (L.w > 192) L.w = 192;
+    if (L.h > 192) L.h = 192;
     return L;
 }
 
@@ -508,7 +608,8 @@ static Stems stemsOf(UnitType t) {
             // 官方 rules Image=MTNK（无独立 apoc.vxl）
             return {"mtnk", "mtnktur", "mtnkbarl", nullptr, false};
         case UnitType::RobotTank:
-            return {"robo", "robotur", nullptr, nullptr, false};
+            // 盟军气垫遥控坦克：悬浮锚点（非履带触地）
+            return {"robo", "robotur", nullptr, nullptr, true};
         case UnitType::BattleFortress:
             return {"bfrt", nullptr, nullptr, nullptr, false};
         case UnitType::MasterMind:
@@ -524,7 +625,7 @@ static Stems stemsOf(UnitType t) {
         case UnitType::IFV:
             return {"fv", "fvtur", nullptr, nullptr, false};
         case UnitType::FlakTrack:
-            return {"htk", "htktur", "htkbarl", nullptr, false};
+            return {"htk", "htktur", nullptr, nullptr, false};
         case UnitType::GatlingTank:
             return {"ytnk", "ytnktur", nullptr, nullptr, false};
         case UnitType::PrismTank:
@@ -543,7 +644,7 @@ static Stems stemsOf(UnitType t) {
             return {"tnkd", nullptr, nullptr, nullptr, false};
         case UnitType::LasherTank:
             return {"ltnk", "ltnktur", "ltnkbarl", nullptr, false};
-        // 原作 Voxel=no：恐怖机器人 DRON.shp；混乱无人机 CAOS.vxl
+        // 原作 Voxel=no：恐怖机器人 DRON.shp；混乱机器人 CAOS.vxl（地面）
         case UnitType::TerrorDrone:
             return {nullptr, nullptr, nullptr, nullptr, false};
         case UnitType::ChaosDrone:
@@ -585,24 +686,52 @@ static Stems stemsOf(UnitType t) {
     }
 }
 
+static bool projectStemPts(const char* stem, float phi, std::vector<Pt>& pts,
+                           float& mnx, float& mxx, float& mny, float& mxy) {
+    const VxlFile* v = getVxl(stem);
+    if (!v) return false;
+    std::vector<Pt> part;
+    float a, b, c, d;
+    projectVxl(*v, phi, part, a, b, c, d, getHva(stem), 0);
+    if (part.empty()) return false;
+    if (pts.empty()) {
+        mnx = a; mxx = b; mny = c; mxy = d;
+    } else {
+        mnx = std::min(mnx, a); mxx = std::max(mxx, b);
+        mny = std::min(mny, c); mxy = std::max(mxy, d);
+    }
+    pts.insert(pts.end(), part.begin(), part.end());
+    return true;
+}
+
 static bool renderStem(const char* stem, const char* barl, int dir, bool floating,
                        const Layout* forced, PixBuf& out, Layout* outLayout) {
     const VxlFile* v = getVxl(stem);
     if (!v) return false;
-    VxlFile merged;
-    const VxlFile* use = v;
-    if (barl) {
-        const VxlFile* b = getVxl(barl);
-        if (b) { mergeVxl(v, b, merged); use = &merged; }
-    }
     float phi = phiForScreenAlpha(45.f * (dir & 7));
     std::vector<Pt> pts;
     float mnx, mxx, mny, mxy;
-    projectVxl(*use, phi, pts, mnx, mxx, mny, mxy);
+    // 炮塔/炮管分开投影、各自 HVA，再合并点集（避免 MDUMMY01/DUMMY01 抢错矩阵）
+    if (!projectStemPts(stem, phi, pts, mnx, mxx, mny, mxy)) return false;
+    if (barl) projectStemPts(barl, phi, pts, mnx, mxx, mny, mxy);
     if (pts.empty()) return false;
     Layout L = forced ? *forced : makeLayout(pts, mnx, mxx, mny, mxy, floating);
     rasterize(pts, L.scale, L.orgx, L.orgy, L.w, L.h, out);
     if (outLayout) *outLayout = L;
+    return true;
+}
+
+static bool assemblyLayout(const Stems& s, int dir, Layout& outL) {
+    if (!s.hull || !getVxl(s.hull)) return false;
+    float phi = phiForScreenAlpha(45.f * (dir & 7));
+    std::vector<Pt> pts;
+    float mnx = 0, mxx = 0, mny = 0, mxy = 0;
+    // 各 stem 用自己的 HVA 投影，再合并包围盒（避免合并后同名节抢错矩阵）
+    if (!projectStemPts(s.hull, phi, pts, mnx, mxx, mny, mxy)) return false;
+    if (s.tur) projectStemPts(s.tur, phi, pts, mnx, mxx, mny, mxy);
+    if (s.barl) projectStemPts(s.barl, phi, pts, mnx, mxx, mny, mxy);
+    if (pts.empty()) return false;
+    outL = makeLayout(pts, mnx, mxx, mny, mxy, s.floating);
     return true;
 }
 
@@ -620,30 +749,6 @@ bool hasBody(UnitType t) {
     init();
     Stems s = stemsOf(t);
     return s.hull && getVxl(s.hull);
-}
-
-static bool assemblyLayout(const Stems& s, int dir, Layout& outL) {
-    const VxlFile* hull = getVxl(s.hull);
-    if (!hull) return false;
-    VxlFile merged;
-    const VxlFile* use = hull;
-    const VxlFile* tur = s.tur ? getVxl(s.tur) : nullptr;
-    const VxlFile* barl = s.barl ? getVxl(s.barl) : nullptr;
-    if (tur || barl) {
-        merged = {};
-        for (const auto& sec : hull->sections) merged.sections.push_back(sec);
-        if (tur) for (const auto& sec : tur->sections) merged.sections.push_back(sec);
-        if (barl) for (const auto& sec : barl->sections) merged.sections.push_back(sec);
-        merged.valid = !merged.sections.empty();
-        use = &merged;
-    }
-    float phi = phiForScreenAlpha(45.f * (dir & 7));
-    std::vector<Pt> pts;
-    float mnx, mxx, mny, mxy;
-    projectVxl(*use, phi, pts, mnx, mxx, mny, mxy);
-    if (pts.empty()) return false;
-    outL = makeLayout(pts, mnx, mxx, mny, mxy, s.floating);
-    return true;
 }
 
 bool renderBody(UnitType t, int dir, int frame, PixBuf& out) {

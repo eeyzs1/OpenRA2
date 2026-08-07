@@ -635,7 +635,11 @@ def vxl_project(vxl: Vxl, hva, facing_phi_deg: float, hva_frame: int = 0):
                 hi = hva.sec_names.index(sec.name)
                 m = hva.mats[min(hva_frame, hva.nframes - 1)][hi]
             except ValueError:
-                m = None
+                # 单节 VXL 与单条 HVA 名称偶发不一致（如 HTK tur: MDUMMY01 vs DUMMY01）
+                if len(vxl.sections) == 1 and hva.nsec == 1:
+                    m = hva.mats[min(hva_frame, hva.nframes - 1)][0]
+                else:
+                    m = None
         tf = sec.transform
         mins = getattr(sec, "mins", None)
         maxs = getattr(sec, "maxs", None)
@@ -646,10 +650,9 @@ def vxl_project(vxl: Vxl, hva, facing_phi_deg: float, hva_frame: int = 0):
             mins is not None and maxs is not None and gsx > 0 and gsy > 0 and gsz > 0
             and (maxs[0] - mins[0]) > 0.01 and (maxs[1] - mins[1]) > 0.01 and (maxs[2] - mins[2]) > 0.01
         )
-        # HVA：仅用于动画；静态定位靠 Voxel Bounds（ModEnc）。偏移过大则丢弃。
-        if m is not None and has_bounds:
-            # HVA 平移按 OpenRA 方式按盒尺寸缩放；静态坦克 HVA 常为 0，可忽略
-            pass
+        # HVA 平移单位需 × section.scale（通常 1/12）才与 Voxel Bounds 同坐标系。
+        # 多节模型（夜鹰/攻城直升机旋翼）靠此抬到机身上；单节坦克 HVA 平移很小，车体/炮塔同值可对齐。
+        hva_scale = float(getattr(sec, "scale", 1.0) or 1.0)
         if m is not None and tf is not None and not has_bounds:
             cx, cy, cz = (s / 2 + 0.5 for s in sec.size)
             ax, ay, az = _apply_mat(tf, cx, cy, cz)
@@ -660,7 +663,7 @@ def vxl_project(vxl: Vxl, hva, facing_phi_deg: float, hva_frame: int = 0):
         ntype = getattr(sec, "normals_type", 4) or 4
         occ = {(vx, vy, vz) for (vx, vy, vz, _c, _n) in sec.voxels}
 
-        def xform(lx, ly, lz, _m=m):
+        def xform(lx, ly, lz, _m=m, _hs=hva_scale):
             # 网格 → 共享世界盒（炮塔叠车体、炮管在炮塔前）
             if has_bounds:
                 x1 = mins[0] + lx * (maxs[0] - mins[0]) / gsx
@@ -670,8 +673,13 @@ def vxl_project(vxl: Vxl, hva, facing_phi_deg: float, hva_frame: int = 0):
                 x1, y1, z1 = _apply_mat(tf, lx, ly, lz)
             else:
                 x1, y1, z1 = lx, ly, lz
-            if _m is not None and not has_bounds:
-                x1, y1, z1 = _apply_mat(_m, x1, y1, z1)
+            if _m is not None:
+                # 旋转/剪切用矩阵线性部；平移 × scale（OpenRA / 西木惯例）
+                x1, y1, z1 = (
+                    _m[0] * x1 + _m[1] * y1 + _m[2] * z1 + _m[3] * _hs,
+                    _m[4] * x1 + _m[5] * y1 + _m[6] * z1 + _m[7] * _hs,
+                    _m[8] * x1 + _m[9] * y1 + _m[10] * z1 + _m[11] * _hs,
+                )
             return _rot_z(x1, y1, z1, cosf, sinf)
 
         for (vx, vy, vz, c, nrm) in sec.voxels:

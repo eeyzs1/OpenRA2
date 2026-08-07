@@ -21,6 +21,21 @@ Writes:
 
 Open `bld_review/` in Explorer and mark each row in `index.txt` as OK / WRONG.
 
+## 1b) Unit asset review
+
+```bat
+python tools/visual_audit/export_unit_review.py
+```
+
+Same layout as buildings, using idle facing-0 frames (`unit_*_d0_f0.png`).
+Singles are named `NN_中文名.png` (from `rules.ini` `Name=`).
+
+| Path | What |
+|------|------|
+| `tools/visual_audit/unit_review/singles/NN_name.png` | One labeled card per unit |
+| `tools/visual_audit/unit_review/sheet_XX.png` | Contact sheets |
+| `tools/visual_audit/unit_review/index.txt` | Checklist (MIX id, size, auto flags) |
+
 ## 2) In-game capture (after assets OK)
 
 ```bat

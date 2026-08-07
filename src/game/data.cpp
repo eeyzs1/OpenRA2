@@ -201,8 +201,8 @@ static UnitDef g_units[(int)UnitType::COUNT] = {
     {UnitType::Boris,      "鲍里斯",     2000,300, 200, 12, 8, Armor::None, MoveType::Infantry, wBorisAK(), FS, BldType::BattleLab},
     // 攻城直升机：飞行机枪 / 部署后远程炮击（战车工厂生产）
     {UnitType::SiegeChopper,"攻城直升机", 1400,240, 300, 4, 7, Armor::Light, MoveType::Air, wSiegeChopperMG(), FS, BldType::Radar, 0},
-    // 混乱无人机：尤里空军，释放毒气使敌军自相残杀（战车工厂生产）
-    {UnitType::ChaosDrone, "混乱无人机",  800, 160, 200, 5, 6, Armor::Light, MoveType::Air, wChaosGas(), FY, BldType::BattleLab, 0},
+    // 混乱机器人：尤里地面无人战车（Chaos Drone），释放毒气使敌军自相残杀（战车工厂生产）
+    {UnitType::ChaosDrone, "混乱机器人",  800, 160, 200, 5, 6, Armor::Light, MoveType::Vehicle, wChaosGas(), FY, BldType::BattleLab, 0},
     // 奴隶：尤里采矿步兵；奴隶矿车：尤里采矿车并可部署为卸货点
     {UnitType::Slave,      "奴隶",        30,  20,  70, 12, 4, Armor::None, MoveType::Infantry, wNone(), 0, BldType::OreRefinery},
     {UnitType::SlaveMiner,  "奴隶矿车",  1500, 280, 2000, 18, 5, Armor::Heavy, MoveType::Vehicle, wNone(), FY, BldType::OreRefinery},
@@ -316,7 +316,7 @@ bool isFactoryFor(BldType b, const UnitDef& u) {
     if (u.type == UnitType::RobotTank) return b == BldType::WarFactory;  // 遥控坦克：两栖但属战车
     if (u.type == UnitType::Nighthawk) return b == BldType::WarFactory;  // 夜鹰直升机出自战车工厂（RA2 原作）
     if (u.type == UnitType::SiegeChopper) return b == BldType::WarFactory; // 攻城直升机出自战车工厂（YR）
-    if (u.type == UnitType::ChaosDrone) return b == BldType::WarFactory;  // 混乱无人机出自战车工厂（YR）
+    if (u.type == UnitType::ChaosDrone) return b == BldType::WarFactory;  // 混乱机器人出自战车工厂（YR）
     if (u.type == UnitType::FloatingDisc) return b == BldType::WarFactory; // 飞碟出自战车工厂（YR）
     if (u.type == UnitType::Slave) return b == BldType::OreRefinery; // 奴隶由奴隶矿车体系产出
     if (u.isNaval() || u.isAmphib()) return b == BldType::NavalYard;

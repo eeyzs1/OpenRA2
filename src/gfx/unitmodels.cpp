@@ -731,7 +731,7 @@ bool buildUnitModel3D(UnitType t, M3Builder& b, bool full, float* turretPivotX, 
             }
             break;
         }
-        case UnitType::ChaosDrone: { // 混乱无人机（尤里）：紧凑飞行器 + 毒气罐（空军）
+        case UnitType::ChaosDrone: { // 混乱机器人（尤里）：地面无人车 + 毒气罐（非飞行器）
             b.ellipsoid(0, 0, 0, 7.0f, 5.5f, 3.5f, YURI, 12, 6);                    // 主体
             b.ellipsoid(5.5f, 0, 0.5f, 3.0f, 2.6f, 2.4f, Color{100, 50, 110, 255}, 10, 5); // 机头
             b.box(5.5f, 0, 1.0f, 0.8f, 0.8f, 0.8f, Color{255, 110, 70, 255}, 0, M3FACE_ALL); // 红眼

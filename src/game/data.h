@@ -111,7 +111,7 @@ enum class UnitType : uint8_t {
     // ---- 尤复补全：YR 新增单位 ----
     Boris,                       // 鲍里斯（苏英雄，AK47+呼叫米格空袭建筑）
     SiegeChopper,                // 攻城直升机（苏，飞行机枪/部署远程炮击）
-    ChaosDrone,                  // 混乱无人机（尤里，释放毒气使敌军自相残杀）
+    ChaosDrone,                  // 混乱机器人（尤里 Chaos Drone，地面毒气无人车）
     // ---- 尤复：奴隶矿车经济 ----
     Slave,                       // 奴隶（步兵采矿，返回精炼厂/奴隶矿车）
     SlaveMiner,                   // 奴隶矿车（尤里采矿车；展开后作卸货点并自动产奴）

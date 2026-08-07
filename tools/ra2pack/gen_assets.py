@@ -74,6 +74,10 @@ FORCE_IMAGE = {
     "slaveminer": "smin",
     # 官方 APOC.Image=MTNK（无独立 apoc.vxl）
     "apocalypse": "mtnk",
+    # YR/渗透步兵：rules 无 Image 时强制 MIX stem
+    "chronoivan": "civan",
+    "slave": "slav",
+    "yuriprime": "yurix",
 }
 UNITS = {
     "gi": ["E1"], "conscript": ["E2"], "engineer": ["ENGINEER"],
@@ -110,6 +114,9 @@ UNITS = {
     "boomer": ["BSUB"],
     "lashertank": ["LTNK"],
     "slaveminer": ["SMIN"],
+    "chronoivan": ["CIVAN"],
+    "slave": ["SLAV"],
+    "yuriprime": ["YURIX", "YURIPR"],
     # ---- 融合阵营：无官方 MIX 时 skip（禁止近亲冒充）----
     "pla": ["PLA"],
     "type99": ["TYPE99"],
@@ -117,13 +124,16 @@ UNITS = {
 INFANTRY = {"gi", "conscript", "engineer", "spy", "flaktrooper",
             "teslatrooper", "sniper", "tanya", "desolator", "chrono", "crazyivan",
             "terrorist", "navyseal", "yuri", "chronocommando", "psicommando",
-            "rocketeer", "guardiangi", "pla", "initiate", "brute", "virus", "boris"}
+            "rocketeer", "guardiangi", "pla", "initiate", "brute", "virus", "boris",
+            "chronoivan", "slave", "yuriprime"}
 MINERS = {"harvester", "chronominer", "warminer", "slaveminer"}
 # 卸货动画 VXL（HORV/CMON）：与车体 Image 不同
 MINER_UNLOAD_VXL = {"harvester": "horv", "chronominer": "cmon", "warminer": "horv"}
 # 引擎 MoveType（src/game/data.cpp）：空军/海军不烘地面投影，锚点=内容中心
 AIR = {"intruder", "blackeagle", "kirov", "nighthawk", "hornet", "rocketeer",
        "mig", "siegechopper", "floatingdisc"}
+# 气垫/悬浮地面单位：无履带触地点，用内容中心锚点（避免遥控坦克左偏裁切）
+HOVER = {"robottank"}
 NAVAL = {"destroyer", "typhoon", "aegis", "seascorpion", "dreadnought",
          "aircraftcarrier", "dolphin", "squid", "boomer"}
 BLDS = {
@@ -268,23 +278,35 @@ def render_voxel_unit(img, canvas, eng=""):
     vd = get(img + ".vxl")
     if not vd:
         return None, None
-    # 静态站姿烘焙：不用 HVA（与炮塔/炮管共用 section 坐标系对齐）。
-    # HVA 大平移在单独烘炮塔时会被丢弃，若车体保留会导致错位。
-    v = Vxl(vd); h = None
-    w, ch = canvas
-    floating = eng in AIR or eng in NAVAL
+    # 加载 HVA：多节模型（夜鹰/攻城直升机）靠 HVA 把旋翼抬到机身；idle=frame 0。
+    v = Vxl(vd)
+    hd = get(img + ".hva")
+    h = Hva(hd) if hd else None
+    if h is not None and not h.valid:
+        h = None
+    floating = eng in AIR or eng in NAVAL or eng in HOVER
     per = []
-    maxbw = 0.0; maxbh = 0.0
     for e in range(8):
-        pts, zmin = vxl_project(v, h, _phi_for_screen_alpha(45 * e))
+        pts, zmin = vxl_project(v, h, _phi_for_screen_alpha(45 * e), hva_frame=0)
         if not pts:
             return None, None
         xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
-        maxbw = max(maxbw, max(xs) - min(xs)); maxbh = max(maxbh, max(ys) - min(ys))
         per.append((pts, zmin, min(xs), max(xs), min(ys), max(ys)))
-    bw = maxbw + 1.3; bh = maxbh + 1.3
+    return _rasterize_per(per, canvas, floating)
+
+
+def _rasterize_per(per, canvas, floating, anchor_per=None):
+    """per: [(pts,zmin,mnx,mxx,mny,mxy)*8]。anchor_per 若给则用其点做地面锚点（炮塔装配时用车体）。"""
+    w, ch = canvas
+    maxbw = 0.0
+    maxbh = 0.0
+    for pts, zmin, mnx, mxx, mny, mxy in per:
+        maxbw = max(maxbw, mxx - mnx)
+        maxbh = max(maxbh, mxy - mny)
+    bw = maxbw + 1.3
+    bh = maxbh + 1.3
     scale = ENGINE_TILE_W / float(RA2_TILE_W)
-    margin = 2
+    margin = 4  # 略留边，避免飞碟/遥控坦克贴边裁切
     need_w = int(bw * scale) + 2 * margin
     if floating:
         need_h = int(bh * scale) + 2 * margin
@@ -293,26 +315,189 @@ def render_voxel_unit(img, canvas, eng=""):
     w = max(w, need_w)
     ch = max(ch, need_h)
     anchor_y = ch / 2 + 4 if floating else ch * 0.72
-    out = []
     orgs = []
     for e in range(8):
         pts, zmin, mnx, mxx, mny, mxy = per[e]
-        if floating:
-            gx = (mnx + mxx) / 2; gy = (mny + mxy) / 2
+        # 地面锚点优先用车体点，避免炮塔把触地点抬飞
+        apts = pts
+        if anchor_per is not None:
+            apts = anchor_per[e][0]
+            amnx = min(p[0] for p in apts)
+            amxx = max(p[0] for p in apts)
+            amny = min(p[1] for p in apts)
+            amxy = max(p[1] for p in apts)
         else:
-            ycut = mxy - 1.2
-            low = [p for p in pts if p[1] >= ycut]
+            amnx, amxx, amny, amxy = mnx, mxx, mny, mxy
+        if floating:
+            gx = (mnx + mxx) / 2
+            gy = (mny + mxy) / 2
+        else:
+            ycut = amxy - 1.2
+            low = [p for p in apts if p[1] >= ycut]
             if low:
                 gx = sum(p[0] for p in low) / len(low)
-                gy = mxy
+                gy = amxy
             else:
-                gx = (mnx + mxx) / 2; gy = mxy
+                gx = (amnx + amxx) / 2
+                gy = amxy
         orgx = w / 2 - gx * scale
         orgy = anchor_y - gy * scale + 0.5 * scale
         orgs.append((orgx, orgy))
+    # 地面锚点相对包围盒偏心时，内容会顶穿画布边；扩边并平移原点
+    pad_l = pad_r = pad_t = pad_b = 0.0
+    for e in range(8):
+        _, _, mnx, mxx, mny, mxy = per[e]
+        orgx, orgy = orgs[e]
+        left = orgx + mnx * scale
+        right = orgx + mxx * scale
+        top = orgy + mny * scale
+        bottom = orgy + mxy * scale
+        pad_l = max(pad_l, margin - left)
+        pad_r = max(pad_r, right - (w - margin))
+        pad_t = max(pad_t, margin - top)
+        pad_b = max(pad_b, bottom - (ch - margin))
+    pad_l = int(max(0, math.ceil(pad_l)))
+    pad_r = int(max(0, math.ceil(pad_r)))
+    pad_t = int(max(0, math.ceil(pad_t)))
+    pad_b = int(max(0, math.ceil(pad_b)))
+    if pad_l or pad_r or pad_t or pad_b:
+        w += pad_l + pad_r
+        ch += pad_t + pad_b
+        orgs = [(ox + pad_l, oy + pad_t) for ox, oy in orgs]
+    out = []
+    for e in range(8):
+        pts = per[e][0]
+        orgx, orgy = orgs[e]
         out.append(render_pts(pts, PAL_U, scale, orgx, orgy, w, ch, supersample=2))
     layout = {"scale": scale, "w": w, "ch": ch, "floating": floating, "orgs": orgs}
     return out, layout
+
+
+def _project_stem_dirs(stem: str):
+    """返回 per=[(pts,zmin,mnx,mxx,mny,mxy)*8] 或 None。"""
+    vd = get(stem + ".vxl")
+    if not vd:
+        return None
+    v = Vxl(vd)
+    hd = get(stem + ".hva")
+    h = Hva(hd) if hd else None
+    if h is not None and not h.valid:
+        h = None
+    per = []
+    for e in range(8):
+        pts, zmin = vxl_project(v, h, _phi_for_screen_alpha(45 * e), hva_frame=0)
+        if not pts:
+            return None
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        per.append((pts, zmin, min(xs), max(xs), min(ys), max(ys)))
+    return per
+
+
+def _merge_per(a, b):
+    """合并两套 8 向投影的点集（同方向）。"""
+    out = []
+    for e in range(8):
+        pts = list(a[e][0]) + list(b[e][0])
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        out.append((pts, min(a[e][1], b[e][1]), min(xs), max(xs), min(ys), max(ys)))
+    return out
+
+
+def _barl_stem(tur: str):
+    """tur stem → barl stem；部分炮塔 VXL 已含完整炮管，叠 barl 会出双管假象。"""
+    if tur in ("htktur",):  # 高射炮车：htktur 已是完整上扬高射炮
+        return None
+    if tur.endswith("tur"):
+        return tur[:-3] + "barl"
+    return tur + "barl"
+
+
+def render_unit_with_turret(hull_stem, tur_stem, canvas, eng=""):
+    """车体+炮塔(+炮管) 共用合并包围盒画布，避免飞碟/遥控坦克裁切。
+    返回 (hull_imgs, tur_imgs, layout) 或 (None, None, None)。"""
+    hull_per = _project_stem_dirs(hull_stem)
+    if not hull_per:
+        return None, None, None
+    floating = eng in AIR or eng in NAVAL or eng in HOVER
+
+    tur_per = None
+    if tur_stem and has(tur_stem + ".vxl"):
+        # 炮塔与炮管分开投影：各用自己的 HVA（避免合并后同名/异名抢矩阵）
+        t_only = _project_stem_dirs(tur_stem)
+        barl_name = _barl_stem(tur_stem)
+        b_only = _project_stem_dirs(barl_name) if barl_name and has(barl_name + ".vxl") else None
+        if t_only and b_only:
+            tur_per = _merge_per(t_only, b_only)
+        else:
+            tur_per = t_only
+
+    if tur_per:
+        combined = _merge_per(hull_per, tur_per)
+        # 先算合并 layout（画布尺寸+原点）
+        _, layout = _rasterize_per(combined, canvas, floating, anchor_per=hull_per)
+        # 用同一 layout 分别栅格化车体/炮塔
+        scale = layout["scale"]
+        w, ch = layout["w"], layout["ch"]
+        orgs = layout["orgs"]
+        hull_imgs, tur_imgs = [], []
+        for e in range(8):
+            orgx, orgy = orgs[e]
+            hull_imgs.append(render_pts(hull_per[e][0], PAL_U, scale, orgx, orgy, w, ch, supersample=2))
+            tur_imgs.append(render_pts(tur_per[e][0], PAL_U, scale, orgx, orgy, w, ch, supersample=2))
+        return hull_imgs, tur_imgs, layout
+
+    hull_imgs, layout = _rasterize_per(hull_per, canvas, floating)
+    return hull_imgs, None, layout
+
+
+def render_turret(tur, layout):
+    """tur+barl 与车体同一画布/原点叠绘（layout 来自 render_voxel_unit / assembly）。"""
+    if not layout:
+        return None
+    # 分投影：各自 HVA，避免 HTK tur(MDUMMY01) 与 barl(DUMMY01) 抢错矩阵
+    t_per = _project_stem_dirs(tur)
+    if not t_per:
+        return None
+    barl_name = _barl_stem(tur)
+    b_per = _project_stem_dirs(barl_name) if barl_name and has(barl_name + ".vxl") else None
+    per = _merge_per(t_per, b_per) if b_per else t_per
+    scale = layout["scale"]
+    w, ch = layout["w"], layout["ch"]
+    orgs = layout["orgs"]
+    out = []
+    for e in range(8):
+        orgx, orgy = orgs[e]
+        out.append(render_pts(per[e][0], PAL_U, scale, orgx, orgy, w, ch, supersample=2))
+    return out
+
+
+def render_turret_centered(tur, canvas):
+    """无车体 layout 时回退：内容居中（近亲表兜底）。"""
+    t_per = _project_stem_dirs(tur)
+    if not t_per:
+        return None
+    barl_name = _barl_stem(tur)
+    b_per = _project_stem_dirs(barl_name) if barl_name and has(barl_name + ".vxl") else None
+    per = _merge_per(t_per, b_per) if b_per else t_per
+    w, ch = canvas
+    maxbw = 0.0
+    maxbh = 0.0
+    for pts, zmin, mnx, mxx, mny, mxy in per:
+        maxbw = max(maxbw, mxx - mnx)
+        maxbh = max(maxbh, mxy - mny)
+    scale = ENGINE_TILE_W / float(RA2_TILE_W)
+    need = int(max(maxbw, maxbh) * scale) + 6
+    w = max(w, need); ch = max(ch, need)
+    out = []
+    for e in range(8):
+        pts, zmin, mnx, mxx, mny, mxy = per[e]
+        gx = (mnx + mxx) / 2; gy = (mny + mxy) / 2
+        orgx = w / 2 - gx * scale
+        orgy = ch / 2 - gy * scale
+        out.append(render_pts(pts, PAL_U, scale, orgx, orgy, w, ch, supersample=2))
+    return out
 
 # ------------------------------------------------------------- SHP 工具
 def shp_frame_img(shp, i, pal, remap=True, civ_neutral=False, tech_neutral=False):
@@ -378,6 +563,7 @@ SEQ_MAP = {
     "navyseal": "SealSequence", "boris": "SealSequence",
     "yuri": "YuriSequence", "chronocommando": "ComandoSequence",
     "psicommando": "PsiTroopSequence", "rocketeer": "RocketeerSequence",
+    "chronoivan": "CIvanSequence", "slave": "SlaveSequence", "yuriprime": "YuriXSequence",
 }
 ANIM_META = {"units": {}, "blds": {}}  # 写出到 assets/sprites/anims.ini
 # --only 增量运行：先读入既有 anims.ini，末尾覆盖写回时保留未触及条目（全量运行时自然整体刷新）
@@ -567,60 +753,6 @@ def _merge_vxl(*vxls):
         if v is None:
             continue
         out.sections.extend(v.sections)
-    return out
-
-def render_turret(tur, layout):
-    """tur+barl 与车体同一画布/原点叠绘（layout 来自 render_voxel_unit）。"""
-    if not layout:
-        return None
-    vd = get(tur + ".vxl")
-    if not vd:
-        return None
-    vtur = Vxl(vd)
-    barl_name = tur[:-3] + "barl" if tur.endswith("tur") else tur + "barl"
-    vbarl = Vxl(get(barl_name + ".vxl")) if has(barl_name + ".vxl") else None
-    v = _merge_vxl(vtur, vbarl)
-    scale = layout["scale"]
-    w, ch = layout["w"], layout["ch"]
-    orgs = layout["orgs"]
-    out = []
-    for e in range(8):
-        pts, zmin = vxl_project(v, None, _phi_for_screen_alpha(45 * e))
-        if not pts:
-            return None
-        orgx, orgy = orgs[e]
-        out.append(render_pts(pts, PAL_U, scale, orgx, orgy, w, ch, supersample=2))
-    return out
-
-def render_turret_centered(tur, canvas):
-    """无车体 layout 时回退：内容居中（近亲表兜底）。"""
-    vd = get(tur + ".vxl")
-    if not vd:
-        return None
-    vtur = Vxl(vd)
-    barl_name = tur[:-3] + "barl" if tur.endswith("tur") else tur + "barl"
-    vbarl = Vxl(get(barl_name + ".vxl")) if has(barl_name + ".vxl") else None
-    v = _merge_vxl(vtur, vbarl)
-    w, ch = canvas
-    per = []
-    maxbw = 0.0; maxbh = 0.0
-    for e in range(8):
-        pts, zmin = vxl_project(v, None, _phi_for_screen_alpha(45 * e))
-        if not pts:
-            return None
-        xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
-        maxbw = max(maxbw, max(xs) - min(xs)); maxbh = max(maxbh, max(ys) - min(ys))
-        per.append((pts, min(xs), max(xs), min(ys), max(ys)))
-    scale = ENGINE_TILE_W / float(RA2_TILE_W)
-    need = int(max(maxbw, maxbh) * scale) + 6
-    w = max(w, need); ch = max(ch, need)
-    out = []
-    for e in range(8):
-        pts, mnx, mxx, mny, mxy = per[e]
-        gx = (mnx + mxx) / 2; gy = (mny + mxy) / 2
-        orgx = w / 2 - gx * scale
-        orgy = ch / 2 - gy * scale
-        out.append(render_pts(pts, PAL_U, scale, orgx, orgy, w, ch, supersample=2))
     return out
 
 # ------------------------------------------------------------- 建筑
@@ -1063,6 +1195,7 @@ def main():
         img = FORCE_IMAGE.get(eng, R[rid].get("Image", rid).lower())
         ok = False
         layout = None
+        tdirs = None
         if has(img + ".vxl"):
             # 采矿车加大画布，避免货舱被裁切；地面车辆随内容尺寸，勿强行 128（1:1 体素会显得过小）
             default = (140, 140) if eng in MINERS else (72, 72)
@@ -1072,7 +1205,14 @@ def main():
                 canvas = (max(canvas[0], 140), max(canvas[1], 140))
             elif eng not in AIR and eng not in NAVAL and eng not in INFANTRY:
                 canvas = (max(min(canvas[0], 96), 64), max(min(canvas[1], 96), 64))
-            dirs, layout = render_voxel_unit(img, canvas, eng)
+            # 有炮塔时用车体+炮塔合并包围盒，避免飞碟/遥控坦克裁切
+            tur = img + "tur"
+            if not has(tur + ".vxl") and eng in TURRETS:
+                tur = TURRETS[eng]
+            if has(tur + ".vxl"):
+                dirs, tdirs, layout = render_unit_with_turret(img, tur, canvas, eng)
+            else:
+                dirs, layout = render_voxel_unit(img, canvas, eng)
             if dirs:
                 for e in range(8):
                     save(dirs[e], f"unit_{eng}_d{e}_f0.png")
@@ -1103,7 +1243,14 @@ def main():
                                 save(udirs[e], f"unit_{eng}_unload_d{e}_f0.png")
                 ok = True
         elif has(img + ".shp"):
-            canvas = ph_size("unit", eng, (24, 30) if eng in INFANTRY or eng == "attackdog" else (60, 60))
+            # 尤里首脑 SHP 立姿约 28x54，需更高画布以免 LANCZOS 压扁
+            if eng == "yuriprime":
+                default_inf = (40, 64)
+            elif eng in INFANTRY or eng == "attackdog":
+                default_inf = (24, 30)
+            else:
+                default_inf = (60, 60)
+            canvas = ph_size("unit", eng, default_inf)
             # 优先：art.ini 序列全套（stand/walk/fire/die/dep）；其次：机器人相位交错；兜底：方向帧
             if render_seq_unit(img, eng, canvas):
                 ok = True
@@ -1119,18 +1266,22 @@ def main():
             report["units_ok"].append((eng, rid, img))
         else:
             report["units_skip"].append((eng, f"{rid}/{img} file missing"))
-        # 炮塔：与车体同一坐标系/画布叠绘（layout）；失败则居中兜底
+        # 炮塔：优先用装配路径已算好的 tdirs；否则 layout 叠绘 / 居中兜底
         if ok:
-            tur = img + "tur"
-            if not has(tur + ".vxl") and eng in TURRETS:
-                tur = TURRETS[eng]
-            if has(tur + ".vxl"):
-                tdirs = render_turret(tur, layout) if layout else None
-                if not tdirs:
-                    tdirs = render_turret_centered(tur, (48, 48))
-                if tdirs:
-                    for e in range(8):
-                        save(tdirs[e], f"turret_{eng}_d{e}.png")
+            if tdirs:
+                for e in range(8):
+                    save(tdirs[e], f"turret_{eng}_d{e}.png")
+            else:
+                tur = img + "tur"
+                if not has(tur + ".vxl") and eng in TURRETS:
+                    tur = TURRETS[eng]
+                if has(tur + ".vxl"):
+                    tdirs2 = render_turret(tur, layout) if layout else None
+                    if not tdirs2:
+                        tdirs2 = render_turret_centered(tur, (48, 48))
+                    if tdirs2:
+                        for e in range(8):
+                            save(tdirs2[e], f"turret_{eng}_d{e}.png")
         # 禁止：车体失败时用近亲炮塔兜底
         # 图标
         asec = A.get(R[rid].get("Image", rid).upper(), {}) or A.get(rid, {})

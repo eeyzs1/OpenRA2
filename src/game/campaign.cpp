@@ -564,7 +564,7 @@ static std::vector<MissionDef> buildBuiltinMissions() {
         },
         {
             "混乱之雨", "Chaos Rain",
-            "盟军大举进攻。坚守十分钟，混乱无人机的毒气将使敌军自相残杀。",
+            "盟军大举进攻。坚守十分钟，混乱机器人的毒气将使敌军自相残杀。",
             "The Allies attack in force. Hold for ten minutes — Chaos Drone gas turns their ranks against each other.",
             Faction::Yuri, {Faction::Allies},
             96, 0, 16000,
@@ -578,10 +578,10 @@ static std::vector<MissionDef> buildBuiltinMissions() {
             1, 18000, "", false,
             {
                 {TrigCond::Always, {0,0,0,0,0}, TrigAct::Eva, {0,0,0,0,-1}, {},
-                 "混乱无人机毒气使敌军陷入自相残杀。", "Chaos Drone gas drives enemies to attack each other."},
+                 "混乱机器人毒气使敌军陷入自相残杀。", "Chaos Drone gas drives enemies to attack each other."},
                 {TrigCond::Time, {3600,0,0,0,0}, TrigAct::SpawnAt, {0,8,8,-1,0},
                  {UnitType::ChaosDrone, UnitType::ChaosDrone},
-                 "混乱无人机增援抵达。", "Chaos Drone reinforcement arrived."},
+                 "混乱机器人增援抵达。", "Chaos Drone reinforcement arrived."},
             }
         },
         {
