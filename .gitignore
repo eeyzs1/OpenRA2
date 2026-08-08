@@ -31,3 +31,4 @@ tools/ra2pack/probe_*.py
 assets/gui/menu/
 # Local GUI review dumps (ra2.exe --gui-review)
 gui_review/
+tools/visual_audit/menu_ref/

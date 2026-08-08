@@ -90,8 +90,9 @@ void guiPanel(int x, int y, int w, int h) {
 }
 
 void drawTextS(Font f, const char* s, int x, int y, int size, Color c) {
-    DrawTextEx(f, s, {(float)x + 1, (float)y + 1}, (float)size, 1, Color{0, 0, 0, 210});
-    DrawTextEx(f, s, {(float)x, (float)y}, (float)size, 1, c);
+    // spacing=0 更贴近原作挤字；1px 硬阴影（非柔边）
+    DrawTextEx(f, s, {(float)x + 1, (float)y + 1}, (float)size, 0, Color{0, 0, 0, 200});
+    DrawTextEx(f, s, {(float)x, (float)y}, (float)size, 0, c);
 }
 
 // ===================== 阵营化 GUI 调色板（RA2 原作实测取色） =====================
@@ -1651,61 +1652,77 @@ void Game::drawHUD() {
                   8, 48, 13, Color{140, 230, 255, 255});
     }
 
-    // 暂停/菜单/结算
+    // 暂停提示
     if (paused && !gameOver) {
         drawTextF(font, TR(S::Paused), SCREEN_W / 2 - 30, SCREEN_H / 2, 28, WHITE);
     }
+    // 暂停/菜单/结算 — 已在 render() 预画到 UI RT；此处半透明遮罩 + blit
     if (showMenu || gameOver) {
-        DrawRectangle(0, 0, SCREEN_W, SCREEN_H, Color{0, 0, 0, 160});
-        int mw = 320, mh = 426;
-        int mx = SCREEN_W / 2 - mw / 2, my = SCREEN_H / 2 - mh / 2;
-        guiPanel(mx, my, mw, mh);
-        Vector2 mm = mousePos();
-        bool mpr = mPressed(MOUSE_LEFT_BUTTON);
-        if (gameOver) {
-            const char* t = victory ? TR(S::Victory) : TR(S::Defeat);
-            drawTextS(font, t, mx + mw / 2 - 40, my + 24, 34, victory ? Color{120, 255, 120, 255} : RED);
-        } else {
-            drawTextS(font, TR(S::GameMenu), mx + mw / 2 - 40, my + 20, 22, WHITE);
-        }
-        auto restart = [&]() {
-            if (campaignMission >= 0) newCampaignGame(campaignMission);
-            else newGame((uint64_t)time(nullptr));
-            showMenu = false;
-        };
-        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 72, 200, 32},
-                      gameOver ? TR(S::PlayAgain) : TR(S::Continue), 16, !(gameOver && netGame))) {
-            if (gameOver) restart();
-            else showMenu = false;
-        }
-        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 114, 200, 32},
-                      TextFormat("%s (%s)", TR(S::SaveProgress), keyName(keyBind[KA_QuickSave])), 14,
-                      !gameOver && !netGame)) {
-            message(saveGameFile(QUICKSAVE_PATH) ? TR(S::MsgSaved) : TR(S::MsgSaveFail));
-            showMenu = false;
-        }
-        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 156, 200, 32},
-                      TextFormat("%s (%s)", TR(S::LoadProgress), keyName(keyBind[KA_QuickLoad])), 14,
-                      !gameOver && !netGame)) {
-            message(loadGameFile(QUICKSAVE_PATH) ? TR(S::MsgLoaded) : TR(S::MsgLoadFail));
-            showMenu = false;
-        }
-        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 198, 200, 32}, TR(S::Settings), 16)) {
-            settingsFromGame = true;
-            showMenu = false;
-            phase = Phase::Settings;
-        }
-        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 240, 200, 32}, TR(S::Restart), 16, !netGame))
-            restart();
-        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 282, 200, 32}, TR(S::BackToMain), 16)) {
-            if (netGame) netLeave();
-            else phase = Phase::MainMenu;
-            showMenu = false;
-        }
-        if (ra2Button(font, mm, mpr, {(float)mx + 60, (float)my + 324, 200, 32}, TR(S::ExitGame), 16, true, true)) {
-            CloseWindow();
-            exit(0);
-        }
+        DrawRectangle(0, 0, SCREEN_W, SCREEN_H, Color{0, 0, 0, 170});
+        menuBlitUi();
+    }
+}
+
+void Game::drawGameMenuOverlay() {
+    ensureMenuGui();
+    drawRa2Shell(font, gameOver ? (victory ? TR(S::Victory) : TR(S::Defeat)) : TR(S::GameMenu),
+                 1 /* Allied blue */, true);
+    Rectangle content = menuShellContent();
+    Rectangle side = menuShellSide();
+
+    int cx = (int)(content.x + content.width / 2);
+    // 左区留给 Allied eagle 底图；少写大标题，贴近原作暂停屏
+    if (gameOver) {
+        const char* t = victory ? TR(S::Victory) : TR(S::Defeat);
+        drawTextS(font, t, cx - textW(font, t, 28) / 2, (int)content.height / 2 - 16, 28,
+                  victory ? Color{120, 255, 160, 255} : Color{255, 100, 90, 255});
+    }
+
+    Vector2 mm = menuUiFromCanvas(mousePos());
+    bool mpr = mPressed(MOUSE_LEFT_BUTTON);
+    auto restart = [&]() {
+        if (campaignMission >= 0) newCampaignGame(campaignMission);
+        else newGame((uint64_t)time(nullptr));
+        showMenu = false;
+    };
+    // 侧栏列表：等分槽 + 更满字号（布局/文字优先于 BIK）
+    const float bx = side.x + 6.0f, bw = side.width - 12.0f, bh = 40.0f;
+    const float by0 = 178.0f, btnGap = 2.0f; // LOAD_MON_Y(48)+LOAD_MON_H(122)+8
+    auto rowY = [&](int i) { return by0 + i * (bh + btnGap); };
+    auto listItem = [&](int i, const char* text, bool enabled = true) -> bool {
+        return ra2Button(font, mm, mpr, {bx, rowY(i), bw, bh}, text, 13, enabled);
+    };
+    if (listItem(0, gameOver ? TR(S::PlayAgain) : TR(S::Continue), !(gameOver && netGame))) {
+        if (gameOver) restart();
+        else showMenu = false;
+    }
+    if (listItem(1, TextFormat("%s (%s)", TR(S::SaveProgress), keyName(keyBind[KA_QuickSave])),
+                 !gameOver && !netGame)) {
+        message(saveGameFile(QUICKSAVE_PATH) ? TR(S::MsgSaved) : TR(S::MsgSaveFail));
+        showMenu = false;
+    }
+    if (listItem(2, TextFormat("%s (%s)", TR(S::LoadProgress), keyName(keyBind[KA_QuickLoad])),
+                 !gameOver && !netGame)) {
+        message(loadGameFile(QUICKSAVE_PATH) ? TR(S::MsgLoaded) : TR(S::MsgLoadFail));
+        showMenu = false;
+    }
+    if (listItem(3, TR(S::Settings))) {
+        settingsFromGame = true;
+        showMenu = false;
+        phase = Phase::Settings;
+    }
+    if (listItem(4, TR(S::Restart), !netGame))
+        restart();
+    if (listItem(5, TR(S::BackToMain))) {
+        if (netGame) netLeave();
+        else phase = Phase::MainMenu;
+        showMenu = false;
+    }
+    Rectangle resume{bx, side.y + side.height - 56, bw, 44};
+    const char* rt = gameOver ? TR(S::ExitGame) : TR(S::Continue);
+    if (ra2Button(font, mm, mpr, resume, rt, 14)) {
+        if (gameOver) { CloseWindow(); exit(0); }
+        else showMenu = false;
     }
 }
 

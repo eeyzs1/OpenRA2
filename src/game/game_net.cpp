@@ -296,35 +296,40 @@ void Game::netAdvance() {
     }
 }
 
-// ===================== 大厅 UI =====================
+// ===================== 大厅 UI（左内容 + 右侧栏） =====================
 void Game::drawNetLobby() {
-    drawMenuBackdrop(font, TR(S::LanGame));
-    int cx = SCREEN_W / 2;
-    Vector2 m = mousePos();
+    drawRa2Shell(font, TR(S::LanGame), 2);
+    Rectangle content = menuShellContent();
+    Rectangle side = menuShellSide();
+    int cx = (int)(content.x + content.width / 2);
+    Vector2 m = menuUiFromCanvas(mousePos());
     bool pressed = mPressed(MOUSE_LEFT_BUTTON);
 
-    // 角色选择
+    auto sideBtn = [&](float y, const char* text, int size = 14) {
+        return ra2Button(font, m, pressed, {side.x + 6, y, side.width - 12, 44}, text, size);
+    };
+
+    // 角色选择：左内容展示，动作在右侧栏
     if (lobbyState == 0) {
-        int bw = 300, bh = 60, gap = 20;
-        if (ra2Button(font, m, pressed, {(float)cx - bw - gap / 2, 340, (float)bw, (float)bh}, TR(S::HostGame), 22)) {
+        const char* tip = g_lang ? "Choose host or join" : "选择创建主机或加入对局";
+        drawTextM(font, tip, cx - textW(font, tip, 16) / 2, 180, 16, Color{220, 216, 206, 255});
+        if (sideBtn(210, TR(S::HostGame), 14)) {
             lobbyRole = 0;
             if (net.host(NET_PORT)) lobbyState = 1;
             else lobbyState = 3;
         }
-        if (ra2Button(font, m, pressed, {(float)cx + gap / 2, 340, (float)bw, (float)bh}, TR(S::JoinGame), 22)) {
+        if (sideBtn(262, TR(S::JoinGame), 14)) {
             lobbyRole = 1;
             lobbyEditingIp = true;
-            lobbyState = 4; // 输入 IP
+            lobbyState = 4;
         }
     } else if (lobbyRole == 0) {
-        // 主机：等待连接 → 对手加入 → 开始
         const char* st = lobbyState == 1 ? TR(S::WaitPeer) : lobbyState == 2 ? TR(S::PeerJoined) : TR(S::ConnectFail);
-        drawTextM(font, st, cx - textW(font, st, 22) / 2, 330, 22, Color{220, 216, 206, 255});
+        drawTextM(font, st, cx - textW(font, st, 16) / 2, 180, 16, Color{220, 216, 206, 255});
         if (lobbyState == 2) {
             std::string info = std::string(countryName((Country)peerCountry));
-            drawTextM(font, info.c_str(), cx - textW(font, info.c_str(), 19) / 2, 366, 19, Color{255, 210, 100, 255});
-            if (ra2Button(font, m, pressed, {(float)cx - 150, 420, 300, 56}, TR(S::StartBattle), 22)) {
-                // 权威配置下发（双方国家颜色+种子+地图+资金）
+            drawTextM(font, info.c_str(), cx - textW(font, info.c_str(), 14) / 2, 210, 14, Color{255, 210, 100, 255});
+            if (sideBtn(210, TR(S::StartBattle), 14)) {
                 netSeed = (uint64_t)GetTime() * 2654435761u + 881;
                 NetLink::Writer w;
                 w.w((uint64_t)netSeed);
@@ -342,28 +347,26 @@ void Game::drawNetLobby() {
             }
         }
     } else {
-        // 客户端：输入 IP → 连接 → 等待开始
         if (lobbyState == 4) {
-            drawTextM(font, TR(S::IpLabel), cx - 220, 330, 19, Color{200, 196, 188, 255});
-            Rectangle box{(float)cx - 220, 356, 440, 44};
+            drawTextM(font, TR(S::IpLabel), cx - 160, 160, 14, Color{200, 196, 188, 255});
+            Rectangle box{(float)cx - 160, 186, 320, 32};
             DrawRectangleRec(box, Color{18, 18, 24, 255});
-            DrawRectangleLinesEx(box, 2, lobbyEditingIp ? Color{255, 200, 90, 255} : Color{110, 96, 60, 255});
-            drawTextM(font, lobbyIp.c_str(), (int)box.x + 12, (int)box.y + 11, 20, Color{255, 220, 120, 255});
-            // IP 字符输入（数字/点/退格）
+            DrawRectangleLinesEx(box, 1, lobbyEditingIp ? Color{255, 200, 90, 255} : Color{110, 96, 60, 255});
+            drawTextM(font, lobbyIp.c_str(), (int)box.x + 8, (int)box.y + 8, 14, Color{255, 220, 120, 255});
             for (int k = KEY_ZERO; k <= KEY_NINE; k++)
                 if (kPressed(k) && lobbyIp.size() < 15) lobbyIp.push_back((char)('0' + k - KEY_ZERO));
             if (kPressed(KEY_PERIOD) && lobbyIp.size() < 15) lobbyIp.push_back('.');
             if (kPressed(KEY_BACKSPACE) && !lobbyIp.empty()) lobbyIp.pop_back();
-            if (ra2Button(font, m, pressed, {(float)cx - 150, 420, 300, 52}, TR(S::JoinGame), 21)) {
+            if (sideBtn(210, TR(S::JoinGame), 14)) {
                 if (net.connectTo(lobbyIp.c_str(), NET_PORT)) lobbyState = 1;
                 else lobbyState = 3;
             }
         } else {
             const char* st = lobbyState == 1 ? TR(S::WaitPeer) : lobbyState == 2 ? TR(S::WaitHostStart) : TR(S::ConnectFail);
-            drawTextM(font, st, cx - textW(font, st, 22) / 2, 340, 22, Color{220, 216, 206, 255});
+            drawTextM(font, st, cx - textW(font, st, 16) / 2, 180, 16, Color{220, 216, 206, 255});
         }
     }
-    if (ra2Button(font, m, pressed, {(float)cx - 110, 700, 220, 48}, TR(S::Back), 20)) netLeave();
+    if (sideBtn(side.y + side.height - 56, TR(S::Back), 14)) netLeave();
 }
 
 // ===================== 双进程自测 =====================

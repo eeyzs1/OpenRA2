@@ -12,6 +12,9 @@
 
 constexpr int SCREEN_W = 1440;
 constexpr int SCREEN_H = 810;
+// 菜单壳层逻辑分辨率（原作 640×480）；画到 canvas 时统一放大
+constexpr int UI_W = 640;
+constexpr int UI_H = 480;
 
 // 游戏阶段
 enum class Phase { MainMenu, Setup, MissionSelect, Settings, NetLobby, InGame, MapEditor };
@@ -260,6 +263,7 @@ private:
     void drawSetup();
     void drawMissionSelect();
     void drawSettings();     // 设置页（语言/显示/音量/按键）
+    void drawGameMenuOverlay(); // ESC/结算：画在 640 UI RT 上（勿嵌套 canvas）
     int pollAnyKey();        // 重绑定捕获：真实 GetKeyPressed 或脚本注入
     void refreshMapPreview(); // 设置界面地图缩略图重生成
 
@@ -325,12 +329,30 @@ void drawTextM(Font f, const char* s, int x, int y, int size, Color c);
 int textW(Font f, const char* s, int size);
 bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size = 20,
                bool enabled = true, bool danger = false);
-void drawMenuBackdrop(Font font, const char* title);
-void ensureMenuGui();                                 // 懒加载 assets/gui/menu
-bool drawMenuPanelChrome(int x, int y, int w, int h); // 原作对话框框；失败则 false
-void drawMenuOptSlot(Rectangle r, bool hover);        // 选项值槽（optbtn / 回退 guiSlot）
-void menuSetBikForceFrame(int frame);                 // 审核截图：强制 BIK 帧（-1=实时）
+bool ra2TextButton(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size = 28);
+void drawMenuBackdrop(Font font, const char* title); // 兼容旧调用 → RA2 shell
+// theme: 0=load 选项/遭遇战/战役 / 1=盟军暂停 / 2=multi 联机大厅；drawEmptyMonitor=false 时监视器留给调用方
+void drawRa2Shell(Font font, const char* sideTitle, int theme = 0, bool drawEmptyMonitor = true);
+// 红框滑条（离散档）；点击/拖动改档时返回 true 且更新 step
+bool ra2RedSlider(Font font, Vector2 m, bool pressed, int x, int y, int trackW,
+                  int& step, int nSteps, const char* valueText);
+Rectangle menuShellContent(); // 左内容区（drawRa2Shell 之后有效）
+Rectangle menuShellSide();    // 右侧栏
+Rectangle menuShellMonitor(); // 右侧监视器槽
+void ensureMenuGui();
+bool drawMenuPanelChrome(int x, int y, int w, int h);
+void drawMenuOptSlot(Rectangle r, bool hover);
+void drawMenuPip(float x, float y, bool on); // 原作 pips 勾选
+void menuSetBikForceFrame(int frame);
 int menuBikFrameCount();
+// 菜单 UI 坐标 ↔ canvas（1440×810）坐标；壳层页绘制期间有效
+Vector2 menuUiFromCanvas(Vector2 canvasPos);
+Vector2 menuCanvasFromUi(float uiX, float uiY);
+float menuUiScale();
+void menuBeginUi();  // 开始画到 640×480 RT（勿嵌套在其它 RenderTexture 内）
+void menuEndUi();    // 结束 UI RT（不 blit）
+void menuBlitUi();   // 将 UI RT 整数/等比 POINT 放大贴到当前目标（canvas）
+bool menuShellPhase(Phase p); // MainMenu/Setup/Settings/MissionSelect/NetLobby
 
 // RA2 金属 GUI 辅助（game_hud.cpp 实现，菜单/设置页共享复用，确保全 GUI 风格一致）
 void guiMetalFill(int x, int y, int w, int h);          // 平铺拉丝金属底

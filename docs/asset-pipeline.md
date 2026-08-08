@@ -17,7 +17,20 @@ OpenRA2 支持两条资产路径：
 python tools/ra2pack/gen_menu_gui.py
 ```
 
-写出 `assets/gui/menu/`（含 `ra2ts_l/f####.jpg` + `sdbtnanm_*.png`）。缺素材时引擎回退程序化金属 GUI。
+写出 `assets/gui/menu/`：
+- 主菜单：`ra2ts_l/f####.jpg`（BIK 帧）+ 金字按钮素材
+- 选项/遭遇战壳：`load.png`（`load.pcx`）、`multi.png`
+- Allied 暂停鹰徽：`bkgdmd_*.png` / `bkgdsm_*.png`（`uibkgd.pal`）
+- 控件：`dropdown_*.png`、`sdmpbtn_*.png`、`optbtn_*.png` 等
+- 调色板/字体：`pal/*.pal`、`fonts/*.fnt`
+
+缺素材时引擎回退程序化金属 GUI。**注意**：`fsbkgdsm` 是战役阵营徽记，不是选项页侧栏。
+
+壳层页在 **640×480 逻辑画布**上拼装 `load.png` UV 槽位与 `sdmpbtn`/`optbtn`/`dropdown`/`pips`，再 POINT 放大 letterbox 到 1440×810（禁止把壳图直接拉满宽屏）。页面 ↔ 素材对照与冻结 UV 见 [`docs/ra2-reference/menu-screens.md`](ra2-reference/menu-screens.md)。
+
+### 地图预览 vs 局内地形（后续里程碑）
+
+遭遇战缩略图已与 `bakeTerrain` **同源 TMP/岸线采样**，同 seed 进局地形结构可辨认一致。但地图本身仍是 `Map::generate` 的 FBM 噪声岛（height 全 0），**不是**官方 `.map`/`.yrm`。下一里程碑再考虑：加强 generate、接入官方图、启用 height/cliff。
 
 审核截图：
 

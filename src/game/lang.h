@@ -16,7 +16,7 @@ enum class S : int {
     // 战役选择
     MissionN, ObjSurvive, ObjEliminate, ObjTrigger, ClickEnter,
     // 遭遇战设置
-    ChangeMap, MapSize, SizeS, SizeM, SizeL, MapType, MapContinent, MapIslands, MapLake,
+    ChangeMap, CustomizeBattle, MapSize, SizeS, SizeM, SizeL, MapType, MapContinent, MapIslands, MapLake,
     Player, Color, Country, CommanderYou, ComputerN, Remove, AddComputer,
     StartMoney, GameSpeed, SpeedSlow, SpeedNormal, SpeedFast, Volume, Crates, AIAlliance, StartGame,
     GameMode, ModeBattle, ModeFFA, ModeUnholy, ModeMegawealth, ModeLandRush, ModeMeatGrinder, ModeNavalWar,
@@ -47,7 +47,9 @@ enum class S : int {
     EvaInfNoChrono, EvaWaveIncoming,
     SpyTechChrono, SpyTechPsi, SpySWVictim, SpySWReset, EvaMindGain, EvaMindLost,
     // 设置页
-    Language, DisplaySection, WindowMode, WMFullscreen, WMWindowed, Resolution, ResDesktop,
+    Language, DisplaySection, GameOptsSection, InterfaceSection, SoundSection,
+    WindowMode, WMFullscreen, WMWindowed, Resolution, ResDesktop,
+    OptionsMenu, Keyboard, NetworkOpts,
     KeysSection, ResetKeys, PressKey, KeysTip,
     KaStop, KaUnload, KaDeploy, KaScatter, KaGuard, KaWaypoint, KaSameType, KaTeam01, KaTeam02, KaMusic, KaViewBase,
     KaPause, KaRally, KaSell, KaQuickSave, KaQuickLoad, KaSpeedUp, KaSpeedDown,

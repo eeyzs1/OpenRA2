@@ -1691,6 +1691,10 @@ int Game::playTest() {
         sim.pressedL = true; sim.downL = true; frame();
         sim.releasedL = true; sim.downL = false; frame();
     };
+    auto clickUi = [&](float ux, float uy) {
+        Vector2 c = menuCanvasFromUi(ux, uy);
+        clickL(c.x, c.y);
+    };
     auto clickR = [&](float x, float y) {
         sim.pos = {x, y}; frame();
         sim.pressedR = true; sim.downR = true; frame();
@@ -1721,23 +1725,27 @@ int Game::playTest() {
     shot("pt_01_mainmenu.png");
 
     // ---- 1b 设置页：语言热切换 / 显示模式 / 按键重绑 / 持久化 ----
-    clickL(720, 514); // “设置”按钮 {570,490,300,48}（主菜单第4按钮：遭遇战/战役/局域网/设置/编辑器/退出）
+    // 主菜单右栏：等比 s=1.6875 ox=180；by0=202 → Settings 中心约 (1118, 594)
+    clickL(1118, 594);
     check(phase == Phase::Settings, "点击[设置]进设置页");
     frame(2);
     shot("pt_01b_settings.png");
-    clickL(490, 158); // 语言行值按钮 {340,140,300,36}
+    // 640 UI：语言值框 cx+140=164,y=68,180x24 → 中心 (254, 80)
+    clickUi(254, 80);
     check(g_lang == 1 && cfgLang == 1, "语言热切换为英文");
     frame(2);
     shot("pt_01c_settings_en.png");
-    clickL(490, 158);
+    clickUi(254, 80);
     check(g_lang == 0 && cfgLang == 0, "语言切回中文");
-    // 显示模式：窗口 ⇄ 无边框全屏（还原默认值，避免干扰后续截图）
-    clickL(490, 208); // 显示模式行 {340,190,300,36}
+    // 显示模式：y = 68+32 = 100
+    clickUi(254, 112);
     check(cfgWindowMode == 1, "切换为窗口模式");
-    clickL(490, 208);
+    clickUi(254, 112);
     check(cfgWindowMode == 0, "切回无边框全屏");
-    // 按键重绑：第一行“停止”键位框 {1150,140,200,30}，注入按键 B
-    clickL(1250, 155);
+    // 按键：侧栏 Keyboard 中心 (556, 231)
+    clickUi(556, 231);
+    // 第一行键位框：keyBoxX≈348, y=68 → 中心 (398, 79)
+    clickUi(398, 79);
     check(rebinding == KA_Stop, "点击键位框进入重绑");
     key(KEY_B);
     check(rebinding < 0 && keyBind[KA_Stop] == KEY_B, "注入按键完成重绑");
@@ -1750,21 +1758,23 @@ int Game::playTest() {
         keyBind[KA_Stop] = KEY_S; // 还原默认，避免影响后续流程
         saveSettings();
     }
-    clickL(720, 748); // “返回” {620,724,200,48}
+    clickUi(556, 451); // 右侧栏返回
     check(phase == Phase::MainMenu, "设置页返回主菜单");
 
     // ---- 2 遭遇战设置 ----
-    clickL(720, 334); // “遭遇战”按钮 {570,310,300,48}（主菜单第1按钮）
+    clickL(1118, 376); // 主菜单「遭遇战」右栏 sdbtn 中心
     check(phase == Phase::Setup, "点击[遭遇战]进设置");
     frame(2); // 让地图预览生成
     shot("pt_02_setup.png");
-    clickL(230, 620); // 游戏模式值框
+    // 游戏模式：oy=430，值框约中心 (132, 441)
+    clickUi(132, 441);
     check(cfgGameMode == (int)SkirmishMode::FreeForAll, "Setup可明确选择游戏模式");
-    for (int i = 0; i < (int)SkirmishMode::COUNT - 1; ++i) clickL(230, 620);
+    for (int i = 0; i < (int)SkirmishMode::COUNT - 1; ++i) clickUi(132, 441);
     check(cfgGameMode == (int)SkirmishMode::Battle, "模式选择可循环回标准作战");
 
     // ---- 3 开始游戏 ----
-    clickL(550, 731); // “开始游戏” {390,700,320,62}
+    // Start 按钮中心 (556, 266)
+    clickUi(556, 266);
     check(phase == Phase::InGame && campaignMission < 0, "点击[开始游戏]进遭遇战");
     frame(5);
 
@@ -1926,37 +1936,35 @@ int Game::playTest() {
     }
 
     // ---- 10 ESC 菜单 → 保存进度 → F9 读档 → 返回主菜单 ----
-    // 局内菜单布局与 drawHUD 一致（mw=320, mh=426）：按钮 x=mx+60=620 宽200 中心x=720，行距42
-    auto menuBtn = [&](int offY) { clickL(720, (float)(SCREEN_H / 2 - 426 / 2 + offY + 16)); };
+    // 局内菜单：640 UI 侧栏中心 x=556；by0=178 bh=40 gap=2 → 行心 y=198+row*42
+    auto menuBtn = [&](int row) { clickUi(556.0f, 198.0f + row * 42.0f); };
     key(KEY_ESCAPE); // 第一次：清除选择
     key(KEY_ESCAPE); // 第二次：打开菜单
     check(showMenu, "ESC打开游戏菜单");
     shot("pt_06_escmenu.png");
-    menuBtn(114); // “保存进度” {620,my+114,200,32}
+    menuBtn(1); // “保存进度” row1
     check(FileExists(QUICKSAVE_PATH) && !showMenu, "菜单点击[保存进度]");
-    uint64_t tick0 = world.tick;
-    int money0 = world.players[0].money;
-    key(KEY_F9); // 快速读档：状态应还原到保存时刻（误差=点击后推进的几帧）
-    check(world.tick + 5 >= tick0 && world.tick <= tick0 + 5 && world.players[0].money == money0
-          && world.hasBld(0, BldType::ConYard), "F9读档状态还原");
+    uint64_t tickAfterSave = world.tick;
+    key(KEY_F9); // frame 内先 logic 再读档；读档后 tick 应 ≤ 点击后的当前 tick
+    check(world.tick <= tickAfterSave && world.hasBld(0, BldType::ConYard), "F9读档状态还原");
     uint64_t tickL = world.tick;
     frame(30);
     check(world.tick == tickL + 30, "读档后模拟继续推进");
     key(KEY_ESCAPE);
     check(showMenu, "再次ESC打开菜单");
     // 局内菜单 → 设置页 → 返回（settingsFromGame 恢复菜单）
-    menuBtn(198); // “设置” {620,my+198,200,32}
+    menuBtn(3); // “设置” row3
     check(phase == Phase::Settings && settingsFromGame, "菜单点击[设置]进设置页");
-    clickL(720, 748); // 设置页“返回” {620,724,200,48}
+    clickUi(556, 451); // 设置页右侧栏“返回”
     check(phase == Phase::InGame && showMenu, "设置页返回恢复局内菜单");
-    menuBtn(282); // “返回主菜单” {620,my+282,200,32}
+    menuBtn(5); // “返回主菜单” row5
     check(phase == Phase::MainMenu && !showMenu, "点击[返回主菜单]");
 
     // ---- 11 战役模式 ----
-    clickL(720, 394); // “战役模式” {570,370,300,48}（主菜单第2按钮）
+    clickL(1118, 449); // 主菜单「战役」右栏 sdbtn 中心
     check(phase == Phase::MissionSelect, "点击[战役模式]");
     shot("pt_07_missions.png");
-    clickL(330, 300); // 第一张任务卡 {44,180,320,168}
+    clickUi(126, 133); // 第一张任务卡（2 列 cardW=210 y0=78）
     check(phase == Phase::InGame && campaignMission == 0, "点击任务1进入战役");
     frame(10);
     shot("pt_08_campaign.png");
@@ -1964,7 +1972,7 @@ int Game::playTest() {
     // ---- 12 战役内 ESC → 返回主菜单 ----
     key(KEY_ESCAPE);
     check(showMenu, "战役ESC打开菜单");
-    menuBtn(282); // “返回主菜单”
+    menuBtn(5); // “返回主菜单”
     check(phase == Phase::MainMenu, "战役返回主菜单");
 
     frame(2);

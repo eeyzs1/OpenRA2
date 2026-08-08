@@ -1,5 +1,6 @@
 # Extract RA2 main-menu / dialog chrome into assets/gui/menu/ (local-only, copyrighted).
-# Requires tools/ra2pack/game/ MIX tree. No BIK decode — title/dialog stills only.
+# Requires tools/ra2pack/game/ MIX tree. Decodes title stills, shell PCX, dialog SHP, fonts/pals.
+# BIK: ra2ts_l via ffmpeg.
 import os, sys, struct
 from ra2lib import MixTree, Shp, shp_frame_to_rgba
 from PIL import Image
@@ -134,6 +135,17 @@ def save_shp(T, name, pal, prefix=None, shadow=False):
             continue
         if img.getbbox() is None:
             continue
+        # 仅清掉极边缘 1px 的近白碎屑；勿擦真边框（旧 4px/420 阈值会伤 sdmpbtn）
+        if stem.startswith("sdmpbtn") or stem in ("diplobtn", "optbtn", "dropdown"):
+            px = img.load()
+            w, h = img.size
+            for y in range(h):
+                for x in range(w):
+                    if x > 0 and x < w - 1 and y > 0 and y < h - 1:
+                        continue
+                    r, g, b, a = px[x, y]
+                    if a and r > 240 and g > 240 and b > 230:
+                        px[x, y] = (0, 0, 0, 0)
         path = os.path.join(OUT, "%s_%02d.png" % (stem, i))
         try:
             img.save(path)
@@ -147,9 +159,13 @@ def save_shp(T, name, pal, prefix=None, shadow=False):
 
 def main():
     T = MixTree()
-    pal = load_pal(T, ("dialog.pal", "dialogn.pal", "dialogy.pal", "unittem.pal", "cameo.pal"))
+    pal_dlg = load_pal(T, ("dialog.pal", "dialogn.pal", "dialogy.pal", "unittem.pal", "cameo.pal"))
+    pal_ui = load_pal(T, ("uibkgd.pal", "dialog.pal"))
+    pal_ui_y = load_pal(T, ("uibkgdy.pal", "uibkgd.pal", "dialog.pal"))
+    pal_fs = load_pal(T, ("fsbkgdlg.pal", "dialog.pal"))
+    pal_side = load_pal(T, ("sidebar.pal", "shell.pal", "dialog.pal"))
 
-    # Title / campaign / dialog stills
+    # Title / campaign / dialog stills (PCX)
     for n in (
         "title.pcx",
         "titlelg.pcx",
@@ -157,33 +173,83 @@ def main():
         "titlesm.pcx",
         "campaign.pcx",
         "bkgdlg.pcx",
+        "bkgdmd.pcx",
+        "bkgdsm.pcx",
         "aloadlg.pcx",
         "rloadlg.pcx",
         "dlgsysa.pcx",
         "dlgsysi.pcx",
         "mpscore.pcx",
         "wdtbkbtn.pcx",
+        # 选项/读档/联机壳层底图（左视口 + 右 PCB 侧栏）
+        "load.pcx",
+        "multi.pcx",
     ):
         save_pcx(T, n)
 
-    # Dialog SHP panels
+    # Allied / Yuri pause & dialog panels（uibkgd 调色）
+    for n, p in (
+        ("bkgdlg.shp", pal_ui),
+        ("bkgdmd.shp", pal_ui),
+        ("bkgdsm.shp", pal_ui),
+        ("bkgdlgy.shp", pal_ui_y),
+        ("bkgdmdy.shp", pal_ui_y),
+        ("bkgdsmy.shp", pal_ui_y),
+        ("pudlgbga.shp", pal_dlg),
+        ("pudlgbgs.shp", pal_dlg),
+        ("pudlgbgn.shp", pal_dlg),
+        ("pudlgbgy.shp", pal_dlg),
+    ):
+        save_shp(T, n, p)
+
+    # 全屏菜单装饰板 / 按钮 — 侧栏按钮用 shell.pal 才有原作红/琥珀内光
+    pal_btn = load_pal(T, ("shell.pal", "dialog.pal"))
     for n in (
-        "bkgdlg.shp",
         "fsbkgdlg.shp",
-        "pudlgbga.shp",
-        "pudlgbgs.shp",
-        "pudlgbgn.shp",
-        "pudlgbgy.shp",
-        "sdbtnbkgd.shp",
-        "sdbtnanm.shp",
+        "fsbkgdsm.shp",
+        "diplobtn.shp",
         "optbtn.shp",
         "ebtn-up.shp",
         "ebtn-dn.shp",
+        "dropdown.shp",
+        "credits.shp",
     ):
-        save_shp(T, n, pal)
+        save_shp(T, n, pal_dlg)
+    for n in ("sdbtnbkgd.shp", "sdbtnanm.shp", "sdmpbtn.shp"):
+        save_shp(T, n, pal_btn)
+
+    # 局内侧栏段（sidebar.pal；菜单侧栏拼装备用）
+    for n in ("side1.shp", "side2.shp", "side3.shp", "addon.shp", "tab01.shp", "tab02.shp", "tab03.shp", "pips.shp"):
+        save_shp(T, n, pal_side)
 
     for i in range(12):
-        save_shp(T, "button%02d.shp" % i, pal)
+        save_shp(T, "button%02d.shp" % i, pal_dlg)
+
+    # 调色板原文（调试/再解码）
+    pal_dir = os.path.join(OUT, "pal")
+    os.makedirs(pal_dir, exist_ok=True)
+    for pn in ("dialog.pal", "dialogn.pal", "dialogy.pal", "shell.pal", "fsbkgdlg.pal",
+               "uibkgd.pal", "uibkgdy.pal", "sidebar.pal"):
+        _, raw = T.find(pn)
+        if raw and len(raw) >= 768:
+            path = os.path.join(pal_dir, pn)
+            with open(path, "wb") as f:
+                f.write(raw[:768])
+            print("saved", path)
+
+    # 原作 Unicode 点阵字库（运行时优先于系统 TTF）
+    fnt_dir = os.path.join(OUT, "fonts")
+    os.makedirs(fnt_dir, exist_ok=True)
+    for fn in ("game.fnt", "12metfnt.fnt", "grad6fnt.fnt"):
+        _, raw = T.find(fn)
+        if raw:
+            path = os.path.join(fnt_dir, fn)
+            with open(path, "wb") as f:
+                f.write(raw)
+            print("saved", path, len(raw))
+
+    extract_country_flags(T, load_pal(T, ("unittem.pal", "dialog.pal", "shell.pal")))
+    extract_faction_icons(T, load_pal(T, ("dialog.pal", "unittem.pal", "cameo.pal")))
 
     extract_bik(T, "ra2ts_l.bik", "ra2ts_l")
 
@@ -192,7 +258,7 @@ def main():
     with open(man, "w", encoding="utf-8") as f:
         for dirpath, _, files in os.walk(OUT):
             for fn in sorted(files):
-                if fn.endswith((".png", ".jpg", ".ini")):
+                if fn.endswith((".png", ".jpg", ".ini", ".pal", ".fnt")):
                     rel = os.path.relpath(os.path.join(dirpath, fn), OUT).replace("\\", "/")
                     f.write(rel + "\n")
     n_img = sum(1 for dirpath, _, files in os.walk(OUT) for fn in files if fn.endswith((".png", ".jpg")))
@@ -247,6 +313,100 @@ def extract_bik(T, name, stem):
             f.write("width=%d\n" % im.size[0])
             f.write("height=%d\n" % im.size[1])
     print("saved BIK", name, "->", out_dir, "frames", len(frames))
+
+
+def extract_country_flags(T, pal):
+    """Crop ~28×28 lobby flag icons from causfgl_a.shp etc. (frame 0 compact bbox)."""
+    flag_dir = os.path.join(OUT, "flags")
+    os.makedirs(flag_dir, exist_ok=True)
+    mapping = {
+        "america": "causfgl",
+        "korea": "caskfgl",
+        "france": "cafrfgl",
+        "germany": "cagefgl",
+        "uk": "caukfgl",
+        "russia": "carufgl",
+        "cuba": "cacufgl",
+        "libya": "calbfgl",
+        "iraq": "cairfgl",
+        "china": "cankfgl",  # 原作无中国旗；共辉用朝鲜旗资源
+        "yuri": "cunkfgl",
+    }
+    for key, stem in mapping.items():
+        raw = None
+        for name in (stem + "_a.shp", stem + ".shp"):
+            _, raw = T.find(name)
+            if raw:
+                break
+        if not raw:
+            print("MISS flag", key, stem)
+            continue
+        shp = Shp(raw)
+        saved = False
+        for i in range(min(shp.nframes, 8)):
+            img = shp_frame_to_rgba(shp.frame_pixels(i), pal, canvas=(shp.w, shp.h), remap=False)
+            bb = img.getbbox()
+            if not bb:
+                continue
+            bw, bh = bb[2] - bb[0], bb[3] - bb[1]
+            if 8 <= bw <= 80 and 8 <= bh <= 80:
+                crop = img.crop(bb)
+                path = os.path.join(flag_dir, key + ".png")
+                crop.save(path)
+                print("saved flag", path, crop.size, "frame", i)
+                saved = True
+                break
+        if not saved:
+            print("FAIL flag crop", key)
+
+
+def extract_faction_icons(T, pal):
+    """Lobby faction plaques: obsalli / obssovi / obsyuri (+ china/random helpers)."""
+    fac_dir = os.path.join(OUT, "factions")
+    os.makedirs(fac_dir, exist_ok=True)
+    mapping = {
+        "allies": "obsalli.shp",
+        "soviet": "obssovi.shp",
+        "yuri": "obsyuri.shp",
+    }
+    for key, name in mapping.items():
+        _, raw = T.find(name)
+        if not raw:
+            print("MISS faction", key, name)
+            continue
+        shp = Shp(raw)
+        img = shp_frame_to_rgba(shp.frame_pixels(0), pal, canvas=(shp.w, shp.h), remap=False)
+        bb = img.getbbox()
+        if bb:
+            img = img.crop(bb)
+        path = os.path.join(fac_dir, key + ".png")
+        img.save(path)
+        print("saved faction", path, img.size)
+
+    # 中国：无专用观察者徽，用国旗放大作阵营列占位
+    china_flag = os.path.join(OUT, "flags", "china.png")
+    if os.path.isfile(china_flag):
+        im = Image.open(china_flag).convert("RGBA")
+        im = im.resize((48, 48), Image.NEAREST)
+        path = os.path.join(fac_dir, "china.png")
+        im.save(path)
+        print("saved faction", path, im.size)
+
+    # 随机：黄 ??? 在暗红底
+    rnd = Image.new("RGBA", (48, 36), (20, 8, 8, 255))
+    # 简单点阵问号块（无依赖字体）
+    px = rnd.load()
+    # draw three small blocks as ???
+    for i, ox in enumerate((6, 20, 34)):
+        for y in range(8, 28):
+            for x in range(ox, ox + 8):
+                if (y < 12 or y > 24) or x in (ox, ox + 7) or (10 <= y <= 18 and x == ox + 3):
+                    px[x, y] = (255, 236, 64, 255)
+        px[ox + 3, 22] = (255, 236, 64, 255)
+        px[ox + 3, 26] = (255, 236, 64, 255)
+    path = os.path.join(fac_dir, "random.png")
+    rnd.save(path)
+    print("saved faction", path, rnd.size)
 
 
 if __name__ == "__main__":

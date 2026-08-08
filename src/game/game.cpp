@@ -2,6 +2,7 @@
 #include "game/campaign.h"
 #include "game/script.h"
 #include "gfx/sprites.h"
+#include "gfx/bitfont.h"
 #include "sfx/sound.h"
 #include "rlgl.h"
 #include <cmath>
@@ -175,23 +176,35 @@ void Game::newGame(uint64_t seed) {
 }
 
 void Game::loadFont() {
-    // 自动收集双语全部界面字符：字符串表 + 单位/建筑/超武/阵营/战役旁表 + ASCII，
-    // 双语字模全量预载，语言热切换无需重启、任何语言下不缺字显示 '?'
+    // 双语界面字符全量收集；优先原作 game.fnt 点阵（锐利），失败再回退系统 TTF
     std::string all;
     appendAllFontText(all);
     for (int c = 32; c < 127; c++) all += (char)c;
     int count = 0;
     int* cps = LoadCodepoints(all.c_str(), &count);
-    const char* paths[] = {
-        "C:/Windows/Fonts/simhei.ttf",
-        "C:/Windows/Fonts/msyh.ttc",
-        "C:/Windows/Fonts/simsun.ttc",
-    };
-    for (auto p : paths) {
-        if (FileExists(p)) {
-            font = LoadFontEx(p, 18, cps, count);
-            TraceLog(LOG_INFO, "RA2 font: %s baseSize=%d glyphs=%d", p, font.baseSize, font.glyphCount);
-            if (font.baseSize > 0 && font.glyphCount > count / 2) { fontOk = true; break; }
+    font = LoadFontFromRa2Fnt("assets/gui/menu/fonts/game.fnt", cps, count);
+    if (font.baseSize > 0 && font.glyphCount > 64) {
+        fontOk = true;
+    } else {
+        if (font.texture.id) UnloadFont(font);
+        font = {};
+        const char* paths[] = {
+            "C:/Windows/Fonts/simhei.ttf",
+            "C:/Windows/Fonts/msyh.ttc",
+            "C:/Windows/Fonts/simsun.ttc",
+        };
+        for (auto p : paths) {
+            if (!FileExists(p)) continue;
+            font = LoadFontEx(p, 64, cps, count);
+            TraceLog(LOG_INFO, "RA2 font TTF fallback: %s baseSize=%d glyphs=%d",
+                     p, font.baseSize, font.glyphCount);
+            if (font.baseSize > 0 && font.glyphCount > count / 2) {
+                SetTextureFilter(font.texture, TEXTURE_FILTER_POINT);
+                fontOk = true;
+                break;
+            }
+            if (font.texture.id) UnloadFont(font);
+            font = {};
         }
     }
     UnloadCodepoints(cps);
@@ -247,15 +260,26 @@ void Game::run() {
 void Game::render() {
     // 菜单阶段：独立渲染路径
     if (phase != Phase::InGame) {
-        BeginTextureMode(canvas);
-        ClearBackground(BLACK);
-        if (phase == Phase::MainMenu) drawMainMenu();
-        else if (phase == Phase::MissionSelect) drawMissionSelect();
-        else if (phase == Phase::Settings) drawSettings();
-        else if (phase == Phase::NetLobby) drawNetLobby();
-        else if (phase == Phase::MapEditor) drawMapEditor();
-        else drawSetup();
-        EndTextureMode();
+        // 壳层页先画 640×480 UI RT，再 blit 到 canvas（禁止嵌套 RenderTexture）
+        if (menuShellPhase(phase)) {
+            menuBeginUi();
+            if (phase == Phase::MainMenu) drawMainMenu();
+            else if (phase == Phase::MissionSelect) drawMissionSelect();
+            else if (phase == Phase::Settings) drawSettings();
+            else if (phase == Phase::NetLobby) drawNetLobby();
+            else drawSetup();
+            menuEndUi();
+            BeginTextureMode(canvas);
+            ClearBackground(BLACK);
+            menuBlitUi();
+            EndTextureMode();
+        } else {
+            BeginTextureMode(canvas);
+            ClearBackground(BLACK);
+            if (phase == Phase::MapEditor) drawMapEditor();
+            else drawSetup();
+            EndTextureMode();
+        }
         if (!shotFile.empty()) {
             Image img = LoadImageFromTexture(canvas.texture);
             ImageFlipVertical(&img);
@@ -278,6 +302,12 @@ void Game::render() {
         return;
     }
     updateMinimap(); // 嵌套 RenderTexture 会破坏画布渲染状态，提前更新
+    // ESC/结算壳同样先离屏到 UI RT，再在 canvas 上 blit
+    if (showMenu || gameOver) {
+        menuBeginUi();
+        drawGameMenuOverlay();
+        menuEndUi();
+    }
     // 1. 逻辑分辨率渲染到离屏画布
     BeginTextureMode(canvas);
     ClearBackground(BLACK);

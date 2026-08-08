@@ -22,6 +22,7 @@
 | [neutrals.md](./neutrals.md) | 动物、平民、战役限定 |
 | [stats-tables.md](./stats-tables.md) | Cost/HP/Power 总表 |
 | [hotkeys.md](./hotkeys.md) | 默认快捷键 |
+| [menu-screens.md](./menu-screens.md) | 主菜单/选项/遭遇战壳层 UV 与素材对照 |
 | [version-diff.md](./version-diff.md) | RA2 ↔ YR 差异 |
 
 ## 表现风格
