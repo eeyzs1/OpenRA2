@@ -25,7 +25,7 @@ void Game::updateHoverCursor(int mx, int my) {
             int tx, ty;
             screenToTile(wx, wy, tx, ty);
             const BldDef& d = bldDef(t);
-            int bx = tx - d.w / 2, by = ty - d.h / 2;
+            int bx = tx - (d.w - 1), by = ty - (d.h - 1);
             cursorKind = world.canPlace(t, bx, by, localPlayer) ? CursorKind::Arrow : CursorKind::NoMove;
         }
         return;
@@ -40,14 +40,22 @@ void Game::updateHoverCursor(int mx, int my) {
     EID eu = pickUnit(mx, my);
     EID eb = pickBuilding(mx, my);
 
-    // 无选单位：己方驻军建筑 → 部署光标（点一下撤出）；建造厂 + MCV Repacks → 打包光标
+    // 无选单位：己方驻军建筑 → 部署光标（点一下撤出）；
+    // 建造厂 + MCV Repacks：悬停自身 → Deploy；悬停可走地 → Move（右键打包移动）
     if (sel.empty()) {
         if (eb != INVALID_EID && world.ents[eb].player == localPlayer
             && !world.ents[eb].garrison.empty()) {
             cursorKind = CursorKind::Deploy;
         } else if (world.valid(selBuilding) && world.ents[selBuilding].player == localPlayer
                    && world.ents[selBuilding].btype == BldType::ConYard && world.mcvRepacks) {
-            cursorKind = CursorKind::Deploy;
+            if (eb == selBuilding)
+                cursorKind = CursorKind::Deploy;
+            else if (world.map.inBounds(tx, ty) && world.map.passable(tx, ty)
+                     && (eu == INVALID_EID || world.ents[eu].player != localPlayer)
+                     && (eb == INVALID_EID || world.ents[eb].player != localPlayer))
+                cursorKind = CursorKind::Move;
+            else
+                cursorKind = CursorKind::Deploy;
         }
         return;
     }
@@ -172,13 +180,14 @@ void Game::updateHoverCursor(int mx, int my) {
         cursorKind = CursorKind::Harvest;
         return;
     }
-    // MCV：脚印含其他单位则不可展开（与 orderDeploy/canDeployMcv 一致）
+    // MCV：可展开时显示 Deploy（含悬停自身；点选已不依赖光标种类）
     if (hasMcv) {
         for (EID id : sel) {
             if (!world.valid(id) || world.ents[id].utype != UnitType::MCV) continue;
             if (world.canDeployMcv(id)) { cursorKind = CursorKind::Deploy; return; }
         }
     }
+
     // 已选可部署单位且悬停自身 → Deploy
     if (hasDeployable && eu != INVALID_EID && world.ents[eu].player == localPlayer) {
         UnitType ut = world.ents[eu].utype;

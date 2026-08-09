@@ -1,6 +1,7 @@
 @echo off
 setlocal EnableExtensions
 rem OpenRA2 launcher: ASCII + CRLF + no BOM (required for Explorer double-click).
+rem Always runs build\Release\ra2.exe (the Release cmake output). Rebuild updates that file.
 cd /d "%~dp0" || (
   echo [OpenRA2] cannot cd to script directory
   pause
@@ -11,22 +12,22 @@ set "LOG=%CD%\launch_log.txt"
 > "%LOG%" echo [%date% %time%] OpenRA2 launcher
 >> "%LOG%" echo CD=%CD%
 
-set "EXE="
-if exist "%CD%\build\Release\ra2.exe" set "EXE=%CD%\build\Release\ra2.exe"
-if not defined EXE if exist "%CD%\build-asan\Debug\ra2.exe" set "EXE=%CD%\build-asan\Debug\ra2.exe"
-if not defined EXE if exist "%CD%\build\Debug\ra2.exe" set "EXE=%CD%\build\Debug\ra2.exe"
-
-if not defined EXE (
-  >> "%LOG%" echo FAIL: ra2.exe not found
-  echo [OpenRA2] ra2.exe not found. Build first:
+set "EXE=%CD%\build\Release\ra2.exe"
+if not exist "%EXE%" (
+  >> "%LOG%" echo FAIL: missing %EXE%
+  echo [OpenRA2] build\Release\ra2.exe not found.
+  echo Build first:
   echo   cmake --build build --config Release --target ra2
+  echo Then double-click this bat again.
   pause
   exit /b 1
 )
 
 >> "%LOG%" echo EXE=%EXE%
-echo [OpenRA2] launching:
+for %%I in ("%EXE%") do >> "%LOG%" echo EXE_TIME=%%~tI SIZE=%%~zI
+echo [OpenRA2] launching Release build:
 echo   %EXE%
+for %%I in ("%EXE%") do echo   stamped %%~tI
 
 rem Absolute path + WorkingDirectory; verify process still alive after 2s.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^

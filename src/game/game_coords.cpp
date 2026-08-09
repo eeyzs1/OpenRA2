@@ -33,6 +33,18 @@ Rectangle Game::unitScreenRect(const World::Ent& e) const {
     if (ud.canHarvet())
         frame = (e.oreLoad >= World::harvesterCapacity(e.utype)) ? 1 : 0;
     const Sprite& body = g_sprites.unitBody(e.utype, e.dir & 7, frame, cid);
+    // 优先用不透明包围盒：与选中角标/点选一致，避免透明画布把命中区甩到左上
+    if (body.visR > body.visL && body.visB > body.visT) {
+        Rectangle r{
+            p.x - (float)body.ox + (float)body.visL,
+            p.y - (float)body.oy + (float)body.visT,
+            (float)body.visW(),
+            (float)body.visH()
+        };
+        // 点选略放宽，避免深色描边落在包围盒外
+        r.x -= 4.f; r.y -= 4.f; r.width += 8.f; r.height += 8.f;
+        return r;
+    }
     Rectangle r{
         p.x - (float)body.ox,
         p.y - (float)body.oy,

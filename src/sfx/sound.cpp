@@ -887,19 +887,10 @@ void SoundBank::initBgm() {
         playBgmTrack(bgmFiles.size() > 1 ? GetRandomValue(0, (int)bgmFiles.size() - 1) : 0);
         return;
     }
-    // 回退：程序合成 RA2 风格工业进行曲
-    Buf b = genTrack(TRACK_MARCH);
-    bgmMem = wavBytes(b); // 常驻成员：drwav 流式解码直接引用此内存，局部变量悬垂会在首帧 UpdateMusicStream 崩溃
-    bgm = LoadMusicStreamFromMemory(".wav", bgmMem.data(), (int)bgmMem.size());
-    if (bgm.stream.buffer == nullptr) {
-        TraceLog(LOG_WARNING, "RA2 bgm: music stream load failed");
-        return;
-    }
-    bgm.looping = true;
-    SetMusicVolume(bgm, 0.35f * masterVol);
-    PlayMusicStream(bgm);
-    bgmOk = true;
-    TraceLog(LOG_INFO, "RA2 bgm: industrial march synthesized, %.1fs loop", (float)b.frames() / RATE);
+    // 无外部音乐：禁止程序合成回退
+    missingAssets++;
+    TraceLog(LOG_ERROR, "BGM-MISSING: no files in assets/music/ (procedural BGM disabled; refuse start)");
+    fprintf(stderr, "BGM-MISSING: no files in assets/music/ (procedural BGM disabled; refuse start)\n");
 }
 
 void SoundBank::updateBgm() {
@@ -923,33 +914,11 @@ void SoundBank::toggleBgm() {
 }
 
 // ===================== 播放 =====================
-// 离线素材生成（--gen-assets）：合成波形导出 WAV，游戏运行时直接加载文件
-bool SoundBank::genSfxAssets(const char* dir) {
-    MakeDirectory("assets");
-    MakeDirectory(dir);
-    MakeDirectory("assets/music");
-    int n = 0, fail = 0;
-    auto saveBuf = [&](const Buf& b, const char* path) {
-        std::vector<short> pcm = pcm16(b);
-        ::Wave w;
-        w.frameCount = (unsigned)b.frames();
-        w.sampleRate = RATE;
-        w.sampleSize = 16;
-        w.channels = 2;
-        w.data = (void*)pcm.data();
-        if (ExportWave(w, path)) n++; else fail++;
-    };
-    for (int i = 0; i < (int)Sfx::COUNT; i++) {
-        char path[192];
-        snprintf(path, sizeof(path), "%s/%s.wav", dir, sfxAssetName((Sfx)i));
-        saveBuf(genSfx((Sfx)i), path);
-    }
-    // 内置 BGM 也落盘（assets/music/ 非空时运行时优先播放文件并随机轮换，见 initBgm/updateBgm）
-    saveBuf(genTrack(TRACK_MARCH), "assets/music/industrial_march.wav");
-    saveBuf(genTrack(TRACK_GRIND), "assets/music/grind_heavy.wav");
-    saveBuf(genTrack(TRACK_OVERDRIVE), "assets/music/overdrive_fast.wav");
-    printf("gen-assets: %d sounds written to %s, %d failed\n", n, dir, fail);
-    return fail == 0;
+// 已禁用：禁止程序合成波形写入 assets/
+bool SoundBank::genSfxAssets(const char* /*dir*/) {
+    TraceLog(LOG_ERROR, "genSfxAssets disabled: place extracted audio under assets/sfx and assets/music");
+    fprintf(stderr, "genSfxAssets disabled: place extracted audio under assets/sfx and assets/music\n");
+    return false;
 }
 
 void SoundBank::init() {
@@ -960,9 +929,9 @@ void SoundBank::init() {
         TraceLog(LOG_WARNING, "RA2 sfx: no audio device, muted");
         return;
     }
+    missingAssets = 0;
     int external = 0;
     for (int i = 0; i < (int)Sfx::COUNT; i++) {
-        // 外部素材优先：assets/sfx/<name>.wav / .ogg / .mp3
         char path[192];
         Sound base{};
         const char* nm = sfxAssetName((Sfx)i);
@@ -970,24 +939,19 @@ void SoundBank::init() {
             snprintf(path, sizeof(path), "assets/sfx/%s%s", nm, ext);
             if (FileExists(path)) { base = LoadSound(path); break; }
         }
-        if (base.stream.buffer) { external++; }
-        else {
-            Buf bb = genSfx((Sfx)i);
-            std::vector<short> pcm = pcm16(bb);
-            ::Wave w;
-            w.frameCount = (unsigned)bb.frames();
-            w.sampleRate = RATE;
-            w.sampleSize = 16;
-            w.channels = 2;
-            w.data = (void*)pcm.data();
-            base = LoadSoundFromWave(w);
+        if (base.stream.buffer) {
+            external++;
+            snd[i][0] = base;
+            for (int a = 1; a < ALIAS; a++) snd[i][a] = LoadSoundAlias(base);
+        } else {
+            missingAssets++;
+            TraceLog(LOG_ERROR, "SFX-MISSING %s (procedural synth disabled; refuse start)", nm);
+            fprintf(stderr, "SFX-MISSING %s (procedural synth disabled; refuse start)\n", nm);
         }
-        snd[i][0] = base;
-        for (int a = 1; a < ALIAS; a++) snd[i][a] = LoadSoundAlias(base);
     }
-    ok = true;
-    TraceLog(LOG_INFO, "RA2 sfx: %d sounds ready (%d external, %d synthesized)",
-             (int)Sfx::COUNT, external, (int)Sfx::COUNT - external);
+    ok = (missingAssets == 0);
+    TraceLog(LOG_INFO, "RA2 sfx: %d/%d external sounds loaded, missing=%d",
+             external, (int)Sfx::COUNT, missingAssets);
 }
 
 void SoundBank::shutdown() {

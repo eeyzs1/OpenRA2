@@ -9,10 +9,15 @@ void Game::updateCamera() {
     if (kDown(KEY_UP)) camY -= sp;
     if (kDown(KEY_DOWN)) camY += sp;
     Vector2 m = mousePos();
-    if (m.x < 4) camX -= sp;
-    if (m.x > SCREEN_W - 4) camX += sp;
-    if (m.y < 4) camY -= sp;
-    if (m.y > SCREEN_H - 4) camY += sp;
+    // 开局短时禁止边缘卷轴：从菜单点「开始」后鼠标常在侧栏/边缘，否则镜头瞬间被拖离基地车
+    if (camEdgeLock > 0) {
+        camEdgeLock--;
+    } else {
+        if (m.x < 4) camX -= sp;
+        if (m.x > SCREEN_W - 4) camX += sp;
+        if (m.y < 4) camY -= sp;
+        if (m.y > SCREEN_H - 4) camY += sp;
+    }
 
     // 滚轮缩放：以鼠标下世界点为锚
     float wheel = GetMouseWheelMove();

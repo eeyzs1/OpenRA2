@@ -309,6 +309,7 @@ void Game::drawMapEditor() {
             DrawRectangleLines(sx - TILE_W / 2 + 2, sy + 2, d.w * TILE_W / 2, d.h * TILE_H, col);
         } else {
             const Sprite& s = g_sprites.unitBody((UnitType)e.typeIdx, 0, 0, colIdx < 0 ? 0 : colIdx);
+            // 编辑器预览：脚点按菱形中心（与 HEAD 一致；局内 unitScreenPos 仍为北尖）
             DrawTexture(s.tex, sx - s.ox, sy + TILE_H / 2 - s.oy, WHITE);
         }
         Color col = colIdx < 0 ? GRAY : HOUSE_COLORS[colIdx];

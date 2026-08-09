@@ -300,9 +300,17 @@ bool World::spawnFromFactory(int player, const UnitDef& u) {
                         break; // 一座复制中心即可生效
                     }
                 }
-                // 走向集结点（用缓存的 rally 值：spawnUnit 后 b 已悬空）
+                // 走向集结点（用缓存的 rally：spawnUnit 后 b 已悬空）
+                // 采矿车：出厂即自动寻矿（勿只走集结点后空闲，武装矿车 Idle 还会优先索敌）
+                Ent& ne = ents[nu];
+                if (u.canHarvet()) {
+                    ne.autoHarvest = true;
+                    Vec2i ore;
+                    if (map.findNearestOre(sx, sy, 48, ore))
+                        orderHarvest({nu}, ore.x, ore.y);
+                    return true;
+                }
                 if (rallyX >= 0) {
-                    Ent& ne = ents[nu];
                     if (u.isAir()) {
                         // 空中单位：直线飞往集结点，无需寻路
                         ne.goalX = (float)rallyX; ne.goalY = (float)rallyY;

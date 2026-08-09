@@ -9,13 +9,23 @@
 #include <algorithm>
 
 void World::orderMove(const std::vector<EID>& sel, float x, float y, bool attackMove, bool append) {
-    int n = 0;
+    // MCV Repacks：选中建造厂下达移动 → 先打包成基地车再寻路
+    std::vector<EID> units;
+    units.reserve(sel.size());
     for (EID id : sel) {
         if (!valid(id)) continue;
         Ent& e = ents[id];
-        if (e.isBuilding) {
+        if (e.isBuilding && e.btype == BldType::ConYard && mcvRepacks) {
+            EID mcv = packConYardToMcv(id);
+            if (valid(mcv)) units.push_back(mcv);
             continue;
         }
+        if (!e.isBuilding) units.push_back(id);
+    }
+    int n = 0;
+    for (EID id : units) {
+        if (!valid(id)) continue;
+        Ent& e = ents[id];
         const UnitDef& ud = unitDef(e.utype);
         float lx = x, ly = y; // 本单元目标点（append 时可能被队首替换，不能污染共享参数）
         if (append) { // 路径点追加：入队；移动中则到位自动接续，空闲立即启程
@@ -33,7 +43,7 @@ void World::orderMove(const std::vector<EID>& sel, float x, float y, bool attack
         if (ud.canHarvet()) e.autoHarvest = false; // 手动移动暂停自动寻矿
         e.goalX = lx; e.goalY = ly;
         // 目标点按单位散开（方阵）—— RA2 标准间距 1.5 格
-        int cols = (int)ceilf(sqrtf((float)sel.size()));
+        int cols = (int)ceilf(sqrtf((float)units.size()));
         float ox = lx + (n % cols - cols / 2) * 1.5f;
         float oy = ly + (n / cols) * 1.5f;
         n++;
@@ -513,22 +523,9 @@ void World::orderDeploy(EID id) {
         g_sfx.playAt(Sfx::Deploy, e.x, e.y);
         return;
     }
-    // MCV Repacks：建造厂打包回基地车（需遭遇战选项开启）
+    // MCV Repacks：建造厂打包回基地车
     if (e.isBuilding && e.btype == BldType::ConYard) {
-        if (!mcvRepacks) return;
-        int pl = e.player;
-        float sx = e.x + 1.5f, sy = e.y + 1.5f;
-        const BldDef& d = bldDef(e.btype);
-        for (int dy = 0; dy < d.h; dy++)
-            for (int dx = 0; dx < d.w; dx++) {
-                int cx = (int)e.x + dx, cy = (int)e.y + dy;
-                if (map.inBounds(cx, cy)) bldOcc[cellIdx(cx, cy)] = -1;
-            }
-        e.alive = false;
-        freeList.push_back(id);
-        recomputePower();
-        spawnUnit(pl, UnitType::MCV, sx, sy);
-        g_sfx.playAt(Sfx::Deploy, sx, sy);
+        packConYardToMcv(id);
         return;
     }
     if (e.utype != UnitType::MCV) return;
@@ -540,6 +537,28 @@ void World::orderDeploy(EID id) {
     spawnBuilding(pl, BldType::ConYard, bx, by, true);
     map.reveal(pl, bx + 1, by + 1, 8);
     g_sfx.playAt(Sfx::Deploy, (float)bx + 1, (float)by + 1);
+}
+
+EID World::packConYardToMcv(EID id) {
+    if (!valid(id)) return INVALID_EID;
+    Ent& e = ents[id];
+    if (!e.isBuilding || e.btype != BldType::ConYard) return INVALID_EID;
+    if (!mcvRepacks) return INVALID_EID;
+    if (e.mindBy != INVALID_EID || e.permaControlled) return INVALID_EID;
+    int pl = e.player;
+    float sx = e.x + 1.5f, sy = e.y + 1.5f;
+    const BldDef& d = bldDef(e.btype);
+    for (int dy = 0; dy < d.h; dy++)
+        for (int dx = 0; dx < d.w; dx++) {
+            int cx = (int)e.x + dx, cy = (int)e.y + dy;
+            if (map.inBounds(cx, cy)) bldOcc[cellIdx(cx, cy)] = -1;
+        }
+    e.alive = false;
+    freeList.push_back(id);
+    recomputePower();
+    EID mcv = spawnUnit(pl, UnitType::MCV, sx, sy);
+    g_sfx.playAt(Sfx::Deploy, sx, sy);
+    return mcv;
 }
 
 void World::orderCapture(const std::vector<EID>& sel, EID bldId) {

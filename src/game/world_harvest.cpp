@@ -25,8 +25,12 @@ void refineryDockCenter(const World::Ent& b, float& cx, float& cy) {
     cx = b.x + 3.5f;
     cy = b.y + 1.5f;
 }
-bool besideOreCell(float ex, float ey, int ox, int oy) {
-    return std::max(std::abs((int)ex - ox), std::abs((int)ey - oy)) <= 1;
+bool onOreCell(float ex, float ey, int ox, int oy) {
+    // Dig only when standing on the ore tile (adjacent Dig looks premature).
+    return (int)ex == ox && (int)ey == oy;
+}
+bool besideCell(float ex, float ey, int cx, int cy) {
+    return std::max(std::abs((int)ex - cx), std::abs((int)ey - cy)) <= 1;
 }
 } // namespace
 
@@ -113,8 +117,8 @@ void World::updateHarvester(Ent& e, EID id) {
                     break;
                 }
             }
-            // 挖掘距离 = 矿格上/邻格（Chebyshev≤1，不用欧氏 od<2）
-            if (besideOreCell(e.x, e.y, e.oreCell.x, e.oreCell.y)) {
+            // Dig only on the target ore cell
+            if (onOreCell(e.x, e.y, e.oreCell.x, e.oreCell.y)) {
                 e.path.clear();
                 e.pathIdx = 0;
                 e.state = UState::HarvestDig;
@@ -126,11 +130,30 @@ void World::updateHarvester(Ent& e, EID id) {
                 std::vector<Vec2i> path;
                 if (map.findPath((int)e.x, (int)e.y, e.oreCell.x, e.oreCell.y, path)) {
                     if (path.empty()) {
-                        e.state = UState::HarvestDig;
-                        e.digTimer = 0;
-                        e.dir = dirFromVec(e.oreCell.x + 0.5f - e.x, e.oreCell.y + 0.5f - e.y);
-                        e.turretDir = e.dir;
-                        g_sfx.playAt(Sfx::Dig, e.oreCell.x + 0.5f, e.oreCell.y + 0.5f);
+                        // Empty path = already at rewritten goal (≤3 from ore). Dig only on ore.
+                        if (onOreCell(e.x, e.y, e.oreCell.x, e.oreCell.y)) {
+                            e.state = UState::HarvestDig;
+                            e.digTimer = 0;
+                            e.dir = dirFromVec(e.oreCell.x + 0.5f - e.x, e.oreCell.y + 0.5f - e.y);
+                            e.turretDir = e.dir;
+                            g_sfx.playAt(Sfx::Dig, e.oreCell.x + 0.5f, e.oreCell.y + 0.5f);
+                        } else {
+                            bool stepped = false;
+                            for (int dy = -1; dy <= 1 && !stepped; dy++)
+                                for (int dx = -1; dx <= 1 && !stepped; dx++) {
+                                    int ax = e.oreCell.x + dx, ay = e.oreCell.y + dy;
+                                    if (!map.passable(ax, ay) || bldBlocked(ax, ay)) continue;
+                                    std::vector<Vec2i> ap;
+                                    if (map.findPath((int)e.x, (int)e.y, ax, ay, ap) && !ap.empty()) {
+                                        e.path = std::move(ap); e.pathIdx = 0;
+                                        stepped = true;
+                                    }
+                                }
+                            if (!stepped) {
+                                if (e.oreLoad > 0) beginReturnToRefinery();
+                                else e.state = UState::Idle;
+                            }
+                        }
                     } else {
                         e.path = std::move(path); e.pathIdx = 0;
                     }
@@ -141,7 +164,7 @@ void World::updateHarvester(Ent& e, EID id) {
                     if (map.findNearestOre((int)e.x, (int)e.y, kTiberiumNearScan, alt)
                         && (alt.x != e.oreCell.x || alt.y != e.oreCell.y)) {
                         e.oreCell = alt;
-                        if (besideOreCell(e.x, e.y, alt.x, alt.y)) {
+                        if (onOreCell(e.x, e.y, alt.x, alt.y)) {
                             e.state = UState::HarvestDig;
                             e.digTimer = 0;
                             e.dir = dirFromVec(alt.x + 0.5f - e.x, alt.y + 0.5f - e.y);
@@ -185,7 +208,7 @@ void World::updateHarvester(Ent& e, EID id) {
                     Vec2i next;
                     if (map.findNearestOre(e.oreCell.x, e.oreCell.y, kTiberiumNearScan, next)) {
                         e.oreCell = next;
-                        if (besideOreCell(e.x, e.y, next.x, next.y)) {
+                        if (onOreCell(e.x, e.y, next.x, next.y)) {
                             e.state = UState::HarvestDig;
                             e.digTimer = 0;
                             e.dir = dirFromVec(next.x + 0.5f - e.x, next.y + 0.5f - e.y);
@@ -222,7 +245,7 @@ void World::updateHarvester(Ent& e, EID id) {
             if (b.isBuilding) refineryDockUnload(b, dockX, dockY);
             else { dockX = (int)b.x; dockY = (int)b.y; }
             bool atDock = distf(e.x, e.y, dx, dy) < 2.0f
-                       || besideOreCell(e.x, e.y, dockX, dockY);
+                       || besideCell(e.x, e.y, dockX, dockY);
             if (atDock) {
                 e.state = UState::HarvestUnload;
                 e.digTimer = 0;

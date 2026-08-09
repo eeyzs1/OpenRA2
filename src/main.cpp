@@ -142,12 +142,27 @@ int main(int argc, char** argv) {
         return 0;
     }
     bool windowed = false;
-    for (int i = 1; i < argc; i++)
+    bool liveVerify = false;
+    for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--windowed") == 0) windowed = true;
-    // 测试/截图等非交互模式：隐藏窗口运行，不打扰用户桌面
-    bool testMode = argc > 1 && strncmp(argv[1], "--", 2) == 0 && strcmp(argv[1], "--windowed") != 0;
+        if (strcmp(argv[i], "--live-verify") == 0) { liveVerify = true; windowed = true; }
+    }
+    // 测试/截图等非交互模式：隐藏窗口；live-verify 必须可见才能打真实鼠标
+    bool testMode = !liveVerify && argc > 1 && strncmp(argv[1], "--", 2) == 0 && strcmp(argv[1], "--windowed") != 0;
     Game game;
     game.init(windowed, testMode);
+    if (!game.assetsOk()) {
+        fprintf(stderr, "FATAL: required assets missing — game will not start. See SPRITE-MISSING/SFX-MISSING/GUI-MISSING above.\n");
+#ifdef _WIN32
+        if (!testMode) {
+            MessageBoxA(nullptr,
+                "Required game assets are missing.\nExtract RA2 MIX assets first (tools/ra2pack).\nSee console/log for SPRITE-MISSING / SFX-MISSING.",
+                "OpenRA2 — missing assets", MB_OK | MB_ICONERROR);
+        }
+#endif
+        game.shutdown();
+        return 1;
+    }
     if (argc > 1 && strcmp(argv[1], "--smoke") == 0) {
         int frames = argc > 2 ? atoi(argv[2]) : 600;
         int fails = 1;
@@ -185,6 +200,11 @@ int main(int argc, char** argv) {
         } catch (...) {
             TraceLog(LOG_ERROR, "CAMPAIGN MATRIX EXCEPTION: unknown exception");
         }
+        game.shutdown();
+        return fails == 0 ? 0 : 1;
+    }
+    if (liveVerify || (argc > 1 && strcmp(argv[1], "--live-verify") == 0)) {
+        int fails = game.liveVerify();
         game.shutdown();
         return fails == 0 ? 0 : 1;
     }

@@ -195,25 +195,32 @@ Font LoadFontFromRa2Fnt(const char* path, const int* codepoints, int codepointCo
     std::memset(font.glyphs, 0, (size_t)font.glyphCount * sizeof(GlyphInfo));
 
     int fromTrad = 0;
+    auto glyphHasInk = [](const GlyphInfo& g) -> bool {
+        if (!g.image.data || g.image.width <= 1 || g.image.height <= 0) return false;
+        const unsigned char* px = (const unsigned char*)g.image.data;
+        int n = g.image.width * g.image.height;
+        int ink = 0;
+        for (int i = 0; i < n; i++) if (px[i] > 32) ink++;
+        return ink >= 3; // 空心方框/占位几乎无墨，强制走 TTF
+    };
     for (int i = 0; i < font.glyphCount; i++) {
         int cp = cps[i];
+        // 汉字走 TTF；拉丁字母/数字也走 TTF（game.fnt 部分拉丁是空心方框占位，会显示成 ▯）
+        bool forceTtf = (cp >= 0x80)
+            || (cp >= '0' && cp <= '9')
+            || (cp >= 'A' && cp <= 'Z')
+            || (cp >= 'a' && cp <= 'z');
         RawGlyph raw = lookupRaw(fileData, hdr, cp);
-        bool usable = raw.ok && raw.width > 0 && raw.bits && raw.idx != placeholderIdx;
-
-        if (!usable) {
-            int trad = toTraditionalCp(cp);
-            if (trad != cp) {
-                RawGlyph tr = lookupRaw(fileData, hdr, trad);
-                if (tr.ok && tr.width > 0 && tr.bits && tr.idx != placeholderIdx) {
-                    raw = tr;
-                    usable = true;
-                    fromTrad++;
-                }
+        bool usable = !forceTtf && raw.ok && raw.width > 0 && raw.bits && raw.idx != placeholderIdx;
+        (void)fromTrad;
+        if (usable) {
+            font.glyphs[i] = fromRaw(cp, raw, hdr, spaceAdv, bakeScale);
+            if (!glyphHasInk(font.glyphs[i])) {
+                UnloadImage(font.glyphs[i].image);
+                font.glyphs[i] = makeEmpty(cp, (int)hdr.fontHeight, spaceAdv, bakeScale);
+                needTtf.push_back(i);
             }
-        }
-
-        if (usable) font.glyphs[i] = fromRaw(cp, raw, hdr, spaceAdv, bakeScale);
-        else {
+        } else {
             font.glyphs[i] = makeEmpty(cp, (int)hdr.fontHeight, spaceAdv, bakeScale);
             needTtf.push_back(i);
         }
@@ -221,8 +228,34 @@ Font LoadFontFromRa2Fnt(const char* path, const int* codepoints, int codepointCo
 
     UnloadFileData(fileData);
 
-    // 剩余缺字（箭头/数学符号等）：复用 '?' 点阵，避免空白/豆腐
+    // 缺字：优先系统 TTF 同高度烘焙（简体补字）；失败再退回 '?'
     if (!needTtf.empty()) {
+        std::vector<int> missCps;
+        missCps.reserve(needTtf.size());
+        for (int gi : needTtf) missCps.push_back(cps[(size_t)gi]);
+
+        GlyphInfo* ttfGlyphs = nullptr;
+        const char* ttfPaths[] = {
+            "C:/Windows/Fonts/simhei.ttf",
+            "C:/Windows/Fonts/msyh.ttc",
+            "C:/Windows/Fonts/simsun.ttc",
+        };
+        int fontPx = (int)hdr.fontHeight;
+        if (fontPx < 12) fontPx = 12;
+        for (const char* tp : ttfPaths) {
+            if (!FileExists(tp)) continue;
+            int dataSize = 0;
+            unsigned char* fileDataTtf = LoadFileData(tp, &dataSize);
+            if (!fileDataTtf || dataSize <= 0) continue;
+            ttfGlyphs = LoadFontData(fileDataTtf, dataSize, fontPx, missCps.data(), (int)missCps.size(), FONT_DEFAULT);
+            UnloadFileData(fileDataTtf);
+            if (ttfGlyphs) {
+                TraceLog(LOG_INFO, "RA2 bitfont: TTF fill from %s for %d glyphs", tp, (int)missCps.size());
+                break;
+            }
+        }
+
+        int filledTtf = 0, filledQ = 0;
         int q = -1;
         for (int i = 0; i < font.glyphCount; i++) {
             if (cps[(size_t)i] == (int)'?' && font.glyphs[i].image.data && font.glyphs[i].image.width > 1) {
@@ -230,18 +263,56 @@ Font LoadFontFromRa2Fnt(const char* path, const int* codepoints, int codepointCo
                 break;
             }
         }
-        int filled = 0;
-        if (q >= 0) {
-            for (int gi : needTtf) {
-                UnloadImage(font.glyphs[gi].image);
+
+        for (size_t n = 0; n < needTtf.size(); n++) {
+            int gi = needTtf[n];
+            UnloadImage(font.glyphs[gi].image);
+            font.glyphs[gi].image = {};
+            bool ok = false;
+            if (ttfGlyphs) {
+                GlyphInfo& src = ttfGlyphs[n];
+                if (src.image.data && src.image.width > 0 && src.image.height > 0) {
+                    Image img = ImageCopy(src.image);
+                    if (img.format != PIXELFORMAT_UNCOMPRESSED_GRAYSCALE)
+                        ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_GRAYSCALE);
+                    // 与原作 1bpp 点阵对齐；标点笔画细，阈值过高会整字被抹掉成缺字缝
+                    if (img.data && img.format == PIXELFORMAT_UNCOMPRESSED_GRAYSCALE) {
+                        unsigned char* px = (unsigned char*)img.data;
+                        int np = img.width * img.height;
+                        int ink = 0;
+                        for (int pi = 0; pi < np; pi++) if (px[pi] >= 100) ink++;
+                        unsigned char thr = (ink < 8) ? 80 : 140; // 细笔画（逗号/叹号）用更低阈值
+                        for (int pi = 0; pi < np; pi++) px[pi] = (px[pi] >= thr) ? 255 : 0;
+                    }
+                    font.glyphs[gi].value = cps[(size_t)gi];
+                    font.glyphs[gi].image = img;
+                    // 基线：TTF offsetY 常与点阵差一截，统一贴顶避免同句深浅+高低不一
+                    int adv = src.advanceX > 0 ? src.advanceX : (int)hdr.ideographWidth;
+                    if (bakeScale > 1) adv *= bakeScale;
+                    font.glyphs[gi].advanceX = adv;
+                    font.glyphs[gi].offsetX = 0;
+                    font.glyphs[gi].offsetY = 0;
+                    ok = true;
+                    filledTtf++;
+                }
+            }
+            if (!ok && q >= 0) {
                 font.glyphs[gi].image = ImageCopy(font.glyphs[q].image);
                 font.glyphs[gi].advanceX = font.glyphs[q].advanceX;
                 font.glyphs[gi].offsetX = font.glyphs[q].offsetX;
                 font.glyphs[gi].offsetY = font.glyphs[q].offsetY;
-                filled++;
+                font.glyphs[gi].value = cps[(size_t)gi];
+                filledQ++;
+            } else if (!ok) {
+                font.glyphs[gi] = makeEmpty(cps[(size_t)gi], (int)hdr.fontHeight, spaceAdv, bakeScale);
             }
         }
-        TraceLog(LOG_INFO, "RA2 bitfont: filled %d missing glyphs from '?'", filled);
+
+        if (ttfGlyphs) {
+            for (int i = 0; i < (int)missCps.size(); i++) UnloadImage(ttfGlyphs[i].image);
+            MemFree(ttfGlyphs);
+        }
+        TraceLog(LOG_INFO, "RA2 bitfont: missing fill ttf=%d qmark=%d", filledTtf, filledQ);
     }
 
     TraceLog(LOG_INFO, "RA2 bitfont: packing atlas glyphs=%d...", font.glyphCount);

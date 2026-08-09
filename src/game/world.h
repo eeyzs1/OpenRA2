@@ -303,7 +303,8 @@ public:
     void orderAttack(const std::vector<EID>& sel, EID target);
     void orderHarvest(const std::vector<EID>& sel, int x, int y);
     void orderStop(const std::vector<EID>& sel);
-    void orderDeploy(EID id);                    // 基地车展开
+    void orderDeploy(EID id);                    // 基地车展开 / 建造厂打包
+    EID packConYardToMcv(EID id);                // MCV Repacks：建造厂→基地车，返回新 EID
     void orderCapture(const std::vector<EID>& sel, EID bldId);
     void orderRepair(const std::vector<EID>& sel, EID bldId);   // 工程师修复己方受损建筑
     void orderScatter(const std::vector<EID>& sel); // X 散布

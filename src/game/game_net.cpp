@@ -103,7 +103,11 @@ void Game::netHandleMsgs() {
     auto validCountry = [](int value) {
         return value > (int)Country::None && value < (int)Country::COUNT;
     };
-    auto validMapSize = [](int value) { return value == 64 || value == 96 || value == 128; };
+    auto validMapSize = [](int value) {
+        static const int k[] = {48, 64, 96, 128, 160, 200, 256};
+        for (int s : k) if (s == value) return true;
+        return false;
+    };
     auto validTargetEid = [&](int value) {
         return value >= 0 && value < (int)world.ents.size();
     };
@@ -135,7 +139,7 @@ void Game::netHandleMsgs() {
                 int crates = r.r<uint8_t>();
                 int country = r.r<uint8_t>();
                 int color = r.r<uint8_t>();
-                if (!r.done() || seed == 0 || !validMapSize(mapSize) || mapType < 0 || mapType > 2
+                if (!r.done() || seed == 0 || !validMapSize(mapSize) || mapType < 0 || mapType > 6
                     || money < 0 || money > 1000000 || crates > 1
                     || !validCountry(country) || color < 0 || color >= MAX_PLAYERS) {
                     reject("invalid welcome");

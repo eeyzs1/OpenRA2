@@ -60,14 +60,17 @@ static BldType spriteAliasBld(BldType t) {
     return t; // 全部建筑均有专属图形
 }
 
-// 缺素材：禁止程序生成回退。返回 1×1 品红占位并 LOG_ERROR（调用方可见）。
+// 缺素材：禁止程序生成回退。累计计数，返回 1×1 品红占位；启动时 missingCount()>0 则拒绝进游戏。
+static int g_spriteMissingCount = 0;
 static PixBuf missingAssetPix(const char* kind, const char* name) {
-    TraceLog(LOG_ERROR, "SPRITE-MISSING %s=%s (no RA2 extract; procedural disabled)", kind, name);
-    fprintf(stderr, "SPRITE-MISSING %s=%s (no RA2 extract; procedural disabled)\n", kind, name);
+    g_spriteMissingCount++;
+    TraceLog(LOG_ERROR, "SPRITE-MISSING %s=%s (procedural fallback disabled; refuse start)", kind, name);
+    fprintf(stderr, "SPRITE-MISSING %s=%s (procedural fallback disabled; refuse start)\n", kind, name);
     PixBuf pb(1, 1);
     pb.set(0, 0, Color{255, 0, 255, 255});
     return pb;
 }
+int SpriteBank::missingCount() const { return g_spriteMissingCount; }
 
 Sprite SpriteBank::makeSprite(PixBuf&& pb, int ox, int oy) {
     Sprite s;
@@ -1946,7 +1949,7 @@ const Sprite& SpriteBank::tile(Terrain t, int variant) {
     if (it != cache.end()) return it->second;
     PixBuf pb;
     if (!loadSpr(pb, "assets/sprites/tile_%s_%d.png", terrainAssetName(t), variant))
-        pb = baseTile(t, variant);
+        pb = missingAssetPix("tile", terrainAssetName(t));
     // 文件矿脉瓦片也做边缘软化（硬菱形叠草地很扎眼）
     if ((t == Terrain::Ore || t == Terrain::Gems) && pb.w > 0 && pb.h > 0) {
         float cx = (pb.w - 1) * 0.5f, cy = (pb.h - 1) * 0.5f;
@@ -1973,7 +1976,7 @@ const Sprite& SpriteBank::overlaySpr(Overlay o) {
     if (it != cache.end()) return it->second;
     PixBuf pb;
     if (!loadSpr(pb, "assets/sprites/overlay_%s.png", overlayAssetName(o)))
-        pb = baseOverlay(o);
+        pb = missingAssetPix("overlay", overlayAssetName(o));
     Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2; s.oy = s.tex.height - 1;
     return cache.emplace(k, s).first->second;
@@ -1984,16 +1987,8 @@ const Sprite& SpriteBank::crateSpr() {
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
     PixBuf pb;
-    if (!loadSpr(pb, "assets/sprites/overlay_crate.png")) {
-        // 无提取素材时的程序兜底（等距木箱）
-        pb = PixBuf(36, 40);
-        Color wood{168, 124, 68, 255}, woodDark{118, 82, 42, 255}, band{220, 190, 70, 255};
-        pb.fillRect(8, 12, 20, 18, woodDark);
-        pb.fillRect(8, 8, 20, 8, wood);
-        pb.fillRect(8, 14, 20, 2, band);
-        pb.fillRect(8, 22, 20, 2, band);
-        pb.fillRect(17, 8, 2, 22, band);
-    }
+    if (!loadSpr(pb, "assets/sprites/overlay_crate.png"))
+        pb = missingAssetPix("overlay", "crate");
     Sprite s = makeSprite(std::move(pb), 0, 0);
     // theater SHP 60×60：南触点约在内容底缘中心
     s.ox = s.tex.width / 2;
@@ -2020,7 +2015,19 @@ const Sprite& SpriteBank::finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, 
         pb = std::move(canvas);
     }
     pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
+    // vis* 仅供选中/点选收紧；ox/oy 保持与 gen_assets / 既有核对一致（整幅中心+0.72h）
+    int visL = pb.w, visT = pb.h, visR = -1, visB = -1;
+    for (int y = 0; y < pb.h; y++)
+        for (int x = 0; x < pb.w; x++)
+            if (pb.get(x, y).a > 30) {
+                if (x < visL) visL = x;
+                if (x > visR) visR = x;
+                if (y < visT) visT = y;
+                if (y > visB) visB = y;
+            }
+    if (visR < 0) { visL = 0; visT = 0; visR = pb.w - 1; visB = pb.h - 1; }
     Sprite s = makeSprite(std::move(pb), 0, 0);
+    s.visL = visL; s.visT = visT; s.visR = visR; s.visB = visB;
     s.ox = s.tex.width / 2;
     // 地面载具：锚点与 gen_assets 南触点 0.72h 一致；步兵/空/海仍用中心+4
     if (!ud.isAir() && !ud.isNaval() && !ud.isInfantry()
@@ -2107,10 +2114,21 @@ const Sprite& SpriteBank::unitTurret(UnitType t, int dir, int player) {
     }
     if (!ext) pb = missingAssetPix("turret", unitAssetName(orig));
     pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
+    int visL = pb.w, visT = pb.h, visR = -1, visB = -1;
+    for (int y = 0; y < pb.h; y++)
+        for (int x = 0; x < pb.w; x++)
+            if (pb.get(x, y).a > 30) {
+                if (x < visL) visL = x;
+                if (x > visR) visR = x;
+                if (y < visT) visT = y;
+                if (y > visB) visB = y;
+            }
+    if (visR < 0) { visL = 0; visT = 0; visR = pb.w - 1; visB = pb.h - 1; }
     Sprite s = makeSprite(std::move(pb), 0, 0);
-    s.ox = s.tex.width / 2;
+    s.visL = visL; s.visT = visT; s.visR = visR; s.visB = visB;
     // 与车体同一锚点规则：叠绘时 body.ox/oy 对齐才不漂
     const UnitDef& ud = unitDef(t);
+    s.ox = s.tex.width / 2;
     if (!ud.isAir() && !ud.isNaval() && !ud.isInfantry())
         s.oy = (int)(s.tex.height * 0.72f);
     else
@@ -2381,8 +2399,10 @@ const Sprite& SpriteBank::explosion(int frame) {
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
     PixBuf pb;
-    if (!loadSpr(pb, "assets/sprites/fx_explosion_%d.png", frame))
-        pb = baseExplosion(frame);
+    if (!loadSpr(pb, "assets/sprites/fx_explosion_%d.png", frame)) {
+        char nm[32]; snprintf(nm, sizeof(nm), "%d", frame);
+        pb = missingAssetPix("fx_explosion", nm);
+    }
     Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2; s.oy = s.tex.height / 2;
     return cache.emplace(k, s).first->second;
@@ -2394,7 +2414,7 @@ const Sprite& SpriteBank::muzzle() {
     if (it != cache.end()) return it->second;
     PixBuf pb;
     if (!loadSpr(pb, "assets/sprites/fx_muzzle.png"))
-        pb = baseMuzzle();
+        pb = missingAssetPix("fx", "muzzle");
     Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2; s.oy = s.tex.height / 2;
     return cache.emplace(k, s).first->second;
@@ -2405,8 +2425,10 @@ const Sprite& SpriteBank::projectile(int kind, int dir) {
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
     PixBuf pb;
-    if (!loadSpr(pb, "assets/sprites/fx_proj_%d_d%d.png", kind, dir & 7))
-        pb = baseProjectile(kind, dir);
+    if (!loadSpr(pb, "assets/sprites/fx_proj_%d_d%d.png", kind, dir & 7)) {
+        char nm[32]; snprintf(nm, sizeof(nm), "%d_d%d", kind, dir & 7);
+        pb = missingAssetPix("fx_proj", nm);
+    }
     Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2; s.oy = s.tex.height / 2;
     return cache.emplace(k, s).first->second;
@@ -2418,8 +2440,10 @@ const Sprite& SpriteBank::smoke(int frame) {
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
     PixBuf pb;
-    if (!loadSpr(pb, "assets/sprites/fx_smoke_%d.png", frame))
-        pb = baseSmoke(frame);
+    if (!loadSpr(pb, "assets/sprites/fx_smoke_%d.png", frame)) {
+        char nm[32]; snprintf(nm, sizeof(nm), "%d", frame);
+        pb = missingAssetPix("fx_smoke", nm);
+    }
     Sprite s = makeSprite(std::move(pb), 0, 0);
     s.ox = s.tex.width / 2; s.oy = s.tex.height / 2;
     return cache.emplace(k, s).first->second;
@@ -2497,12 +2521,13 @@ const Sprite& SpriteBank::iconUnit(UnitType t, int player) {
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
     PixBuf ext;
-    if (loadSpr(ext, "assets/sprites/icon_unit_%s.png", unitAssetName(t))) {
-        ext.remap(Pal::REMAP, HOUSE_COLORS[player]);
+    // cameo.pal 图标勿 house-remap（会把天空/涂装染坏）
+    const char* stem = unitAssetName(t);
+    if (loadSpr(ext, "assets/sprites/icon_unit_%s.png", stem)) {
         Sprite s = makeSprite(std::move(ext), 0, 0);
         return cache.emplace(k, s).first->second;
     }
-    PixBuf miss = missingAssetPix("icon_unit", unitAssetName(t));
+    PixBuf miss = missingAssetPix("icon_unit", stem);
     Sprite s = makeSprite(std::move(miss), 0, 0);
     return cache.emplace(k, s).first->second;
 }
@@ -2513,7 +2538,7 @@ const Sprite& SpriteBank::iconBld(BldType t, int player) {
     if (it != cache.end()) return it->second;
     PixBuf ext;
     if (loadSpr(ext, "assets/sprites/icon_bld_%s.png", bldAssetName(t))) {
-        ext.remap(Pal::REMAP, HOUSE_COLORS[player]);
+        // cameo 已是成品色，勿 remap
         Sprite s = makeSprite(std::move(ext), 0, 0);
         return cache.emplace(k, s).first->second;
     }
@@ -2524,12 +2549,14 @@ const Sprite& SpriteBank::iconBld(BldType t, int player) {
 
 void SpriteBank::init() {
     inited = true;
+    g_spriteMissingCount = 0;
     VxlRt::init(); // 运行时 VXL（调色板 / VPL）
     loadAnimsIni(); // 动画元数据（walk/fire/die/mk 帧数）
-    // 预生成地形瓦片（常用）
+    // 预载必需地形/装饰/特效（缺失计入 missingCount，启动侧拒绝进游戏）
     for (int t = 0; t <= (int)Terrain::Bridge; t++)
         for (int v = 0; v < 8; v++) tile((Terrain)t, v);
     for (int o = 1; o <= (int)Overlay::Rock2; o++) overlaySpr((Overlay)o);
+    crateSpr();
     for (int f = 0; f < EXPLOSION_FRAMES; f++) explosion(f);
     for (int f = 0; f < SMOKE_FRAMES; f++) smoke(f);
     muzzle();
@@ -2574,163 +2601,9 @@ static std::vector<int> unitFrameKeys(UnitType t) {
     return {0};
 }
 
-bool SpriteBank::genAssets(const char* outDir) {
-    MakeDirectory("assets");
-    MakeDirectory(outDir);
-    MakeDirectory("assets/preview");
-    int n = 0, fail = 0, skipped = 0;
-    auto save = [&](const PixBuf& pb, const char* fmt, ...) {
-        char path[256];
-        va_list ap; va_start(ap, fmt);
-        vsnprintf(path, sizeof(path), fmt, ap);
-        va_end(ap);
-        // 已有 MIX 提取的真实素材时不覆盖（避免程序像素占位冲掉 gen_assets.py 产物）
-        if (FileExists(path)) { skipped++; return; }
-        if (pb.saveToFile(path)) n++; else fail++;
-    };
-    // 地形瓦片（6 类 × 8 变体）
-    for (int t = 0; t <= (int)Terrain::Bridge; t++)
-        for (int v = 0; v < 8; v++)
-            save(baseTile((Terrain)t, v), "%s/tile_%s_%d.png", outDir, terrainAssetName((Terrain)t), v);
-    // 地表装饰
-    for (int o = 1; o <= (int)Overlay::Rock2; o++)
-        save(baseOverlay((Overlay)o), "%s/overlay_%s.png", outDir, overlayAssetName((Overlay)o));
-    // 单位（全方向全帧）+ 炮塔
-    for (int i = 0; i < (int)UnitType::COUNT; i++) {
-        UnitType t = (UnitType)i;
-        const char* nm = unitAssetName(t);
-        for (int d = 0; d < 8; d++)
-            for (int f : unitFrameKeys(t))
-                save(unitContentPix(t, d, f), "%s/unit_%s_d%d_f%d.png", outDir, nm, d, f);
-        if (hasTurret(t))
-            for (int d = 0; d < 8; d++)
-                save(turretContentPix(t, d), "%s/turret_%s_d%d.png", outDir, nm, d);
-    }
-    // 建筑（成品 + 脚手架）
-    for (int i = 0; i < (int)BldType::COUNT; i++) {
-        BldType t = (BldType)i;
-        const char* nm = bldAssetName(t);
-        save(bldContentPix(t, false), "%s/bld_%s.png", outDir, nm);
-        save(bldContentPix(t, true), "%s/bld_%s_scaffold.png", outDir, nm);
-    }
-    // 特效
-    for (int f = 0; f < EXPLOSION_FRAMES; f++) save(baseExplosion(f), "%s/fx_explosion_%d.png", outDir, f);
-    for (int f = 0; f < SMOKE_FRAMES; f++) save(baseSmoke(f), "%s/fx_smoke_%d.png", outDir, f);
-    save(baseMuzzle(), "%s/fx_muzzle.png", outDir);
-    for (int kind = 0; kind < 2; kind++)
-        for (int d = 0; d < 8; d++)
-            save(baseProjectile(kind, d), "%s/fx_proj_%d_d%d.png", outDir, kind, d);
-    // 图标（与运行时 iconUnit/iconBld 的程序生成路径一致，保留红色占位供运行时换色）
-    for (int i = 0; i < (int)UnitType::COUNT; i++) {
-        UnitType t = (UnitType)i;
-        PixBuf body = unitContentPix(t, 2, 0);
-        if (hasTurret(t)) body.blit(turretContentPix(t, 2), 2, 2);
-        int gy = body.h - 1; // 地面锚点：最低不透明像素行
-        while (gy > 0) {
-            bool solid = false;
-            for (int x = 0; x < body.w && !solid; x++) solid = body.get(x, gy).a > 60;
-            if (solid) break;
-            gy--;
-        }
-        save(makeIcon(body, gy), "%s/icon_unit_%s.png", outDir, unitAssetName(t));
-    }
-    for (int i = 0; i < (int)BldType::COUNT; i++) {
-        PixBuf bc = bldContentPix((BldType)i, false);
-        int gy = bldGroundY_;
-        save(makeIcon(bc, gy), "%s/icon_bld_%s.png", outDir, bldAssetName((BldType)i));
-    }
-
-    // ---------- 审核预览图（assets/preview/，不参与游戏） ----------
-    // 通用网格拼版：rows 个条目 × cols 个方向/形态，单元格取最大内容尺寸
-    auto sheet = [&](const char* path, const std::vector<std::vector<PixBuf>>& rows, Color bg) {
-        int cw = 0, ch = 0;
-        for (auto& r : rows)
-            for (auto& c : r) { cw = std::max(cw, c.w); ch = std::max(ch, c.h); }
-        cw += 8; ch += 8;
-        int cols = 0;
-        for (auto& r : rows) cols = std::max(cols, (int)r.size());
-        PixBuf s(std::max(1, cols * cw), std::max(1, (int)rows.size() * ch));
-        s.clear(bg);
-        for (size_t y = 0; y < rows.size(); y++)
-            for (size_t x = 0; x < rows[y].size(); x++) {
-                const PixBuf& c = rows[y][x];
-                s.blit(c, (int)x * cw + (cw - c.w) / 2, (int)y * ch + (ch - c.h) / 2);
-            }
-        s.saveToFile(path);
-    };
-    Color sheetBg{40, 42, 46, 255};
-    {   // 单位：每单位一行（f0 × 8 方向），有第二帧的追加一行 f1；带炮塔的行尾叠加示意
-        std::vector<std::vector<PixBuf>> rows;
-        for (int i = 0; i < (int)UnitType::COUNT; i++) {
-            UnitType t = (UnitType)i;
-            for (int f : unitFrameKeys(t)) {
-                std::vector<PixBuf> row;
-                for (int d = 0; d < 8; d++) {
-                    PixBuf c = unitContentPix(t, d, f);
-                    if (hasTurret(t) && f == 0) c.blit(turretContentPix(t, d), 2, 2);
-                    row.push_back(std::move(c));
-                }
-                rows.push_back(std::move(row));
-            }
-        }
-        sheet("assets/preview/units.png", rows, sheetBg);
-    }
-    {   // 建筑：每个一行（成品 | 脚手架）
-        std::vector<std::vector<PixBuf>> rows;
-        for (int i = 0; i < (int)BldType::COUNT; i++)
-            rows.push_back({bldContentPix((BldType)i, false), bldContentPix((BldType)i, true)});
-        sheet("assets/preview/buildings.png", rows, sheetBg);
-    }
-    {   // 地形与装饰
-        std::vector<std::vector<PixBuf>> rows;
-        for (int t = 0; t <= (int)Terrain::Bridge; t++) {
-            std::vector<PixBuf> row;
-            for (int v = 0; v < 8; v++) row.push_back(baseTile((Terrain)t, v));
-            rows.push_back(std::move(row));
-        }
-        std::vector<PixBuf> ov;
-        for (int o = 1; o <= (int)Overlay::Rock2; o++) ov.push_back(baseOverlay((Overlay)o));
-        rows.push_back(std::move(ov));
-        sheet("assets/preview/terrain.png", rows, sheetBg);
-    }
-    {   // 特效：爆炸 12 帧 / 烟 6 帧 / 枪口 / 抛射体 2 类 × 8 方向
-        std::vector<std::vector<PixBuf>> rows;
-        std::vector<PixBuf> ex, sm, mu, p0, p1;
-        for (int f = 0; f < EXPLOSION_FRAMES; f++) ex.push_back(baseExplosion(f));
-        for (int f = 0; f < SMOKE_FRAMES; f++) sm.push_back(baseSmoke(f));
-        mu.push_back(baseMuzzle());
-        for (int d = 0; d < 8; d++) { p0.push_back(baseProjectile(0, d)); p1.push_back(baseProjectile(1, d)); }
-        rows = {std::move(ex), std::move(sm), std::move(mu), std::move(p0), std::move(p1)};
-        sheet("assets/preview/fx.png", rows, sheetBg);
-    }
-    {   // 图标墙：单位图标 + 建筑图标（8 列）
-        std::vector<std::vector<PixBuf>> rows;
-        std::vector<PixBuf> row;
-        auto flush = [&]() { if (!row.empty()) { rows.push_back(std::move(row)); row.clear(); } };
-        for (int i = 0; i < (int)UnitType::COUNT; i++) {
-            UnitType t = (UnitType)i;
-            PixBuf body = unitContentPix(t, 2, 0);
-            if (hasTurret(t)) body.blit(turretContentPix(t, 2), 2, 2);
-            int gy = body.h - 1;
-            while (gy > 0) {
-                bool solid = false;
-                for (int x = 0; x < body.w && !solid; x++) solid = body.get(x, gy).a > 60;
-                if (solid) break;
-                gy--;
-            }
-            row.push_back(makeIcon(body, gy));
-            if (row.size() == 8) flush();
-        }
-        for (int i = 0; i < (int)BldType::COUNT; i++) {
-            PixBuf bc = bldContentPix((BldType)i, false);
-            row.push_back(makeIcon(bc, bldGroundY_));
-            if (row.size() == 8) flush();
-        }
-        flush();
-        sheet("assets/preview/icons.png", rows, sheetBg);
-    }
-
-    TraceLog(LOG_INFO, "gen-assets: %d written, %d skipped(existing), %d failed -> %s", n, skipped, fail, outDir);
-    printf("gen-assets: %d written, %d skipped (kept MIX extracts), %d failed -> %s\n", n, skipped, fail, outDir);
-    return fail == 0;
+bool SpriteBank::genAssets(const char* /*outDir*/) {
+    // Disabled: do not write procedural pixels into assets/; use gen_assets.py
+    TraceLog(LOG_ERROR, "genAssets disabled: use tools/ra2pack/gen_assets.py");
+    fprintf(stderr, "genAssets disabled: use tools/ra2pack/gen_assets.py\n");
+    return false;
 }

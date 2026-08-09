@@ -3,7 +3,7 @@
 # BIK: ra2ts_l via ffmpeg.
 import os, sys, struct
 from ra2lib import MixTree, Shp, shp_frame_to_rgba
-from PIL import Image
+from PIL import Image, ImageDraw
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 OUT = os.path.join(ROOT, "assets", "gui", "menu")
@@ -329,7 +329,7 @@ def extract_country_flags(T, pal):
         "cuba": "cacufgl",
         "libya": "calbfgl",
         "iraq": "cairfgl",
-        "china": "cankfgl",  # 原作无中国旗；共辉用朝鲜旗资源
+        # china：不复用朝鲜旗；下方单独画五星红旗
         "yuri": "cunkfgl",
     }
     for key, stem in mapping.items():
@@ -358,6 +358,30 @@ def extract_country_flags(T, pal):
                 break
         if not saved:
             print("FAIL flag crop", key)
+
+    # 中国：原作无国旗 SHP；画简易五星红旗（与「中国」文案一致，勿用朝鲜旗）
+    import math
+    cn = Image.new("RGBA", (28, 28), (0, 0, 0, 0))
+    cpx = cn.load()
+    for y in range(4, 24):
+        wave = int(1.5 * math.sin((y - 4) / 3.0))
+        for x in range(3 + wave, 25 + wave):
+            if 0 <= x < 28:
+                shade = min(252, 200 + (x % 5) * 8)
+                cpx[x, y] = (shade, 20, 20, 255)
+    for y, x in [(8, 7), (9, 6), (9, 7), (9, 8), (10, 7), (8, 6), (8, 8), (10, 6), (10, 8), (7, 7), (11, 7)]:
+        if 0 <= x < 28 and 0 <= y < 28:
+            cpx[x, y] = (252, 220, 40, 255)
+    for cx, cy in [(14, 7), (16, 10), (14, 13), (11, 15)]:
+        for dy in range(-1, 2):
+            for dx in range(-1, 2):
+                if abs(dx) + abs(dy) <= 1:
+                    x, y = cx + dx, cy + dy
+                    if 0 <= x < 28 and 0 <= y < 28:
+                        cpx[x, y] = (252, 220, 40, 255)
+    cn_path = os.path.join(flag_dir, "china.png")
+    cn.save(cn_path)
+    print("saved flag", cn_path, cn.size, "procedural PRC")
 
 
 def extract_faction_icons(T, pal):
@@ -392,18 +416,13 @@ def extract_faction_icons(T, pal):
         im.save(path)
         print("saved faction", path, im.size)
 
-    # 随机：黄 ??? 在暗红底
-    rnd = Image.new("RGBA", (48, 36), (20, 8, 8, 255))
-    # 简单点阵问号块（无依赖字体）
-    px = rnd.load()
-    # draw three small blocks as ???
-    for i, ox in enumerate((6, 20, 34)):
-        for y in range(8, 28):
-            for x in range(ox, ox + 8):
-                if (y < 12 or y > 24) or x in (ox, ox + 7) or (10 <= y <= 18 and x == ox + 3):
-                    px[x, y] = (255, 236, 64, 255)
-        px[ox + 3, 22] = (255, 236, 64, 255)
-        px[ox + 3, 26] = (255, 236, 64, 255)
+    # 随机：暗红底 + 红框 + 双向箭头（勿写 ???；界面已有「随机」文案）
+    rnd = Image.new("RGBA", (48, 36), (16, 6, 6, 255))
+    d = ImageDraw.Draw(rnd)
+    d.rectangle([0, 0, 47, 35], outline=(200, 48, 36, 255))
+    d.polygon([(10, 18), (18, 10), (18, 26)], fill=(220, 48, 36, 255))
+    d.polygon([(38, 18), (30, 10), (30, 26)], fill=(220, 48, 36, 255))
+    d.rectangle([20, 14, 28, 22], fill=(255, 180, 60, 255))
     path = os.path.join(fac_dir, "random.png")
     rnd.save(path)
     print("saved faction", path, rnd.size)

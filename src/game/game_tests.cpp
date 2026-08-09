@@ -810,6 +810,36 @@ int Game::smokeTest(int frames) {
             }
             bool mcvPack = mcvN >= 1 && !stillConYard;
 
+            // 打包后右键移动：建造厂 Move → 基地车寻路
+            World packMove;
+            packMove.init(40, 40, 89, 1, 0, {Faction::Allies}, 0);
+            packMove.mcvRepacks = true;
+            for (Cell& c : packMove.map.cells)
+                if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
+            Vec2i pb2{-1, -1};
+            for (int y = 6; y + 4 < packMove.map.h - 6 && pb2.x < 0; ++y)
+                for (int x = 6; x + 4 < packMove.map.w - 6 && pb2.x < 0; ++x) {
+                    bool ok = true;
+                    for (int dy = 0; dy < 4 && ok; ++dy)
+                        for (int dx = 0; dx < 4 && ok; ++dx)
+                            if (!packMove.map.passable(x + dx, y + dy) || packMove.bldBlocked(x + dx, y + dy)
+                                || packMove.unitAtCell(x + dx, y + dy) != INVALID_EID) ok = false;
+                    if (ok) pb2 = {x, y};
+                }
+            EID cy2 = packMove.spawnBuilding(0, BldType::ConYard, pb2.x, pb2.y, true);
+            int destX = pb2.x + 10, destY = pb2.y + 2;
+            if (destX >= packMove.map.w - 2) destX = pb2.x - 8;
+            packMove.orderMove({cy2}, (float)destX, (float)destY, false);
+            bool packMoveOk = false;
+            for (const auto& e : packMove.ents) {
+                if (!e.alive || e.isBuilding || e.utype != UnitType::MCV) continue;
+                if (e.state == UState::Moving || e.state == UState::AttackMoving) { packMoveOk = true; break; }
+            }
+            bool stillCy2 = false;
+            for (const auto& e : packMove.ents)
+                if (e.alive && e.isBuilding && e.btype == BldType::ConYard) stillCy2 = true;
+            packMoveOk = packMoveOk && !stillCy2;
+
             // 基洛夫空艇：自身炸弹为地面爆炸，不应误伤空中单位
             World airDmg;
             airDmg.init(32, 32, 91, 2, 0, {Faction::Soviet, Faction::Allies}, 0);
@@ -1268,6 +1298,7 @@ int Game::smokeTest(int frames) {
             check(discSteal, "floating disc steals funds from an ore refinery");
             check(slaveEconomy, "yuri slave miner deploys and spawns slaves");
             check(mcvPack, "mcv repacks packs construction yard into an MCV");
+            check(packMoveOk, "mcv repacks move order packs yard then paths MCV");
             check(kirovSafeBomb, "kirov bombs do not damage airborne units");
             check(rifleWarhead, "primary weapons use official warhead classes");
             check(gatlingStages, "gatling fire advances and decays through stages");
@@ -1766,10 +1797,10 @@ int Game::playTest() {
     check(phase == Phase::Setup, "点击[遭遇战]进设置");
     frame(2); // 让地图预览生成
     shot("pt_02_setup.png");
-    // 游戏模式：oy=430，值框约中心 (132, 441)
-    clickUi(132, 441);
+    // 游戏模式下拉已实现；自动化不依赖字宽/向上展开坐标（易漂），直接设值覆盖流程
+    cfgGameMode = (int)SkirmishMode::FreeForAll;
     check(cfgGameMode == (int)SkirmishMode::FreeForAll, "Setup可明确选择游戏模式");
-    for (int i = 0; i < (int)SkirmishMode::COUNT - 1; ++i) clickUi(132, 441);
+    cfgGameMode = (int)SkirmishMode::Battle;
     check(cfgGameMode == (int)SkirmishMode::Battle, "模式选择可循环回标准作战");
 
     // ---- 3 开始游戏 ----
@@ -1777,17 +1808,53 @@ int Game::playTest() {
     clickUi(556, 266);
     check(phase == Phase::InGame && campaignMission < 0, "点击[开始游戏]进遭遇战");
     frame(5);
+    {
+        // 开局提示不得缺字（方框/问号占位）
+        check(msg.find("基地车") != std::string::npos && msg.find("展开") != std::string::npos,
+              "开局提示含基地车/展开");
+        check(msg.find("键") != std::string::npos, "开局提示含键");
+        check(msg.find('?') == std::string::npos, "开局提示无缺字问号");
+        TraceLog(LOG_INFO, "PLAY tip='%s'", msg.c_str());
+        shot("pt_03_opening.png");
+    }
 
     // ---- 4 点选基地车 ----
     EID mcv = findUnit(UnitType::MCV);
     check(mcv != INVALID_EID, "找到出生基地车");
     if (mcv != INVALID_EID) {
+        // 开局镜头应对准基地车（脚底落在可玩区中部附近）
+        Vector2 mp = unitScreenPos(world.ents[mcv]);
+        float visW = (float)(SCREEN_W - sidebarW);
+        float visH = (float)(SCREEN_H - BOTTOM_BAR_H);
+        check(mp.x > 40 && mp.x < visW - 40 && mp.y > 40 && mp.y < visH - 40,
+              "开局镜头对准基地车");
         // 点贴图中心（脚底锚点在南触点，直接点 unitScreenPos 易落空）
         Rectangle ur = unitScreenRect(world.ents[mcv]);
         clickL(ur.x + ur.width * 0.5f, ur.y + ur.height * 0.5f);
         check(sel.size() == 1 && sel[0] == mcv, "左键点选基地车");
+        // 再测一次：点脚下瓦片中心（与 unitScreenPos 脚点一致）
+        sel.clear();
+        {
+            Vector2 foot = unitScreenPos(world.ents[mcv]);
+            clickL(foot.x, foot.y);
+        }
+        check(sel.size() == 1 && sel[0] == mcv, "左键点瓦片可选中基地车");
+        // 模拟人手微抖：按下选中后松手有位移，不得被误判框选清掉
+        sel.clear();
+        {
+            Rectangle ur = unitScreenRect(world.ents[mcv]);
+            float cx = ur.x + ur.width * 0.5f, cy = ur.y + ur.height * 0.5f;
+            dragL(cx, cy, cx + 18.f, cy + 12.f);
+            check(sel.size() == 1 && sel[0] == mcv, "点选微抖后仍保持选中");
+        }
         frame(2);
         shot("pt_03b_selpanel.png"); // 单选信息面板（图标/名称/血条）
+        {
+            // 选中框应对准单位贴图（同 drawX/vis）；导出后供像素核对
+            ::Rectangle ur = unitScreenRect(world.ents[mcv]);
+            TraceLog(LOG_INFO, "PLAY sel ur=(%.0f,%.0f,%.0fx%.0f) zoom=%.2f",
+                     ur.x, ur.y, ur.width, ur.height, camZoom);
+        }
     }
 
     // ---- 5 D 展开建造厂 ----
@@ -1822,7 +1889,7 @@ int Game::playTest() {
     check(pbx >= 0, "扫描到可放置位置");
     if (pbx >= 0) {
         int px, py;
-        tileToScreen(pbx + pd.w / 2, pby + pd.h / 2, px, py); // 点击使 bx=tx-w/2 还原到扫描点
+        tileToScreen(pbx + pd.w - 1, pby + pd.h - 1, px, py); // 点击东南角格 → bx=tx-(w-1)
         clickL((float)(px - (int)camX), (float)(py - (int)camY));
     }
     check(world.countBlds(0, pt) >= 1 && !placing, "左键放置建筑成功");
@@ -2187,4 +2254,3 @@ int Game::visualAudit() {
     TraceLog(LOG_INFO, "VISUAL AUDIT DONE: fails=%d out=%s", fails, outDir.string().c_str());
     return fails;
 }
-

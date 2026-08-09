@@ -637,6 +637,8 @@ def render_seq_unit(img, eng, canvas):
                 if not im:
                     return False
                 save(im, f"unit_{eng}_walk_d{e}_f{p}.png")
+        # EngineerSequence 等个别 SHP：奇数向 walk 相对 Ready 错位 2 格。
+        # 提取后若 walk 与 stand 朝向不一致，运行 tools/_scratch 或手工按 stand 重排 walk/fire/dep。
     # 开火（多相位）
     if fire and fire[0] + 8 * fire[1] <= n:
         meta["fire"] = fire[1]
@@ -1293,7 +1295,8 @@ def main():
                     save(ic, f"icon_unit_{eng}.png")
                     report["icons_ok"].append(("unit_" + eng, cand)); break
         else:
-            report["icons_skip"].append(("unit_" + eng, "no cameo (synth disabled)"))
+            # 无独立 cameo：记入 skip（禁止近亲图标回退；缺图标时游戏启动失败）
+            report["icons_skip"].append(("unit_" + eng, "no cameo"))
 
     for eng, cands in BLDS.items():
         if ONLY and ("bld_" + eng) not in ONLY and eng not in ONLY:

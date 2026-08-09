@@ -44,21 +44,26 @@ void Map::generate(int w_, int h_, uint64_t seed, int numPlayers, std::vector<Ve
         outSpawns.push_back(corners[i]);
 
     // 1. 基础地形：按地图类型生成水域格局
+    // 0 大陆 1 岛屿 2 湖泊 3 群岛 4 海岸 5 河谷 6 山地
     for (int y = 0; y < h; y++)
         for (int x = 0; x < w; x++) {
             Cell& c = at(x, y);
             float v = fbm(x / 18.0f, y / 18.0f, seed);
-            if (mapType == 1) {
-                // 岛屿：每出生点一座主岛 + 中央争夺岛，其余为海（噪声海岸）
+            if (mapType == 1 || mapType == 3) {
+                // 岛屿 / 群岛：出生点岛屿 + 中央岛；群岛额外撒碎岛
                 float best = 1e9f;
                 for (auto& sp : outSpawns) {
                     float dx = (float)(x - sp.x), dy = (float)(y - sp.y);
                     best = std::min(best, sqrtf(dx * dx + dy * dy));
                 }
                 float dx = (float)(x - w / 2), dy = (float)(y - h / 2);
-                best = std::min(best, sqrtf(dx * dx + dy * dy) * 1.4f); // 中央岛稍小
-                float shore = w / 4.5f;
+                best = std::min(best, sqrtf(dx * dx + dy * dy) * 1.4f);
+                float shore = (mapType == 3) ? (w / 6.5f) : (w / 4.5f);
                 float edge = v * 7.0f;
+                if (mapType == 3) {
+                    float isle = fbm(x / 9.0f, y / 9.0f, seed ^ 0xA15E);
+                    if (isle > 0.62f) best = std::min(best, shore * 0.55f);
+                }
                 if (best < shore - 5 + edge) c.terrain = Terrain::Clear;
                 else if (best < shore + edge) c.terrain = v < 0.45f ? Terrain::Rough : Terrain::Clear;
                 else c.terrain = Terrain::Water;
@@ -70,6 +75,28 @@ void Map::generate(int w_, int h_, uint64_t seed, int numPlayers, std::vector<Ve
                 if (dc < lakeR) c.terrain = Terrain::Water;
                 else if (dc < lakeR + 3) c.terrain = Terrain::Rough;
                 else if (v < 0.34f) c.terrain = Terrain::Rough;
+                else c.terrain = Terrain::Clear;
+            } else if (mapType == 4) {
+                // 海岸：一侧大海，内侧大陆（噪声岸线）
+                float nx = (float)x / (float)std::max(1, w - 1);
+                float shore = 0.38f + (v - 0.5f) * 0.12f;
+                if (nx < shore - 0.04f) c.terrain = Terrain::Water;
+                else if (nx < shore + 0.03f) c.terrain = v < 0.5f ? Terrain::Rough : Terrain::Clear;
+                else if (v < 0.32f) c.terrain = Terrain::Rough;
+                else c.terrain = Terrain::Clear;
+            } else if (mapType == 5) {
+                // 河谷：纵贯地图的弯曲河道 + 两岸陆地
+                float cx = w * 0.5f + (fbm(y / 14.0f, 3.0f, seed ^ 0x51BEULL) - 0.5f) * (w * 0.35f);
+                float d = fabsf((float)x - cx);
+                float half = 3.5f + v * 2.5f;
+                if (d < half) c.terrain = Terrain::Water;
+                else if (d < half + 2.5f) c.terrain = Terrain::Rough;
+                else if (v < 0.36f) c.terrain = Terrain::Rough;
+                else c.terrain = Terrain::Clear;
+            } else if (mapType == 6) {
+                // 山地：大量 Rough，少量水洼
+                if (v < 0.22f) c.terrain = Terrain::Water;
+                else if (v < 0.55f) c.terrain = Terrain::Rough;
                 else c.terrain = Terrain::Clear;
             } else {
                 // 大陆：fbm 噪声散布湖区
@@ -136,7 +163,8 @@ void Map::generate(int w_, int h_, uint64_t seed, int numPlayers, std::vector<Ve
 
     // 5. 桥梁（RA2 标志性战术地形）：横跨 1~4 格狭窄水域、两端接陆地的直线通道
     //    岛屿图海宽不生成；大陆/湖泊图在湖岸窄处生成，成为陆军跨水捷径
-    if (mapType != 1) {
+    // 5. 桥梁：岛屿/群岛海面过宽不生成；其余类型在窄水域架桥
+    if (mapType != 1 && mapType != 3) {
         auto isLand = [&](int x, int y) {
             return inBounds(x, y) && at(x, y).terrain != Terrain::Water && at(x, y).terrain != Terrain::Bridge;
         };

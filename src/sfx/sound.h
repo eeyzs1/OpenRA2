@@ -4,7 +4,7 @@
 #include <vector>
 #include <string>
 
-// 音效系统：优先加载 assets/sfx/ 外部音频，缺失时回退到程序合成波形
+// 音效系统：仅加载 assets/sfx/ 外部音频；缺失则记错并拒绝启动（无程序合成回退）
 enum class Sfx : uint8_t {
     Shot = 0,   // 步枪
     Cannon,     // 坦克炮
@@ -42,6 +42,8 @@ class SoundBank {
 public:
     void init();
     void shutdown();
+    int missingCount() const { return missingAssets; }
+    bool assetsOk() const { return missingAssets == 0; } // 仅统计缺失文件；无声卡不算素材失败
 
     // 全局/UI 播放
     void play(Sfx id, float vol = 1.0f);
@@ -49,17 +51,18 @@ public:
     void playAt(Sfx id, float tx, float ty);
     void setListener(float tx, float ty) { lisX = tx; lisY = ty; }
 
-    // 程序合成 BGM（进行曲，循环流式播放）
+    // 背景音乐：仅播放 assets/music/ 文件；无文件则记错，不合成
     void initBgm();
     void updateBgm();            // 每帧调用驱动音乐流
     void toggleBgm();
     bool bgmEnabled() const { return bgmOn; }
+    bool bgmReady() const { return bgmOk; }
 
     // 主音量 0..1（音效+音乐；选项界面热更新，无需重启）
     void setMasterVol(float v);
     float masterVolume() const { return masterVol; }
 
-    // 离线素材生成（--gen-assets）：全量导出 WAV 到 assets/sfx/ + BGM 到 assets/music/；无需音频设备
+    // 已禁用：禁止程序合成 WAV 写入 assets
     bool genSfxAssets(const char* dir);
 
 private:
@@ -69,14 +72,15 @@ private:
     double last[(int)Sfx::COUNT]{};
     float lisX = 0, lisY = 0;
     bool ok = false;
+    int missingAssets = 0;
     float masterVol = 1.0f;
 
     Music bgm{};
     bool bgmOk = false;
     bool bgmOn = true;
-    // 内置合成 BGM 的 WAV 字节：drwav 流式解码只引用不复制该内存，必须与流同生命周期（常驻成员）
+    // 外部 BGM 的 WAV 字节（若从内存加载时使用）
     std::vector<unsigned char> bgmMem;
-    // 外部音乐播放列表（assets/music/）；空时使用内置合成进行曲
+    // 外部音乐播放列表（assets/music/）；空则拒绝启动
     std::vector<std::string> bgmFiles;
     int bgmIdx = -1;
     bool bgmFromFiles = false;

@@ -20,10 +20,12 @@ struct UnitAnimInfo {
     bool dep = false;
 };
 
-// 程序化素材库：启动时用代码生成全部像素素材
+// 外部精灵库：仅加载 assets/sprites（及运行时 VXL），缺失则记错并拒绝启动
 class SpriteBank {
 public:
     void init(); // 需在 InitWindow 之后调用
+    int missingCount() const; // init/加载过程中累计的缺失数
+    bool assetsOk() const { return missingCount() == 0; }
 
     // 地形与装饰
     const Sprite& tile(Terrain t, int variant);
@@ -87,7 +89,7 @@ private:
     int bldGroundY_ = 0;
 
 public:
-    // 离线素材生成（--gen-assets）：全量导出 PNG 到 assets/sprites/ + 审核预览图；无需 InitWindow
+    // 已禁用：禁止程序生成 PNG（请用 tools/ra2pack/gen_assets.py 从 MIX 提取）
     bool genAssets(const char* dir);
 private:
 

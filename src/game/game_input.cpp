@@ -7,31 +7,80 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <vector>
 #include <unordered_set>
 
 EID Game::pickUnit(int mx, int my) const {
     // 屏幕坐标 → 未缩放视口坐标（与 unitScreenRect / rlScalef 一致）
     float vx = (float)mx / camZoom, vy = (float)my / camZoom;
     EID best = INVALID_EID;
-    float bestArea = 1e30f;
     float bestDist = 1e30f;
+    float bestArea = 1e30f;
     for (size_t i = 0; i < world.ents.size(); i++) {
         const World::Ent& e = world.ents[i];
         if (!e.alive || e.isBuilding) continue;
         if (e.player != localPlayer && world.map.fogAt(localPlayer, (int)e.x, (int)e.y) != FOG_VISIBLE) continue;
         Rectangle r = unitScreenRect(e);
-        r.x -= 6.0f; r.y -= 6.0f; r.width += 12.0f; r.height += 12.0f;
+        // 轻度放宽命中；过大 padding 会让步兵抢掉基地车等大贴图中心点击
+        Rectangle rs{r.x * camZoom, r.y * camZoom, r.width * camZoom, r.height * camZoom};
+        rs.x -= 8.0f; rs.y -= 8.0f; rs.width += 16.0f; rs.height += 16.0f;
+        Rectangle rb = r;
+        rb.x -= 8.0f; rb.y -= 8.0f; rb.width += 16.0f; rb.height += 16.0f;
         Vector2 p = unitScreenPos(e);
         const UnitDef& ud = unitDef(e.utype);
         if (ud.isAir() && e.state != UState::Landed) p.y -= AIR_ALT;
-        bool inBox = vx >= r.x && vx < r.x + r.width && vy >= r.y && vy < r.y + r.height;
+        bool inBox = (vx >= rb.x && vx < rb.x + rb.width && vy >= rb.y && vy < rb.y + rb.height)
+                  || ((float)mx >= rs.x && (float)mx < rs.x + rs.width
+                      && (float)my >= rs.y && (float)my < rs.y + rs.height);
+        float footR = ud.isInfantry() ? 48.0f : 72.0f;
         float dFoot = distf(p.x, p.y, vx, vy);
-        if (!inBox && dFoot > 28.0f) continue;
+        // 贴图中心（身子）也易点中
         float cx = r.x + r.width * 0.5f, cy = r.y + r.height * 0.5f;
-        float d = distf(cx, cy, vx, vy);
+        float dBody = distf(cx, cy, vx, vy);
+        if (!inBox && dFoot > footR && dBody > footR) continue;
+        // 框内命中优先，但仍按距脚/身排序，避免重叠时乱抢
+        float d = std::min(dFoot, dBody);
+        if (inBox) d *= 0.35f;
         float area = std::max(64.0f, r.width * r.height);
-        if (area < bestArea - 1.0f || (fabsf(area - bestArea) <= 1.0f && d < bestDist)) {
+        if (d < bestDist - 0.5f || (fabsf(d - bestDist) <= 0.5f && area < bestArea)) {
+            bestDist = d;
             bestArea = area;
+            best = (int)i;
+        }
+    }
+    if (best != INVALID_EID) return best;
+
+    // 贴图命中失败：瓦片邻格己方单位（与 unitScreenPos 北尖约定一致）
+    float wx, wy;
+    screenToWorld(mx, my, wx, wy);
+    int tx, ty;
+    screenToTile(wx, wy, tx, ty);
+    bestDist = 1e30f;
+    for (size_t i = 0; i < world.ents.size(); i++) {
+        const World::Ent& e = world.ents[i];
+        if (!e.alive || e.isBuilding || e.player != localPlayer) continue;
+        int ex = (int)floorf(e.x), ey = (int)floorf(e.y);
+        int dx = ex - tx, dy = ey - ty;
+        if (dx < -1 || dx > 1 || dy < -1 || dy > 1) continue;
+        float d = distf((float)ex + 0.5f, (float)ey + 0.5f, wx, wy);
+        float score = d + (dx == 0 && dy == 0 ? 0.f : 10.f);
+        if (score < bestDist) {
+            bestDist = score;
+            best = (int)i;
+        }
+    }
+    if (best != INVALID_EID) return best;
+
+    // 最终回退：屏幕空间最近己方单位（阈值收紧，避免点空地误选远处单位）
+    const float kMaxScreenDist = 56.0f;
+    bestDist = kMaxScreenDist;
+    best = INVALID_EID;
+    for (size_t i = 0; i < world.ents.size(); i++) {
+        const World::Ent& e = world.ents[i];
+        if (!e.alive || e.isBuilding || e.player != localPlayer) continue;
+        Vector2 p = unitScreenPos(e);
+        float d = distf(p.x, p.y, vx, vy);
+        if (d < bestDist) {
             bestDist = d;
             best = (int)i;
         }
@@ -89,7 +138,9 @@ void Game::doSelect(int mx, int my, bool additive) {
     if (!additive) { sel.clear(); selBuilding = INVALID_EID; }
     EID u = pickUnit(mx, my);
     if (u != INVALID_EID) {
-        if (world.ents[u].player == localPlayer) sel.push_back(u);
+        if (world.ents[u].player == localPlayer) {
+            sel.push_back(u);
+        }
         return;
     }
     EID b = pickBuilding(mx, my);
@@ -123,12 +174,19 @@ void Game::cmdDeploySel() {
         return;
     }
     // MCV Repacks：选中建造厂 → 打包回基地车
-    if (sel.empty() && world.valid(selBuilding) && world.ents[selBuilding].isBuilding
+        if (sel.empty() && world.valid(selBuilding) && world.ents[selBuilding].isBuilding
         && world.ents[selBuilding].player == localPlayer
         && world.ents[selBuilding].btype == BldType::ConYard && world.mcvRepacks) {
+        float sx = world.ents[selBuilding].x + 1.5f, sy = world.ents[selBuilding].y + 1.5f;
         World::Cmd c; c.type = World::Cmd::Deploy; c.ids.push_back(selBuilding);
         issueCmd(c);
         selBuilding = INVALID_EID;
+        sel.clear();
+        for (size_t i = 0; i < world.ents.size(); i++) {
+            const World::Ent& e = world.ents[i];
+            if (!e.alive || e.isBuilding || e.player != localPlayer || e.utype != UnitType::MCV) continue;
+            if (distf(e.x, e.y, sx, sy) < 2.5f) sel.push_back((int)i);
+        }
         message(TR(S::MsgDeployed));
         return;
     }
@@ -445,7 +503,8 @@ void Game::handleInput() {
             screenToTile(wx, wy, tx, ty);
             BldType t = world.players[localPlayer].placingBld;
             const BldDef& d = bldDef(t);
-            int bx = tx - d.w / 2, by = ty - d.h / 2;
+            // 光标对准占地东南角格（与幽灵锚点一致，避免中心格导致大幅偏移）
+            int bx = tx - (d.w - 1), by = ty - (d.h - 1);
             if (world.canPlace(t, bx, by, localPlayer)) { // 本地预检；真正放置在命令执行时（联机延迟）
                 World::Cmd c; c.type = World::Cmd::PlaceBuilding; c.a = (int)t;
                 c.x = (float)bx; c.y = (float)by;
@@ -460,44 +519,91 @@ void Game::handleInput() {
         return;
     }
 
-    // 框选：在地图上按下；松开即便滑到侧栏/底栏也要结算（否则 dragging 卡死、框选失效）
+    // 框选/点选：LMB 只负责选择（移动/攻击一律 RMB）
     bool cancelledBoxDrag = false;
+    auto hitLocalAt = [&](int x, int y) -> bool {
+        EID u = pickUnit(x, y);
+        if (u != INVALID_EID && world.ents[u].player == localPlayer) return true;
+        EID b = pickBuilding(x, y);
+        return b != INVALID_EID && world.ents[b].player == localPlayer;
+    };
     if (!overUI && mPressed(MOUSE_LEFT_BUTTON)) {
-        // Deploy 光标 + 已选单位 → 部署（MCV 展开等），勿落到框选取消选中
+        // 已选 + Deploy 光标：点自身或空地 → 展开（RA2；勿被点选逻辑吃掉）
         if (!sel.empty() && cursorKind == CursorKind::Deploy) {
-            cmdDeploySel();
-        } else if (sel.empty() && cursorKind == CursorKind::Deploy) {
-            // 无选单位 + 部署光标点驻军建筑 → 撤出
+            int px = (int)mouse.x, py = (int)mouse.y;
+            EID u = pickUnit(px, py);
+            bool onSelected = (u != INVALID_EID
+                && std::find(sel.begin(), sel.end(), u) != sel.end());
+            if (onSelected || !hitLocalAt(px, py)) {
+                cmdDeploySel();
+                dragging = false;
+                dragPressSelected = false;
+                return;
+            }
+        }
+        if (sel.empty() && cursorKind == CursorKind::Deploy) {
             EID eb = pickBuilding((int)mouse.x, (int)mouse.y);
             if (eb != INVALID_EID && world.ents[eb].player == localPlayer
                 && !world.ents[eb].garrison.empty()) {
                 World::Cmd c; c.type = World::Cmd::Ungarrison; c.ids.push_back(eb);
                 issueCmd(c);
                 message(TR(S::MsgUngarrison));
+                dragging = false;
+                dragPressSelected = false;
+                return;
             }
-        } else {
-            dragging = true;
-            dragStart = mouse;
+        }
+        dragging = true;
+        dragStart = mouse;
+        dragPressSelected = false;
+        // 按下即点选：实机微抖/松手偏移时仍能选中
+        int px = (int)mouse.x, py = (int)mouse.y;
+        if (hitLocalAt(px, py)) {
+            doSelect(px, py, kDown(KEY_LEFT_SHIFT));
+            dragPressSelected = true;
         }
     }
     if (dragging && (mReleased(MOUSE_LEFT_BUTTON) || mPressed(MOUSE_RIGHT_BUTTON) || kPressed(KEY_ESCAPE))) {
         if (mReleased(MOUSE_LEFT_BUTTON)) {
-            // 松手点若在 UI 上，点选用起点（避免点到侧栏误清选）；框选用完整矩形
             Rectangle r{
                 std::min(dragStart.x, mouse.x), std::min(dragStart.y, mouse.y),
                 fabsf(mouse.x - dragStart.x), fabsf(mouse.y - dragStart.y)};
             bool add = kDown(KEY_LEFT_SHIFT);
-            if (r.width < 6 && r.height < 6) {
-                float sx = overUI ? dragStart.x : mouse.x;
-                float sy = overUI ? dragStart.y : mouse.y;
-                doSelect((int)sx, (int)sy, add);
-            } else {
+            // 任一边够长才算框选，避免人手微抖清掉按下时的点选
+            bool realBox = (r.width >= 28.f && r.height >= 28.f);
+            int ix = (int)(overUI ? dragStart.x : mouse.x);
+            int iy = (int)(overUI ? dragStart.y : mouse.y);
+            int sx0 = (int)dragStart.x, sy0 = (int)dragStart.y;
+
+            if (realBox) {
                 doBoxSelect(r, add);
+            } else if (dragPressSelected) {
+                // 已在按下时选中：保持，不触发 Deploy/清选
+            } else {
+                bool hit = hitLocalAt(sx0, sy0) || hitLocalAt(ix, iy);
+                if (hit) {
+                    if (hitLocalAt(sx0, sy0)) doSelect(sx0, sy0, add);
+                    else doSelect(ix, iy, add);
+                } else if (!sel.empty() && cursorKind == CursorKind::Deploy) {
+                    // 空地 + 部署光标：展开（D 键仍可用）
+                    cmdDeploySel();
+                } else if (sel.empty() && cursorKind == CursorKind::Deploy) {
+                    EID eb = pickBuilding(ix, iy);
+                    if (eb != INVALID_EID && world.ents[eb].player == localPlayer
+                        && !world.ents[eb].garrison.empty()) {
+                        World::Cmd c; c.type = World::Cmd::Ungarrison; c.ids.push_back(eb);
+                        issueCmd(c);
+                        message(TR(S::MsgUngarrison));
+                    }
+                } else {
+                    doSelect(ix, iy, add); // 点空地：清选（绝不 LMB 下令移动）
+                }
             }
         } else {
-            cancelledBoxDrag = true; // RMB/ESC 取消框选，勿紧接着发移动令
+            cancelledBoxDrag = true;
         }
         dragging = false;
+        dragPressSelected = false;
     }
     if (!overUI) {
         // 右键指令
@@ -516,6 +622,31 @@ void Game::handleInput() {
                 } else {
                     issueSmartOrder((int)mouse.x, (int)mouse.y);
                     waypointLatch = false; // 普通指令自动退出路径点模式
+                }
+            } else if (world.valid(selBuilding) && world.ents[selBuilding].isBuilding
+                       && world.ents[selBuilding].player == localPlayer
+                       && world.ents[selBuilding].btype == BldType::ConYard && world.mcvRepacks) {
+                // MCV Repacks：选中建造厂右键地面 → 打包成基地车并移动
+                float wx, wy;
+                screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
+                int tx, ty;
+                screenToTile(wx, wy, tx, ty);
+                if (world.map.inBounds(tx, ty) && world.map.passable(tx, ty)) {
+                    EID cy = selBuilding;
+                    World::Cmd c; c.type = World::Cmd::Move; c.ids.push_back(cy);
+                    c.x = (float)tx; c.y = (float)ty;
+                    issueCmd(c);
+                    selBuilding = INVALID_EID;
+                    sel.clear();
+                    // 单机命令已应用：选中新基地车
+                    for (size_t i = 0; i < world.ents.size(); i++) {
+                        const World::Ent& e = world.ents[i];
+                        if (!e.alive || e.isBuilding || e.player != localPlayer) continue;
+                        if (e.utype != UnitType::MCV) continue;
+                        if (e.state == UState::Moving || e.state == UState::AttackMoving)
+                            sel.push_back((int)i);
+                    }
+                    message(TR(S::MsgDeployed));
                 }
             } else if (world.valid(selBuilding) && world.ents[selBuilding].isBuilding
                        && world.ents[selBuilding].player == localPlayer

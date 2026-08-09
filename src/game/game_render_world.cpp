@@ -9,8 +9,27 @@
 #include <cstring>
 #include <algorithm>
 #include <unordered_set>
+#include <vector>
 
 #include "gfx/bld_cage_data.inc"
+
+// 血条/角标必须与单位同一绘制路径：RenderTexture 下 DrawRectangle 与 DrawTexture
+// 可能不一致，表现为框选逻辑在左上、贴图在右下。用 1×1 白纹理解算矩形。
+static Texture2D g_worldRectTex{};
+static void ensureWorldRectTex() {
+    if (g_worldRectTex.id != 0) return;
+    Image img = GenImageColor(1, 1, WHITE);
+    g_worldRectTex = LoadTextureFromImage(img);
+    UnloadImage(img);
+}
+static void fillRectWorld(float x, float y, float w, float h, Color c) {
+    if (w <= 0.f || h <= 0.f) return;
+    ensureWorldRectTex();
+    DrawTexturePro(g_worldRectTex, {0, 0, 1, 1}, {x, y, w, h}, {0, 0}, 0.f, c);
+}
+void Game::flushWorldOverlayRects() {
+    // 叠层已在 zoom 矩阵内用 DrawTexturePro 画完；保留接口供调用方清空语义
+}
 
 // Selection cage: Foundation parallelogram at geo SE (bldScreenPos), elev from fit.
 // Global nudge + N px toward S along both diamond edges (E→S and W→S).
@@ -59,9 +78,10 @@ static BldCageParams resolveBldCage(const char* stem, int footW, int footH, cons
     float roof = std::max(8.0f, (float)spr.visElev() - 4.0f);
     c.elev = std::min(c.elev, roof);
     c.elev = std::clamp(c.elev, 8.0f, 280.0f);
+    // 与 fit_bld_cages / 逐栋核对截图一致：全局 nudge + 边向/向下 nudge
+    // （fitted offX/offY 是相对 geo SE 的微调，nudge 是引擎侧统一座椅偏移）
     c.offX += kCageNudgeX;
     c.offY += kCageNudgeY;
-    // Along E→S and W→S (toward south tip on the ground diamond).
     auto addAlong = [&](float dx, float dy) {
         float len = sqrtf(dx * dx + dy * dy);
         if (len > 1e-3f) {
@@ -71,7 +91,6 @@ static BldCageParams resolveBldCage(const char* stem, int footW, int footH, cons
     };
     addAlong(-c.eArmX, -c.eArmY); // E → S
     addAlong(-c.wArmX, -c.wArmY); // W → S
-    // Ts → S is straight down in screen space (Ts = (S.x, S.y - elev)).
     c.offY += kCageDownNudgePx;
     return c;
 }
@@ -111,8 +130,7 @@ void Game::bakeTerrain() {
     PixBuf pb(bw, bh);
     const uint64_t seed = 20260723; // 固定种子：同一地形类型烘焙观感一致
     // 真实 RA2 地形瓦片（gen_terrain.py 自 isotemp.mix 提取，64x32 菱形）：
-    // 文件存在则逐像素采样，缺失/采样到透明点回退程序化配色。
-    // Ore/Gems 不在此采样（烘焙层垫采空土地，矿脉瓦片动态绘制于上层）。
+    // 文件存在则逐像素采样。启动时 SpriteBank 已要求瓦片齐全；此处仅处理采样缝隙。
     PixBuf tilePx[6][8];
     bool tileOk[6][8] = {};
     {
@@ -532,31 +550,52 @@ void Game::drawEntities() {
                     DrawTexture(tur.tex, drawX + (body.ox - tur.ox), drawY + (body.oy - tur.oy), tint);
                 }
             }
-            // RA2：单位选中只显示血条，不画贴图边框/角标
+            // RA2：单位选中显示血条 + 角标（叠层在 zoom 外 flush，避免与贴图错位）
             bool selected = selSet.count(it.id) > 0;
             int boxX = drawX, boxY = drawY, boxW = body.tex.width, boxH = body.tex.height;
-            // 地面单位 finishUnitSprite 有 6/4 阴影边距：收紧到主体，避免血条过宽
-            if (!ud.isAir() && !ud.isNaval()) {
+            // 用不透明包围盒收紧血条/角标（与 unitScreenRect 一致）
+            if (body.visR > body.visL && body.visB > body.visT) {
+                boxX = drawX + body.visL;
+                boxY = drawY + body.visT;
+                boxW = body.visW();
+                boxH = body.visH();
+            } else if (!ud.isAir() && !ud.isNaval()) {
+                // 回退：finishUnitSprite 6/4 阴影边距
                 boxX += 6; boxY += 4; boxW -= 12; boxH -= 8;
                 if (boxW < 8) { boxX = drawX; boxW = body.tex.width; }
                 if (boxH < 8) { boxY = drawY; boxH = body.tex.height; }
             }
             if (selected || e.hp < ud.hp)
-                drawHealthBar(boxX, boxY - 6, std::max(28, boxW), (float)e.hp / ud.hp, selected);
+                drawHealthBar(boxX, boxY - 6, std::max(28, boxW), (float)e.hp / std::max(1, ud.hp), selected);
+            if (selected) {
+                const float L = (float)std::min(10, std::min(std::max(boxW, 1), std::max(boxH, 1)) * 35 / 100);
+                const float th = 2.f;
+                Color sc{40, 255, 70, 230};
+                fillRectWorld((float)boxX, (float)boxY, L, th, sc);
+                fillRectWorld((float)boxX, (float)boxY, th, L, sc);
+                fillRectWorld((float)boxX + boxW - L, (float)boxY, L, th, sc);
+                fillRectWorld((float)boxX + boxW - th, (float)boxY, th, L, sc);
+                fillRectWorld((float)boxX, (float)boxY + boxH - th, L, th, sc);
+                fillRectWorld((float)boxX, (float)boxY + boxH - L, th, L, sc);
+                fillRectWorld((float)boxX + boxW - L, (float)boxY + boxH - th, L, th, sc);
+                fillRectWorld((float)boxX + boxW - th, (float)boxY + boxH - L, th, L, sc);
+            }
             // 军衔标志（RA2：老兵银三角 / 精英金三角，画在单位右下角）
             if (e.vetRank > 0) {
                 Color rc = e.vetRank >= 2 ? Color{255, 200, 60, 255} : Color{220, 220, 220, 255};
                 for (int i = 0; i < e.vetRank; i++) {
                     int vx = boxX + boxW - 8 - (e.vetRank - 1 - i) * 9;
                     int vy = boxY + boxH - 2;
-                    DrawTriangle({(float)vx, (float)vy + 4}, {(float)vx + 3, (float)vy}, {(float)vx + 6, (float)vy + 4}, rc);
+                    fillRectWorld((float)vx + 2, (float)vy, 2, 1, rc);
+                    fillRectWorld((float)vx + 1, (float)vy + 1, 4, 1, rc);
+                    fillRectWorld((float)vx, (float)vy + 2, 6, 2, rc);
                 }
             }
             // 战机弹药指示
             if (selected && ud.ammo > 0) {
                 for (int i = 0; i < ud.ammo; i++) {
                     Color ac = i < e.ammo ? Color{255, 200, 60, 255} : Color{70, 70, 74, 255};
-                    DrawRectangle(boxX + i * 7, boxY - 10, 5, 3, ac);
+                    fillRectWorld((float)(boxX + i * 7), (float)(boxY - 10), 5, 3, ac);
                 }
             }
             // 铁幕无敌：暗化罩光
@@ -1188,7 +1227,7 @@ void Game::drawHealthBar(int px, int py, int w, float frac, bool selected, int p
                          : std::clamp((w + gap) / (pipW + gap), 5, 25);
     int rowW = n * pipW + (n - 1) * gap;
     int x0 = px + (w - rowW) / 2;
-    DrawRectangle(x0 - 1, py - 1, rowW + 2, pipH + 2, Color{0, 0, 0, 180});
+    fillRectWorld((float)(x0 - 1), (float)(py - 1), (float)(rowW + 2), (float)(pipH + 2), Color{0, 0, 0, 180});
     Color fill = frac > 0.5f ? Color{60, 220, 60, 255}
                : (frac > 0.25f ? Color{230, 210, 40, 255} : Color{220, 40, 40, 255});
     const Color empty{40, 40, 36, 220};
@@ -1197,7 +1236,7 @@ void Game::drawHealthBar(int px, int py, int w, float frac, bool selected, int p
     if (frac <= 0.0f) filled = 0;
     for (int i = 0; i < n; i++) {
         int x = x0 + i * (pipW + gap);
-        DrawRectangle(x, py, pipW, pipH, i < filled ? fill : empty);
+        fillRectWorld((float)x, (float)py, (float)pipW, (float)pipH, i < filled ? fill : empty);
     }
 }
 

@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Rewrite launch.bat / 启动游戏.bat as ASCII + CRLF + no BOM."""
+"""Rewrite launch.bat / startup wrapper bat as ASCII + CRLF + no BOM."""
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# Single canonical exe: cmake --build build --config Release --target ra2
+# -> build\Release\ra2.exe. Do not fall back to Debug/root copies (stale).
 # PowerShell Start-Process detaches cleanly (bat `start` + CUI used to die on CTRL_CLOSE).
 LAUNCH = r"""@echo off
 setlocal EnableExtensions
 rem OpenRA2 launcher: ASCII + CRLF + no BOM (required for Explorer double-click).
+rem Always runs build\Release\ra2.exe (the Release cmake output). Rebuild updates that file.
 cd /d "%~dp0" || (
   echo [OpenRA2] cannot cd to script directory
   pause
@@ -18,22 +21,22 @@ set "LOG=%CD%\launch_log.txt"
 > "%LOG%" echo [%date% %time%] OpenRA2 launcher
 >> "%LOG%" echo CD=%CD%
 
-set "EXE="
-if exist "%CD%\build\Release\ra2.exe" set "EXE=%CD%\build\Release\ra2.exe"
-if not defined EXE if exist "%CD%\build-asan\Debug\ra2.exe" set "EXE=%CD%\build-asan\Debug\ra2.exe"
-if not defined EXE if exist "%CD%\build\Debug\ra2.exe" set "EXE=%CD%\build\Debug\ra2.exe"
-
-if not defined EXE (
-  >> "%LOG%" echo FAIL: ra2.exe not found
-  echo [OpenRA2] ra2.exe not found. Build first:
+set "EXE=%CD%\build\Release\ra2.exe"
+if not exist "%EXE%" (
+  >> "%LOG%" echo FAIL: missing %EXE%
+  echo [OpenRA2] build\Release\ra2.exe not found.
+  echo Build first:
   echo   cmake --build build --config Release --target ra2
+  echo Then double-click this bat again.
   pause
   exit /b 1
 )
 
 >> "%LOG%" echo EXE=%EXE%
-echo [OpenRA2] launching:
+for %%I in ("%EXE%") do >> "%LOG%" echo EXE_TIME=%%~tI SIZE=%%~zI
+echo [OpenRA2] launching Release build:
 echo   %EXE%
+for %%I in ("%EXE%") do echo   stamped %%~tI
 
 rem Absolute path + WorkingDirectory; verify process still alive after 2s.
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
@@ -65,8 +68,10 @@ def to_crlf_ascii(text: str) -> bytes:
 
 def main() -> None:
     (ROOT / "launch.bat").write_bytes(to_crlf_ascii(LAUNCH))
-    (ROOT / "启动游戏.bat").write_bytes(to_crlf_ascii(WRAPPER))
-    print("wrote launch.bat and 启动游戏.bat (ASCII CRLF no BOM)")
+    wrapper_path = ROOT / "\u542f\u52a8\u6e38\u620f.bat"  # 启动游戏.bat
+    wrapper_path.write_bytes(to_crlf_ascii(WRAPPER))
+    print("wrote launch.bat and startup wrapper (ASCII CRLF no BOM)")
+    print("canonical exe: build\\Release\\ra2.exe only")
 
 
 if __name__ == "__main__":

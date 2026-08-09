@@ -7,6 +7,8 @@
 #include "rlgl.h"
 #include <cmath>
 #include <algorithm>
+#include <vector>
+#include <cstdint>
 
 // ===================== 初始化 =====================
 void Game::init(bool windowed, bool hidden) {
@@ -40,9 +42,24 @@ void Game::init(bool windowed, bool hidden) {
     SetTargetFPS(60);
     loadFont();
     g_sprites.init();
+    if (!g_sprites.assetsOk()) {
+        assetsOk_ = false;
+        TraceLog(LOG_ERROR, "ASSET-CHECK: %d sprite asset(s) missing — refuse start", g_sprites.missingCount());
+    }
+    // 侧栏/底栏铬面：无文件则程序化兜底已禁用，启动失败
+    if (!FileExists("assets/gui/sidebar_allied.png") || !FileExists("assets/gui/bottombar.png")) {
+        assetsOk_ = false;
+        TraceLog(LOG_ERROR, "GUI-MISSING: assets/gui/sidebar_allied.png or bottombar.png");
+        fprintf(stderr, "GUI-MISSING: assets/gui/sidebar_allied.png or bottombar.png\n");
+    }
     if (!hidden) { // 隐藏窗口=无头测试：不初始化音频设备，避免提示音/BGM 打扰用户
         g_sfx.init();
         g_sfx.initBgm();
+        if (!g_sfx.assetsOk() || !g_sfx.bgmReady()) {
+            assetsOk_ = false;
+            TraceLog(LOG_ERROR, "ASSET-CHECK: audio missing (sfx missing=%d bgmOk=%d) — refuse start",
+                     g_sfx.missingCount(), (int)g_sfx.bgmReady());
+        }
         static const int vols[] = {0, 25, 50, 75, 100};
         g_sfx.setMasterVol(vols[cfgVolume] / 100.0f); // 持久化音量生效
     }
@@ -154,19 +171,36 @@ void Game::newGame(uint64_t seed) {
     }
     sel.clear();
     selBuilding = INVALID_EID;
+    dragging = false;
+    dragPressSelected = false;
     placing = false;
     gameOver = victory = false;
     camZoom = 1.0f;
-    // 摄像机对准出生点
-    for (auto& e : world.ents)
-        if (e.alive && !e.isBuilding && e.player == 0) {
+    // 摄像机对准本地基地车（优先 MCV；与 HEAD/unitScreenPos 北尖公式一致）
+    {
+        for (auto& e : world.ents) {
+            if (!e.alive || e.isBuilding || e.player != localPlayer) continue;
+            if (e.utype != UnitType::MCV) continue;
             int sx, sy;
             tileToScreen((int)e.x, (int)e.y, sx, sy);
             camX = (float)sx - (SCREEN_W - sidebarW) / 2.0f;
             camY = (float)sy - SCREEN_H / 2.0f;
+            camZoom = 1.0f;
             break;
         }
-    message(TextFormat(TR(S::MsgFindMCVFmt), keyName(keyBind[KA_Deploy])));
+    }
+    {
+        // 中文避免夹杂拉丁字母：game.fnt/字模图集对 D 等易出空心方框
+        if (g_lang) {
+            std::string tip = TR(S::MsgFindMCVFmt);
+            const char* kn = keyName(keyBind[KA_Deploy]);
+            size_t pos = tip.find("%s");
+            if (pos != std::string::npos) tip.replace(pos, 2, kn ? kn : "?");
+            message(tip);
+        } else {
+            message("找到基地车，按D键展开！");
+        }
+    }
     phase = Phase::InGame;
     bakeTerrain(); // 整图地表烘焙（连续噪声，无瓦片网格感）
     g_sprites.preloadMatch(localPlayer); // 开局预载本地玩家素材，消除游戏中懒加载掉帧
@@ -176,38 +210,53 @@ void Game::newGame(uint64_t seed) {
 }
 
 void Game::loadFont() {
-    // 双语界面字符全量收集；优先原作 game.fnt 点阵（锐利），失败再回退系统 TTF
+    // 界面字模：系统黑体（汉字/标点/拉丁一致）。先收集文案再对码点去重，避免 LoadFontEx 装入重复槽位。
     std::string all;
     appendAllFontText(all);
     for (int c = 32; c < 127; c++) all += (char)c;
     int count = 0;
     int* cps = LoadCodepoints(all.c_str(), &count);
-    font = LoadFontFromRa2Fnt("assets/gui/menu/fonts/game.fnt", cps, count);
-    if (font.baseSize > 0 && font.glyphCount > 64) {
-        fontOk = true;
-    } else {
+    std::vector<int> uniq;
+    uniq.reserve((size_t)std::max(count, 0) + 8);
+    std::vector<uint8_t> seen(0x110000 / 8, 0); // bitset for BMP+plane
+    auto add = [&](int cp) {
+        if (cp <= 0 || cp >= 0x110000) return;
+        size_t i = (size_t)cp;
+        uint8_t bit = (uint8_t)(1u << (i & 7));
+        size_t bi = i >> 3;
+        if (seen[bi] & bit) return;
+        seen[bi] |= bit;
+        uniq.push_back(cp);
+    };
+    for (int i = 0; i < count; i++) add(cps[i]);
+    UnloadCodepoints(cps);
+    TraceLog(LOG_INFO, "RA2 font codepoints: raw=%d unique=%d", count, (int)uniq.size());
+
+    fontOk = false;
+    const char* paths[] = {
+        "C:/Windows/Fonts/simhei.ttf",
+        "C:/Windows/Fonts/msyh.ttc",
+        "C:/Windows/Fonts/simsun.ttc",
+    };
+    for (auto p : paths) {
+        if (!FileExists(p)) continue;
+        font = LoadFontEx(p, 36, uniq.data(), (int)uniq.size());
+        TraceLog(LOG_INFO, "RA2 font TTF: %s baseSize=%d glyphs=%d",
+                 p, font.baseSize, font.glyphCount);
+        if (font.baseSize > 0 && font.glyphCount > 64) {
+            // POINT：避免图集双线性采样把笔画顶缘糊成白块
+            SetTextureFilter(font.texture, TEXTURE_FILTER_POINT);
+            fontOk = true;
+            break;
+        }
         if (font.texture.id) UnloadFont(font);
         font = {};
-        const char* paths[] = {
-            "C:/Windows/Fonts/simhei.ttf",
-            "C:/Windows/Fonts/msyh.ttc",
-            "C:/Windows/Fonts/simsun.ttc",
-        };
-        for (auto p : paths) {
-            if (!FileExists(p)) continue;
-            font = LoadFontEx(p, 64, cps, count);
-            TraceLog(LOG_INFO, "RA2 font TTF fallback: %s baseSize=%d glyphs=%d",
-                     p, font.baseSize, font.glyphCount);
-            if (font.baseSize > 0 && font.glyphCount > count / 2) {
-                SetTextureFilter(font.texture, TEXTURE_FILTER_POINT);
-                fontOk = true;
-                break;
-            }
-            if (font.texture.id) UnloadFont(font);
-            font = {};
-        }
     }
-    UnloadCodepoints(cps);
+    if (!fontOk) {
+        font = LoadFontFromRa2Fnt("assets/gui/menu/fonts/game.fnt", uniq.data(), (int)uniq.size());
+        if (font.baseSize > 0 && font.glyphCount > 64) fontOk = true;
+        else if (font.texture.id) { UnloadFont(font); font = {}; }
+    }
     if (!fontOk) font = GetFontDefault();
 }
 
@@ -289,13 +338,15 @@ void Game::render() {
         }
         BeginDrawing();
         ClearBackground(Color{6, 8, 12, 255}); // letterbox 用深蓝灰填充，非纯黑（与 GUI 底色融合）
-        float rw = (float)GetRenderWidth(), rh = (float)GetRenderHeight();
         Rectangle src{0, 0, (float)SCREEN_W, -(float)SCREEN_H};
-        Rectangle dst{(rw - rh * SCREEN_W / SCREEN_H) / 2, 0, rh * SCREEN_W / SCREEN_H, rh};
-        if (rw / SCREEN_W < rh / SCREEN_H) dst = Rectangle{0, (rh - rw * SCREEN_H / SCREEN_W) / 2, rw, rw * SCREEN_H / SCREEN_W};
-        // 一次性诊断：打印 letterbox 实际值
+        Rectangle dst = letterboxDst();
         static bool dbgOnce = false;
-        if (!dbgOnce) { TraceLog(LOG_INFO, "LETTERBOX: rw=%.0f rh=%.0f canvas=%dx%d dst={%.0f,%.0f,%.0f,%.0f}", rw, rh, SCREEN_W, SCREEN_H, dst.x, dst.y, dst.width, dst.height); dbgOnce = true; }
+        if (!dbgOnce) {
+            TraceLog(LOG_INFO, "LETTERBOX: screen=%dx%d render=%dx%d canvas=%dx%d dst={%.0f,%.0f,%.0fx%.0f}",
+                     GetScreenWidth(), GetScreenHeight(), GetRenderWidth(), GetRenderHeight(),
+                     SCREEN_W, SCREEN_H, dst.x, dst.y, dst.width, dst.height);
+            dbgOnce = true;
+        }
         DrawTexturePro(canvas.texture, src, dst, {0, 0}, 0, WHITE);
         ShowCursor();
         EndDrawing();
@@ -315,6 +366,7 @@ void Game::render() {
         int viewW = SCREEN_W - sidebarW;
         BeginScissorMode(0, 0, viewW, SCREEN_H);
         rlPushMatrix();
+        rlLoadIdentity();
         rlScalef(camZoom, camZoom, 1.0f);
         drawWorld();
         drawEntities();
@@ -322,6 +374,7 @@ void Game::render() {
         drawFogLayer();
         drawPlacement();
         rlPopMatrix();
+        flushWorldOverlayRects();
         EndScissorMode();
     }
     // 框选矩形（屏幕空间，不受 zoom 矩阵影响）
@@ -351,10 +404,8 @@ void Game::render() {
     // 2. 点对点放大到物理帧缓冲
     BeginDrawing();
     ClearBackground(Color{6, 8, 12, 255}); // letterbox 用深蓝灰填充，非纯黑
-    float rw = (float)GetRenderWidth(), rh = (float)GetRenderHeight();
     Rectangle src{0, 0, (float)SCREEN_W, -(float)SCREEN_H};
-    Rectangle dst{(rw - rh * SCREEN_W / SCREEN_H) / 2, 0, rh * SCREEN_W / SCREEN_H, rh};
-    if (rw / SCREEN_W < rh / SCREEN_H) dst = Rectangle{0, (rh - rw * SCREEN_H / SCREEN_W) / 2, rw, rw * SCREEN_H / SCREEN_W};
+    Rectangle dst = letterboxDst();
     DrawTexturePro(canvas.texture, src, dst, {0, 0}, 0, WHITE);
     HideCursor(); // 局内始终隐藏系统光标（自定义光标已画在 canvas）
     EndDrawing();

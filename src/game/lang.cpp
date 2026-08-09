@@ -68,7 +68,7 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"快速游戏", "Short Game"},
     {"共享视野", "Shared Vision"},
     {"超级武器", "Superweapons"},
-    {"MCV打包", "MCV Repacks"},
+    {"建造厂可回打包", "MCV Repacks"},
     // HUD / 侧边栏
     {"资金", "Funds"},
     {"电", "PWR"},
@@ -110,7 +110,7 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"重新开始", "Restart"},
     {"返回主菜单", "Main Menu"},
     // 局内消息
-    {"找到基地车，按 %s 展开！", "Find your MCV, press %s to deploy!"},
+    {"找到基地车，按D键展开！", "Find your MCV, press %s to deploy!"},
     {"电力不足，生产减缓", "Low power: production slowed"},
     {"工程师：前往占领", "Engineer: moving to capture"},
     {"步兵登船中", "Infantry boarding"},
@@ -250,6 +250,15 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"老兵", "Veteran"},
     {"精英", "Elite"},
     {"生命 %d/%d", "HP %d/%d"},
+    // 遭遇战地图扩展
+    {"微 48x48", "Tiny 48x48"},
+    {"超大 160x160", "XL 160x160"},
+    {"巨型 200x200", "Huge 200x200"},
+    {"史诗 256x256", "Epic 256x256"},
+    {"群岛", "Archipelago"},
+    {"海岸", "Coast"},
+    {"河谷", "River"},
+    {"山地", "Mountain"},
 };
 
 const char* TR(S id) {
@@ -303,6 +312,8 @@ static const char* kSKey[(int)S::COUNT] = {
     "LanGame", "HostGame", "JoinGame", "WaitPeer", "PeerJoined", "WaitHostStart",
     "ConnectFail", "StartBattle", "IpLabel", "PeerLeft", "DesyncWarn", "YourSide",
     "TipCostTimeFmt", "TipRequireFmt", "TipNoMoney", "RankVet", "RankElite", "HpFmt",
+    "SizeXS", "SizeXL", "SizeHuge", "SizeEpic",
+    "MapArchipelago", "MapCoast", "MapRiver", "MapMountain",
 };
 
 static int sKeyByName(const char* s) {
@@ -610,11 +621,22 @@ void appendAllFontText(std::string& out) {
     for (int i = 0; i < (int)BldType::COUNT; i++) { out += bldDef((BldType)i).name; out += BLD_EN[i]; }
     for (int i = 0; i < (int)SWType::COUNT; i++) { out += swDef((SWType)i).name; out += SW_EN[i]; }
     for (int i = 0; i < 4; i++) { out += factionName((Faction)i); out += FACTION_EN[i]; }
+    // 国家名（遭遇战下拉）；此前未收集 → 缺字显示为 ?
+    for (int i = 0; i < (int)Country::COUNT; i++) {
+        out += COUNTRY_CN[i];
+        out += COUNTRY_EN[i];
+    }
     for (const MissionDef& md : missionTable()) {
         out += md.name; out += md.brief;
         out += md.nameEn; out += md.briefEn;
         for (const Trigger& t : md.triggers) { out += t.msg; out += t.msgEn; }
     }
-    // 窗口标题与杂项中文
+    // 窗口标题 / 遭遇战难度下拉（硬编码文案）与杂项
     out += "OpenRA2 - 共和国之辉 复刻";
+    out += "简单普通困难残酷";
+    out += "EasyNormalHardBrutal";
+    out += "主菜单";
+    // 开局提示 + 常用全角标点（ini 覆盖后仍须进字模，避免缺字方框）
+    out += "找到基地车，按D键展开！";
+    out += "，。！？、；：“”‘’（）【】…—";
 }

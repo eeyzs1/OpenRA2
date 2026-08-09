@@ -620,12 +620,16 @@ void World::updateUnit(Ent& e, EID id) {
     switch (e.state) {
         case UState::Idle: {
             // 自动索敌（警戒模式按视野半径，普通按射程+2）
-            const WeaponDef ew = effWeapon(e);
-            if (ew.damage > 0) {
-                float scanR = e.guard ? (float)std::max(ud.sight, ew.range + 2)
-                                      : (float)(ew.range + 2);
-                EID en = findNearestEnemy(e.player, e.x, e.y, scanR, true, &ew, e.utype);
-                if (en != INVALID_EID) { e.target = en; e.state = UState::Chasing; }
+            // 空载采矿车优先采矿：勿被武装矿车 Idle 索敌抢走
+            const UnitDef& udIdle = unitDef(e.utype);
+            if (!(udIdle.canHarvet() && e.autoHarvest && e.oreLoad == 0)) {
+                const WeaponDef ew = effWeapon(e);
+                if (ew.damage > 0) {
+                    float scanR = e.guard ? (float)std::max(ud.sight, ew.range + 2)
+                                          : (float)(ew.range + 2);
+                    EID en = findNearestEnemy(e.player, e.x, e.y, scanR, true, &ew, e.utype);
+                    if (en != INVALID_EID) { e.target = en; e.state = UState::Chasing; }
+                }
             }
             break;
         }

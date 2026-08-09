@@ -58,6 +58,9 @@ enum class S : int {
     ConnectFail, StartBattle, IpLabel, PeerLeft, DesyncWarn, YourSide,
     // 生产图标悬停提示 / 选中信息面板
     TipCostTimeFmt, TipRequireFmt, TipNoMoney, RankVet, RankElite, HpFmt,
+    // 遭遇战地图扩展（追加在末尾，避免打乱既有 S 序号）
+    SizeXS, SizeXL, SizeHuge, SizeEpic,
+    MapArchipelago, MapCoast, MapRiver, MapMountain,
     COUNT
 };
 

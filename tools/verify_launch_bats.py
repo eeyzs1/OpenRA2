@@ -45,6 +45,11 @@ def check(path: Path, *, must_call_launch: bool = False) -> list[str]:
         errs.append(f"{path.name}: must launch via PowerShell Start-Process")
     if r"build\Release\ra2.exe" not in code:
         errs.append(f"{path.name}: missing Release ra2.exe path")
+    # Single canonical path: no Debug/asan/root fallbacks (stale copies confuse rebuilds).
+    if r"build\Debug\ra2.exe" in code or r"build-asan" in code:
+        errs.append(f"{path.name}: must not fall back to Debug/asan exe")
+    if r"%CD%\ra2.exe" in code:
+        errs.append(f"{path.name}: must not fall back to root ra2.exe")
     return errs
 
 

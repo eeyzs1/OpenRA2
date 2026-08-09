@@ -31,6 +31,7 @@ enum KeyAction : int {
 class Game {
 public:
     void init(bool windowed = false, bool hidden = false); // 默认无边框全屏；windowed 调试窗口；hidden 测试用隐藏窗口（不弹窗）
+    bool assetsOk() const { return assetsOk_; } // false = 缺素材，main 应拒绝进主循环
     void shutdown();
     void run(); // 主循环
     int smokeTest(int frames); // 无头冒烟测试，返回失败断言数
@@ -38,6 +39,7 @@ public:
     int campaignMatrixTest(int frames); // 32 关启动/触发器/胜负静态与运行矩阵
     void benchCampaign(int mission, int warmTicks, int frames); // 临时诊断：战役真实渲染耗时（解除帧率上限）
     int playTest();             // 自动化完整游玩测试：脚本注入输入，真实窗口跑全流程，返回失败数
+    int liveVerify();           // 可见窗口 + 真实 OS 鼠标点选/设置页目检（修复实机选不中）
     int visualAudit();          // 建筑虚线笼/建造出售动画/地形目检截图（人工或脚本审图）
     void debugMenuShot(const char* file, bool setup); // 菜单截图（验证用）
     void debugShot(int warmTicks, const char* file); // 遭遇战截图：预热出基地/电厂/单位后拍全屏（验证用）
@@ -54,6 +56,7 @@ private:
     int localPlayer = 0;
 
     // 阶段与遭遇战配置
+    bool assetsOk_ = true; // init 校验素材；缺失则 main 拒绝进主循环
     Phase phase = Phase::MainMenu;
     int cfgCountry = (int)Country::China; // 玩家国家（RA2 原作：国家决定阵营与特色单位；COUNT=随机）
     int cfgColor = 0;       // 玩家颜色
@@ -139,6 +142,7 @@ private:
     float camX = 0, camY = 0;
     float camSpeed = 14;
     float camZoom = 1.0f; // 滚轮缩放：0.5=拉远，2.0=拉近
+    int camEdgeLock = 0; // 开局若干逻辑帧内禁止边缘卷轴，避免点「开始」后镜头被拖走
     static constexpr float CAM_ZOOM_MIN = 0.5f;
     static constexpr float CAM_ZOOM_MAX = 2.0f;
 
@@ -147,6 +151,7 @@ private:
     EID selBuilding = INVALID_EID;
     bool dragging = false;
     Vector2 dragStart{0, 0};
+    bool dragPressSelected = false; // 按下时已点中单位/建筑（松手小拖动则保持，大框则改框选）
 
     // 鼠标光标（RA2 mouse.shp 提取帧）
     enum class CursorKind : uint8_t {
@@ -247,6 +252,8 @@ private:
     // 渲染子模块
     void drawWorld();
     void drawEntities();
+    void drawSelectionOverlay();
+    void flushWorldOverlayRects(); // 叠层已在 zoom 矩阵内 DrawTexturePro；保留空实现兼容调用
     void drawEffectsLayer();
     void drawFogLayer();
     void drawHUD();
@@ -302,6 +309,8 @@ private:
 
     // 输入包装：统一逻辑坐标（高 DPI 修正）+ 脚本注入（playTest 自动化）
     Vector2 mousePos() const;
+    // 画布 letterbox 目标矩形（与 render 绘制必须同公式）
+    static Rectangle letterboxDst();
     bool mPressed(int btn) const;
     bool mDown(int btn) const;
     bool mReleased(int btn) const;
@@ -342,6 +351,7 @@ Rectangle menuShellMonitor(); // 右侧监视器槽
 void ensureMenuGui();
 bool drawMenuPanelChrome(int x, int y, int w, int h);
 void drawMenuOptSlot(Rectangle r, bool hover);
+void drawMenuOptSlot(Rectangle r, bool hover, bool showArrow);
 void drawMenuPip(float x, float y, bool on); // 原作 pips 勾选
 void menuSetBikForceFrame(int frame);
 int menuBikFrameCount();

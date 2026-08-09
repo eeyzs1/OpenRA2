@@ -1,5 +1,7 @@
 build/
 build-asan/
+# Stale root copy — always launch via build\Release\ra2.exe (启动游戏.bat)
+/ra2.exe
 *.png
 .vs/
 .vscode/
@@ -24,11 +26,14 @@ tools/visual_audit/**/_probe/
 tools/visual_audit/**/_probe/**
 tools/visual_audit/**/form_probe/
 tools/visual_audit/**/form_probe/**
-tools/visual_audit/bld_review/form_probe/
+tools/visual_audit/bld_review/
 tools/ra2pack/_*.py
 tools/ra2pack/probe_*.py
+tools/ra2pack/out/
 # MIX-extracted menu chrome (regen via gen_menu_gui.py; copyrighted)
 assets/gui/menu/
-# Local GUI review dumps (ra2.exe --gui-review)
+# Local GUI / audit dumps (not game content)
 gui_review/
+gui_review_prev_*/
+assets/preview/
 tools/visual_audit/menu_ref/
