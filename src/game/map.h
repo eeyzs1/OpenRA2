@@ -88,4 +88,11 @@ public:
 private:
     float noise2(int x, int y, uint64_t seed) const;
     float fbm(float x, float y, uint64_t seed) const;
+
+    // A* 持久 scratch（findPath 为 const，用 mutable + generation 懒重置）
+    mutable std::vector<float> astarG;
+    mutable std::vector<int> astarParent;
+    mutable std::vector<uint32_t> astarOpenStamp;   // == gen 表示本轮已写过 g/parent
+    mutable std::vector<uint32_t> astarClosedStamp; // == gen 表示已闭合
+    mutable uint32_t astarGen = 1;
 };

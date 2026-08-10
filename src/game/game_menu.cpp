@@ -179,19 +179,20 @@ void menuBlitUi() {
     DrawTexturePro(g_menu.uiRT.texture, src, dst, {0, 0}, 0, WHITE);
 }
 
-// 勾选：原作遭遇战是橙/红圆形指示灯（非蓝菱）
+// 勾选：金属灯座 + 琥珀指示灯
 void drawMenuPip(float x, float y, bool on) {
     ensureMenuGui();
-    // 优先用 pips 小图，但多数帧不是菜单灯；菜单勾选改画原作风格圆灯
     float cx = x + 7.f, cy = y + 7.f;
-    DrawCircle((int)cx, (int)cy, 7, Color{40, 12, 10, 255});
-    DrawCircleLines((int)cx, (int)cy, 7, Color{180, 40, 30, 255});
+    DrawCircle((int)cx, (int)cy, 8, Color{18, 18, 22, 255});
+    DrawCircleLines((int)cx, (int)cy, 8, Color{90, 94, 104, 255});
+    DrawCircleLines((int)cx, (int)cy, 7, Color{40, 42, 48, 255});
     if (on) {
-        DrawCircle((int)cx, (int)cy, 5, Color{255, 120, 30, 255});
-        DrawCircle((int)cx, (int)cy, 3, Color{255, 200, 80, 255});
-        DrawCircle((int)cx - 1, (int)cy - 1, 1, Color{255, 240, 180, 220});
+        DrawCircle((int)cx, (int)cy, 5, Color{220, 110, 28, 255});
+        DrawCircle((int)cx, (int)cy, 3, Color{255, 200, 90, 255});
+        DrawCircle((int)cx - 1, (int)cy - 2, 1, Color{255, 245, 200, 230});
     } else {
-        DrawCircle((int)cx, (int)cy, 4, Color{50, 20, 16, 255});
+        DrawCircle((int)cx, (int)cy, 4, Color{36, 28, 24, 255});
+        DrawCircle((int)cx, (int)cy, 2, Color{22, 18, 16, 255});
     }
 }
 
@@ -342,12 +343,17 @@ bool drawMenuPanelChrome(int x, int y, int w, int h) {
 
 void drawMenuOptSlot(Rectangle r, bool hover, bool showArrow) {
     ensureMenuGui();
-    // value slot: near-black + red border; yellow chevron if dropdown (not gray SHP tile)
-    DrawRectangleRec(r, Color{10, 8, 10, 255});
-    DrawRectangleLinesEx(r, 1, hover ? Color{255, 96, 48, 255} : Color{176, 40, 32, 255});
+    // 金属凹陷槽：替代细红框，与侧栏工业风统一
+    DrawRectangleRec(r, Color{10, 12, 16, 255});
+    guiBevel(r, true);
+    DrawRectangleLinesEx(
+        {(float)((int)r.x + 1), (float)((int)r.y + 1), (float)((int)r.width - 2), (float)((int)r.height - 2)},
+        1, hover ? Color{210, 175, 70, 220} : Color{55, 58, 66, 200});
+    if (hover)
+        DrawRectangle((int)r.x + 2, (int)r.y + 2, (int)r.width - 4, (int)r.height - 4, Color{255, 210, 90, 18});
     if (showArrow) {
-        float cx = r.x + r.width - 9.f, cy = r.y + r.height * 0.5f;
-        Color ac = hover ? MENU_YELLOW_HI : MENU_YELLOW;
+        float cx = r.x + r.width - 10.f, cy = r.y + r.height * 0.5f;
+        Color ac = hover ? MENU_YELLOW_HI : Color{200, 175, 90, 255};
         DrawTriangle({cx - 3.5f, cy - 2.5f}, {cx + 3.5f, cy - 2.5f}, {cx, cy + 3.5f}, ac);
     }
 }
@@ -456,9 +462,11 @@ bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const char* text
     if (text && text[0]) {
         Color idle = MENU_YELLOW;
         Color hiC = MENU_YELLOW_HI;
-        int tw = textW(font, text, size);
-        drawTextS(font, text, (int)(r.x + r.width / 2 - tw / 2), (int)(r.y + r.height / 2 - size / 2), size,
-                  enabled ? (hover ? hiC : idle) : Color{96, 98, 102, 255});
+        Vector2 sz = MeasureTextEx(font, text, (float)size, 0);
+        drawTextS(font, text,
+                  (int)(r.x + (r.width - sz.x) * 0.5f),
+                  (int)(r.y + (r.height - sz.y) * 0.5f),
+                  size, enabled ? (hover ? hiC : idle) : Color{96, 98, 102, 255});
     }
     bool clicked = hover && pressed;
     if (clicked) g_sfx.play(Sfx::Click, 0.6f);
@@ -482,9 +490,11 @@ static bool ra2TitleButton(Font font, Vector2 m, bool pressed, Rectangle r, cons
         menuDrawTex(g_menu.sdbtnBkgd, r, Color{255, 255, 255, 40});
     }
     if (text && text[0]) {
-        int tw = textW(font, text, size);
-        drawTextS(font, text, (int)(r.x + r.width / 2 - tw / 2), (int)(r.y + r.height / 2 - size / 2), size,
-                  hover ? MENU_YELLOW_HI : MENU_YELLOW);
+        Vector2 sz = MeasureTextEx(font, text, (float)size, 0);
+        drawTextS(font, text,
+                  (int)(r.x + (r.width - sz.x) * 0.5f),
+                  (int)(r.y + (r.height - sz.y) * 0.5f),
+                  size, hover ? MENU_YELLOW_HI : MENU_YELLOW);
     }
     bool clicked = hover && pressed;
     if (clicked) g_sfx.play(Sfx::Click, 0.6f);
@@ -496,19 +506,21 @@ bool ra2RedSlider(Font font, Vector2 m, bool pressed, int x, int y, int trackW,
     if (nSteps < 2) nSteps = 2;
     if (step < 0) step = 0;
     if (step >= nSteps) step = nSteps - 1;
-    // 原作：暗红底轨 + 细红框 + 竖条红指示针；右侧红框数值
-    Rectangle frame{(float)x, (float)y + 2, (float)trackW, 12};
-    DrawRectangleRec(frame, Color{28, 10, 10, 255});
-    DrawRectangleLinesEx(frame, 1, Color{180, 48, 36, 255});
+    // 金属轨 + 琥珀指示针 + 数值槽
+    Rectangle frame{(float)x, (float)y + 1, (float)trackW, 14};
+    DrawRectangleRec(frame, Color{14, 16, 20, 255});
+    guiBevel(frame, true);
+    DrawRectangle((int)frame.x + 2, (int)frame.y + 5, (int)frame.width - 4, 4, Color{28, 18, 14, 255});
     float t = (float)step / (float)(nSteps - 1);
-    int hx = (int)(frame.x + 2 + t * (frame.width - 4));
-    DrawRectangle(hx - 1, (int)frame.y + 1, 3, (int)frame.height - 2, Color{230, 56, 40, 255});
+    int hx = (int)(frame.x + 3 + t * (frame.width - 6));
+    DrawRectangle(hx - 2, (int)frame.y + 2, 5, (int)frame.height - 4, Color{70, 72, 80, 255});
+    DrawRectangle(hx - 1, (int)frame.y + 3, 3, (int)frame.height - 6, Color{240, 140, 48, 255});
+    DrawLine(hx, (int)frame.y + 3, hx, (int)(frame.y + frame.height - 4), Color{255, 220, 140, 220});
     if (valueText && valueText[0]) {
-        int vw = textW(font, valueText, 12) + 10;
-        if (vw < 28) vw = 28;
+        int vw = textW(font, valueText, 12) + 12;
+        if (vw < 32) vw = 32;
         Rectangle vb{(float)(x + trackW + 8), (float)y, (float)vw, 16};
-        DrawRectangleRec(vb, Color{8, 10, 12, 255});
-        DrawRectangleLinesEx(vb, 1, Color{180, 48, 36, 255});
+        drawMenuOptSlot(vb, false, false);
         drawTextS(font, valueText, (int)vb.x + (vw - textW(font, valueText, 12)) / 2, y + 2, 12,
                   Color{255, 230, 90, 255});
     }
@@ -887,11 +899,11 @@ void Game::drawMissionSelect() {
         Rectangle r{(float)(tabsX + t * (tabW + tabGap)), (float)tabsY, (float)tabW, (float)tabH};
         bool sel = campTab == t;
         bool hover = CheckCollisionPointRec(m, r);
-        drawMenuOptSlot(r, sel || hover);
-        if (sel) DrawRectangleLinesEx(r, 1, Color{255, 90, 50, 255});
+        drawMenuOptSlot(r, sel || hover, false);
+        if (sel) DrawRectangleLinesEx(r, 1, Color{230, 190, 70, 255});
         const char* fn = t < 4 ? factName(campFac[t]) : (g_lang ? "Official" : "官方");
         drawTextS(font, fn, (int)r.x + tabW / 2 - textW(font, fn, 12) / 2, (int)r.y + 7, 12,
-                  sel ? Color{255, 230, 90, 255} : Color{200, 180, 120, 255});
+                  sel ? Color{255, 235, 120, 255} : Color{190, 175, 130, 255});
         if (hover && mPressed(MOUSE_LEFT_BUTTON)) { g_sfx.play(Sfx::Click, 0.6f); campTab = t; }
     }
 
@@ -917,20 +929,26 @@ void Game::drawMissionSelect() {
         int gx = x0 + (j % cols) * (cardW + gapX), gy = y0 + (j / cols) * (cardH + gapY);
         Rectangle r{(float)gx, (float)gy, (float)cardW, (float)cardH};
         bool hover = CheckCollisionPointRec(m, r);
-        // 原作 load 内容区：深底 + 暗红地图感 + 红描边黄字
-        DrawRectangleRec(r, hover ? Color{28, 16, 14, 255} : Color{14, 10, 12, 255});
-        DrawRectangle(gx + 2, gy + 2, cardW - 4, cardH - 4, Color{40, 12, 10, 40});
-        DrawRectangleLinesEx(r, 1, hover ? Color{255, 90, 50, 255} : Color{160, 40, 32, 230});
+        DrawRectangleRec(r, Color{16, 18, 22, 255});
+        guiBevel(r, false);
+        DrawRectangle(gx + 3, gy + 3, cardW - 6, cardH - 6, hover ? Color{28, 22, 16, 230} : Color{12, 14, 18, 230});
+        guiBevel({(float)(gx + 3), (float)(gy + 3), (float)(cardW - 6), (float)(cardH - 6)}, true);
+        DrawRectangleLinesEx(r, 1, hover ? Color{230, 190, 70, 255} : Color{70, 74, 82, 220});
+        // 左色条：目标类型速识
+        Color stripe = md.objective == 1 ? Color{70, 160, 220, 255}
+                      : md.objective == 2 ? Color{200, 140, 60, 255}
+                                          : Color{200, 70, 55, 255};
+        DrawRectangle(gx + 4, gy + 4, 4, cardH - 8, stripe);
         int rx = (int)r.x, ry = (int)r.y;
-        drawTextS(font, TextFormat(TR(S::MissionN), i + 1), rx + 8, ry + 6, 11, Color{200, 150, 80, 255});
-        drawTextS(font, missionName(i), rx + 8, ry + 20, 15, Color{255, 220, 90, 255});
-        DrawRectangle(rx + 8, ry + 40, cardW - 16, 1, Color{140, 40, 32, 200});
-        int blines = drawWrapped(font, missionBrief(i), rx + 8, ry + 44, cardW - 16, 11, Color{220, 200, 150, 255}, 2);
+        drawTextS(font, TextFormat(TR(S::MissionN), i + 1), rx + 14, ry + 6, 11, Color{170, 150, 100, 255});
+        drawTextS(font, missionName(i), rx + 14, ry + 20, 15, Color{255, 230, 110, 255});
+        DrawRectangle(rx + 14, ry + 40, cardW - 24, 1, Color{90, 78, 50, 200});
+        int blines = drawWrapped(font, missionBrief(i), rx + 14, ry + 44, cardW - 24, 11, Color{210, 200, 170, 255}, 2);
         const char* objText = md.objective == 1 ? TextFormat(TR(S::ObjSurvive), md.objectiveTick / (30 * 60))
                               : md.objective == 2 ? TR(S::ObjTrigger) : TR(S::ObjEliminate);
-        drawTextS(font, objText, rx + 8, ry + 46 + blines * 13, 11, Color{255, 180, 70, 255});
+        drawTextS(font, objText, rx + 14, ry + 46 + blines * 13, 11, Color{255, 190, 90, 255});
         if (hover) {
-            drawTextS(font, TR(S::ClickEnter), rx + 8, ry + cardH - 18, 12, Color{255, 236, 150, 255});
+            drawTextS(font, TR(S::ClickEnter), rx + 14, ry + cardH - 18, 12, Color{255, 236, 150, 255});
             if (mPressed(MOUSE_LEFT_BUTTON)) {
                 g_sfx.play(Sfx::Click, 0.6f);
                 newCampaignGame(i);
@@ -1345,7 +1363,8 @@ void Game::drawSetup() {
         bool chover = CheckCollisionPointRec(m, cr);
         bool copen = g_sdrop.kind == SetupDrop::Color && g_sdrop.slot == idx;
         DrawRectangleRec(cr, HOUSE_COLORS[color]);
-        DrawRectangleLinesEx(cr, 1, (chover || copen) ? Color{255, 96, 48, 255} : Color{176, 40, 32, 255});
+        guiBevel(cr, true);
+        DrawRectangleLinesEx(cr, 1, (chover || copen) ? Color{230, 190, 70, 255} : Color{70, 74, 82, 220});
         {
             float cx = cr.x + cr.width - 7.f, cy = cr.y + cr.height * 0.5f;
             Color ac = (chover || copen) ? MENU_YELLOW_HI : MENU_YELLOW;

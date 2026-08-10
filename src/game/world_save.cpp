@@ -596,6 +596,8 @@ bool World::loadGame(FILE* f) {
     for (const EvaEvent& ev : evaQueue)
         if (ev.player < 0 || ev.player >= numPlayers) return false;
     recomputePower();
+    rebuildUnitOcc(); // 占位链表为派生数据，读档后重建
+    rebuildAirOcc();
     return true;
 }
 

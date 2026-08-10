@@ -354,8 +354,7 @@ void Game::drawNetLobby() {
         if (lobbyState == 4) {
             drawTextM(font, TR(S::IpLabel), cx - 160, 160, 14, Color{200, 196, 188, 255});
             Rectangle box{(float)cx - 160, 186, 320, 32};
-            DrawRectangleRec(box, Color{18, 18, 24, 255});
-            DrawRectangleLinesEx(box, 1, lobbyEditingIp ? Color{255, 200, 90, 255} : Color{110, 96, 60, 255});
+            drawMenuOptSlot(box, lobbyEditingIp, false);
             drawTextM(font, lobbyIp.c_str(), (int)box.x + 8, (int)box.y + 8, 14, Color{255, 220, 120, 255});
             for (int k = KEY_ZERO; k <= KEY_NINE; k++)
                 if (kPressed(k) && lobbyIp.size() < 15) lobbyIp.push_back((char)('0' + k - KEY_ZERO));

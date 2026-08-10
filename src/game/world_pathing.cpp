@@ -16,15 +16,10 @@ void World::tryUnstackIdle(Ent& e, EID id) {
     bool need = false;
     if (ud.isInfantry()) {
         need = countInfantryAtCell(cx, cy, id) >= 3; // 已有 ≥3 名其他步兵 → 超叠
-    } else {
-        for (size_t i = 0; i < ents.size(); i++) {
-            if ((EID)i == id) continue;
-            const Ent& o = ents[i];
-            if (!o.alive || o.isBuilding || o.parasiting) continue;
-            const UnitDef& oud = unitDef(o.utype);
-            if (oud.isAir() && o.state != UState::Landed) continue;
-            if (oud.isInfantry()) continue;
-            if ((int)o.x == cx && (int)o.y == cy) { need = true; break; }
+    } else if (map.inBounds(cx, cy) && !unitOccHead.empty()) {
+        for (EID oid = unitOccHead[(size_t)cellIdx(cx, cy)]; oid != INVALID_EID; oid = ents[oid].occNext) {
+            if (oid == id) continue;
+            if (!unitDef(ents[oid].utype).isInfantry()) { need = true; break; }
         }
     }
     if (!need) return;
@@ -38,6 +33,8 @@ void World::tryUnstackIdle(Ent& e, EID id) {
         if (cellHardBlockedForMove(nx, ny, id)) continue;
         e.x = nx + 0.5f;
         e.y = ny + 0.5f;
+        unitOccSync(id);
+        airOccSync(id);
         return;
     }
 }
@@ -61,6 +58,8 @@ void World::moveAlongPath(Ent& e, EID id) {
                 if ((dx || dy) && passableStep((int)o.x, (int)o.y, nx, ny, od.pathDomain()) && !bldBlocked(nx, ny)
                     && !cellHardBlockedForMove(nx, ny, blocker)) {
                     o.x = nx + 0.5f; o.y = ny + 0.5f;
+                    unitOccSync(blocker);
+                    airOccSync(blocker);
                 }
             }
         }
@@ -147,10 +146,14 @@ void World::moveAlongPath(Ent& e, EID id) {
             e.camouflaged = false; e.camoTick = 0; // 幻影移动解除伪装（间谍伪装不因移动解除）
         }
         pickupCrates(e); // 驶入补给箱：拾取
+        unitOccSync(id);
+        airOccSync(id);
     } else {
         e.blockTick = 0;
         e.x += (dx / dist) * step;
         e.y += (dy / dist) * step;
+        unitOccSync(id);
+        airOccSync(id);
     }
 }
 

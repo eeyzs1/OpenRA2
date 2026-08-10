@@ -140,6 +140,10 @@ public:
         BldType btype = BldType::ConYard;
         float x = 0, y = 0;        // 单位：浮点瓦片坐标；建筑：左上格
         float px = 0, py = 0;      // 上一逻辑帧位置（渲染插值用，update() 开头快照）
+        int occCell = -1;          // 单位格占位链表：当前 cellIdx，-1=未挂入（派生数据，不入存档/checksum）
+        EID occNext = INVALID_EID; // 同格下一单位
+        int airBucket = -1;        // 空中粗桶索引（4×4 格），派生数据
+        EID airNext = INVALID_EID; // 同桶下一飞行单位
         int dir = 2;
         int turretDir = 2;
         int hp = 1;
@@ -274,6 +278,12 @@ public:
 
     // 建筑占格（cellIdx -> eid+1）
     std::vector<int> bldOcc;
+    // 单位占格链表头（cellIdx -> 首个地面单位 EID）；同格串在 Ent::occNext
+    std::vector<EID> unitOccHead;
+    // 空中单位粗桶（4×4 格一桶，飞行中不进 unitOcc）；派生数据
+    static constexpr int AIR_BUCKET = 4;
+    int airBucketW = 0;
+    std::vector<EID> airOccHead;
 
     // mapFile 非空时加载手工地图（maps/xxx.txt：地形+预置实体+出生点），失败回退程序生成；
     // noStartForce=true 时不刷初始基地车部队（全部由地图文件放置，仅手工地图有效）
@@ -402,6 +412,10 @@ public:
     // 移动占位：目标格对 mover 是否硬阻挡（RA2：车/舰 1 格；步兵同格≤3；车可驶过步兵）
     bool cellHardBlockedForMove(int x, int y, EID mover) const;
     int countInfantryAtCell(int x, int y, EID ignore = INVALID_EID) const;
+    void unitOccSync(EID id);      // 按当前 x/y/状态刷新占位链表（O(同格人数)）
+    void rebuildUnitOcc();         // 全量重建（init/load 后）
+    void airOccSync(EID id);       // 飞行单位粗桶刷新
+    void rebuildAirOcc();          // 全量重建空中桶（init/load 后）
 
     // 主更新（逻辑帧）
     void update();

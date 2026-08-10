@@ -14,39 +14,121 @@ EID World::bldAt(int bx, int by) const {
     return v > 0 ? v - 1 : INVALID_EID;
 }
 
-EID World::unitAtCell(int x, int y) const {
-    for (size_t i = 0; i < ents.size(); i++) {
-        const Ent& e = ents[i];
-        if (!e.alive || e.isBuilding) continue;
-        if (e.parasiting) continue; // 寄生中的机器人附着在宿主上，不占格
-        if (unitDef(e.utype).isAir() && e.state != UState::Landed) continue; // 飞行中不占格
-        if ((int)e.x == x && (int)e.y == y) return (int)i;
-    }
-    return INVALID_EID;
+static bool unitShouldOccupy(const World::Ent& e) {
+    if (!e.alive || e.isBuilding || e.parasiting) return false;
+    if (unitDef(e.utype).isAir() && e.state != UState::Landed) return false;
+    return true;
 }
 
-// 脚印格是否被「其他」地面单位占用（扫全表，避免 unitAtCell 先命中自身而漏掉同格单位）
-bool World::groundUnitBlocksCell(int x, int y, EID ignore) const {
+static bool unitShouldAirBucket(const World::Ent& e) {
+    if (!e.alive || e.isBuilding || e.parasiting) return false;
+    return unitDef(e.utype).isAir() && e.state != UState::Landed;
+}
+
+void World::rebuildUnitOcc() {
+    unitOccHead.assign((size_t)map.w * map.h, INVALID_EID);
     for (size_t i = 0; i < ents.size(); i++) {
-        if ((EID)i == ignore) continue;
-        const Ent& e = ents[i];
-        if (!e.alive || e.isBuilding) continue;
-        if (e.parasiting) continue;
-        if (unitDef(e.utype).isAir() && e.state != UState::Landed) continue;
-        if ((int)e.x == x && (int)e.y == y) return true;
+        ents[i].occCell = -1;
+        ents[i].occNext = INVALID_EID;
+    }
+    for (size_t i = 0; i < ents.size(); i++)
+        unitOccSync((EID)i);
+}
+
+void World::unitOccSync(EID id) {
+    if (id < 0 || id >= (EID)ents.size()) return;
+    Ent& e = ents[id];
+    int want = -1;
+    if (unitShouldOccupy(e) && map.inBounds((int)e.x, (int)e.y))
+        want = cellIdx((int)e.x, (int)e.y);
+    if (e.occCell == want) return;
+
+    if (e.occCell >= 0 && e.occCell < (int)unitOccHead.size()) {
+        EID* link = &unitOccHead[(size_t)e.occCell];
+        while (*link != INVALID_EID) {
+            if (*link == id) {
+                *link = e.occNext;
+                break;
+            }
+            if (*link < 0 || *link >= (EID)ents.size()) break;
+            link = &ents[*link].occNext;
+        }
+        e.occCell = -1;
+        e.occNext = INVALID_EID;
+    }
+
+    if (want >= 0) {
+        e.occNext = unitOccHead[(size_t)want];
+        unitOccHead[(size_t)want] = id;
+        e.occCell = want;
+    }
+}
+
+void World::rebuildAirOcc() {
+    airBucketW = (map.w + AIR_BUCKET - 1) / AIR_BUCKET;
+    const int bh = (map.h + AIR_BUCKET - 1) / AIR_BUCKET;
+    airOccHead.assign((size_t)airBucketW * (size_t)bh, INVALID_EID);
+    for (size_t i = 0; i < ents.size(); i++) {
+        ents[i].airBucket = -1;
+        ents[i].airNext = INVALID_EID;
+    }
+    for (size_t i = 0; i < ents.size(); i++)
+        airOccSync((EID)i);
+}
+
+void World::airOccSync(EID id) {
+    if (id < 0 || id >= (EID)ents.size()) return;
+    Ent& e = ents[id];
+    int want = -1;
+    if (unitShouldAirBucket(e) && map.inBounds((int)e.x, (int)e.y) && airBucketW > 0) {
+        const int bx = (int)e.x / AIR_BUCKET;
+        const int by = (int)e.y / AIR_BUCKET;
+        want = by * airBucketW + bx;
+    }
+    if (e.airBucket == want) return;
+
+    if (e.airBucket >= 0 && e.airBucket < (int)airOccHead.size()) {
+        EID* link = &airOccHead[(size_t)e.airBucket];
+        while (*link != INVALID_EID) {
+            if (*link == id) {
+                *link = e.airNext;
+                break;
+            }
+            if (*link < 0 || *link >= (EID)ents.size()) break;
+            link = &ents[*link].airNext;
+        }
+        e.airBucket = -1;
+        e.airNext = INVALID_EID;
+    }
+
+    if (want >= 0 && want < (int)airOccHead.size()) {
+        e.airNext = airOccHead[(size_t)want];
+        airOccHead[(size_t)want] = id;
+        e.airBucket = want;
+    }
+}
+
+EID World::unitAtCell(int x, int y) const {
+    if (!map.inBounds(x, y) || unitOccHead.empty()) return INVALID_EID;
+    return unitOccHead[(size_t)cellIdx(x, y)];
+}
+
+// 脚印格是否被「其他」地面单位占用（格链表，O(同格人数)）
+bool World::groundUnitBlocksCell(int x, int y, EID ignore) const {
+    if (!map.inBounds(x, y) || unitOccHead.empty()) return false;
+    for (EID id = unitOccHead[(size_t)cellIdx(x, y)]; id != INVALID_EID; id = ents[id].occNext) {
+        if (id == ignore) continue;
+        return true;
     }
     return false;
 }
 
 int World::countInfantryAtCell(int x, int y, EID ignore) const {
+    if (!map.inBounds(x, y) || unitOccHead.empty()) return 0;
     int n = 0;
-    for (size_t i = 0; i < ents.size(); i++) {
-        if ((EID)i == ignore) continue;
-        const Ent& e = ents[i];
-        if (!e.alive || e.isBuilding) continue;
-        if (e.parasiting) continue;
-        if (!unitDef(e.utype).isInfantry()) continue;
-        if ((int)e.x == x && (int)e.y == y) n++;
+    for (EID id = unitOccHead[(size_t)cellIdx(x, y)]; id != INVALID_EID; id = ents[id].occNext) {
+        if (id == ignore) continue;
+        if (unitDef(ents[id].utype).isInfantry()) n++;
     }
     return n;
 }
@@ -57,28 +139,22 @@ int World::countInfantryAtCell(int x, int y, EID ignore) const {
 // - 车可进入有步兵的格（碾压/驶过另判）；步兵不可进入有车/舰的格
 bool World::cellHardBlockedForMove(int x, int y, EID mover) const {
     if (!valid(mover) || !ents[mover].alive) return groundUnitBlocksCell(x, y, mover);
+    if (!map.inBounds(x, y) || unitOccHead.empty()) return false;
     const Ent& self = ents[mover];
-    const UnitDef& sud = unitDef(self.utype);
-    const bool moverInf = sud.isInfantry();
+    const bool moverInf = unitDef(self.utype).isInfantry();
     constexpr int kInfStack = 3;
-    for (size_t i = 0; i < ents.size(); i++) {
-        if ((EID)i == mover) continue;
-        const Ent& o = ents[i];
-        if (!o.alive || o.isBuilding) continue;
-        if (o.parasiting) continue;
-        const UnitDef& oud = unitDef(o.utype);
-        if (oud.isAir() && o.state != UState::Landed) continue;
-        if ((int)o.x != x || (int)o.y != y) continue;
-        const bool otherInf = oud.isInfantry();
-        if (moverInf && otherInf) {
-            if (countInfantryAtCell(x, y, mover) < kInfStack) continue;
-            return true;
-        }
-        if (moverInf && !otherInf) return true;   // 步兵 vs 车/舰
-        if (!moverInf && otherInf) continue;      // 车/舰 vs 步兵：可进
-        return true; // 车/舰 vs 车/舰：硬挡
+    int otherInf = 0;
+    bool hasVehicle = false;
+    for (EID id = unitOccHead[(size_t)cellIdx(x, y)]; id != INVALID_EID; id = ents[id].occNext) {
+        if (id == mover) continue;
+        if (unitDef(ents[id].utype).isInfantry()) otherInf++;
+        else hasVehicle = true;
     }
-    return false;
+    if (moverInf) {
+        if (hasVehicle) return true;
+        return otherInf >= kInfStack;
+    }
+    return hasVehicle; // 车/舰：仅被其他车/舰硬挡
 }
 
 bool World::hasBld(int player, BldType t) const {
@@ -199,44 +275,103 @@ bool World::hasFactoryFor(int player, const UnitDef& u) const {
 EID World::findNearestEnemy(int player, float x, float y, float maxR, bool includeBlds, const WeaponDef* w, UnitType seeker) {
     EID best = INVALID_EID;
     float bd = maxR;
-    for (size_t i = 0; i < ents.size(); i++) {
-        const Ent& e = ents[i];
-        if (!e.alive || e.player < 0 || !isEnemy(player, e.player)) continue;
-        if (e.parasiting && e.utype == UnitType::TerrorDrone) continue; // 寄生中的机器人不可被索敌（乌贼缠绕仍可被攻击摘除）
-        if (e.isBuilding && !includeBlds) continue;
+    if (maxR <= 0.0f) return INVALID_EID;
+
+    auto consider = [&](EID id) {
+        if (id < 0 || id >= (EID)ents.size()) return;
+        const Ent& e = ents[id];
+        if (!e.alive || e.player < 0 || !isEnemy(player, e.player)) return;
+        if (e.parasiting && e.utype == UnitType::TerrorDrone) return; // 寄生中的机器人不可被索敌（乌贼缠绕仍可被攻击摘除）
+        if (e.isBuilding && !includeBlds) return;
         if (!e.isBuilding) {
-            if (e.camouflaged && e.utype != UnitType::Spy) continue; // 幻影伪装：无法被自动索敌
+            if (e.camouflaged && e.utype != UnitType::Spy) return; // 幻影伪装：无法被自动索敌
             // 间谍（含伪装）：除军犬外无法被自动索敌（RA2 原作：军犬嗅探）
-            if (e.utype == UnitType::Spy && seeker != UnitType::AttackDog) continue;
+            if (e.utype == UnitType::Spy && seeker != UnitType::AttackDog) return;
             // 台风/雷鸣潜艇下潜隐身：仅反潜探测单位在 7 格内、或任何单位贴脸（2.5 格）可发现
             if ((e.utype == UnitType::Typhoon || e.utype == UnitType::Boomer) && e.subReveal <= 0) {
                 float sd = distf(x, y, e.x, e.y);
-                if (!(isDetector(seeker) && sd <= 7.0f) && sd > 2.5f) continue;
+                if (!(isDetector(seeker) && sd <= 7.0f) && sd > 2.5f) return;
             }
             // 心灵控制者索敌：跳过免疫目标与已被控制单位（RA2 原作）
             if ((seeker == UnitType::Yuri || seeker == UnitType::PsiCommando || seeker == UnitType::YuriPrime)
-                && (psychicImmune(e.utype) || e.permaControlled || e.mindBy != INVALID_EID)) continue;
+                && (psychicImmune(e.utype) || e.permaControlled || e.mindBy != INVALID_EID)) return;
         }
         // 尤里无法控制建筑（尤里首脑可控；心灵突击队有 C4 可炸建筑，不在此过滤）
-        if (e.isBuilding && seeker == UnitType::Yuri) continue;
+        if (e.isBuilding && seeker == UnitType::Yuri) return;
         // 武器射界过滤：空中目标需 antiAir，地面目标需 antiGround
         if (w) {
             bool airT = !e.isBuilding && unitDef(e.utype).isAir() && e.state != UState::Landed;
-            if (airT && !w->antiAir) continue;
-            if (!airT && !w->antiGround) continue;
+            if (airT && !w->antiAir) return;
+            if (!airT && !w->antiGround) return;
             if (w->navalOnly) {
                 // 鱼雷类：仅水上目标（舰船或水上建筑）
                 bool onWater = e.isBuilding
                     ? map.at((int)e.x + bldDef(e.btype).w / 2, (int)e.y + bldDef(e.btype).h / 2).terrain == Terrain::Water
                     : map.at((int)e.x, (int)e.y).terrain == Terrain::Water;
-                if (!onWater) continue;
+                if (!onWater) return;
             }
         }
         float ex = e.x, ey = e.y;
         if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
         float d = distf(x, y, ex, ey);
-        if (d < bd) { bd = d; best = (int)i; }
+        // 最近距离；平局取更小 EID（扫描顺序无关、确定性）
+        if (d < bd || (d == bd && (best == INVALID_EID || id < best))) {
+            bd = d;
+            best = id;
+        }
+    };
+
+    const int cx = (int)x, cy = (int)y;
+    const int cellR = (int)std::ceil(maxR) + 1;
+    const bool needGround = !w || w->antiGround;
+    const bool needAir = !w || w->antiAir;
+
+    // 地面单位：格占位环扫
+    if (needGround && !unitOccHead.empty()) {
+        for (int dy = -cellR; dy <= cellR; dy++) {
+            for (int dx = -cellR; dx <= cellR; dx++) {
+                const int gx = cx + dx, gy = cy + dy;
+                if (!map.inBounds(gx, gy)) continue;
+                for (EID id = unitOccHead[(size_t)cellIdx(gx, gy)]; id != INVALID_EID; id = ents[id].occNext)
+                    consider(id);
+            }
+        }
     }
+
+    // 建筑：脚印格；仅在左上角格计入，避免重复
+    if (includeBlds && needGround && !bldOcc.empty()) {
+        for (int dy = -cellR; dy <= cellR; dy++) {
+            for (int dx = -cellR; dx <= cellR; dx++) {
+                const int gx = cx + dx, gy = cy + dy;
+                if (!map.inBounds(gx, gy)) continue;
+                const int v = bldOcc[(size_t)cellIdx(gx, gy)];
+                if (v <= 0) continue;
+                const EID id = v - 1;
+                if (id < 0 || id >= (EID)ents.size()) continue;
+                const Ent& b = ents[id];
+                if ((int)b.x != gx || (int)b.y != gy) continue;
+                consider(id);
+            }
+        }
+    }
+
+    // 飞行单位：4×4 粗桶
+    if (needAir && airBucketW > 0 && !airOccHead.empty()) {
+        const int bh = (map.h + AIR_BUCKET - 1) / AIR_BUCKET;
+        const int minBx = std::max(0, (cx - cellR) / AIR_BUCKET);
+        const int maxBx = std::min(airBucketW - 1, (cx + cellR) / AIR_BUCKET);
+        const int minBy = std::max(0, (cy - cellR) / AIR_BUCKET);
+        const int maxBy = std::min(bh - 1, (cy + cellR) / AIR_BUCKET);
+        for (int by = minBy; by <= maxBy; by++) {
+            for (int bx = minBx; bx <= maxBx; bx++) {
+                const int bi = by * airBucketW + bx;
+                if (bi < 0 || bi >= (int)airOccHead.size()) continue;
+                for (EID id = airOccHead[(size_t)bi]; id != INVALID_EID; id = ents[id].airNext)
+                    consider(id);
+            }
+        }
+    }
+
     return best;
 }
 

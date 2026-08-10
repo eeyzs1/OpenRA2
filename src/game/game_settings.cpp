@@ -75,21 +75,22 @@ void Game::drawSettings() {
     auto redValue = [&](int x, int y, int w, int h, const char* value, bool enabled) {
         Rectangle r{(float)x, (float)y, (float)w, (float)h};
         bool hover = CheckCollisionPointRec(m, r) && enabled;
-        drawMenuOptSlot(r, hover && enabled);
+        drawMenuOptSlot(r, hover && enabled, false);
         if (!enabled) DrawRectangleRec(r, Color{10, 12, 16, 180});
         drawTextS(font, value, x + 8, y + (h - 12) / 2, 12,
                   enabled ? Color{255, 230, 90, 255} : Color{110, 100, 90, 255});
         return hover && pr;
     };
     auto section = [&](int x, int y, const char* title) {
-        drawTextS(font, title, x, y, 14, Color{255, 230, 90, 255});
-        DrawRectangle(x, y + 18, 160, 1, Color{140, 50, 40, 180});
+        drawTextS(font, title, x, y, 15, Color{255, 220, 110, 255});
+        DrawRectangle(x, y + 19, 180, 2, Color{90, 78, 48, 220});
+        DrawRectangle(x, y + 19, 60, 2, Color{210, 170, 70, 255});
     };
     auto pip = [&](int x, int y, const char* label, bool& val) {
         Rectangle hit{(float)x, (float)y, (float)(22 + textW(font, label, 12)), 18};
         bool hover = CheckCollisionPointRec(m, hit);
         drawMenuPip((float)x, (float)y + 2, val);
-        drawTextS(font, label, x + 22, y + 2, 12, Color{255, 230, 90, 255});
+        drawTextS(font, label, x + 22, y + 2, 12, hover ? Color{255, 240, 160, 255} : Color{230, 210, 140, 255});
         if (hover && pr) { val = !val; g_sfx.play(Sfx::Click, 0.45f); }
     };
 
@@ -99,7 +100,7 @@ void Game::drawSettings() {
     if (settingsPane == 0) {
         section(cx, cy, TR(S::DisplaySection));
         int y = cy + 28;
-        drawTextS(font, TR(S::Language), cx, y + 4, 13, Color{255, 230, 90, 255});
+        drawTextS(font, TR(S::Language), cx, y + 4, 13, Color{200, 190, 150, 255});
         // play-test：值框中心约 (248+90, 72+12) → 与旧相对位置对齐到 UI
         if (redValue(cx + 140, y, 180, 24, g_lang ? "English" : "中文", true)) {
             cfgLang = g_lang ? 0 : 1;
@@ -108,7 +109,7 @@ void Game::drawSettings() {
             saveSettings();
         }
         y += 32;
-        drawTextS(font, TR(S::WindowMode), cx, y + 4, 13, Color{255, 230, 90, 255});
+        drawTextS(font, TR(S::WindowMode), cx, y + 4, 13, Color{200, 190, 150, 255});
         if (redValue(cx + 140, y, 180, 24,
                      cfgWindowMode == 0 ? TR(S::WMFullscreen) : TR(S::WMWindowed), true)) {
             cfgWindowMode = cfgWindowMode ? 0 : 1;
@@ -118,7 +119,7 @@ void Game::drawSettings() {
         }
         y += 32;
         drawTextS(font, TR(S::Resolution), cx, y + 4, 13,
-                  cfgWindowMode ? Color{255, 230, 90, 255} : Color{110, 100, 90, 255});
+                  cfgWindowMode ? Color{200, 190, 150, 255} : Color{110, 100, 90, 255});
         if (redValue(cx + 140, y, 180, 24,
                      cfgWindowMode ? TextFormat("%d × %d", RES_LIST[cfgResIdx][0], RES_LIST[cfgResIdx][1])
                                    : TR(S::ResDesktop),
@@ -133,7 +134,7 @@ void Game::drawSettings() {
         section(cx, y, TR(S::GameOptsSection));
         y += 28;
         const S speedNames[] = {S::SpeedSlow, S::SpeedNormal, S::SpeedFast};
-        drawTextS(font, TR(S::GameSpeed), cx, y + 4, 13, Color{255, 230, 90, 255});
+        drawTextS(font, TR(S::GameSpeed), cx, y + 4, 13, Color{200, 190, 150, 255});
         if (ra2RedSlider(font, m, pr, cx + 140, y + 2, 180, gameSpeed, 3, TR(speedNames[gameSpeed])))
             saveSettings();
 
@@ -146,7 +147,7 @@ void Game::drawSettings() {
         section(cx, y, TR(S::SoundSection));
         y += 28;
         static const int vols[] = {0, 25, 50, 75, 100};
-        drawTextS(font, TR(S::Volume), cx, y + 4, 13, Color{255, 230, 90, 255});
+        drawTextS(font, TR(S::Volume), cx, y + 4, 13, Color{200, 190, 150, 255});
         if (ra2RedSlider(font, m, pr, cx + 140, y + 2, 180, cfgVolume, 5,
                          TextFormat("%d", vols[cfgVolume]))) {
             g_sfx.setMasterVol(vols[cfgVolume] / 100.0f);
@@ -172,8 +173,7 @@ void Game::drawSettings() {
                       armed ? Color{255, 226, 150, 255} : Color{255, 230, 90, 255});
             Rectangle kr{(float)keyBoxX, (float)y, (float)keyBoxW, 22};
             bool hover = CheckCollisionPointRec(m, kr);
-            DrawRectangleRec(kr, Color{10, 12, 16, 255});
-            DrawRectangleLinesEx(kr, 1, armed || hover ? Color{255, 100, 70, 255} : Color{180, 50, 40, 220});
+            drawMenuOptSlot(kr, armed || hover, false);
             const char* kn = armed ? "…" : keyName(keyBind[i]);
             drawTextS(font, kn, (int)kr.x + keyBoxW / 2 - textW(font, kn, 11) / 2, y + 4, 11, Color{255, 230, 90, 255});
             if (hover && pr && rebinding < 0) { rebinding = i; g_sfx.play(Sfx::Click, 0.5f); }

@@ -29,6 +29,9 @@ void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const st
     if (!hand) map.generate(w, h, seed, numPlayers, spawns, mapType);
     map.initFog(numPlayers);
     bldOcc.assign((size_t)map.w * map.h, -1);
+    unitOccHead.assign((size_t)map.w * map.h, INVALID_EID);
+    airBucketW = (map.w + AIR_BUCKET - 1) / AIR_BUCKET;
+    airOccHead.assign((size_t)airBucketW * ((map.h + AIR_BUCKET - 1) / AIR_BUCKET), INVALID_EID);
     map.bldOccRef = &bldOcc; // 寻路避开建筑占用
     players.assign(numPlayers, Player{});
 
@@ -359,6 +362,8 @@ EID World::spawnUnit(int player, UnitType t, float x, float y) {
         slot.hp = unitDef(UnitType::Hornet).hp;
         e.cargo.assign(unitDef(t).cargoCap, slot);
     }
+    unitOccSync(id);
+    airOccSync(id);
     return id;
 }
 
@@ -401,6 +406,8 @@ void World::kill(EID id, bool explode) {
     BldType deadBtype = e.btype;
     bool wasSelling = e.selling;
     e.alive = false;
+    unitOccSync(id); // alive=false → 从占位链表摘除
+    airOccSync(id);
     freeList.push_back(id);
     if (e.isBuilding) {
         const BldDef& d = bldDef(e.btype);

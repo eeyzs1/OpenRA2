@@ -258,9 +258,34 @@ bool Map::findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, 
     if (sx == tx && sy == ty) return true;
 
     const int N = w * h;
-    std::vector<float> gScore(N, 1e30f);
-    std::vector<int> parent(N, -1);
-    std::vector<uint8_t> closed(N, 0);
+    if ((int)astarG.size() != N) {
+        astarG.assign((size_t)N, 0.0f);
+        astarParent.assign((size_t)N, -1);
+        astarOpenStamp.assign((size_t)N, 0);
+        astarClosedStamp.assign((size_t)N, 0);
+        astarGen = 1;
+    }
+    if (++astarGen == 0) {
+        std::fill(astarOpenStamp.begin(), astarOpenStamp.end(), 0);
+        std::fill(astarClosedStamp.begin(), astarClosedStamp.end(), 0);
+        astarGen = 1;
+    }
+    const uint32_t gen = astarGen;
+
+    auto gAt = [&](int i) -> float {
+        return astarOpenStamp[(size_t)i] == gen ? astarG[(size_t)i] : 1e30f;
+    };
+    auto setG = [&](int i, float g, int par) {
+        astarOpenStamp[(size_t)i] = gen;
+        astarG[(size_t)i] = g;
+        astarParent[(size_t)i] = par;
+    };
+    auto closed = [&](int i) {
+        return astarClosedStamp[(size_t)i] == gen;
+    };
+    auto markClosed = [&](int i) {
+        astarClosedStamp[(size_t)i] = gen;
+    };
 
     auto hFn = [&](int x, int y) {
         float dx = (float)abs(x - tx), dy = (float)abs(y - ty);
@@ -270,7 +295,7 @@ bool Map::findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, 
     std::priority_queue<AStarNode, std::vector<AStarNode>, decltype(cmp)> open(cmp);
 
     int startIdx = sy * w + sx;
-    gScore[startIdx] = 0;
+    setG(startIdx, 0.0f, -1);
     open.push({sx, sy, 0, hFn(sx, sy), -1});
 
     static const int DX[8] = {1, -1, 0, 0, 1, 1, -1, -1};
@@ -281,15 +306,14 @@ bool Map::findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, 
     while (!open.empty() && expanded++ < maxNodes) {
         AStarNode cur = open.top(); open.pop();
         int ci = cur.y * w + cur.x;
-        if (closed[ci]) continue;
-        closed[ci] = 1;
+        if (closed(ci)) continue;
+        markClosed(ci);
         if (cur.x == tx && cur.y == ty) {
-            // 回溯
             std::vector<Vec2i> rev;
             int i = ci;
             while (i >= 0 && i != startIdx) {
                 rev.push_back({i % w, i / w});
-                i = parent[i];
+                i = astarParent[(size_t)i];
             }
             outPath.assign(rev.rbegin(), rev.rend());
             return true;
@@ -304,11 +328,10 @@ bool Map::findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, 
                     || !climbOk(cur.x, cur.y, cur.x, cur.y + DY[d], domain)) continue;
             }
             int ni = ny * w + nx;
-            if (closed[ni]) continue;
+            if (closed(ni)) continue;
             float ng = cur.g + COST[d];
-            if (ng < gScore[ni]) {
-                gScore[ni] = ng;
-                parent[ni] = ci;
+            if (ng < gAt(ni)) {
+                setG(ni, ng, ci);
                 open.push({nx, ny, ng, ng + hFn(nx, ny), (int)ci});
             }
         }

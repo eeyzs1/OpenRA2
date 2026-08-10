@@ -196,7 +196,7 @@ private:
     Font font{};
     bool fontOk = false;
     int sidebarW = 184; // RA2 原作侧边栏占屏宽 ~12.5%（1366x768 原作实测 171px → 1440 等比 180+）
-    static constexpr int BOTTOM_BAR_H = 35; // 底部命令栏（原作 1366x768 底栏 33px → 810 等比 35）
+    static constexpr int BOTTOM_BAR_H = 42; // 底栏加高，指令钮更易点（原作等比约 35）
     int uiTab = 0; // 0 建筑 1 防御(含超武) 2 步兵 3 车辆/海军（RA2 原作 4 页签）
     int uiScroll = 0;   // 生产网格滚动行（超出一页时 ▲▼ 滚动）
     bool showFps = false; // F3 帧率/耗时显示（性能诊断）

@@ -165,7 +165,11 @@ void World::update() {
     for (size_t i = 0; i < ents.size(); i++) {
         if (!ents[i].alive) continue;
         if (ents[i].isBuilding) updateBuilding(ents[i], (int)i);
-        else updateUnit(ents[i], (int)i);
+        else {
+            updateUnit(ents[i], (int)i);
+            unitOccSync((EID)i); // 移动/起飞/寄生后刷新格占位（同格不变则 O(1)）
+            airOccSync((EID)i);
+        }
     }
 
     // 弹道
@@ -625,7 +629,7 @@ void World::updateUnit(Ent& e, EID id) {
             tryUnstackIdle(e, id);
             if (!(udIdle.canHarvet() && e.autoHarvest && e.oreLoad == 0)) {
                 const WeaponDef ew = effWeapon(e);
-                if (ew.damage > 0) {
+                if (ew.damage > 0 && (tick + (uint64_t)id) % 4 == 0) {
                     float scanR = e.guard ? (float)std::max(ud.sight, ew.range + 2)
                                           : (float)(ew.range + 2);
                     EID en = findNearestEnemy(e.player, e.x, e.y, scanR, true, &ew, e.utype);
@@ -640,21 +644,39 @@ void World::updateUnit(Ent& e, EID id) {
             if (e.state == UState::AttackMoving && ew.damage > 0) {
                 // 有炮塔：边走边打；无炮塔：进入追击停下开火
                 if (unitHasTurret(e.utype)) {
-                    EID en = findNearestEnemy(e.player, e.x, e.y, (float)ew.range, true, &ew, e.utype);
-                    if (en != INVALID_EID) {
-                        e.target = en;
-                        const Ent& t = ents[en];
-                        float tx = t.x, ty = t.y;
-                        if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
-                        int wantTur = dirFromVec(tx - e.x, ty - e.y);
-                        if (e.turretDir != wantTur)
-                            e.turretDir = rotStepDir(e.turretDir, wantTur);
-                        if (rotDistDir(e.turretDir, wantTur) <= 1 && e.atkCd <= 0) {
-                            fireWeapon(e, id, en);
-                            e.atkCd = ew.cooldown;
+                    if ((tick + (uint64_t)id) % 2 == 0) {
+                        EID en = findNearestEnemy(e.player, e.x, e.y, (float)ew.range, true, &ew, e.utype);
+                        if (en != INVALID_EID) {
+                            e.target = en;
+                            const Ent& t = ents[en];
+                            float tx = t.x, ty = t.y;
+                            if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
+                            int wantTur = dirFromVec(tx - e.x, ty - e.y);
+                            if (e.turretDir != wantTur)
+                                e.turretDir = rotStepDir(e.turretDir, wantTur);
+                            if (rotDistDir(e.turretDir, wantTur) <= 1 && e.atkCd <= 0) {
+                                fireWeapon(e, id, en);
+                                e.atkCd = ew.cooldown;
+                            }
+                        }
+                    } else if (valid(e.target) && e.atkCd <= 0) {
+                        // 错开帧：已有目标则继续转向/开火，避免火力腰斩
+                        const Ent& t = ents[e.target];
+                        if (t.alive && isEnemy(e.player, t.player)) {
+                            float tx = t.x, ty = t.y;
+                            if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
+                            if (distf(e.x, e.y, tx, ty) <= (float)ew.range) {
+                                int wantTur = dirFromVec(tx - e.x, ty - e.y);
+                                if (e.turretDir != wantTur)
+                                    e.turretDir = rotStepDir(e.turretDir, wantTur);
+                                if (rotDistDir(e.turretDir, wantTur) <= 1) {
+                                    fireWeapon(e, id, e.target);
+                                    e.atkCd = ew.cooldown;
+                                }
+                            }
                         }
                     }
-                } else {
+                } else if ((tick + (uint64_t)id) % 2 == 0) {
                     EID en = findNearestEnemy(e.player, e.x, e.y, (float)(ew.range + 1), true, &ew, e.utype);
                     if (en != INVALID_EID) { e.target = en; e.state = UState::Chasing; break; }
                 }
@@ -706,8 +728,8 @@ void World::updateUnit(Ent& e, EID id) {
                     e.state = UState::Attacking; // 传送到位后立即进入开火（相位不适结束后才真正开枪）
                     break;
                 }
-                // 每 30 帧重寻路
-                if (e.path.empty() || (tick % 30) == 0) {
+                // 每 30 帧重寻路（按 id 错开，避免同帧 A* 尖峰）
+                if (e.path.empty() || (tick + (uint64_t)id) % 30 == 0) {
                     std::vector<Vec2i> path;
                     if (map.findPath((int)e.x, (int)e.y, (int)tx, (int)ty, path, 20000, ud.pathDomain())) {
                         e.path = std::move(path); e.pathIdx = 0;
@@ -958,7 +980,7 @@ void World::updateUnit(Ent& e, EID id) {
                     }
                     break;
                 }
-                if (e.path.empty() || (tick % 30) == 0) {
+                if (e.path.empty() || (tick + (uint64_t)id) % 30 == 0) {
                     std::vector<Vec2i> path;
                     if (map.findPath((int)e.x, (int)e.y, (int)bx, (int)by, path, 20000, ud.pathDomain())) {
                         e.path = std::move(path); e.pathIdx = 0;
@@ -988,7 +1010,7 @@ void World::updateUnit(Ent& e, EID id) {
                     }
                     break;
                 }
-                if (e.path.empty() || (tick % 30) == 0) {
+                if (e.path.empty() || (tick + (uint64_t)id) % 30 == 0) {
                     int gx, gy;
                     if (boardGoal(t, ud.pathDomain(), gx, gy)) {
                         std::vector<Vec2i> path;

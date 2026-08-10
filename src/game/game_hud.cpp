@@ -1138,10 +1138,15 @@ void Game::drawHUD() {
         int vh = (int)(r.height * (1.0f - frac));
         DrawRectangle((int)r.x + 1, (int)r.y + 1, (int)r.width - 2, vh, Color{0, 0, 0, 150});
     };
-    auto nameStrip = [&](Rectangle r, const char* nm, bool bright) { // 名称（叠于图标底部，白字黑影）
-        int nw = (int)MeasureTextEx(font, nm, 11, 1).x;
-        drawTextS(font, nm, (int)(r.x + r.width / 2 - nw / 2), (int)(r.y + r.height - 13), 11,
-                  bright ? Color{240, 242, 248, 255} : Color{120, 124, 132, 255});
+    auto nameStrip = [&](Rectangle r, const char* nm, bool bright) { // 名称：底部暗条 + 描边字
+        const int stripH = 15;
+        int sy = (int)(r.y + r.height) - stripH;
+        DrawRectangle((int)r.x + 1, sy, (int)r.width - 2, stripH, Color{0, 0, 0, 170});
+        DrawRectangleGradientV((int)r.x + 1, sy - 4, (int)r.width - 2, 4,
+                               Color{0, 0, 0, 0}, Color{0, 0, 0, 140});
+        int nw = (int)MeasureTextEx(font, nm, 11, 0).x;
+        drawTextS(font, nm, (int)(r.x + r.width / 2 - nw / 2), sy + 1, 11,
+                  bright ? Color{250, 248, 235, 255} : Color{150, 152, 158, 255});
     };
 
     for (int row = 0; row < visRows; row++) {
@@ -1277,7 +1282,7 @@ void Game::drawHUD() {
             auto drawCameo = [&](Rectangle dst) {
                 DrawTexturePro(icon.tex, {0, 0, (float)icon.tex.width, (float)icon.tex.height},
                                dst, {0, 0}, 0,
-                               canBuild || activeThis ? WHITE : Color{88, 88, 92, 255});
+                               canBuild || activeThis ? WHITE : Color{150, 152, 158, 255});
             };
             if (orig) {
                 drawCameo({r.x + 3, r.y + 3, r.width - 6, r.height - 6});
@@ -1404,7 +1409,16 @@ void Game::drawHUD() {
     {
         int by = SCREEN_H - BOTTOM_BAR_H;
         const float BB = SCREEN_W / 1366.0f; // 原作底栏源图 → 本游宽度
-        if (!orig) DrawTexture(g_bbar, 0, by, WHITE); // orig 底栏已在侧栏贴图前绘制
+        if (!orig) {
+            // 程序化底栏贴图拉伸填满加高后的条
+            if (g_bbar.id)
+                DrawTexturePro(g_bbar,
+                               {0, 0, (float)g_bbar.width, (float)g_bbar.height},
+                               {0, (float)by, (float)SCREEN_W, (float)BOTTOM_BAR_H},
+                               {0, 0}, 0, WHITE);
+            else
+                DrawRectangle(0, by, SCREEN_W, BOTTOM_BAR_H, Color{28, 30, 36, 255});
+        }
         Vector2 mp = mousePos();
         auto barHov = [&](int x, int w) {
             return CheckCollisionPointRec(mp, {(float)x, (float)by, (float)w, (float)BOTTOM_BAR_H});
@@ -1412,7 +1426,7 @@ void Game::drawHUD() {
         const char* tip = nullptr;
         // ---- RA2 底栏：左侧菜单药丸 + 高级指令条（Team01/02/TypeSelect/Deploy/Guard/PlanningMode） ----
         // 热点（orig=原作底栏图标实测位 ×BB；否则程序化底栏位）
-        int hxMenu = orig ? (int)(4 * BB) : 6, hwMenu = orig ? (int)(58 * BB) : 52;
+        int hxMenu = orig ? (int)(4 * BB) : 8, hwMenu = orig ? (int)(58 * BB) : 56;
         if (barHov(hxMenu, hwMenu)) { // 银药丸：菜单
             tip = TR(S::GameMenu);
             if (mPressed(MOUSE_LEFT_BUTTON)) { showMenu = true; g_sfx.play(Sfx::Click, 0.6f); }
@@ -1445,13 +1459,14 @@ void Game::drawHUD() {
         };
         // YR 默认 AdvancedCommandBar：Team01,Team02,TypeSelect,Deploy,Guard,PlanningMode
         struct CmdBtn { int x, w; S name; int key; int action; };
+        const int cmdW = orig ? (int)(40 * BB) : 42;
         const CmdBtn btns[] = {
-            {orig ? (int)(85 * BB)  : 132, orig ? (int)(36 * BB) : 36, S::KaTeam01,   KEY_ONE, 0},
-            {orig ? (int)(137 * BB) : 170, orig ? (int)(36 * BB) : 36, S::KaTeam02,   KEY_TWO, 1},
-            {orig ? (int)(188 * BB) : 208, orig ? (int)(36 * BB) : 36, S::KaSameType, keyBind[KA_SameType], 2},
-            {orig ? (int)(240 * BB) : 246, orig ? (int)(36 * BB) : 36, S::KaDeploy,   keyBind[KA_Deploy], 3},
-            {orig ? (int)(292 * BB) : 284, orig ? (int)(36 * BB) : 36, S::KaGuard,    keyBind[KA_Guard], 4},
-            {orig ? (int)(346 * BB) : 322, orig ? (int)(36 * BB) : 36, S::KaWaypoint, keyBind[KA_Waypoint], 5},
+            {orig ? (int)(85 * BB)  : 128, cmdW, S::KaTeam01,   KEY_ONE, 0},
+            {orig ? (int)(137 * BB) : 174, cmdW, S::KaTeam02,   KEY_TWO, 1},
+            {orig ? (int)(188 * BB) : 220, cmdW, S::KaSameType, keyBind[KA_SameType], 2},
+            {orig ? (int)(240 * BB) : 266, cmdW, S::KaDeploy,   keyBind[KA_Deploy], 3},
+            {orig ? (int)(292 * BB) : 312, cmdW, S::KaGuard,    keyBind[KA_Guard], 4},
+            {orig ? (int)(346 * BB) : 358, cmdW, S::KaWaypoint, keyBind[KA_Waypoint], 5},
         };
         bool hasSel = !sel.empty();
         auto recallTeam = [&](int n) {
@@ -1599,31 +1614,38 @@ void Game::drawHUD() {
         }
     }
 
-    // ---- 悬停提示（光标旁浮动文字，RA2 风格深色底+金边，避免压在图标上看不清） ----
+    // ---- 悬停提示（金属信息槽 + 金边） ----
     if (tipSet) {
         int tx = (int)tipPos.x + 16, ty = (int)tipPos.y + 6;
-        int wname = (int)MeasureTextEx(font, tipName.c_str(), 15, 1).x;
+        int wname = (int)MeasureTextEx(font, tipName.c_str(), 15, 0).x;
         if (tx + wname > sbX - 4) tx = (int)tipPos.x - wname - 14;
-        int wsub = tipSub.empty() ? 0 : (int)MeasureTextEx(font, tipSub.c_str(), 12, 1).x;
-        int wreas = tipReason.empty() ? 0 : (int)MeasureTextEx(font, tipReason.c_str(), 12, 1).x;
+        int wsub = tipSub.empty() ? 0 : (int)MeasureTextEx(font, tipSub.c_str(), 12, 0).x;
+        int wreas = tipReason.empty() ? 0 : (int)MeasureTextEx(font, tipReason.c_str(), 12, 0).x;
         int bw = wname;
         if (wsub > bw) bw = wsub;
         if (wreas > bw) bw = wreas;
-        bw += 14;
-        int bh = 24 + (tipSub.empty() ? 0 : 15) + (tipReason.empty() ? 0 : 15);
+        bw += 18;
+        int bh = 26 + (tipSub.empty() ? 0 : 15) + (tipReason.empty() ? 0 : 15);
         if (tx + bw > SCREEN_W) tx = SCREEN_W - bw - 2;
         if (tx < 2) tx = 2;
-        DrawRectangle(tx - 7, ty - 5, bw, bh, Color{10, 12, 16, 224});
-        DrawRectangleLinesEx({(float)(tx - 7), (float)(ty - 5), (float)bw, (float)bh}, 1, GUI_GOLD);
+        Rectangle tipR{(float)(tx - 8), (float)(ty - 6), (float)bw, (float)bh};
+        DrawRectangleRec(tipR, Color{12, 14, 18, 235});
+        guiBevel(tipR, false);
+        DrawRectangleLinesEx(tipR, 1, GUI_GOLD);
+        DrawRectangle((int)tipR.x + 2, (int)tipR.y + 2, (int)tipR.width - 4, (int)tipR.height - 4, Color{255, 210, 90, 12});
         drawTextS(font, tipName.c_str(), tx, ty, 15, Color{255, 240, 200, 255});
         int ly = ty + 17;
         if (!tipSub.empty()) { drawTextS(font, tipSub.c_str(), tx, ly, 12, Color{200, 205, 215, 255}); ly += 14; }
-        if (!tipReason.empty()) drawTextS(font, tipReason.c_str(), tx, ly, 12, Color{255, 110, 90, 255});
+        if (!tipReason.empty()) drawTextS(font, tipReason.c_str(), tx, ly, 12, Color{255, 120, 95, 255});
     }
 
-    // ===================== 消息与战役目标（左上角） =====================
-    if (msgTimer > 0)
-        drawTextS(font, msg.c_str(), 8, 8, 15, Color{240, 236, 220, 255});
+    // ===================== 消息与战役目标（左上角，半透底板） =====================
+    if (msgTimer > 0) {
+        int mw = (int)MeasureTextEx(font, msg.c_str(), 15, 0).x + 16;
+        DrawRectangle(4, 4, mw, 22, Color{0, 0, 0, 160});
+        guiBevel({4, 4, (float)mw, 22}, true);
+        drawTextS(font, msg.c_str(), 12, 8, 15, Color{245, 240, 220, 255});
+    }
 
     if (campaignMission >= 0 && !gameOver) {
         const MissionDef& md = missionTable()[campaignMission];
@@ -1640,7 +1662,11 @@ void Game::drawHUD() {
         } else {
             obj += TR(S::ObjElimAll);
         }
-        drawTextS(font, obj.c_str(), 8, 28, 13, Color{230, 200, 130, 255});
+        int ow = (int)MeasureTextEx(font, obj.c_str(), 13, 0).x + 16;
+        int oy = msgTimer > 0 ? 28 : 6;
+        DrawRectangle(4, oy, ow, 20, Color{0, 0, 0, 150});
+        guiBevel({4, (float)oy, (float)ow, 20}, true);
+        drawTextS(font, obj.c_str(), 12, oy + 3, 13, Color{235, 205, 140, 255});
     }
 
     // ---- F3 帧率显示 ----
@@ -1685,35 +1711,36 @@ void Game::drawGameMenuOverlay() {
         else newGame((uint64_t)time(nullptr));
         showMenu = false;
     };
-    // 侧栏列表：等分槽 + 更满字号（布局/文字优先于 BIK）
+    // 侧栏列表：等分槽（非结算时不再顶部重复「继续」——仅底栏保留）
     const float bx = side.x + 6.0f, bw = side.width - 12.0f, bh = 40.0f;
     const float by0 = 178.0f, btnGap = 2.0f; // LOAD_MON_Y(48)+LOAD_MON_H(122)+8
     auto rowY = [&](int i) { return by0 + i * (bh + btnGap); };
     auto listItem = [&](int i, const char* text, bool enabled = true) -> bool {
         return ra2Button(font, mm, mpr, {bx, rowY(i), bw, bh}, text, 13, enabled);
     };
-    if (listItem(0, gameOver ? TR(S::PlayAgain) : TR(S::Continue), !(gameOver && netGame))) {
-        if (gameOver) restart();
-        else showMenu = false;
+    int row = 0;
+    if (gameOver) {
+        if (listItem(row++, TR(S::PlayAgain), !netGame))
+            restart();
     }
-    if (listItem(1, TextFormat("%s (%s)", TR(S::SaveProgress), keyName(keyBind[KA_QuickSave])),
+    if (listItem(row++, TextFormat("%s (%s)", TR(S::SaveProgress), keyName(keyBind[KA_QuickSave])),
                  !gameOver && !netGame)) {
         message(saveGameFile(QUICKSAVE_PATH) ? TR(S::MsgSaved) : TR(S::MsgSaveFail));
         showMenu = false;
     }
-    if (listItem(2, TextFormat("%s (%s)", TR(S::LoadProgress), keyName(keyBind[KA_QuickLoad])),
+    if (listItem(row++, TextFormat("%s (%s)", TR(S::LoadProgress), keyName(keyBind[KA_QuickLoad])),
                  !gameOver && !netGame)) {
         message(loadGameFile(QUICKSAVE_PATH) ? TR(S::MsgLoaded) : TR(S::MsgLoadFail));
         showMenu = false;
     }
-    if (listItem(3, TR(S::Settings))) {
+    if (listItem(row++, TR(S::Settings))) {
         settingsFromGame = true;
         showMenu = false;
         phase = Phase::Settings;
     }
-    if (listItem(4, TR(S::Restart), !netGame))
+    if (listItem(row++, TR(S::Restart), !netGame))
         restart();
-    if (listItem(5, TR(S::BackToMain))) {
+    if (listItem(row++, TR(S::BackToMain))) {
         if (netGame) netLeave();
         else phase = Phase::MainMenu;
         showMenu = false;
@@ -1776,18 +1803,27 @@ void Game::drawMinimap(int mmX, int mmY, int mmW, int mmH) {
     float scTex = 256.0f / std::max(w, h); // 与 updateMinimap 烘焙一致
     float srcW = w * scTex, srcH = h * scTex;
     if (!radarOnline()) {
-        DrawRectangle(mmX, mmY, mmW, mmH, Color{6, 8, 10, 255});
-        for (int i = 0; i < mmW; i += 4)
-            for (int j = 0; j < mmH; j += 4) {
-                uint32_t v = ((uint32_t)(i * 31 + j * 17) ^ (uint32_t)(world.tick / 4)) * 0x5bd1e995u;
-                if ((v >> 13) % 23 == 0)
-                    DrawRectangle(mmX + i, mmY + j, 2, 2, Color{20, 30, 26, 255});
+        DrawRectangle(mmX, mmY, mmW, mmH, Color{4, 6, 8, 255});
+        // CRT 扫描线 + 静态噪点
+        for (int j = 0; j < mmH; j += 3)
+            DrawLine(mmX, mmY + j, mmX + mmW, mmY + j, Color{18, 28, 24, 90});
+        for (int i = 0; i < mmW; i += 3)
+            for (int j = 0; j < mmH; j += 3) {
+                uint32_t v = ((uint32_t)(i * 31 + j * 17) ^ (uint32_t)(world.tick / 3)) * 0x5bd1e995u;
+                if ((v >> 12) % 19 == 0)
+                    DrawPixel(mmX + i, mmY + j, Color{40, 70, 55, 180});
             }
-        if ((world.tick / 16) % 2) {
-            const char* t = TR(S::RadarOffline);
-            int tw = (int)MeasureTextEx(font, t, 13, 1).x;
-            drawTextS(font, t, mmX + mmW / 2 - tw / 2, mmY + mmH / 2 - 7, 13, Color{220, 70, 56, 255});
-        }
+        // 中央「无信号」铭牌
+        int pw = std::min(mmW - 16, 120), ph = 36;
+        int px = mmX + (mmW - pw) / 2, py = mmY + (mmH - ph) / 2;
+        Rectangle plate{(float)px, (float)py, (float)pw, (float)ph};
+        DrawRectangleRec(plate, Color{10, 12, 14, 230});
+        guiBevel(plate, true);
+        DrawRectangleLinesEx(plate, 1, Color{90, 78, 48, 220});
+        const char* t = TR(S::RadarOffline);
+        int tw = (int)MeasureTextEx(font, t, 13, 0).x;
+        Color tc = ((world.tick / 20) % 2) ? Color{255, 170, 70, 255} : Color{200, 120, 50, 255};
+        drawTextS(font, t, px + (pw - tw) / 2, py + 10, 13, tc);
         return;
     }
     // 地图区拉伸铺满雷达内腔（原作雷达非等比）
