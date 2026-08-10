@@ -1,35 +1,234 @@
 {
-  "note": "Cage overrides: foot only where art<<Foundation; offX from card bodyCx vs S.",
+  "note": "Cage overrides from human review. elev↓ = shorter box; offY↑ = whole cage down (screen +Y).",
   "buildings": {
     "nuclearreactor": {
       "footW": 3,
       "footH": 3,
-      "elev": 120,
-      "offX": 19
+      "elev": 73,
+      "offX": 19,
+      "offY": 18
+    },
+    "barracks": {
+      "elev": 66.6
+    },
+    "warfactory": {
+      "elev": 47.6
+    },
+    "orerefinery": {
+      "offX": -4,
+      "elev": 44.6
+    },
+    "airforcecmd": {
+      "elev": 92.6
+    },
+    "grandcannon": {
+      "elev": 88.6
+    },
+    "conyard_sov": {
+      "elev": 67
+    },
+    "navalyard_sov": {
+      "elev": 120.6
+    },
+    "navalyard_yuri": {
+      "elev": 78
+    },
+    "orerefinery_sov": {
+      "offX": -9,
+      "elev": 52.6
+    },
+    "psychicbeacon": {
+      "elev": 106.6
+    },
+    "psychicbeacon2": {
+      "elev": 118
+    },
+    "servicedepot_sov": {
+      "elev": 57.6
+    },
+    "warfactory_sov": {
+      "offX": -5,
+      "elev": 80
+    },
+    "warfactory_yuri": {
+      "elev": 50
     },
     "barracks_yuri": {
       "footW": 2,
       "footH": 2,
-      "elev": 148,
+      "elev": 106,
       "offX": -32
     },
     "civhouse3": {
       "footW": 2,
       "footH": 2,
-      "elev": 118,
+      "elev": 79.6,
       "offX": -24
     },
-    "orerefinery": {
-      "offX": -4
-    },
     "servicedepot": {
-      "offX": -13
+      "offX": -13,
+      "elev": 12.0
     },
-    "orerefinery_sov": {
-      "offX": -9
+    "airforcecmd_usa": {
+      "elev": 92.6
     },
-    "warfactory_sov": {
-      "offX": -5
+    "powerplant": {
+      "elev": 47.6
+    },
+    "teslareactor": {
+      "elev": 49.6,
+      "footW": 2,
+      "footH": 2
+    },
+    "nukesilo": {
+      "elev": 52.6
+    },
+    "weatherdevice": {
+      "elev": 30.6
+    },
+    "ironcurtain": {
+      "elev": 24.6
+    },
+    "chronosphere": {
+      "elev": 18
+    },
+    "geneticmutator": {
+      "elev": 26.6
+    },
+    "psychicdominator": {
+      "elev": 27.6
+    },
+    "oilderrick": {
+      "elev": 61.6
+    },
+    "hospital": {
+      "elev": 60.6
+    },
+    "machineshop": {
+      "elev": 57.6
+    },
+    "techairport": {
+      "elev": 84
+    },
+    "secretlab": {
+      "elev": 82.6
+    },
+    "techoutpost": {
+      "elev": 100.6
+    },
+    "civhouse": {
+      "elev": 34.6
+    },
+    "grinder": {
+      "elev": 57
+    },
+    "battlelab_sov": {
+      "elev": 93
+    },
+    "civbarn": {
+      "elev": 35.6
+    },
+    "civchurch": {
+      "elev": 125.6
+    },
+    "civhouse2": {
+      "elev": 53.6
+    },
+    "civhouse4": {
+      "elev": 48.6
+    },
+    "civhouse5": {
+      "elev": 25.6
+    },
+    "civhouse6": {
+      "elev": 24.0
+    },
+    "civhouse7": {
+      "elev": 24.6
+    },
+    "civwash": {
+      "elev": 29.6
+    },
+    "conyard": {
+      "elev": 40.6
+    },
+    "bioreactor": {
+      "elev": 73.6
+    },
+    "techpowerplant": {
+      "elev": 69.6
+    },
+    "radar": {
+      "elev": 84.6
+    },
+    "battlelab": {
+      "elev": 160.6
+    },
+    "navalyard": {
+      "elev": 96.6
+    },
+    "orepurifier": {
+      "elev": 29.6
+    },
+    "industrialplant": {
+      "elev": 112.6
+    },
+    "cloningvat": {
+      "elev": 89.6
+    },
+    "robotcontrol": {
+      "elev": 52.6
+    },
+    "pillbox": {
+      "elev": 13.6
+    },
+    "sentrygun": {
+      "elev": 18.6
+    },
+    "prismtower": {
+      "elev": 90.6
+    },
+    "teslacoil": {
+      "elev": 72.6
+    },
+    "patriotmissile": {
+      "elev": 14.6
+    },
+    "gatlingcannon": {
+      "elev": 15.6
+    },
+    "battlebunker": {
+      "elev": 20.6
+    },
+    "tankbunker": {
+      "elev": 15.6
+    },
+    "psychictower": {
+      "elev": 127.6
+    },
+    "gapgenerator": {
+      "elev": 100.6
+    },
+    "spysat": {
+      "elev": 41.6
+    },
+    "psychicsensor": {
+      "elev": 101.6
+    },
+    "wall": {
+      "elev": 24.6
+    },
+    "barracks_sov": {
+      "elev": 110.6
+    },
+    "civwatertower": {
+      "elev": 62.6
+    },
+    "sandbags": {
+      "elev": 14.6
+    },
+    "wall_sov": {
+      "elev": 27.6
     }
   }
 }

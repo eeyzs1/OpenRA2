@@ -107,15 +107,17 @@ EID Game::pickBuilding(int mx, int my) const {
 
         // 占领后用阵营色；中立科技保留原色（cid=-2 跳过 remap）
         int cid;
-        if (e.player >= 0)
+        Country bldCountry = Country::None;
+        if (e.player >= 0) {
             cid = world.players[e.player].colorId;
-        else if (e.btype == BldType::OilDerrick || e.btype == BldType::Hospital
+            bldCountry = world.players[e.player].country;
+        } else if (e.btype == BldType::OilDerrick || e.btype == BldType::Hospital
                  || e.btype == BldType::TechAirport)
             cid = -2;
         else
             cid = -1;
         Vector2 p = bldScreenPos(e);
-        const Sprite& s = g_sprites.building(e.btype, cid, false);
+        const Sprite& s = g_sprites.building(e.btype, cid, false, bldCountry);
         float x0 = p.x - s.ox + 6, y0 = p.y - s.oy + 4;
         float x1 = x0 + (float)(s.tex.width - 14), y1 = y0 + (float)(s.tex.height - 10);
         bool sprHit = (vx >= x0 && vx <= x1 && vy >= y0 && vy <= y1);
@@ -812,6 +814,7 @@ void Game::handleInput() {
     // 清理失效选择
     sel.erase(std::remove_if(sel.begin(), sel.end(), [&](EID id) { return !world.valid(id); }), sel.end());
     if (!world.valid(selBuilding)) selBuilding = INVALID_EID;
+    clampCameraToMap(); // 编队跳转等改 cam 后再次钳边
 }
 
 // ===================== 渲染 =====================

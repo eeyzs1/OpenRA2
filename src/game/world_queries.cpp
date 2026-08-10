@@ -51,35 +51,32 @@ int World::countInfantryAtCell(int x, int y, EID ignore) const {
     return n;
 }
 
-// RA2 软碰撞：移动中可短暂重叠；友军可穿；步兵同格最多 3；静止敌军车辆硬挡
+// RA2 格点占位（非连续物理引擎）：
+// - 车/舰：同格至多 1（友军/敌军、静止/移动一律硬挡，避免永久重叠）
+// - 步兵：同格至多 3
+// - 车可进入有步兵的格（碾压/驶过另判）；步兵不可进入有车/舰的格
 bool World::cellHardBlockedForMove(int x, int y, EID mover) const {
     if (!valid(mover) || !ents[mover].alive) return groundUnitBlocksCell(x, y, mover);
     const Ent& self = ents[mover];
     const UnitDef& sud = unitDef(self.utype);
+    const bool moverInf = sud.isInfantry();
     constexpr int kInfStack = 3;
     for (size_t i = 0; i < ents.size(); i++) {
         if ((EID)i == mover) continue;
         const Ent& o = ents[i];
         if (!o.alive || o.isBuilding) continue;
         if (o.parasiting) continue;
-        if (unitDef(o.utype).isAir() && o.state != UState::Landed) continue;
-        if ((int)o.x != x || (int)o.y != y) continue;
         const UnitDef& oud = unitDef(o.utype);
-        // 双方都在移动 → 允许穿行（软重叠）
-        if (o.state == UState::Moving || o.state == UState::AttackMoving || o.state == UState::Chasing
-            || o.state == UState::Boarding || o.pathIdx < (int)o.path.size())
-            continue;
-        // 友军静止：不硬挡（轻推/穿行由 moveAlongPath 处理）
-        if (o.player == self.player) continue;
-        // 步兵叠格：已有步兵且未满，步兵可进；有车辆则硬挡
-        if (sud.isInfantry() && oud.isInfantry()) {
+        if (oud.isAir() && o.state != UState::Landed) continue;
+        if ((int)o.x != x || (int)o.y != y) continue;
+        const bool otherInf = oud.isInfantry();
+        if (moverInf && otherInf) {
             if (countInfantryAtCell(x, y, mover) < kInfStack) continue;
             return true;
         }
-        if (sud.isInfantry() && !oud.isInfantry()) return true;
-        if (!sud.isInfantry() && oud.isInfantry()) continue; // 车辆可驶过静止步兵（碾压另判）
-        // 敌军静止车辆/舰船 → 硬挡
-        return true;
+        if (moverInf && !otherInf) return true;   // 步兵 vs 车/舰
+        if (!moverInf && otherInf) continue;      // 车/舰 vs 步兵：可进
+        return true; // 车/舰 vs 车/舰：硬挡
     }
     return false;
 }

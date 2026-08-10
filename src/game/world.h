@@ -399,7 +399,7 @@ public:
     EID bldAt(int bx, int by) const;
     EID unitAtCell(int x, int y) const;
     bool groundUnitBlocksCell(int x, int y, EID ignore = INVALID_EID) const;
-    // 移动软碰撞：目标格对 mover 是否硬阻挡（RA2：友军/移动中可穿，步兵可叠）
+    // 移动占位：目标格对 mover 是否硬阻挡（RA2：车/舰 1 格；步兵同格≤3；车可驶过步兵）
     bool cellHardBlockedForMove(int x, int y, EID mover) const;
     int countInfantryAtCell(int x, int y, EID ignore = INVALID_EID) const;
 
@@ -440,6 +440,7 @@ private:
     void updateCombat(Ent& e, EID id);
     void updateHarvester(Ent& e, EID id);
     void moveAlongPath(Ent& e, EID id);
+    void tryUnstackIdle(Ent& e, EID id); // 静止叠格拆开（车互斥 / 步兵超叠）
     void fireWeapon(Ent& e, EID id, EID targetId);
     void explodeAt(float x, float y, int big);
     bool spawnFromFactory(int player, const UnitDef& u);

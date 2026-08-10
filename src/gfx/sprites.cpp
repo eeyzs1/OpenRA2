@@ -2201,25 +2201,65 @@ const Sprite& SpriteBank::finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, 
     return cache.emplace(k, s).first->second;
 }
 
-const Sprite& SpriteBank::building(BldType t, int player, bool constructing) {
+const char* SpriteBank::bldSpriteStem(BldType t, Country country) {
+    // Prefer faction/country art when PNG exists (matches cage review cards).
+    static thread_local char chosen[64];
+    const char* base = bldAssetName(t);
+    char usa[64], sov[64], yuri[64];
+    const char* cands[4];
+    int n = 0;
+    Faction f = (country == Country::None) ? Faction::Allies : countryFaction(country);
+    if (country == Country::America) {
+        snprintf(usa, sizeof(usa), "%s_usa", base);
+        cands[n++] = usa;
+    }
+    if (f == Faction::Soviet || f == Faction::China) {
+        snprintf(sov, sizeof(sov), "%s_sov", base);
+        cands[n++] = sov;
+    }
+    if (f == Faction::Yuri) {
+        snprintf(yuri, sizeof(yuri), "%s_yuri", base);
+        cands[n++] = yuri;
+    }
+    cands[n++] = base;
+    for (int i = 0; i < n; i++) {
+        if (FileExists(TextFormat("assets/sprites/bld_%s.png", cands[i]))) {
+            snprintf(chosen, sizeof(chosen), "%s", cands[i]);
+            return chosen;
+        }
+    }
+    snprintf(chosen, sizeof(chosen), "%s", base);
+    return chosen;
+}
+
+const Sprite& SpriteBank::building(BldType t, int player, bool constructing, Country country) {
     BldType orig = t;
     t = spriteAliasBld(t);
-    uint64_t k = keyOf(5, (int)t, constructing ? 1 : 0, 0, player);
+    const char* stem = bldSpriteStem(orig, country);
+    // key 含 country：同色不同阵营贴图不撞缓存
+    uint64_t k = keyOf(5, (int)t, constructing ? 1 : 0, (int)country, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
     PixBuf pb;
-    bool ext = loadSpr(pb, "assets/sprites/bld_%s%s.png", bldAssetName(orig), constructing ? "_scaffold" : "")
-            || (orig != t && loadSpr(pb, "assets/sprites/bld_%s%s.png", bldAssetName(t), constructing ? "_scaffold" : ""));
+    const char* mid = constructing ? "_scaffold" : "";
+    bool ext = loadSpr(pb, "assets/sprites/bld_%s%s.png", stem, mid);
+    if (!ext && orig != t) {
+        const char* aliasStem = bldSpriteStem(t, country);
+        ext = loadSpr(pb, "assets/sprites/bld_%s%s.png", aliasStem, mid);
+    }
     // 建造中无独立 scaffold PNG：用 mk 首帧（地基）或成品（均为 MIX 提取），禁止程序脚手架
     if (!ext && constructing) {
-        ext = loadSpr(pb, "assets/sprites/bld_%s_mk_f0.png", bldAssetName(orig))
-            || loadSpr(pb, "assets/sprites/bld_%s.png", bldAssetName(orig))
-            || (orig != t && (loadSpr(pb, "assets/sprites/bld_%s_mk_f0.png", bldAssetName(t))
-                             || loadSpr(pb, "assets/sprites/bld_%s.png", bldAssetName(t))));
+        ext = loadSpr(pb, "assets/sprites/bld_%s_mk_f0.png", stem)
+            || loadSpr(pb, "assets/sprites/bld_%s.png", stem);
+        if (!ext && orig != t) {
+            const char* aliasStem = bldSpriteStem(t, country);
+            ext = loadSpr(pb, "assets/sprites/bld_%s_mk_f0.png", aliasStem)
+                || loadSpr(pb, "assets/sprites/bld_%s.png", aliasStem);
+        }
     }
     int groundY; // 内容画布中"占地菱形南角"的 y 坐标（绘制锚点契约，同 bldScreenPos）
     if (!ext) {
-        pb = missingAssetPix(constructing ? "bld_scaffold" : "bld", bldAssetName(orig));
+        pb = missingAssetPix(constructing ? "bld_scaffold" : "bld", stem);
         groundY = 0;
     } else {
         // 外部 SHP 素材：落地点 = 最低不透明行（地基南角），勿用固定 h-4（透明底边会让建筑浮空/切脚）
@@ -2235,19 +2275,20 @@ const Sprite& SpriteBank::building(BldType t, int player, bool constructing) {
     return finishBldSprite(k, std::move(pb), groundY, player, true, bd.w, bd.h);
 }
 
-const Sprite& SpriteBank::buildingGhost(BldType t, int player) {
+const Sprite& SpriteBank::buildingGhost(BldType t, int player, Country country) {
     BldType orig = t;
     t = spriteAliasBld(t);
+    const char* stem = bldSpriteStem(orig, country);
     // key 槽位 14：无烘焙投影的放置幽灵（与成品 key 5 分开缓存）
-    uint64_t k = keyOf(14, (int)t, 0, 0, player);
+    uint64_t k = keyOf(14, (int)t, (int)country, 0, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
     PixBuf pb;
-    bool ext = loadSpr(pb, "assets/sprites/bld_%s.png", bldAssetName(orig))
-            || (orig != t && loadSpr(pb, "assets/sprites/bld_%s.png", bldAssetName(t)));
+    bool ext = loadSpr(pb, "assets/sprites/bld_%s.png", stem)
+            || (orig != t && loadSpr(pb, "assets/sprites/bld_%s.png", bldSpriteStem(t, country)));
     int groundY;
     if (!ext) {
-        pb = missingAssetPix("bld_ghost", bldAssetName(orig));
+        pb = missingAssetPix("bld_ghost", stem);
         groundY = 0;
     } else {
         groundY = pb.h - 1;
@@ -2354,15 +2395,16 @@ const Sprite& SpriteBank::unitAnim(UnitType t, UAnim a, int dir, int phase, int 
     return finishUnitSprite(k, std::move(pb), t, player);
 }
 
-const Sprite& SpriteBank::buildingMk(BldType t, int frame, int player) {
-    uint64_t k = keyOf(13, (int)t, frame & 0xFF, 0, player);
+const Sprite& SpriteBank::buildingMk(BldType t, int frame, int player, Country country) {
+    uint64_t k = keyOf(13, (int)t, frame & 0xFF, (int)country, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
     PixBuf pb;
-    if (!loadSpr(pb, "assets/sprites/bld_%s_mk_f%d.png", bldAssetName(t), frame))
-        return building(t, player, false); // 帧缺失：回退成品
+    const char* stem = bldSpriteStem(t, country);
+    if (!loadSpr(pb, "assets/sprites/bld_%s_mk_f%d.png", stem, frame))
+        return building(t, player, false, country); // 帧缺失：回退成品
     // 与成品共用地面锚点，避免建造动画逐帧跳动/切脚
-    const Sprite& fin = building(t, player, false);
+    const Sprite& fin = building(t, player, false, country);
     int groundY = fin.oy - 4; // finishBldSprite 把 oy = groundY + 4
     if (groundY < 0 || groundY >= pb.h) {
         groundY = pb.h - 1;
@@ -2579,9 +2621,9 @@ void SpriteBank::preloadMatch(int localPlayer) {
     }
     for (int i = 0; i < (int)BldType::COUNT; i++) {
         BldType t = (BldType)i;
-        building(t, localPlayer, false);
-        building(t, localPlayer, true);
-        building(t, -1, false); // 中立（灰色 remap）预置建筑
+        building(t, localPlayer, false, Country::None);
+        building(t, localPlayer, true, Country::None);
+        building(t, -1, false, Country::None); // 中立（灰色 remap）预置建筑
     }
     for (int i = 0; i < (int)UnitType::COUNT; i++) iconUnit((UnitType)i, localPlayer);
     for (int i = 0; i < (int)BldType::COUNT; i++) iconBld((BldType)i, localPlayer);

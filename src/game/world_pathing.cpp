@@ -8,13 +8,82 @@
 #include <cstring>
 #include <algorithm>
 
+void World::tryUnstackIdle(Ent& e, EID id) {
+    if (!e.alive || e.isBuilding || e.state != UState::Idle) return;
+    const UnitDef& ud = unitDef(e.utype);
+    if (ud.isAir() && e.state != UState::Landed) return;
+    const int cx = (int)e.x, cy = (int)e.y;
+    bool need = false;
+    if (ud.isInfantry()) {
+        need = countInfantryAtCell(cx, cy, id) >= 3; // 已有 ≥3 名其他步兵 → 超叠
+    } else {
+        for (size_t i = 0; i < ents.size(); i++) {
+            if ((EID)i == id) continue;
+            const Ent& o = ents[i];
+            if (!o.alive || o.isBuilding || o.parasiting) continue;
+            const UnitDef& oud = unitDef(o.utype);
+            if (oud.isAir() && o.state != UState::Landed) continue;
+            if (oud.isInfantry()) continue;
+            if ((int)o.x == cx && (int)o.y == cy) { need = true; break; }
+        }
+    }
+    if (!need) return;
+    static const int DX[8] = {1, -1, 0, 0, 1, 1, -1, -1};
+    static const int DY[8] = {0, 0, 1, -1, 1, -1, 1, -1};
+    const int start = (int)((uint32_t)id + tick) & 7;
+    for (int k = 0; k < 8; k++) {
+        const int d = (start + k) & 7;
+        const int nx = cx + DX[d], ny = cy + DY[d];
+        if (!passableStep(cx, cy, nx, ny, ud.pathDomain()) || bldBlocked(nx, ny)) continue;
+        if (cellHardBlockedForMove(nx, ny, id)) continue;
+        e.x = nx + 0.5f;
+        e.y = ny + 0.5f;
+        return;
+    }
+}
+
 void World::moveAlongPath(Ent& e, EID id) {
     if (e.pathIdx >= (int)e.path.size()) return;
     // 乌贼缠绕：宿主舰船被定身无法移动（RA2 原作签名机制）
     if (e.parasite != INVALID_EID && valid(e.parasite) && ents[e.parasite].utype == UnitType::Squid) return;
     const UnitDef& ud = unitDef(e.utype);
     Vec2i next = e.path[e.pathIdx];
-    // 目标格占用：软碰撞（友军/移动中可穿；步兵可叠）；硬挡才等待
+
+    auto waitOrRepath = [&](EID blocker) -> bool {
+        // returns true if caller should abort this tick (always, after wait/repath)
+        if (blocker != INVALID_EID && blocker != id) {
+            Ent& o = ents[blocker];
+            const UnitDef& od = unitDef(o.utype);
+            // 同阵营挡路：尽量轻推到旁格，疏通车流
+            if (o.player == e.player && o.state == UState::Idle && rng.chance(0.35f)) {
+                int dx = rng.range(-1, 1), dy = rng.range(-1, 1);
+                int nx = (int)o.x + dx, ny = (int)o.y + dy;
+                if ((dx || dy) && passableStep((int)o.x, (int)o.y, nx, ny, od.pathDomain()) && !bldBlocked(nx, ny)
+                    && !cellHardBlockedForMove(nx, ny, blocker)) {
+                    o.x = nx + 0.5f; o.y = ny + 0.5f;
+                }
+            }
+        }
+        if (++e.blockTick > 45) { // 堵约 1.5 秒：重寻路
+            e.blockTick = 0;
+            int gx = e.path.back().x, gy = e.path.back().y;
+            // 终点被敌军硬挡才放弃；友军占用仍尝试靠近
+            if (cellHardBlockedForMove(gx, gy, id)) {
+                EID gOcc = unitAtCell(gx, gy);
+                if (gOcc != INVALID_EID && ents[gOcc].player != e.player) {
+                    e.path.clear();
+                    return true;
+                }
+            }
+            std::vector<Vec2i> path;
+            if (map.findPath((int)e.x, (int)e.y, gx, gy, path, 20000, ud.pathDomain())) {
+                e.path = std::move(path); e.pathIdx = 0;
+            } else e.path.clear();
+        }
+        return true;
+    };
+
+    // 目标格占用：车互斥硬挡；步兵可叠≤3；碾压优先清格
     EID occ = unitAtCell(next.x, next.y);
     if (occ != INVALID_EID && occ != id) {
         Ent& o = ents[occ];
@@ -28,45 +97,12 @@ void World::moveAlongPath(Ent& e, EID id) {
             kill(occ);
             // 格子已空，继续走正常移动流程
         } else if (cellHardBlockedForMove(next.x, next.y, id)) {
-            // 同阵营空闲单位挡路：轻推到旁边空格
-            if (o.player == e.player && o.state == UState::Idle && rng.chance(0.18f)) {
-                int dx = rng.range(-1, 1), dy = rng.range(-1, 1);
-                int nx = (int)o.x + dx, ny = (int)o.y + dy;
-                if ((dx || dy) && passableStep((int)o.x, (int)o.y, nx, ny, od.pathDomain()) && !bldBlocked(nx, ny)
-                    && !cellHardBlockedForMove(nx, ny, occ)) {
-                    o.x = nx + 0.5f; o.y = ny + 0.5f;
-                }
-            }
-            if (++e.blockTick > 45) { // 堵约 1.5 秒：重寻路
-                e.blockTick = 0;
-                int gx = e.path.back().x, gy = e.path.back().y;
-                // 终点被敌军硬挡才放弃；友军占用仍尝试靠近
-                if (cellHardBlockedForMove(gx, gy, id)) {
-                    EID gOcc = unitAtCell(gx, gy);
-                    if (gOcc != INVALID_EID && ents[gOcc].player != e.player) {
-                        e.path.clear(); return;
-                    }
-                }
-                std::vector<Vec2i> path;
-                if (map.findPath((int)e.x, (int)e.y, gx, gy, path, 20000, ud.pathDomain())) {
-                    e.path = std::move(path); e.pathIdx = 0;
-                } else e.path.clear();
-            }
+            waitOrRepath(occ);
             return;
-        } else {
-            // 软穿：友军静止挡路时偶尔轻推，自己仍可进入该格
-            if (o.player == e.player && o.state == UState::Idle && rng.chance(0.08f)) {
-                int dx = rng.range(-1, 1), dy = rng.range(-1, 1);
-                int nx = (int)o.x + dx, ny = (int)o.y + dy;
-                if ((dx || dy) && passableStep((int)o.x, (int)o.y, nx, ny, od.pathDomain()) && !bldBlocked(nx, ny)
-                    && !cellHardBlockedForMove(nx, ny, occ)) {
-                    o.x = nx + 0.5f; o.y = ny + 0.5f;
-                }
-            }
         }
     }
     if (bldBlocked(next.x, next.y)) {
-        // 重新寻路
+        // 建筑硬挡：重新寻路绕开
         std::vector<Vec2i> path;
         int gx = e.path.back().x, gy = e.path.back().y;
         if (map.findPath((int)e.x, (int)e.y, gx, gy, path, 20000, ud.pathDomain())) { e.path = std::move(path); e.pathIdx = 0; }
@@ -97,8 +133,13 @@ void World::moveAlongPath(Ent& e, EID id) {
     } else {
         e.moveTick++;
     }
-    e.blockTick = 0;
+    // 落格前再检一次：防止两车同时滑入同格
     if (dist <= step + 1e-4f) {
+        if (cellHardBlockedForMove(next.x, next.y, id) || bldBlocked(next.x, next.y)) {
+            waitOrRepath(unitAtCell(next.x, next.y));
+            return;
+        }
+        e.blockTick = 0;
         e.x = tx; e.y = ty;
         e.pathIdx++;
         e.moveTick = 0;
@@ -107,6 +148,7 @@ void World::moveAlongPath(Ent& e, EID id) {
         }
         pickupCrates(e); // 驶入补给箱：拾取
     } else {
+        e.blockTick = 0;
         e.x += (dx / dist) * step;
         e.y += (dy / dist) * step;
     }

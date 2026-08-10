@@ -622,6 +622,7 @@ void World::updateUnit(Ent& e, EID id) {
             // 自动索敌（警戒模式按视野半径，普通按射程+2）
             // 空载采矿车优先采矿：勿被武装矿车 Idle 索敌抢走
             const UnitDef& udIdle = unitDef(e.utype);
+            tryUnstackIdle(e, id);
             if (!(udIdle.canHarvet() && e.autoHarvest && e.oreLoad == 0)) {
                 const WeaponDef ew = effWeapon(e);
                 if (ew.damage > 0) {

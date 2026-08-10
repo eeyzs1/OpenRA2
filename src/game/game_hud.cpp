@@ -1816,6 +1816,7 @@ void Game::drawMinimap(int mmX, int mmY, int mmW, int mmH) {
             tileToScreen((int)tx, (int)ty, px, py);
             camX = (float)px - viewW / 2.0f;
             camY = (float)py - SCREEN_H / 2.0f;
+            clampCameraToMap();
         }
     }
 }

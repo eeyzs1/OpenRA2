@@ -166,6 +166,30 @@ int Game::smokeTest(int frames) {
             check(!world.valid(inf), "tank crushes infantry");
             check(sawLost, "crush emits unit-lost EVA");
         }
+        // ---- 车辆占位：两辆车不可长期同格重叠 ----
+        {
+            int cy3 = cy + 10;
+            EID a = world.spawnUnit(1, UnitType::Rhino, cx - 2.5f, cy3 + 0.5f);
+            EID b = world.spawnUnit(1, UnitType::Rhino, cx - 1.5f, cy3 + 0.5f);
+            // 故意叠到同一格中心
+            world.ents[a].x = cx + 0.5f; world.ents[a].y = cy3 + 0.5f;
+            world.ents[b].x = cx + 0.5f; world.ents[b].y = cy3 + 0.5f;
+            world.ents[a].state = UState::Idle;
+            world.ents[b].state = UState::Idle;
+            for (int i = 0; i < 30; i++) world.update();
+            bool separated = !((int)world.ents[a].x == (int)world.ents[b].x
+                               && (int)world.ents[a].y == (int)world.ents[b].y);
+            // 同目标移动：最终不得停在同格
+            world.orderMove({a, b}, cx + 6.5f, cy3 + 0.5f, false);
+            for (int i = 0; i < 500; i++) world.update();
+            bool stillMoving = world.ents[a].state == UState::Moving || world.ents[b].state == UState::Moving;
+            bool finalSep = stillMoving || !((int)world.ents[a].x == (int)world.ents[b].x
+                                             && (int)world.ents[a].y == (int)world.ents[b].y);
+            TraceLog(LOG_INFO, "vehicle occupancy: unstack=%d finalSep=%d (expect 1/1)",
+                     (int)separated, (int)finalSep);
+            check(separated, "idle stacked vehicles unstack");
+            check(finalSep, "moved vehicles do not share a cell");
+        }
         // ---- 警戒/散布指令冒烟 ----
         {
             EID g1 = world.spawnUnit(1, UnitType::Rhino, cx - 5.5f, cy + 6.5f);
@@ -2210,7 +2234,7 @@ int Game::visualAudit() {
         e.selling = false;
         {
             int cid = world.players[localPlayer].colorId;
-            const Sprite& cageS = g_sprites.building(cs.t, cid, false);
+            const Sprite& cageS = g_sprites.building(cs.t, cid, false, world.players[localPlayer].country);
             const BldDef& bd = bldDef(cs.t);
             Vector2 p = bldScreenPos(e);
             int npx = 0, npy = 0, spx = 0, spy = 0;

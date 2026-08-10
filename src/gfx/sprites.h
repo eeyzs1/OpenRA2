@@ -43,12 +43,15 @@ public:
     const Sprite& unitAnim(UnitType t, UAnim a, int dir, int phase, int player);
     const UnitAnimInfo& animInfo(UnitType t) const;
 
-    // 建筑（constructing=true 返回脚手架）
-    const Sprite& building(BldType t, int player, bool constructing);
+    // 建筑贴图 stem：有阵营变体 PNG 时用 bld_X_sov/_yuri/_usa，否则 bldAssetName
+    static const char* bldSpriteStem(BldType t, Country country);
+
+    // 建筑（constructing=true 返回脚手架）；country 决定阵营贴图变体
+    const Sprite& building(BldType t, int player, bool constructing, Country country = Country::None);
     // 放置预览：成品外观但不烘焙地面投影（绿格已表示占地，避免双重阴影）
-    const Sprite& buildingGhost(BldType t, int player);
+    const Sprite& buildingGhost(BldType t, int player, Country country = Country::None);
     // 建筑建造动画帧（mk 关键帧）：frame 0..mkFrames-1，无素材回退成品
-    const Sprite& buildingMk(BldType t, int frame, int player);
+    const Sprite& buildingMk(BldType t, int frame, int player, Country country = Country::None);
     int bldMkFrames(BldType t) const;
 
     // 特效

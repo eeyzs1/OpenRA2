@@ -32,12 +32,45 @@ void Game::updateCamera() {
         }
     }
 
+    clampCameraToMap();
+}
+
+void Game::clampCameraToMap() {
+    // RA2：视野不能拖出地图外；视口卡在等距地图 AABB 内（与 bakeTerrain 世界域一致）
+    if (world.map.w <= 0 || world.map.h <= 0) return;
+    int viewW = SCREEN_W - sidebarW;
     float visW = (float)viewW / camZoom;
     float visH = (float)SCREEN_H / camZoom;
-    float minX = -(float)world.map.h * TILE_W / 2.0f - visW - 200.0f;
-    float maxX = (float)world.map.w * TILE_W / 2.0f + 200.0f;
-    float minY = -visH - 100.0f;
-    float maxY = (float)(world.map.w + world.map.h) * TILE_H / 2.0f + 100.0f;
+
+    float mapL, mapR, mapT, mapB;
+    if (terrainW > 0 && terrainH > 0) {
+        mapL = -terrainOX;
+        mapR = -terrainOX + (float)terrainW;
+        mapT = 0.0f;
+        mapB = (float)terrainH;
+    } else {
+        const int mw = world.map.w, mh = world.map.h;
+        mapL = -(float)(mh - 1) * (TILE_W / 2.0f);
+        mapR = (float)(mw - 1) * (TILE_W / 2.0f) + (float)TILE_W;
+        mapT = 0.0f;
+        mapB = (float)(mw + mh - 2) * (TILE_H / 2.0f) + (float)TILE_H;
+    }
+
+    const float mapW = mapR - mapL;
+    const float mapH = mapB - mapT;
+    float minX, maxX, minY, maxY;
+    if (mapW <= visW) {
+        minX = maxX = mapL - (visW - mapW) * 0.5f; // 地图比视口窄：居中
+    } else {
+        minX = mapL;
+        maxX = mapR - visW;
+    }
+    if (mapH <= visH) {
+        minY = maxY = mapT - (visH - mapH) * 0.5f;
+    } else {
+        minY = mapT;
+        maxY = mapB - visH;
+    }
     camX = std::clamp(camX, minX, maxX);
     camY = std::clamp(camY, minY, maxY);
 }

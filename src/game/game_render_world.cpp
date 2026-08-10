@@ -580,12 +580,12 @@ void Game::drawEntities() {
                 fillRectWorld((float)boxX + boxW - L, (float)boxY + boxH - th, L, th, sc);
                 fillRectWorld((float)boxX + boxW - th, (float)boxY + boxH - L, th, L, sc);
             }
-            // 军衔标志（RA2：老兵银三角 / 精英金三角，画在单位右下角）
+            // 军衔标志（RA2：老兵银三角 / 精英金三角，右下角垂直向上累加）
             if (e.vetRank > 0) {
                 Color rc = e.vetRank >= 2 ? Color{255, 200, 60, 255} : Color{220, 220, 220, 255};
                 for (int i = 0; i < e.vetRank; i++) {
-                    int vx = boxX + boxW - 8 - (e.vetRank - 1 - i) * 9;
-                    int vy = boxY + boxH - 2;
+                    int vx = boxX + boxW - 8;
+                    int vy = boxY + boxH - 2 - i * 5;
                     fillRectWorld((float)vx + 2, (float)vy, 2, 1, rc);
                     fillRectWorld((float)vx + 1, (float)vy + 1, 4, 1, rc);
                     fillRectWorld((float)vx, (float)vy + 2, 6, 2, rc);
@@ -611,9 +611,11 @@ void Game::drawEntities() {
             Vector2 p = bldScreenPos(e);
             // 占领后阵营染色；中立科技保留原色（cid=-2）
             int cid;
-            if (e.player >= 0)
+            Country bldCountry = Country::None;
+            if (e.player >= 0) {
                 cid = world.players[e.player].colorId;
-            else if (e.btype == BldType::OilDerrick || e.btype == BldType::Hospital
+                bldCountry = world.players[e.player].country;
+            } else if (e.btype == BldType::OilDerrick || e.btype == BldType::Hospital
                      || e.btype == BldType::TechAirport)
                 cid = -2;
             else
@@ -629,9 +631,9 @@ void Game::drawEntities() {
                     : (total - e.constructAnim) / 5;
                 if (frame < 0) frame = 0;
                 if (frame >= mkf) frame = mkf - 1;
-                sp = &g_sprites.buildingMk(e.btype, frame, cid);
+                sp = &g_sprites.buildingMk(e.btype, frame, cid, bldCountry);
             } else {
-                sp = &g_sprites.building(e.btype, cid, false);
+                sp = &g_sprites.building(e.btype, cid, false, bldCountry);
             }
             const Sprite& s = *sp;
             Color tint = (e.player != localPlayer && fs == FOG_SEEN) ? Color{110, 110, 110, 255} : WHITE;
@@ -689,8 +691,8 @@ void Game::drawEntities() {
             }
             const BldDef& d = bldDef(e.btype);
             const bool bldSelected = ((int)it.id == selBuilding);
-            // 选中笼：底面/高度/偏移按贴图拟合（fit_bld_cages.py），避免 art Height 过高、底面与画不对齐。
-            const Sprite& cageS = g_sprites.building(e.btype, cid, false);
+            // 选中笼：底面/高度/偏移按贴图拟合（fit_bld_cages.py）；stem 与阵营贴图一致。
+            const Sprite& cageS = g_sprites.building(e.btype, cid, false, bldCountry);
             auto dashLine = [](Vector2 a, Vector2 b, Color c, float thick = 1.75f) {
                 float dx = b.x - a.x, dy = b.y - a.y;
                 float len = sqrtf(dx * dx + dy * dy);
@@ -735,15 +737,17 @@ void Game::drawEntities() {
                     DrawCircleV(ts, 3.0f, Color{0, 255, 0, 255});
                 }
             };
-            BldCageParams cage = resolveBldCage(bldAssetName(e.btype), d.w, d.h, cageS);
+            const char* cageStem = SpriteBank::bldSpriteStem(e.btype, bldCountry);
+            BldCageParams cage = resolveBldCage(cageStem, d.w, d.h, cageS);
             Vector2 cageP{p.x + cage.offX, p.y + cage.offY};
             if (bldSelected)
                 drawIsoCuboid(cageP, cage, Color{255, 240, 60, 245});
+            // 血条贴在贴图不透明顶上方（不用 cage.elev：矮笼改完后条会沉进楼体）
             const int bldPips = 20;
             int barW = bldPips * 3 + (bldPips - 1) * 1;
-            float elevBar = cage.elev;
-            int barX = (int)cageP.x - barW / 2;
-            int barY = (int)(cageP.y - elevBar) - 4;
+            int visCx = (int)(p.x - (float)cageS.ox + 0.5f * (float)(cageS.visL + cageS.visR + 1));
+            int barX = visCx - barW / 2;
+            int barY = (int)(p.y - (float)cageS.visElev()) - 6;
             if (bldSelected || e.hp < d.hp) {
                 drawHealthBar(barX, barY, barW, (float)e.hp / std::max(1, d.hp), bldSelected, bldPips);
             }
@@ -1155,7 +1159,8 @@ void Game::drawPlacement() {
     screenToWorld((int)m.x, (int)m.y, wx, wy);
     int tx, ty;
     screenToTile(wx, wy, tx, ty);
-    int bx = tx - d.w / 2, by = ty - d.h / 2;
+    // 光标对准占地东南角格（与 place / updateHoverCursor 一致，避免中心格导致放置瞬间位移）
+    int bx = tx - (d.w - 1), by = ty - (d.h - 1);
     // 脚印染色与 canPlace 一致（整座可放=绿，否则红），避免「格绿但放不下」
     bool canAll = world.canPlace(t, bx, by, localPlayer);
     for (int dy = 0; dy < d.h; dy++)
@@ -1169,7 +1174,8 @@ void Game::drawPlacement() {
             DrawTexture(fogBlack, px - TILE_W / 2 - (int)camX, py - (int)camY, c);
         }
     // 放置预览用无烘焙投影的幽灵（绿格已表示占地，避免双重阴影）
-    const Sprite& s = g_sprites.buildingGhost(t, world.players[localPlayer].colorId);
+    Country placeCountry = world.players[localPlayer].country;
+    const Sprite& s = g_sprites.buildingGhost(t, world.players[localPlayer].colorId, placeCountry);
     int px, py;
     tileToScreen(bx + d.w - 1, by + d.h - 1, px, py);
     if (world.map.inBounds(bx + d.w - 1, by + d.h - 1))
@@ -1191,7 +1197,7 @@ void Game::drawPlacement() {
                 DrawLineEx({a.x + dx * t1, a.y + dy * t1}, {a.x + dx * t2, a.y + dy * t2}, thick, c);
             }
         };
-        BldCageParams cage = resolveBldCage(bldAssetName(t), d.w, d.h, s);
+        BldCageParams cage = resolveBldCage(SpriteBank::bldSpriteStem(t, placeCountry), d.w, d.h, s);
         Vector2 bs{ghostP.x + cage.offX, ghostP.y + cage.offY};
         float elev = cage.elev;
         Vector2 bn, be, bw;

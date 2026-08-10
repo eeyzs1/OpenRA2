@@ -139,10 +139,10 @@ void Game::drawMapEditor() {
     if (kPressed(KEY_ESCAPE)) phase = Phase::MainMenu;
     int panelW = 200;
     int viewW = SCREEN_W - panelW;
-    float minX = -(float)previewMap.h * TILE_W / 2 - 200;
-    float maxX = (float)previewMap.w * TILE_W / 2 + 200 - viewW;
-    float maxY = (float)(previewMap.w + previewMap.h) * TILE_H / 2 + 100 - SCREEN_H;
-    if (maxX < minX) maxX = minX;
+    float minX = -(float)(previewMap.h - 1) * (TILE_W / 2.0f);
+    float maxX = (float)(previewMap.w - 1) * (TILE_W / 2.0f) + (float)TILE_W - (float)viewW;
+    float maxY = (float)(previewMap.w + previewMap.h - 2) * (TILE_H / 2.0f) + (float)TILE_H - (float)SCREEN_H;
+    if (maxX < minX) { float mid = (minX + maxX + (float)viewW) * 0.5f - (float)viewW * 0.5f; minX = maxX = mid; }
     if (maxY < 0) maxY = 0;
     camX = std::max(minX, std::min(maxX, camX));
     camY = std::max(0.0f, std::min(maxY, camY));

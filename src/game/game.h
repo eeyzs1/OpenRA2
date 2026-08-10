@@ -248,6 +248,7 @@ private:
     void render();
     void handleInput();
     void updateCamera();
+    void clampCameraToMap(); // 视野钳在地图 AABB 内（RA2：到边停住）
 
     // 渲染子模块
     void drawWorld();
