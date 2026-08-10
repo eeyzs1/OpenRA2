@@ -33,10 +33,10 @@ void World::fireWeapon(Ent& e, EID id, EID targetId) {
     // 磁暴线圈充电加成：伤害 +50%
     if (e.isBuilding && e.btype == BldType::TeslaCoil && e.teslaCharge > 0)
         w.damage = (int)(w.damage * 1.5f);
-    // 步兵开火动画（art.ini FireUp 序列）：播放期间渲染开火帧
+    // 步兵开火动画（art.ini FireUp）：按 firerate 推进相位
     if (!e.isBuilding) {
         const UnitAnimInfo& fai = g_sprites.animInfo(e.utype);
-        if (fai.fire > 0) e.fireAnim = fai.fire * 2; // 每相位 2 tick
+        if (fai.fire > 0) e.fireAnim = fai.fire * std::max(1, fai.fireRate);
     }
     float sx = e.x, sy = e.y;
     if (e.isBuilding) { sx += bldDef(e.btype).w / 2.0f; sy += bldDef(e.btype).h / 2.0f; }
@@ -82,32 +82,35 @@ void World::fireWeapon(Ent& e, EID id, EID targetId) {
     };
     g_sfx.playAt(sfxFromWeapon(w), sx, sy);
     // 开火口焰特效
-    if (strcmp(ps, "tesla") != 0 && strcmp(ps, "prism") != 0) {
+    if (strcmp(ps, "tesla") != 0 && strcmp(ps, "prism") != 0 && strcmp(ps, "chrono") != 0) {
         Effect mz;
         mz.kind = 5; mz.x = sx; mz.y = sy; mz.maxAge = 4;
         effects.push_back(mz);
     }
+    const ProjectileDef& pd = projectileForWeapon(w);
+
     if (strcmp(ps, "tesla") == 0) {
-        // 磁暴：瞬时电弧
         float mult = weaponMultiplier(w, t);
         damage(targetId, (int)(w.damage * mult), e.player, id);
         Effect ef;
         ef.kind = 2; ef.x = sx; ef.y = sy; ef.x2 = tx; ef.y2 = ty; ef.maxAge = 8;
         effects.push_back(ef);
-    } else if (strcmp(ps, "chrono") == 0) {
-        // 超时空抹除枪：不造成伤害，叠加目标相位进度（冻结→抹除）
+        return;
+    }
+    if (strcmp(ps, "chrono") == 0) {
         Ent& te = ents[targetId];
         te.chrono += 20;
         Effect ef;
         ef.kind = 3; ef.x = sx; ef.y = sy; ef.x2 = tx; ef.y2 = ty; ef.maxAge = 10;
         effects.push_back(ef);
-    } else if (strcmp(ps, "prism") == 0) {
+        return;
+    }
+    if (strcmp(ps, "prism") == 0) {
         float mult = weaponMultiplier(w, t);
         damage(targetId, (int)(w.damage * mult), e.player, id);
         Effect ef;
         ef.kind = 3; ef.x = sx; ef.y = sy; ef.x2 = tx; ef.y2 = ty; ef.maxAge = 10;
         effects.push_back(ef);
-        // YR 光棱坦克标志性折射：主目标附近最多两名敌人承受递减链伤害。
         if (!e.isBuilding && e.utype == UnitType::PrismTank) {
             int chained = 0;
             for (size_t i = 0; i < ents.size() && chained < 2; ++i) {
@@ -124,33 +127,55 @@ void World::fireWeapon(Ent& e, EID id, EID targetId) {
                 ++chained;
             }
         }
-    } else if (strcmp(ps, "bullet") == 0 || strcmp(ps, "rad") == 0) {
-        Projectile p;
-        p.kind = ProjKind::Bullet; p.player = e.player;
-        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.src = id; p.w = w;
-        projs.push_back(p);
-    } else if (strcmp(ps, "flak") == 0) {
-        Projectile p;
-        p.kind = ProjKind::Flak; p.player = e.player;
-        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.src = id; p.w = w;
-        projs.push_back(p);
-    } else if (strcmp(ps, "missile") == 0) {
-        Projectile p;
-        p.kind = ProjKind::Missile; p.player = e.player;
-        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.src = id; p.w = w;
-        if (w.splash >= 1.0f) p.hp = 45; // 大型导弹（V3/无畏舰）：可被防空火力拦截（RA2 原作）
-        projs.push_back(p);
-    } else if (strcmp(ps, "naval") == 0 || strcmp(ps, "torpedo") == 0) {
-        Projectile p;
-        p.kind = ProjKind::Shell; p.player = e.player;
-        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.src = id; p.w = w;
-        projs.push_back(p);
-    } else { // shell
-        Projectile p;
-        p.kind = ProjKind::Shell; p.player = e.player;
-        p.x = sx; p.y = sy; p.tx = tx; p.ty = ty; p.target = targetId; p.src = id; p.w = w;
-        projs.push_back(p);
+        return;
     }
+
+    // 心灵弹道：瞬时命中 + 光束表现；其它 Inviso 走 emitWeaponProjectile
+    if (pd.inviso && (!strcmp(ps, "psi") || !strcmp(pd.name, "Psychic"))) {
+        emitWeaponProjectile(e.player, sx, sy, targetId, id, -1, w);
+        Effect ef; ef.kind = 3; ef.x = sx; ef.y = sy; ef.x2 = tx; ef.y2 = ty; ef.maxAge = 6;
+        effects.push_back(ef);
+        return;
+    }
+    emitWeaponProjectile(e.player, sx, sy, targetId, id, -1, w);
+}
+
+void World::emitWeaponProjectile(int player, float sx, float sy, EID tgt, EID src, int srcGarrisonSlot, const WeaponDef& w) {
+    if (!valid(tgt)) return;
+    const Ent& t = ents[tgt];
+    float tx = t.x, ty = t.y;
+    if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
+    const ProjectileDef& pd = projectileForWeapon(w);
+    const char* ps = w.projSprite ? w.projSprite : "shell";
+
+    // YR Inviso：无飞行体，瞬时结算（InvisibleLow / Psychic 等）
+    if (pd.inviso) {
+        float mult = weaponMultiplier(w, t);
+        damage(tgt, (int)(w.damage * mult), player, src, srcGarrisonSlot);
+        return;
+    }
+
+    // 飞行弹丸：Arcing 瞄落点；ROT>0 制导；Inaccurate 散布
+    float aimX = tx, aimY = ty;
+    if (pd.inaccurate) {
+        float scatter = 0.35f + distf(sx, sy, tx, ty) * 0.06f;
+        aimX += (rng.unit() - 0.5f) * 2.f * scatter;
+        aimY += (rng.unit() - 0.5f) * 2.f * scatter;
+    }
+    Projectile p;
+    p.kind = kindFromProjectile(pd, ps);
+    p.player = player;
+    p.x = sx; p.y = sy; p.ox = sx; p.oy = sy;
+    p.tx = aimX; p.ty = aimY;
+    p.target = tgt; p.src = src; p.srcGarrisonSlot = srcGarrisonSlot; p.w = w;
+    p.rot = pd.rot;
+    p.arcing = pd.arcing;
+    p.proximity = pd.proximity;
+    p.speed = weaponSpeedCenti(w, pd);
+    if (pd.vertical) p.z = 0.8f;
+    if (w.splash >= 1.0f && p.kind == ProjKind::Missile) p.hp = 45; // V3/无畏可拦截
+    initProjectile(p);
+    projs.push_back(p);
 }
 
 void World::damage(EID id, int dmg, int byPlayer, EID byEnt, int byGarrisonSlot) {

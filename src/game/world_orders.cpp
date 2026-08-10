@@ -69,7 +69,7 @@ void World::orderMove(const std::vector<EID>& sel, float x, float y, bool attack
             e.state = UState::Idle;
         }
         if (unitDef(e.utype).canHarvet() && !attackMove) {
-            // 移动后恢复自动采矿由 updateHarvester 处理
+            // Move 将 autoHarvest=false；卸完后不自动再采，直到显式采矿令
             e.oreCell = {-1, -1};
         }
     }
@@ -156,6 +156,20 @@ void World::orderHarvest(const std::vector<EID>& sel, int x, int y) {
         e.path = std::move(path);
         e.pathIdx = 0;
         e.state = UState::HarvestGo;
+    }
+}
+
+void World::orderReturnToRefinery(const std::vector<EID>& sel, EID preferredRef) {
+    for (EID id : sel) {
+        if (!valid(id) || ents[id].isBuilding) continue;
+        Ent& e = ents[id];
+        if (!unitDef(e.utype).canHarvet()) continue;
+        if (e.utype == UnitType::SlaveMiner && e.deployed) continue;
+        e.wps.clear();
+        e.target = INVALID_EID;
+        e.guard = false;
+        e.autoHarvest = true; // 显式回厂后卸完可再出发
+        beginHarvesterReturn(e, preferredRef);
     }
 }
 

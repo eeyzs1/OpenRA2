@@ -30,7 +30,8 @@
 | 文档 | 内容 |
 |------|------|
 | [style/README.md](./style/README.md) | 风格索引 |
-| [style/art-visual.md](./style/art-visual.md) | 画风与 UI |
+| [style/command-shell.md](./style/command-shell.md) | **指挥壳**：菜单/HUD 气质、色票、控件族、反模式 |
+| [style/art-visual.md](./style/art-visual.md) | 画风与 UI 概要 |
 | [style/music.md](./style/music.md) | 音乐 |
 | [style/sfx-voice.md](./style/sfx-voice.md) | 音效与语音 |
 | [style/vfx.md](./style/vfx.md) | 视效 |

@@ -310,10 +310,10 @@ void Game::drawNetLobby() {
     bool pressed = mPressed(MOUSE_LEFT_BUTTON);
 
     auto sideBtn = [&](float y, const char* text, int size = 14) {
-        return ra2Button(font, m, pressed, {side.x + 6, y, side.width - 12, 44}, text, size);
+        return ra2Button(font, m, pressed, {side.x + 8, y, side.width - 16, 40}, text, size);
     };
 
-    // 角色选择：左内容展示，动作在右侧栏
+    // 角色选择：左内容展示，动作在右侧栏（钮高 40、行距 52 → 缝 12）
     if (lobbyState == 0) {
         const char* tip = g_lang ? "Choose host or join" : "选择创建主机或加入对局";
         drawTextM(font, tip, cx - textW(font, tip, 16) / 2, 180, 16, Color{220, 216, 206, 255});

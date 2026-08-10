@@ -22,12 +22,17 @@ struct Projectile {
     ProjKind kind = ProjKind::Bullet;
     int player = 0;
     float x = 0, y = 0;         // 瓦片浮点坐标
-    float tx = 0, ty = 0;       // 目标点
+    float tx = 0, ty = 0;       // 目标点（开火锁定或导弹瞄准点）
+    float ox = 0, oy = 0;       // 发射点（弧线进度）
+    float z = 0;                // 绘制高度（格，弧线/对空）
     EID target = INVALID_EID;         // 追踪目标（可 INVALID）
     EID src = INVALID_EID; // 发射者（军衔经验归属）
     int srcGarrisonSlot = -1; // 建筑驻军弹道的实际乘员
     WeaponDef w{};
-    int speed = 0;          // 每逻辑帧移动比例
+    int speed = 0;          // 每 tick 位移（百分之一格）；由 SpeedLeptons 换算
+    int rot = 0;            // rulesmd ROT；>0 制导
+    bool arcing = false;
+    bool proximity = false;
     int trail = 0;
     int hp = 0;         // 可拦截导弹生命（0=不可拦截；V3/无畏舰大型导弹 >0，防空火力可击落）
 };
@@ -312,6 +317,7 @@ public:
     void orderMove(const std::vector<EID>& sel, float x, float y, bool attackMove, bool append = false);
     void orderAttack(const std::vector<EID>& sel, EID target);
     void orderHarvest(const std::vector<EID>& sel, int x, int y);
+    void orderReturnToRefinery(const std::vector<EID>& sel, EID preferredRef = INVALID_EID);
     void orderStop(const std::vector<EID>& sel);
     void orderDeploy(EID id);                    // 基地车展开 / 建造厂打包
     EID packConYardToMcv(EID id);                // MCV Repacks：建造厂→基地车，返回新 EID
@@ -334,7 +340,7 @@ public:
     struct Cmd {
         enum Type : uint8_t {
             None = 0,
-            Move, Attack, Harvest, Stop, Deploy, Capture, Repair, Scatter, Guard,
+            Move, Attack, Harvest, ReturnHarvester, Stop, Deploy, Capture, Repair, Scatter, Guard,
             Board, Unload, Garrison, Ungarrison, RadDeploy, Paradrop, Service,
             StartUnitProd, CancelUnitProd, StartBldProd, CancelBldProd,
             HoldUnitProd, HoldBldProd, // a=typeIdx；b=1 暂停 / 0 继续（建筑/防御按类型分流队列）
@@ -453,9 +459,13 @@ private:
     void updateBuilding(Ent& e, EID id);
     void updateCombat(Ent& e, EID id);
     void updateHarvester(Ent& e, EID id);
+    void beginHarvesterReturn(Ent& e, EID preferredRef = INVALID_EID);
+    bool findNearestReachableOre(int sx, int sy, int maxR, Vec2i& out) const;
     void moveAlongPath(Ent& e, EID id);
     void tryUnstackIdle(Ent& e, EID id); // 静止叠格拆开（车互斥 / 步兵超叠）
     void fireWeapon(Ent& e, EID id, EID targetId);
+    // 按 Weapon/ProjectileDef 瞬时命中或生成飞行弹（驻军/战斗要塞与 fireWeapon 共用）
+    void emitWeaponProjectile(int player, float sx, float sy, EID tgt, EID src, int srcGarrisonSlot, const WeaponDef& w);
     void explodeAt(float x, float y, int big);
     bool spawnFromFactory(int player, const UnitDef& u);
     void recomputePower();

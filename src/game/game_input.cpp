@@ -335,9 +335,22 @@ void Game::issueSmartOrder(int mx, int my) {
             return;
         }
     }
-    // 友军建筑：工程师右键受损建筑 → 进入修复
+    // 友军建筑：矿车右键精炼厂 → 回厂卸货；工程师右键受损建筑 → 进入修复
     if (eb != INVALID_EID && world.ents[eb].player == localPlayer) {
-        if (hasEngineer && world.ents[eb].hp < bldDef(world.ents[eb].btype).hp) {
+        const World::Ent& fb = world.ents[eb];
+        if (hasHarvester && fb.btype == BldType::OreRefinery) {
+            std::vector<EID> harv;
+            for (EID id : sel) {
+                if (!world.valid(id) || world.ents[id].isBuilding) continue;
+                if (unitDef(world.ents[id].utype).canHarvet()) harv.push_back(id);
+            }
+            if (!harv.empty()) {
+                World::Cmd c; c.type = World::Cmd::ReturnHarvester; c.ids = harv; c.a = eb;
+                issueCmd(c);
+                return;
+            }
+        }
+        if (hasEngineer && fb.hp < bldDef(fb.btype).hp) {
             std::vector<EID> engs;
             for (EID id : sel) if (world.valid(id) && world.ents[id].utype == UnitType::Engineer) engs.push_back(id);
             World::Cmd c; c.type = World::Cmd::Repair; c.ids = engs; c.a = eb;

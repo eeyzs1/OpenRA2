@@ -19,6 +19,7 @@ OpenRA2 素材与规则说明（Modding Guide）
 --------
 assets/
   rules/rules.ini        单位/建筑/超武全部数值（本文件第 1 节）
+  rules/projectiles.ini  YR Projectile= 子集（Arcing/ROT/Inviso/Speed；由 projSprite 桥接）
   campaigns/             战役：campaign.ini 列表 + 每关一个 INI（第 2 节）
   strings/zh.ini|en.ini  界面与播报文本（第 3 节）
   music/                 BGM wav + music.ini 播放列表（第 4 节）

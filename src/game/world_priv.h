@@ -1,6 +1,7 @@
 #pragma once
 #include "game/world.h"
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 
 // Shared private helpers for World subsystem TUs (not part of public API).
@@ -28,6 +29,50 @@ inline int rotStepDir(int cur, int want) {
 inline int rotDistDir(int a, int b) {
     int d = std::abs(a - b) & 7;
     return std::min(d, 8 - d);
+}
+
+// ---- YR ProjectileDef → 运行时弹丸 ----
+inline int defaultProjSpeed(ProjKind k) {
+    switch (k) {
+        case ProjKind::Missile: return 25;
+        case ProjKind::Bullet:  return 90;
+        case ProjKind::Flak:    return 70;
+        case ProjKind::Shell:
+        default:                return 55;
+    }
+}
+// leptons/帧 → 百分之一格/tick（OpenRA2 30fps ≈ 原作 15fps 墙钟）
+inline int leptonsToCentiTiles(int leptons) {
+    if (leptons <= 0) return defaultProjSpeed(ProjKind::Shell);
+    return std::max(1, (leptons * 100 + 256) / 512);
+}
+inline int weaponSpeedCenti(const WeaponDef& w, const ProjectileDef& pd) {
+    int lep = w.speedLeptons >= 0 ? w.speedLeptons : pd.speedLeptons;
+    if (pd.arcing) lep = 50; // ModEnc: Arcing 强制 Speed=50
+    return leptonsToCentiTiles(lep);
+}
+inline ProjKind kindFromProjectile(const ProjectileDef& pd, const char* projSprite) {
+    if (pd.arcing) return ProjKind::Shell;
+    if (pd.rot > 0) {
+        if (pd.aa && !pd.ag) return ProjKind::Flak;
+        return ProjKind::Missile;
+    }
+    const char* ps = projSprite ? projSprite : "shell";
+    if (!strcmp(ps, "flak")) return ProjKind::Flak;
+    if (!strcmp(ps, "missile") || !strcmp(ps, "naval") || !strcmp(ps, "torpedo")) return ProjKind::Missile;
+    if (!strcmp(ps, "bullet") || !strcmp(ps, "rad")) return ProjKind::Bullet;
+    return ProjKind::Shell;
+}
+inline float rotAimStep(int rot) {
+    if (rot <= 0) return 0.f;
+    return std::min(2.0f, rot / 100.0f);
+}
+inline void initProjectile(Projectile& p) {
+    if (p.speed <= 0) p.speed = defaultProjSpeed(p.kind);
+}
+inline float projMoveSpeed(const Projectile& p) {
+    int s = p.speed > 0 ? p.speed : defaultProjSpeed(p.kind);
+    return s / 100.0f;
 }
 
 // 建筑贴边可站格：脚印外围最近可通行点（工程师/间谍贴边抵达，避免寻路进占地中心失败）

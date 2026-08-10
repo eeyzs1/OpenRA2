@@ -58,6 +58,7 @@ void Game::loadSettings() {
         else if (strcmp(line, "window_mode") == 0) cfgWindowMode = (v == 0) ? 0 : 1;
         else if (strcmp(line, "resolution") == 0) { if (v >= 0 && v < 8) cfgResIdx = v; }
         else if (strcmp(line, "volume") == 0) { if (v >= 0 && v <= 4) cfgVolume = v; }
+        else if (strcmp(line, "ui_tips") == 0) cfgUiTips = (v != 0);
         else if (strncmp(line, "key_", 4) == 0) {
             int a = atoi(line + 4);
             if (a >= 0 && a < KA_COUNT && v > 0) keyBind[a] = v;
@@ -74,6 +75,7 @@ void Game::saveSettings() const {
     fprintf(f, "window_mode=%d\n", cfgWindowMode);
     fprintf(f, "resolution=%d\n", cfgResIdx);
     fprintf(f, "volume=%d\n", cfgVolume);
+    fprintf(f, "ui_tips=%d\n", cfgUiTips ? 1 : 0);
     for (int i = 0; i < KA_COUNT; i++) fprintf(f, "key_%d=%d\n", i, keyBind[i]);
     fclose(f);
 }

@@ -1712,8 +1712,8 @@ void Game::drawGameMenuOverlay() {
         showMenu = false;
     };
     // 侧栏列表：等分槽（非结算时不再顶部重复「继续」——仅底栏保留）
-    const float bx = side.x + 6.0f, bw = side.width - 12.0f, bh = 40.0f;
-    const float by0 = 178.0f, btnGap = 2.0f; // LOAD_MON_Y(48)+LOAD_MON_H(122)+8
+    const float bx = side.x + 6.0f, bw = side.width - 12.0f, bh = 36.0f;
+    const float by0 = 178.0f, btnGap = 6.0f; // LOAD_MON_Y(48)+LOAD_MON_H(122)+8
     auto rowY = [&](int i) { return by0 + i * (bh + btnGap); };
     auto listItem = [&](int i, const char* text, bool enabled = true) -> bool {
         return ra2Button(font, mm, mpr, {bx, rowY(i), bw, bh}, text, 13, enabled);

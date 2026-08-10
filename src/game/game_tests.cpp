@@ -287,6 +287,10 @@ int Game::smokeTest(int frames) {
                         navalOnlyOk = navalOnlyOk && unitDef(UnitType::Typhoon).weapon.navalOnly;
                         if (world.valid(landTank)) world.ents[landTank].alive = false; // 清理
                     }
+                    // 清理海域交战残留，避免驱逐舰等干扰岸上装载
+                    if (world.valid(sub)) world.ents[sub].alive = false;
+                    if (world.valid(foeShip)) world.ents[foeShip].alive = false;
+                    world.projs.clear();
                     // 运输装卸：两栖运输船在陆地格装载 2 名步兵后卸载
                     std::vector<Vec2i> frees;
                     for (int dy = -1; dy <= 1; dy++)
@@ -301,10 +305,13 @@ int Game::smokeTest(int frames) {
                         EID i1 = world.spawnUnit(1, UnitType::Conscript, frees[0].x + 0.5f, frees[0].y + 0.5f);
                         EID i2 = world.spawnUnit(1, UnitType::Conscript, frees[1].x + 0.5f, frees[1].y + 0.5f);
                         world.orderBoard({i1, i2}, tr);
-                        for (int i = 0; i < 600 && (int)world.ents[tr].cargo.size() < 2; i++) world.update();
-                        boardOk = (int)world.ents[tr].cargo.size() == 2;
-                        world.orderUnload({tr});
-                        unloadOk = world.ents[tr].cargo.empty();
+                        for (int i = 0; i < 600 && world.valid(tr) && (int)world.ents[tr].cargo.size() < 2; i++)
+                            world.update();
+                        boardOk = world.valid(tr) && (int)world.ents[tr].cargo.size() == 2;
+                        if (world.valid(tr)) {
+                            world.orderUnload({tr});
+                            unloadOk = world.ents[tr].cargo.empty();
+                        } else unloadOk = false;
                     }
                 }
                 TraceLog(LOG_INFO, "naval verify: yardWater=%d yardLandRejected=%d move=%d torpedo=%d navalOnly=%d board=%d unload=%d (expect 1/1/1/1/1/1/1)",
@@ -537,6 +544,48 @@ int Game::smokeTest(int frames) {
             // RA2 UI 保真：采矿容量 HARV=40 / CMIN=20；HOLD 暂停进度；缺钱停扣可续产
             bool harvCap = World::harvesterCapacity(UnitType::WarMiner) == 40
                         && World::harvesterCapacity(UnitType::ChronoMiner) == 20;
+
+            // 自动采矿：Idle+autoHarvest 找可达矿；满载且 autoHarvest=false 仍回厂；显式 ReturnHarvester
+            Vec2i harvPad = findOpen(10, 8);
+            int ox = harvPad.x + 4, oy = harvPad.y + 3;
+            if (core.map.inBounds(ox, oy)) {
+                Cell& oc = core.map.at(ox, oy);
+                oc.terrain = Terrain::Clear;
+                oc.ore = 80; oc.oreMax = 80;
+            }
+            EID refH = core.spawnBuilding(0, BldType::OreRefinery, harvPad.x, harvPad.y, true);
+            EID autoMiner = core.spawnUnit(0, UnitType::ChronoMiner, harvPad.x + 1.5f, harvPad.y + 4.5f);
+            core.ents[autoMiner].autoHarvest = true;
+            core.orderHarvest({autoMiner}, ox, oy);
+            bool autoMine = false;
+            for (int i = 0; i < 120 && !autoMine; i++) {
+                core.update();
+                UState st = core.ents[autoMiner].state;
+                autoMine = (st == UState::HarvestGo || st == UState::HarvestDig
+                            || st == UState::HarvestReturn || st == UState::HarvestUnload
+                            || core.ents[autoMiner].oreLoad > 0);
+            }
+            EID stuckMiner = core.spawnUnit(0, UnitType::WarMiner, harvPad.x + 2.5f, harvPad.y + 4.5f);
+            core.ents[stuckMiner].autoHarvest = false;
+            core.ents[stuckMiner].oreLoad = 10;
+            core.ents[stuckMiner].state = UState::Idle;
+            core.update();
+            bool fullReturns = core.ents[stuckMiner].state == UState::HarvestReturn
+                            || core.ents[stuckMiner].state == UState::HarvestUnload;
+            EID retMiner = core.spawnUnit(0, UnitType::WarMiner, harvPad.x + 0.5f, harvPad.y + 4.5f);
+            core.ents[retMiner].oreLoad = 5;
+            core.ents[retMiner].autoHarvest = false;
+            core.orderReturnToRefinery({retMiner}, refH);
+            bool explicitReturn = core.ents[retMiner].state == UState::HarvestReturn
+                               || core.ents[retMiner].state == UState::HarvestUnload
+                               || (core.valid(core.ents[retMiner].dockRefinery)
+                                   && core.ents[retMiner].dockRefinery == refH);
+            bool harvLoop = autoMine && fullReturns && explicitReturn;
+            // 清理矿车，避免后续缺钱生产测试被卸矿回款干扰
+            for (World::Ent& he : core.ents) {
+                if (!he.alive || he.isBuilding || !unitDef(he.utype).canHarvet()) continue;
+                he.alive = false;
+            }
             core.players[0].money = 50000;
             bool holdStart = core.startUnitProd(0, UnitType::Grizzly);
             int holdProg0 = core.players[0].unitProd[1].progress;
@@ -553,7 +602,10 @@ int Game::smokeTest(int frames) {
             bool brokeStart = core.startUnitProd(0, UnitType::Grizzly);
             int brokeProg0 = core.players[0].unitProd[1].progress;
             int brokePaid0 = core.players[0].unitProd[1].paid;
-            for (int i = 0; i < 20; i++) core.update();
+            for (int i = 0; i < 20; i++) {
+                core.players[0].money = 0; // 排除油井/残留卸矿等被动收入干扰
+                core.update();
+            }
             bool brokePaused = brokeStart && core.players[0].unitProd[1].progress == brokeProg0
                             && core.players[0].unitProd[1].paid == brokePaid0
                             && core.players[0].unitProd[1].active;
@@ -629,6 +681,7 @@ int Game::smokeTest(int frames) {
             check(exitReleased, "factory produces after an exit becomes available");
             check(gemPurifier, "gems and ore purifier apply their combined income");
             check(harvCap, "harvester capacity is HARV40/CMIN20");
+            check(harvLoop, "harvester auto-mine, full return without autoHarvest, and ReturnHarvester cmd");
             check(holdFreezes, "production HOLD freezes progress");
             check(brokeStart && brokePaused && brokeResumes, "broke production pauses and resumes with funds");
             check(chronoDeterministic, "chrono shift uses deterministic selected source units");
@@ -1780,25 +1833,25 @@ int Game::playTest() {
     shot("pt_01_mainmenu.png");
 
     // ---- 1b 设置页：语言热切换 / 显示模式 / 按键重绑 / 持久化 ----
-    // 主菜单右栏：等比 s=1.6875 ox=180；by0=202 → Settings 中心约 (1118, 594)
-    clickL(1118, 594);
+    // 主菜单右栏：s=1.6875 ox=180；by0=176 bh=34 gap=10 → Settings 行心 (1118, 549)
+    clickL(1118, 549);
     check(phase == Phase::Settings, "点击[设置]进设置页");
     frame(2);
     shot("pt_01b_settings.png");
-    // 640 UI：语言值框 cx+140=164,y=68,180x24 → 中心 (254, 80)
-    clickUi(254, 80);
+    // 640 UI：语言值框 cx+140=164,y=62,180x22 → 中心 (254, 73)
+    clickUi(254, 73);
     check(g_lang == 1 && cfgLang == 1, "语言热切换为英文");
     frame(2);
     shot("pt_01c_settings_en.png");
-    clickUi(254, 80);
+    clickUi(254, 73);
     check(g_lang == 0 && cfgLang == 0, "语言切回中文");
-    // 显示模式：y = 68+32 = 100
-    clickUi(254, 112);
+    // 显示模式：y = 62+34 = 96 → 中心 107
+    clickUi(254, 107);
     check(cfgWindowMode == 1, "切换为窗口模式");
-    clickUi(254, 112);
+    clickUi(254, 107);
     check(cfgWindowMode == 0, "切回无边框全屏");
-    // 按键：侧栏 Keyboard 中心 (556, 231)
-    clickUi(556, 231);
+    // 按键：侧栏 Keyboard 中心 by0=206 bh≈79 → (556, 245)
+    clickUi(556, 245);
     // 第一行键位框：keyBoxX≈348, y=68 → 中心 (398, 79)
     clickUi(398, 79);
     check(rebinding == KA_Stop, "点击键位框进入重绑");
@@ -2027,8 +2080,8 @@ int Game::playTest() {
     }
 
     // ---- 10 ESC 菜单 → 保存进度 → F9 读档 → 返回主菜单 ----
-    // 局内菜单：640 UI 侧栏中心 x=556；by0=178 bh=40 gap=2 → 行心 y=198+row*42
-    auto menuBtn = [&](int row) { clickUi(556.0f, 198.0f + row * 42.0f); };
+    // 局内菜单：640 UI 侧栏中心 x=556；by0=178 bh=36 gap=6 → 行心 y=196+row*42
+    auto menuBtn = [&](int row) { clickUi(556.0f, 196.0f + row * 42.0f); };
     key(KEY_ESCAPE); // 第一次：清除选择
     key(KEY_ESCAPE); // 第二次：打开菜单
     check(showMenu, "ESC打开游戏菜单");

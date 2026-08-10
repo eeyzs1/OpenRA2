@@ -85,6 +85,7 @@ private:
     int cfgLang = 0;        // 界面语言：0 中文 1 English
     int cfgWindowMode = 0;  // 显示模式：0 无边框全屏 1 窗口
     int cfgResIdx = 3;      // 窗口分辨率档位（RES_LIST 下标，默认 1440x810）
+    bool cfgUiTips = true;  // 菜单悬停说明（遭遇战右上 info）
     bool borderlessActive = false; // 当前窗口实际状态（applyDisplay 幂等判断）
     bool displayDirty = false;     // 显示模式/分辨率待应用（帧首执行，避免帧中改窗口）
     int keyBind[KA_COUNT] = {};    // 动作 → raylib 键码
@@ -354,6 +355,19 @@ bool drawMenuPanelChrome(int x, int y, int w, int h);
 void drawMenuOptSlot(Rectangle r, bool hover);
 void drawMenuOptSlot(Rectangle r, bool hover, bool showArrow);
 void drawMenuPip(float x, float y, bool on); // 原作 pips 勾选
+// 即时模式组合件（设置页/遭遇战共用，避免各页复制 lambda）
+bool menuPipToggle(Font font, Vector2 m, bool pressed, int x, int y, const char* label, bool& val,
+                   int fontSize = 12, bool* outHovered = nullptr);
+bool menuValueSlot(Font font, Vector2 m, bool pressed, Rectangle r, const char* value,
+                   bool enabled = true, bool showArrow = false, bool center = false);
+bool menuLabeledValue(Font font, Vector2 m, bool pressed, int lx, int y, const char* label,
+                      int vx, int vw, int vh, const char* value, bool enabled = true);
+void menuSectionHeader(Font font, int x, int y, const char* title, int underlineW = 180, int accentW = 60);
+void menuSlotText(Font font, Rectangle r, const char* text, Color c, int fontSize = 11,
+                  int padX = 4, bool shrinkToFit = true);
+void menuInfoPanel(Font font, Rectangle r, const char* title, const char* body,
+                   int titleSize = 12, int bodySize = 10);
+void menuDrawCrt(Font font, Rectangle mon, const char* statusLine = nullptr);
 void menuSetBikForceFrame(int frame);
 int menuBikFrameCount();
 // 菜单 UI 坐标 ↔ canvas（1440×810）坐标；壳层页绘制期间有效

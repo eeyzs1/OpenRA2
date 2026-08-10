@@ -184,23 +184,47 @@ const SWDef& swDef(SWType t);
 // 建筑提供的超武（COUNT = 无）
 SWType bldProvidesSW(BldType t);
 
-// ===================== 武器 =====================
+// ===================== 武器 / 弹道（YR rulesmd Projectile 子集） =====================
+// SpeedLeptons：原作 leptons/帧（1 格=256）；Arcing 强制 50。
+// OpenRA2@30fps：cells/tick = leptons/512（对齐原作 15fps 墙钟位移）。
+struct WeaponDef;
+
+struct ProjectileDef {
+    const char* name = "Cannon";
+    const char* image = "120MM";
+    bool arcing = false;      // 抛物线，瞄开火落点，不追踪
+    bool inviso = false;      // 瞬时命中（无飞行体）
+    bool vertical = false;    // 垂直弹（基洛夫等）
+    bool inaccurate = false;  // 开火时散布落点
+    bool proximity = false;   // 近炸
+    int rot = 0;              // >0 制导；0 非追踪
+    bool aa = false;
+    bool ag = true;
+    int speedLeptons = 40;
+};
+
+const ProjectileDef& projectileDef(const char* name);
+const ProjectileDef& projectileForWeapon(const WeaponDef& w);
+void loadProjectiles(const char* path);
+
 struct WeaponDef {
     int damage = 10;
     int range = 5;           // 格
     int cooldown = 30;       // 逻辑帧
     bool antiAir = false;
     bool antiGround = true;
-    const char* projSprite = "shell"; // shell/bullet/tesla/prism/missile
-    float vsInfantry = 1.0f; // 伤害系数
+    const char* projSprite = "shell"; // 表现/桥接标签
+    float vsInfantry = 1.0f;
     float vsVehicle = 1.0f;
     float vsBuilding = 1.0f;
-    bool navalOnly = false;  // 仅攻击水上目标（潜艇鱼雷）
-    float splash = 0;        // 溅射半径（格，0=单体；V3 火箭范围杀伤）
-    // Legacy 保留旧三分类系数；其他值使用 [Warhead.*] × Armor 矩阵。
+    bool navalOnly = false;
+    float splash = 0;
     enum class Warhead : uint8_t { Legacy, SmallArms, AP, HE, HollowPoint, Psychic, Radiation, COUNT };
     Warhead warhead = Warhead::Legacy;
     const char* report = "";
+    // 原作弹道（可选；默认由 Proj 桥接到 projectiles.ini）
+    const char* projectile = ""; // Projectile.* 名
+    int speedLeptons = -1;       // <0 用弹道默认；武器 Speed（leptons/帧）
 };
 
 // ===================== 单位定义 =====================

@@ -201,14 +201,7 @@ void World::garrisonFire(Ent& b, EID id) {
     w.damage = (int)(w.damage * 1.2f);     // 驻军伤害加成
     EID tgt = findNearestEnemy(b.player, cx, cy, (float)w.range, true, &w, gt);
     if (tgt == INVALID_EID) return;
-    const Ent& t = ents[tgt];
-    float tx = t.x, ty = t.y;
-    if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
-    Projectile p;
-    p.kind = strcmp(w.projSprite, "flak") == 0 ? ProjKind::Flak : ProjKind::Bullet;
-    p.player = b.player;
-    p.x = cx; p.y = cy; p.tx = tx; p.ty = ty; p.target = tgt; p.src = id; p.srcGarrisonSlot = slot; p.w = w;
-    projs.push_back(p);
+    emitWeaponProjectile(b.player, cx, cy, tgt, id, slot, w);
     Effect mz; mz.kind = 5; mz.x = cx; mz.y = cy; mz.maxAge = 4;
     effects.push_back(mz);
     g_sfx.playAt(Sfx::Shot, cx, cy);

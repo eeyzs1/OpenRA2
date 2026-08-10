@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <vector>
+#include <unordered_map>
 
 // 阵营位掩码
 static constexpr uint8_t FA = 1 << (int)Faction::Allies;
@@ -124,91 +126,91 @@ const WeaponDef& siegeChopperDeployedWeapon() { return wSiegeDeploy; }
 // 表为可写静态：启动时 loadRules() 用 assets/rules/rules.ini 逐项覆盖
 static UnitDef g_units[(int)UnitType::COUNT] = {
     // type, name, cost, btime, hp, speed, sight, armor, move, weapon, factions, prereq, ammo
-    {UnitType::MCV,        "基地车",    3000, 500, 1000, 24, 5, Armor::Heavy, MoveType::Vehicle, wNone(), ALLF, BldType::WarFactory, 0},
+    {UnitType::MCV,        "基地车",    3000, 500, 1000, 24, 6, Armor::Heavy, MoveType::Vehicle, wNone(), ALLF, BldType::WarFactory, 0},
     {UnitType::Harvester,  "采矿车",    1400, 280, 1000, 20, 4, Armor::Heavy, MoveType::Vehicle, wNone(), FC, BldType::OreRefinery},
     {UnitType::GI,         "美国大兵",   200, 60,  125, 14, 5, Armor::None, MoveType::Infantry, wGiRifle(), FA, BldType::COUNT},
     {UnitType::Conscript,  "动员兵",    100, 45,  125, 14, 5, Armor::None, MoveType::Infantry, wConscriptRifle(), FS, BldType::COUNT},
     {UnitType::PLA,        "解放军",    150, 50,  120, 13, 5, Armor::None, MoveType::Infantry, wHeavyRifle(), FC, BldType::COUNT},
     {UnitType::Engineer,   "工程师",    500, 120, 75,  14, 4, Armor::None, MoveType::Infantry, wNone(), ALLF, BldType::COUNT},
-    {UnitType::AttackDog,  "军犬",      200, 50,  100, 8,  6, Armor::None, MoveType::Infantry, WeaponDef{30,2,30,false,true,"bullet",2.0f,0,0}, ALLF, BldType::COUNT},
-    {UnitType::Spy,        "间谍",      1000,200, 100, 14, 6, Armor::None, MoveType::Infantry, wNone(), FA | FC, BldType::BattleLab},
+    {UnitType::AttackDog,  "军犬",      200, 50,  100, 8,  9, Armor::None, MoveType::Infantry, WeaponDef{30,2,30,false,true,"bullet",2.0f,0,0}, ALLF, BldType::COUNT},
+    {UnitType::Spy,        "间谍",      1000,200, 100, 14, 9, Armor::None, MoveType::Infantry, wNone(), FA | FC, BldType::BattleLab},
     {UnitType::FlakTrooper,"高射步兵",   300, 70,  100, 14, 5, Armor::None, MoveType::Infantry, wFlakTrooper(), FS, BldType::COUNT},
-    {UnitType::TeslaTrooper,"磁暴步兵",  500, 100, 130, 16, 5, Armor::Light, MoveType::Infantry, wShockTrooper(), FS, BldType::Radar},
+    {UnitType::TeslaTrooper,"磁暴步兵",  500, 100, 130, 16, 6, Armor::Light, MoveType::Infantry, wShockTrooper(), FS, BldType::Radar},
     {UnitType::Sniper,     "狙击手",    600, 110, 125, 16, 8, Armor::None, MoveType::Infantry, wSniper(), FA, BldType::Radar, 0, 0, nullptr, Country::UK},
     {UnitType::Tanya,      "谭雅",      1500,300, 200, 12, 8, Armor::None, MoveType::Infantry, wTanyaGun(), FA, BldType::BattleLab, 0, 0, eliteOf<ewTanya>()},
     {UnitType::Desolator,  "辐射工兵",   600, 110, 150, 14, 6, Armor::None, MoveType::Infantry, wRadiation(), FS, BldType::Radar, 0, 0, nullptr, Country::Iraq},
     {UnitType::Chrono,     "超时空军团兵",1500,300, 125, 14, 8, Armor::None, MoveType::Infantry, wChrono(), FA, BldType::BattleLab},
-    {UnitType::GuardianGI, "重装大兵",   400, 90,  100, 15, 5, Armor::None, MoveType::Infantry, wGGIRifle(), FA, BldType::COUNT},
-    {UnitType::CrazyIvan,  "疯狂伊文",   600, 110, 125, 12, 5, Armor::None, MoveType::Infantry, wIvanBomb(), FS, BldType::Radar},
-    {UnitType::Grizzly,    "灰熊坦克",   700, 150, 300, 12, 6, Armor::Heavy, MoveType::Vehicle, withReport(wTankGun(65, 5, 60), "GrizzlyTankAttack"), FA, BldType::COUNT, 0, 0, eliteOf<ewGrizzly>()},
-    {UnitType::Rhino,      "犀牛坦克",   900, 170, 400, 14, 6, Armor::Heavy, MoveType::Vehicle, withReport(wTankGun(90, 6, 65), "RhinoTankAttack"), FS, BldType::COUNT, 0, 0, eliteOf<ewRhino>()},
-    {UnitType::Type99,     "99式坦克",  1200,190, 500, 12, 6, Armor::Heavy, MoveType::Vehicle, withReport(wTankGun(100, 6, 60), "RhinoTankAttack"), FC, BldType::COUNT, 0, 0, eliteOf<ewType99>()},
-    {UnitType::FlakTrack,  "高射炮车",   500, 110, 180, 10, 6, Armor::Light, MoveType::Vehicle, withWH(WeaponDef{25, 5, 25, true, true, "flak", 1.0f, 0.7f, 0.5f}, WeaponDef::Warhead::HE), FS, BldType::COUNT, 0, 0},
-    {UnitType::IFV,        "多功能步兵车",600, 110, 200, 8,  7, Armor::Light, MoveType::Vehicle, wIFVMissile(), FA, BldType::COUNT, 0, 1},
-    {UnitType::PrismTank,  "光棱坦克",   1200,240, 150, 16, 7, Armor::Light, MoveType::Vehicle, wPrismTank(), FA, BldType::BattleLab, 0, 0, eliteOf<ewPrism>()},
-    {UnitType::TeslaTank,  "磁能坦克",   1200,240, 300, 14, 7, Armor::Heavy, MoveType::Vehicle, withWH(WeaponDef{135, 4, 75, false, true, "tesla", 1.2f, 1.0f, 0.8f}, WeaponDef::Warhead::AP), FS, BldType::BattleLab, 0, 0, eliteOf<ewTeslaTank>(), Country::Russia},
-    {UnitType::MirageTank, "幻影坦克",   1000,220, 200, 12, 7, Armor::Light, MoveType::Vehicle, withReport(wTankGun(100, 7, 70), "MirageTankAttack"), FA | FC, BldType::BattleLab},
-    {UnitType::V3Launcher, "V3火箭车",  800, 200, 150, 18, 6, Armor::Light, MoveType::Vehicle, wV3(), FS | FC, BldType::Radar, 0, 0, eliteOf<ewV3>()},
-    {UnitType::Apocalypse, "天启坦克",   1750,350, 800, 18, 7, Armor::Heavy, MoveType::Vehicle, withReport(WeaponDef{100,6,80,true,true,"shell",0.8f,1.2f,1.0f}, "ApocalypseAttackGround"), FS | FC, BldType::BattleLab, 0, 0, eliteOf<ewApoc>()},
-    {UnitType::TerrorDrone,"恐怖机器人", 500, 100, 100, 6,  5, Armor::Light, MoveType::Vehicle, wDroneBite(), FS | FC, BldType::Radar},
+    {UnitType::GuardianGI, "重装大兵",   400, 90,  100, 15, 6, Armor::None, MoveType::Infantry, wGGIRifle(), FA, BldType::COUNT},
+    {UnitType::CrazyIvan,  "疯狂伊文",   600, 110, 125, 12, 6, Armor::None, MoveType::Infantry, wIvanBomb(), FS, BldType::Radar},
+    {UnitType::Grizzly,    "灰熊坦克",   700, 150, 300, 12, 8, Armor::Heavy, MoveType::Vehicle, withReport(wTankGun(65, 5, 60), "GrizzlyTankAttack"), FA, BldType::COUNT, 0, 0, eliteOf<ewGrizzly>()},
+    {UnitType::Rhino,      "犀牛坦克",   900, 170, 400, 14, 8, Armor::Heavy, MoveType::Vehicle, withReport(wTankGun(90, 6, 65), "RhinoTankAttack"), FS, BldType::COUNT, 0, 0, eliteOf<ewRhino>()},
+    {UnitType::Type99,     "99式坦克",  1200,190, 500, 12, 8, Armor::Heavy, MoveType::Vehicle, withReport(wTankGun(100, 6, 60), "RhinoTankAttack"), FC, BldType::COUNT, 0, 0, eliteOf<ewType99>()},
+    {UnitType::FlakTrack,  "高射炮车",   500, 110, 180, 10, 8, Armor::Light, MoveType::Vehicle, withWH(WeaponDef{25, 5, 25, true, true, "flak", 1.0f, 0.7f, 0.5f}, WeaponDef::Warhead::HE), FS, BldType::COUNT, 0, 0},
+    {UnitType::IFV,        "多功能步兵车",600, 110, 200, 8,  8, Armor::Light, MoveType::Vehicle, wIFVMissile(), FA, BldType::COUNT, 0, 1},
+    {UnitType::PrismTank,  "光棱坦克",   1200,240, 150, 16, 8, Armor::Light, MoveType::Vehicle, wPrismTank(), FA, BldType::BattleLab, 0, 0, eliteOf<ewPrism>()},
+    {UnitType::TeslaTank,  "磁能坦克",   1200,240, 300, 14, 8, Armor::Heavy, MoveType::Vehicle, withWH(WeaponDef{135, 4, 75, false, true, "tesla", 1.2f, 1.0f, 0.8f}, WeaponDef::Warhead::AP), FS, BldType::BattleLab, 0, 0, eliteOf<ewTeslaTank>(), Country::Russia},
+    {UnitType::MirageTank, "幻影坦克",   1000,220, 200, 12, 9, Armor::Light, MoveType::Vehicle, withReport(wTankGun(100, 7, 70), "MirageTankAttack"), FA | FC, BldType::BattleLab},
+    {UnitType::V3Launcher, "V3火箭车",  800, 200, 150, 18, 7, Armor::Light, MoveType::Vehicle, wV3(), FS | FC, BldType::Radar, 0, 0, eliteOf<ewV3>()},
+    {UnitType::Apocalypse, "天启坦克",   1750,350, 800, 18, 6, Armor::Heavy, MoveType::Vehicle, withReport(WeaponDef{100,6,80,true,true,"shell",0.8f,1.2f,1.0f}, "ApocalypseAttackGround"), FS | FC, BldType::BattleLab, 0, 0, eliteOf<ewApoc>()},
+    {UnitType::TerrorDrone,"恐怖机器人", 500, 100, 100, 6,  4, Armor::Light, MoveType::Vehicle, wDroneBite(), FS | FC, BldType::Radar},
     // 空军：speed 越小越快；ammo 打完返航装填
-    {UnitType::Intruder,   "入侵者战机", 1200,240, 150, 3,  6, Armor::Light, MoveType::Air, withWH(WeaponDef{150, 6, 10, false, true, "shell", 0.5f, 1.0f, 1.5f}, WeaponDef::Warhead::HE), FA | FC, BldType::COUNT, 1},
-    {UnitType::MiG,        "米格战机",   1200,240, 150, 2,  6, Armor::Light, MoveType::Air, wAirMissile(), FS, BldType::COUNT, 2},
-    {UnitType::BlackEagle, "黑鹰战机",   1200,300, 200, 2,  7, Armor::Light, MoveType::Air, withWH(WeaponDef{200, 6, 10, false, true, "shell", 0.5f, 1.0f, 1.5f}, WeaponDef::Warhead::HE), FA | FC, BldType::COUNT, 1, 0, nullptr, Country::Korea},
+    {UnitType::Intruder,   "入侵者战机", 1200,240, 150, 3,  8, Armor::Light, MoveType::Air, withWH(WeaponDef{150, 6, 10, false, true, "shell", 0.5f, 1.0f, 1.5f}, WeaponDef::Warhead::HE), FA | FC, BldType::COUNT, 1},
+    {UnitType::MiG,        "米格战机",   1200,240, 150, 2,  8, Armor::Light, MoveType::Air, wAirMissile(), FS, BldType::COUNT, 2},
+    {UnitType::BlackEagle, "黑鹰战机",   1200,300, 200, 2,  8, Armor::Light, MoveType::Air, withWH(WeaponDef{200, 6, 10, false, true, "shell", 0.5f, 1.0f, 1.5f}, WeaponDef::Warhead::HE), FA | FC, BldType::COUNT, 1, 0, nullptr, Country::Korea},
     // 基洛夫：ammo=0 不返航（自由飞行轰炸）；火箭飞行兵：兵营生产的空中步兵
-    {UnitType::Kirov,      "基洛夫空艇", 2000,400, 2000,5,  6, Armor::Heavy, MoveType::Air, wKirovBomb(), FS | FC, BldType::BattleLab, 0, 0, eliteOf<ewKirov>()},
-    {UnitType::Rocketeer,  "火箭飞行兵", 600, 120, 125, 6,  7, Armor::None, MoveType::Air, wRocketGun(), FA, BldType::COUNT, 0},
+    {UnitType::Kirov,      "基洛夫空艇", 2000,400, 2000,5,  8, Armor::Heavy, MoveType::Air, wKirovBomb(), FS | FC, BldType::BattleLab, 0, 0, eliteOf<ewKirov>()},
+    {UnitType::Rocketeer,  "火箭飞行兵", 600, 120, 125, 6,  8, Armor::None, MoveType::Air, wRocketGun(), FA, BldType::COUNT, 0},
     // 海军：speed 越小越快；船厂生产
     {UnitType::Destroyer,  "驱逐舰",     1000,240, 600, 16, 7, Armor::Heavy, MoveType::Naval, wNavalGun(), FA, BldType::COUNT, 0, 0, eliteOf<ewDestroyer>()},
-    {UnitType::Typhoon,    "台风潜艇",   1000,240, 600, 14, 6, Armor::Heavy, MoveType::Naval, wTorpedo(), FS | FC, BldType::COUNT},
-    {UnitType::Aegis,      "中华神盾舰", 1200,260, 800, 14, 9, Armor::Heavy, MoveType::Naval, wAegisAA(), FC, BldType::Radar},
-    {UnitType::SeaScorpion,"海蝎",       600, 130, 400, 10, 7, Armor::Light, MoveType::Naval, wFlak(), FS | FC, BldType::COUNT},
-    {UnitType::Dreadnought,"无畏级战舰", 2000,400, 800, 18, 8, Armor::Heavy, MoveType::Naval, wDreadMissile(), FS, BldType::BattleLab, 0, 0, eliteOf<ewDread>()},
-    {UnitType::AircraftCarrier,"航空母舰",2000,400, 800, 16, 8, Armor::Heavy, MoveType::Naval, wHornet(), FA, BldType::BattleLab, 0, 3}, // 载机量 3（cargo 计舰载机）
-    {UnitType::AmphTransport,"两栖运输船",900, 220, 300, 12, 5, Armor::Light, MoveType::Amphibious, wNone(), ALLF, BldType::COUNT, 0, 5},
+    {UnitType::Typhoon,    "台风潜艇",   1000,240, 600, 14, 4, Armor::Heavy, MoveType::Naval, wTorpedo(), FS | FC, BldType::COUNT},
+    {UnitType::Aegis,      "中华神盾舰", 1200,260, 800, 14, 8, Armor::Heavy, MoveType::Naval, wAegisAA(), FC, BldType::Radar},
+    {UnitType::SeaScorpion,"海蝎",       600, 130, 400, 10, 8, Armor::Light, MoveType::Naval, wFlak(), FS | FC, BldType::COUNT},
+    {UnitType::Dreadnought,"无畏级战舰", 2000,400, 800, 18, 7, Armor::Heavy, MoveType::Naval, wDreadMissile(), FS, BldType::BattleLab, 0, 0, eliteOf<ewDread>()},
+    {UnitType::AircraftCarrier,"航空母舰",2000,400, 800, 16, 7, Armor::Heavy, MoveType::Naval, wHornet(), FA, BldType::BattleLab, 0, 3}, // 载机量 3（cargo 计舰载机）
+    {UnitType::AmphTransport,"两栖运输船",900, 220, 300, 12, 6, Armor::Light, MoveType::Amphibious, wNone(), ALLF, BldType::COUNT, 0, 5},
     // ---- RA2 补全：采矿车阵营差异化 ----
     {UnitType::ChronoMiner,"超时空采矿车",1400,280, 1000, 20, 4, Armor::Heavy, MoveType::Vehicle, wNone(), FA, BldType::OreRefinery},
     {UnitType::WarMiner,   "武装采矿车", 1400,280, 1000, 20, 4, Armor::Heavy, MoveType::Vehicle, wWarMinerGun(), FS, BldType::OreRefinery, 0, 0, eliteOf<ewWarMiner>()},
     // ---- RA2 补全：国家特色单位 ----
     {UnitType::TankDestroyer,"坦克杀手", 900, 170, 400, 12, 6, Armor::Heavy, MoveType::Vehicle, wTDGun(), FA, BldType::COUNT, 0, 0, nullptr, Country::Germany},
-    {UnitType::Terrorist,  "恐怖分子",   200, 45,  75, 12, 5, Armor::None, MoveType::Infantry, wTerrorBomb(), FS, BldType::COUNT, 0, 0, nullptr, Country::Cuba},
-    {UnitType::DemoTruck,  "自爆卡车",   1500,300, 150, 14, 6, Armor::Light, MoveType::Vehicle, wDemoBomb(), FS, BldType::Radar, 0, 0, nullptr, Country::Libya},
+    {UnitType::Terrorist,  "恐怖分子",   200, 45,  75, 12, 9, Armor::None, MoveType::Infantry, wTerrorBomb(), FS, BldType::COUNT, 0, 0, nullptr, Country::Cuba},
+    {UnitType::DemoTruck,  "自爆卡车",   1500,300, 150, 14, 5, Armor::Light, MoveType::Vehicle, wDemoBomb(), FS, BldType::Radar, 0, 0, nullptr, Country::Libya},
     // ---- RA2 补全：运输/海军/特殊 ----
     {UnitType::Nighthawk,  "夜鹰直升机", 1000,220, 175, 4,  7, Armor::Light, MoveType::Air, wNighthawkGun(), FA, BldType::COUNT, 0, 5},
-    {UnitType::Dolphin,    "海豚",       500, 110, 200, 8,  7, Armor::Light, MoveType::Naval, wSonic(), FA, BldType::COUNT},
-    {UnitType::Squid,      "巨型乌贼",   1000,220, 200, 10, 6, Armor::Light, MoveType::Naval, wSquidGrab(), FS, BldType::Radar},
+    {UnitType::Dolphin,    "海豚",       500, 110, 200, 8,  4, Armor::Light, MoveType::Naval, wSonic(), FA, BldType::COUNT},
+    {UnitType::Squid,      "巨型乌贼",   1000,220, 200, 10, 5, Armor::Light, MoveType::Naval, wSquidGrab(), FS, BldType::Radar},
     {UnitType::RobotTank,  "遥控坦克",   600, 150, 180, 10, 6, Armor::Light, MoveType::Amphibious, wTankGun(65, 5, 60), FA, BldType::RobotControl},
-    {UnitType::BattleFortress,"战斗要塞",2000,400, 600, 14, 7, Armor::Heavy, MoveType::Vehicle, wFortressGun(), FA, BldType::BattleLab, 0, 5},
+    {UnitType::BattleFortress,"战斗要塞",2000,400, 600, 14, 6, Armor::Heavy, MoveType::Vehicle, wFortressGun(), FA, BldType::BattleLab, 0, 5},
     {UnitType::Hornet,     "舰载机",     0,   0,   75, 3,  5, Armor::Light, MoveType::Air, wHornetBomb(), 0, BldType::COUNT, 1},
     // ---- P6：海豹部队/尤里/偷科技单位 ----
     // 海豹部队：可游泳渡水（寻路域 2），冲锋枪反步兵，近身 C4 爆破建筑/舰船
-    {UnitType::NavySEAL,   "海豹部队",   1000,200, 125, 12, 7, Armor::None, MoveType::Infantry, wSMG(), FA, BldType::AirForceCmd},
+    {UnitType::NavySEAL,   "海豹部队",   1000,200, 125, 12, 8, Armor::None, MoveType::Infantry, wSMG(), FA, BldType::AirForceCmd},
     // 尤里：心灵控制敌方地面单位（夺取控制权；自身死亡则被控单位复原）
-    {UnitType::Yuri,       "尤里",       800, 240, 100, 14, 8, Armor::None, MoveType::Infantry, wPsychic(), FY, BldType::BattleLab},
+    {UnitType::Yuri,       "尤里",       800, 240, 100, 14, 12, Armor::None, MoveType::Infantry, wPsychic(), FY, BldType::BattleLab},
     // 超时空突击队：渗透盟军作战实验室解锁；传送机动 + 冲锋枪 + C4
     {UnitType::ChronoCommando,"超时空突击队",2000,300, 100, 12, 8, Armor::None, MoveType::Infantry, wSMG(), ALLF, BldType::BattleLab},
     // 心灵突击队：渗透苏军/中国作战实验室解锁；心灵控制 + C4
     {UnitType::PsiCommando,"心灵突击队", 1000,280, 100, 13, 8, Armor::None, MoveType::Infantry, wPsychic(), ALLF, BldType::BattleLab},
     // ---- 尤复阵营：尤里专属单位 ----
-    {UnitType::Initiate,   "尤里新兵",   200, 60,  100, 14, 5, Armor::None, MoveType::Infantry, wPsychicFire(), FY, BldType::COUNT},
-    {UnitType::Brute,      "狂兽人",     500, 110, 200, 12, 5, Armor::Heavy, MoveType::Infantry, wBruteFist(), FY, BldType::Barracks},
-    {UnitType::Virus,      "病毒狙击手", 700, 110, 100, 16, 8, Armor::None, MoveType::Infantry, wVirusRifle(), FY, BldType::Radar},
-    {UnitType::LasherTank, "狂风坦克",   700, 150, 300, 12, 6, Armor::Heavy, MoveType::Vehicle, wLasherGun(), FY, BldType::COUNT},
-    {UnitType::GatlingTank,"盖特坦克",   600, 130, 210, 10, 6, Armor::Light, MoveType::Vehicle, wGatling(25, 16), FY, BldType::COUNT},
-    {UnitType::Magnetron,  "磁电坦克",   1000,240, 150, 14, 7, Armor::Light, MoveType::Vehicle, wMagnetron(), FY, BldType::Radar},
-    {UnitType::MasterMind, "主脑坦克",   1750,350, 500, 14, 7, Armor::Heavy, MoveType::Vehicle, wMasterMind(), FY, BldType::BattleLab},
-    {UnitType::FloatingDisc,"飞碟",      1750,350, 600, 5,  7, Armor::Heavy, MoveType::Air, wDiscBeam(), FY, BldType::BattleLab, 0},
+    {UnitType::Initiate,   "尤里新兵",   200, 60,  100, 14, 9, Armor::None, MoveType::Infantry, wPsychicFire(), FY, BldType::COUNT},
+    {UnitType::Brute,      "狂兽人",     500, 110, 200, 12, 8, Armor::Heavy, MoveType::Infantry, wBruteFist(), FY, BldType::Barracks},
+    {UnitType::Virus,      "病毒狙击手", 700, 110, 100, 16, 9, Armor::None, MoveType::Infantry, wVirusRifle(), FY, BldType::Radar},
+    {UnitType::LasherTank, "狂风坦克",   700, 150, 300, 12, 8, Armor::Heavy, MoveType::Vehicle, wLasherGun(), FY, BldType::COUNT},
+    {UnitType::GatlingTank,"盖特坦克",   600, 130, 210, 10, 10, Armor::Light, MoveType::Vehicle, wGatling(25, 16), FY, BldType::COUNT},
+    {UnitType::Magnetron,  "磁电坦克",   1000,240, 150, 14, 10, Armor::Light, MoveType::Vehicle, wMagnetron(), FY, BldType::Radar},
+    {UnitType::MasterMind, "主脑坦克",   1750,350, 500, 14, 9, Armor::Heavy, MoveType::Vehicle, wMasterMind(), FY, BldType::BattleLab},
+    {UnitType::FloatingDisc,"飞碟",      1750,350, 600, 5,  9, Armor::Heavy, MoveType::Air, wDiscBeam(), FY, BldType::BattleLab, 0},
     {UnitType::Boomer,     "雷鸣潜艇",   2000,400, 1200, 16, 8, Armor::Heavy, MoveType::Naval, wBoomerMissile(), FY, BldType::BattleLab},
     // ---- 尤复补全：YR 新增单位 ----
     // 鲍里斯：苏军英雄（YR 替代尤里），AK-47 反步兵，可呼叫米格空袭建筑
-    {UnitType::Boris,      "鲍里斯",     1500,300, 200, 12, 8, Armor::None, MoveType::Infantry, wBorisAK(), FS, BldType::BattleLab},
+    {UnitType::Boris,      "鲍里斯",     1500,300, 200, 12, 9, Armor::None, MoveType::Infantry, wBorisAK(), FS, BldType::BattleLab},
     // 攻城直升机：飞行机枪 / 部署后远程炮击（战车工厂生产）
     {UnitType::SiegeChopper,"攻城直升机", 1400,240, 300, 4, 7, Armor::Light, MoveType::Air, wSiegeChopperMG(), FS, BldType::Radar, 0},
     // 混乱机器人：尤里地面无人战车（Chaos Drone），释放毒气使敌军自相残杀（战车工厂生产）
     {UnitType::ChaosDrone, "混乱机器人",  800, 160, 200, 5, 6, Armor::Light, MoveType::Vehicle, wChaosGas(), FY, BldType::BattleLab, 0},
     // 奴隶：尤里采矿步兵；奴隶矿车：尤里采矿车并可部署为卸货点
-    {UnitType::Slave,      "奴隶",        10,  20,  125, 12, 4, Armor::None, MoveType::Infantry, wNone(), 0, BldType::OreRefinery},
-    {UnitType::SlaveMiner,  "奴隶矿车",  1500, 280, 2000, 18, 5, Armor::Heavy, MoveType::Vehicle, wNone(), FY, BldType::OreRefinery},
+    {UnitType::Slave,      "奴隶",        10,  20,  125, 12, 5, Armor::None, MoveType::Infantry, wNone(), 0, BldType::OreRefinery},
+    {UnitType::SlaveMiner,  "奴隶矿车",  1500, 280, 2000, 18, 4, Armor::Heavy, MoveType::Vehicle, wNone(), FY, BldType::OreRefinery},
     // YR：尤里英雄；渗透苏军实验室解锁的超时空伊文
     {UnitType::YuriPrime,  "尤里首脑",   1500, 300, 150, 10, 9, Armor::Flak, MoveType::Infantry, wYuriPrimeMC(), FY, BldType::BattleLab},
     {UnitType::ChronoIvan, "超时空伊文", 1750, 240, 100, 12, 8, Armor::None, MoveType::Infantry, wIvanBomb(), ALLF, BldType::BattleLab},
@@ -487,6 +489,7 @@ static bool parseFactionMask(const char* s, uint8_t& out) {
 }
 
 // 武器键覆盖：prefix 为 "Weapon" / "Elite" / nullptr（直接键，部署武器用）
+static std::vector<std::string> g_ownedWeaponStrs;
 static void loadWeaponKeys(const Ini::Section& sec, const char* prefix, WeaponDef& w, std::string& projSlot) {
     char key[32];
     auto kb = [&](const char* k) -> const char* {
@@ -501,6 +504,11 @@ static void loadWeaponKeys(const Ini::Section& sec, const char* prefix, WeaponDe
     if ((v = sec.get(kb("AntiAir")))) w.antiAir = Ini::toBool(v, w.antiAir);
     if ((v = sec.get(kb("AntiGround")))) w.antiGround = Ini::toBool(v, w.antiGround);
     if ((v = sec.get(kb("Proj")))) { projSlot = v; w.projSprite = projSlot.c_str(); }
+    if ((v = sec.get(kb("Projectile")))) {
+        g_ownedWeaponStrs.push_back(v);
+        w.projectile = g_ownedWeaponStrs.back().c_str();
+    }
+    if ((v = sec.get(kb("SpeedLeptons")))) w.speedLeptons = Ini::toInt(v, w.speedLeptons);
     if ((v = sec.get(kb("VsInf")))) w.vsInfantry = Ini::toFloat(v, w.vsInfantry);
     if ((v = sec.get(kb("VsVeh")))) w.vsVehicle = Ini::toFloat(v, w.vsVehicle);
     if ((v = sec.get(kb("VsBld")))) w.vsBuilding = Ini::toFloat(v, w.vsBuilding);
@@ -750,6 +758,10 @@ static void writeWeaponKeys(FILE* f, const char* prefix, const WeaponDef& w) {
     fprintf(f, "%s=%s\n", key("AntiAir", b), w.antiAir ? "yes" : "no");
     fprintf(f, "%s=%s\n", key("AntiGround", b), w.antiGround ? "yes" : "no");
     fprintf(f, "%s=%s\n", key("Proj", b), w.projSprite);
+    if (w.projectile && w.projectile[0])
+        fprintf(f, "%s=%s\n", key("Projectile", b), w.projectile);
+    if (w.speedLeptons >= 0)
+        fprintf(f, "%s=%d\n", key("SpeedLeptons", b), w.speedLeptons);
     fprintf(f, "%s=%g\n", key("VsInf", b), w.vsInfantry);
     fprintf(f, "%s=%g\n", key("VsVeh", b), w.vsVehicle);
     fprintf(f, "%s=%g\n", key("VsBld", b), w.vsBuilding);
@@ -823,4 +835,159 @@ void exportRules(const char* path) {
     fprintf(f, "; 在遭遇战设置中为每个 AI 槽位选择难度和人格\n");
     fclose(f);
     TraceLog(LOG_INFO, "RA2 export: %s written", path);
+}
+
+namespace {
+struct OwnedProjectileDef {
+    std::string name;
+    std::string image;
+    ProjectileDef def{};
+};
+std::vector<OwnedProjectileDef> g_projOwned;
+std::unordered_map<std::string, size_t> g_projIndex;
+std::unordered_map<std::string, std::string> g_projBridge; // Weapon.Proj → Projectile name
+ProjectileDef g_projCannonFallback{};
+
+void ensureCannonFallback() {
+    if (g_projCannonFallback.name && g_projCannonFallback.name[0]
+        && strcmp(g_projCannonFallback.name, "Cannon") == 0
+        && g_projIndex.count("Cannon")) return;
+    g_projCannonFallback = ProjectileDef{};
+    g_projCannonFallback.name = "Cannon";
+    g_projCannonFallback.image = "120MM";
+    g_projCannonFallback.arcing = true;
+    g_projCannonFallback.speedLeptons = 50;
+}
+} // namespace
+
+void loadProjectiles(const char* path) {
+    ensureCannonFallback();
+    Ini ini;
+    if (!ini.load(path)) {
+        TraceLog(LOG_INFO, "RA2 projectiles: %s not found, using Cannon/bridge defaults", path);
+        // Built-in bridge defaults (YR rulesmd)
+        g_projBridge = {
+            {"shell", "Cannon"}, {"bullet", "InvisibleLow"}, {"flak", "AAHeatSeeker"},
+            {"missile", "HeatSeeker"}, {"naval", "NavalToGroundSeeker"}, {"torpedo", "Torpedo"},
+            {"rad", "Invisible"}, {"psi", "Psychic"}, {"tesla", "Electricbounce"},
+            {"prism", "LLine"}, {"chrono", "Invisible"},
+        };
+        // Minimal built-ins if file missing
+        auto add = [&](const char* n, bool arcing, bool inviso, int rot, int spd) {
+            OwnedProjectileDef o;
+            o.name = n; o.image = n;
+            o.def.name = o.name.c_str();
+            o.def.image = o.image.c_str();
+            o.def.arcing = arcing; o.def.inviso = inviso; o.def.rot = rot;
+            o.def.speedLeptons = arcing ? 50 : spd;
+            g_projIndex[o.name] = g_projOwned.size();
+            g_projOwned.push_back(std::move(o));
+            // fix pointers after push - need stable storage
+        };
+        // Rebuild properly with stable pointers
+        g_projOwned.clear(); g_projIndex.clear();
+        struct Seed { const char* n; bool arc; bool inv; int rot; int spd; bool prox; };
+        Seed seeds[] = {
+            {"Cannon", true, false, 0, 50, false},
+            {"Invisible", false, true, 0, 100, false},
+            {"InvisibleLow", false, true, 0, 100, false},
+            {"InvisibleHigh", false, true, 0, 100, false},
+            {"Psychic", false, true, 0, 0, false},
+            {"Electricbounce", false, true, 0, 0, false},
+            {"LLine", false, true, 0, 0, false},
+            {"AAHeatSeeker", false, false, 80, 60, true},
+            {"HeatSeeker", false, false, 8, 40, true},
+            {"NavalToGroundSeeker", false, false, 60, 40, true},
+            {"Torpedo", false, false, 12, 30, false},
+            {"AirToGroundMissile", false, false, 100, 70, false},
+            {"BlimpBombP", false, false, 0, 20, false},
+            {"NormalBomb", false, false, 1, 30, true},
+            {"MedusaProjectile", false, false, 20, 120, false},
+            {"DredMissile", false, false, 16, 30, true},
+        };
+        for (const Seed& s : seeds) {
+            OwnedProjectileDef o;
+            o.name = s.n; o.image = s.n;
+            o.def.arcing = s.arc; o.def.inviso = s.inv; o.def.rot = s.rot;
+            o.def.speedLeptons = s.arc ? 50 : s.spd;
+            o.def.proximity = s.prox;
+            o.def.vertical = (strcmp(s.n, "BlimpBombP") == 0);
+            g_projOwned.push_back(std::move(o));
+        }
+        for (size_t i = 0; i < g_projOwned.size(); ++i) {
+            g_projOwned[i].def.name = g_projOwned[i].name.c_str();
+            g_projOwned[i].def.image = g_projOwned[i].image.c_str();
+            g_projIndex[g_projOwned[i].name] = i;
+        }
+        return;
+    }
+    g_projOwned.clear();
+    g_projIndex.clear();
+    g_projBridge.clear();
+    int nProj = 0, nBridge = 0;
+    for (const Ini::Section& sec : ini.sections) {
+        const std::string& sn = sec.name;
+        if (sn.rfind("ProjectileBridge.", 0) == 0) {
+            const char* p = sec.get("Projectile");
+            if (p) {
+                g_projBridge[sn.substr(17)] = p;
+                nBridge++;
+            }
+            continue;
+        }
+        if (sn.rfind("Projectile.", 0) == 0) {
+            OwnedProjectileDef o;
+            o.name = sn.substr(11);
+            const char* v;
+            o.image = (v = sec.get("Image")) ? v : o.name;
+            o.def.arcing = Ini::toBool(sec.get("Arcing"), false);
+            o.def.inviso = Ini::toBool(sec.get("Inviso"), false);
+            o.def.vertical = Ini::toBool(sec.get("Vertical"), false);
+            o.def.inaccurate = Ini::toBool(sec.get("Inaccurate"), false);
+            o.def.proximity = Ini::toBool(sec.get("Proximity"), false);
+            o.def.rot = Ini::toInt(sec.get("ROT"), 0);
+            o.def.aa = Ini::toBool(sec.get("AA"), false);
+            o.def.ag = Ini::toBool(sec.get("AG"), true);
+            o.def.speedLeptons = Ini::toInt(sec.get("SpeedLeptons"), o.def.arcing ? 50 : 40);
+            if (o.def.arcing) o.def.speedLeptons = 50; // ModEnc: Arcing forces Speed=50
+            g_projOwned.push_back(std::move(o));
+            nProj++;
+        }
+    }
+    for (size_t i = 0; i < g_projOwned.size(); ++i) {
+        g_projOwned[i].def.name = g_projOwned[i].name.c_str();
+        g_projOwned[i].def.image = g_projOwned[i].image.c_str();
+        g_projIndex[g_projOwned[i].name] = i;
+    }
+    if (g_projBridge.empty()) {
+        g_projBridge = {
+            {"shell", "Cannon"}, {"bullet", "InvisibleLow"}, {"flak", "AAHeatSeeker"},
+            {"missile", "HeatSeeker"}, {"naval", "NavalToGroundSeeker"}, {"torpedo", "Torpedo"},
+            {"rad", "Invisible"}, {"psi", "Psychic"}, {"tesla", "Electricbounce"},
+            {"prism", "LLine"}, {"chrono", "Invisible"},
+        };
+    }
+    TraceLog(LOG_INFO, "RA2 projectiles: loaded %d defs, %d bridges from %s", nProj, nBridge, path);
+}
+
+const ProjectileDef& projectileDef(const char* name) {
+    ensureCannonFallback();
+    if (!name || !name[0]) {
+        auto it = g_projIndex.find("Cannon");
+        return it == g_projIndex.end() ? g_projCannonFallback : g_projOwned[it->second].def;
+    }
+    auto it = g_projIndex.find(name);
+    if (it != g_projIndex.end()) return g_projOwned[it->second].def;
+    return g_projCannonFallback;
+}
+
+const ProjectileDef& projectileForWeapon(const WeaponDef& w) {
+    if (w.projectile && w.projectile[0])
+        return projectileDef(w.projectile);
+    const char* tag = w.projSprite ? w.projSprite : "shell";
+    auto it = g_projBridge.find(tag);
+    if (it != g_projBridge.end())
+        return projectileDef(it->second.c_str());
+    // 标签即弹道名
+    return projectileDef(tag);
 }

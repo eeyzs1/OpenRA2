@@ -61,6 +61,14 @@ enum class S : int {
     // 遭遇战地图扩展（追加在末尾，避免打乱既有 S 序号）
     SizeXS, SizeXL, SizeHuge, SizeEpic,
     MapArchipelago, MapCoast, MapRiver, MapMountain,
+    // 界面悬停提示 / 设置开关（追加在末尾）
+    UiTips,
+    TipModeBattle, TipModeFFA, TipModeUnholy, TipModeMegawealth,
+    TipModeLandRush, TipModeMeatGrinder, TipModeNavalWar,
+    TipShortGame, TipMcvRepacks, TipCrates, TipAIAlliance, TipSharedVision, TipSuperweapons,
+    TipGameSpeed, TipStartMoney, TipMapSize,
+    TipMapContinent, TipMapIslands, TipMapLake, TipMapArchipelago, TipMapCoast, TipMapRiver, TipMapMountain,
+    TipCountry, TipColor, TipDiff, TipPlayerSlot, TipAddComputer,
     COUNT
 };
 

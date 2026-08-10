@@ -21,6 +21,7 @@ void Game::init(bool windowed, bool hidden) {
     // 素材外置化：规则数值与字符串须在字体字模收集（appendAllFontText）与任何数据使用前加载；
     // 文件缺失/键缺失均回退内置默认（见 assets/README.txt）
     loadRules("assets/rules/rules.ini");
+    loadProjectiles("assets/rules/projectiles.ini");
     loadStrings("assets/strings/zh.ini", 0);
     loadStrings("assets/strings/en.ini", 1);
     // 初始窗口用小尺寸创建（确保任何屏幕都能完整显示），随后 applyDisplay 切换到目标模式

@@ -497,11 +497,12 @@ void Game::drawEntities() {
             // 超时空军团兵：攻击时持续开火帧；相位不适时闪烁
             bool chronoHoldFire = (drawType == UnitType::Chrono && e.state == UState::Attacking && ai.fire > 0);
             if ((e.fireAnim > 0 || chronoHoldFire) && ai.fire > 0) {
+                int rate = std::max(1, ai.fireRate);
                 int phase;
                 if (chronoHoldFire)
-                    phase = ((int)world.tick / 2) % ai.fire;
+                    phase = ((int)world.tick / rate) % ai.fire;
                 else
-                    phase = (ai.fire * 2 - e.fireAnim) / 2; // 0..fire-1
+                    phase = (ai.fire * rate - e.fireAnim) / rate; // 0..fire-1
                 if (phase < 0) phase = 0;
                 if (phase >= ai.fire) phase = ai.fire - 1;
                 bodyP = &g_sprites.unitAnim(drawType, UAnim::Fire, e.dir, phase, drawCid);
@@ -824,10 +825,21 @@ void Game::drawEntities() {
 
     // 弹道
     for (const Projectile& pr : world.projs) {
-        // 瓦片浮点 → 世界像素
+        // 瓦片浮点 → 世界像素；对空弹道抬升（对齐飞机 AIR_ALT）
         float fx1 = (pr.x - pr.y) * (TILE_W / 2.0f);
         float fy1 = (pr.x + pr.y) * (TILE_H / 2.0f);
-        int sx = (int)fx1 - (int)camX, sy = (int)fy1 - (int)camY - 6;
+        int airLift = (int)(pr.z * (TILE_H)); // z 以格计，换算到等距高度像素
+        if (airLift <= 0 && world.valid(pr.target)) {
+            const World::Ent& pt = world.ents[pr.target];
+            if (!pt.isBuilding && unitDef(pt.utype).isAir() && pt.state != UState::Landed) {
+                float distToAim = distf(pr.x, pr.y, pr.tx, pr.ty);
+                float nearT = 1.0f / (1.0f + distToAim);
+                airLift = (int)(AIR_ALT * (0.35f + 0.65f * nearT));
+            }
+        } else if (airLift <= 0 && pr.kind == ProjKind::Missile && pr.hp > 0) {
+            airLift = AIR_ALT / 2;
+        }
+        int sx = (int)fx1 - (int)camX, sy = (int)fy1 - (int)camY - 6 - airLift;
         if (pr.kind == ProjKind::Bullet) {
             DrawCircle(sx, sy, 2, Color{255, 230, 150, 255});
         } else if (pr.kind == ProjKind::Missile) {

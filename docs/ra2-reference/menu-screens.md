@@ -3,6 +3,8 @@
 权威素材：本机 MIX → `python tools/ra2pack/gen_menu_gui.py` → `assets/gui/menu/`（gitignore，不进仓库）。
 审核：`build\Release\ra2.exe --gui-review gui_review`。
 
+**气质与禁令**（何谓「不像廉价 UI」）见 [`style/command-shell.md`](./style/command-shell.md)。本文只管 UV、主题底图与控件尺寸对照。
+
 ## 保真优先级（产品）
 
 1. **按钮与文字视觉**（红亮心、黄字对比、字号相对槽高）

@@ -11,6 +11,7 @@ namespace {
 // 二进制序列化助手：任何一步读写失败即标记 ok=false（调用方整体放弃）
 // v11 是当前写入格式；读取器保留 v6-v10。新增字段只允许追加到对应结构的既定位置，
 // 并必须由 schema 分支提供旧版默认值，避免“结构体内存快照”式隐式 ABI。
+constexpr char WORLD_SCHEMA_V18[8] = {'R','A','2','W','R','L','D','I'}; // 'I' = 18: projectile arcing/ROT/z
 constexpr char WORLD_SCHEMA_V17[8] = {'R','A','2','W','R','L','D','H'}; // 'H' = 17: Cell.height
 constexpr char WORLD_SCHEMA_V16[8] = {'R','A','2','W','R','L','D','G'}; // 'G' = 16: Ent.selling
 constexpr char WORLD_SCHEMA_V15[8] = {'R','A','2','W','R','L','D','F'}; // 'F' = 15: autoHarvest + rockVehicles
@@ -91,7 +92,7 @@ bool World::saveGame(FILE* f) const {
     for (const Ent& e : ents)
         if (e.path.size() > 4096 || e.wps.size() > 4096 || e.cargo.size() > 64
             || e.garrison.size() > 64 || e.mindTargets.size() > 64) return false;
-    s.wbuf(WORLD_SCHEMA_V17, sizeof(WORLD_SCHEMA_V17));
+    s.wbuf(WORLD_SCHEMA_V18, sizeof(WORLD_SCHEMA_V18));
     s.w(tick); s.w(numPlayers); s.w(rng.s);
     s.w(cratesEnabled); s.w(aiAlliance);
     uint8_t mode = (uint8_t)skirmishMode;
@@ -202,6 +203,7 @@ bool World::saveGame(FILE* f) const {
             s.w(p.target); s.w(p.src); s.w(p.srcGarrisonSlot);
             serWeapon(s, p.w);
             s.w(p.speed); s.w(p.trail); s.w(p.hp);
+            s.w(p.ox); s.w(p.oy); s.w(p.z); s.w(p.rot); s.w(p.arcing); s.w(p.proximity);
         }
     }
     {
@@ -239,6 +241,7 @@ bool World::loadGame(FILE* f) {
     Ser s{f};
     char magic[8];
     s.rbuf(magic, 8);
+    bool schema18 = s.ok && memcmp(magic, WORLD_SCHEMA_V18, 8) == 0;
     bool schema17 = s.ok && memcmp(magic, WORLD_SCHEMA_V17, 8) == 0;
     bool schema16 = s.ok && memcmp(magic, WORLD_SCHEMA_V16, 8) == 0;
     bool schema15 = s.ok && memcmp(magic, WORLD_SCHEMA_V15, 8) == 0;
@@ -251,17 +254,18 @@ bool World::loadGame(FILE* f) {
     bool schema8 = s.ok && memcmp(magic, "RA2WRLD8", 8) == 0;
     bool schema7 = s.ok && memcmp(magic, "RA2WRLD7", 8) == 0;
     bool schema6 = s.ok && memcmp(magic, "RA2WRLD6", 8) == 0;
-    if (!schema17 && !schema16 && !schema15 && !schema14 && !schema13 && !schema12 && !schema11 && !schema10 && !schema9 && !schema8 && !schema7 && !schema6) return false;
-    const bool schemaAtLeast7 = schema17 || schema16 || schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9 || schema8 || schema7;
-    const bool schemaAtLeast8 = schema17 || schema16 || schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9 || schema8;
-    const bool schemaAtLeast9 = schema17 || schema16 || schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9;
-    const bool schemaAtLeast11 = schema17 || schema16 || schema15 || schema14 || schema13 || schema12 || schema11;
-    const bool schemaAtLeast12 = schema17 || schema16 || schema15 || schema14 || schema13 || schema12;
-    const bool schemaAtLeast13 = schema17 || schema16 || schema15 || schema14 || schema13;
-    const bool schemaAtLeast14 = schema17 || schema16 || schema15 || schema14;
-    const bool schemaAtLeast15 = schema17 || schema16 || schema15;
-    const bool schemaAtLeast16 = schema17 || schema16;
-    const bool schemaAtLeast17 = schema17;
+    if (!schema18 && !schema17 && !schema16 && !schema15 && !schema14 && !schema13 && !schema12 && !schema11 && !schema10 && !schema9 && !schema8 && !schema7 && !schema6) return false;
+    const bool schemaAtLeast7 = schema18 || schema17 || schema16 || schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9 || schema8 || schema7;
+    const bool schemaAtLeast8 = schema18 || schema17 || schema16 || schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9 || schema8;
+    const bool schemaAtLeast9 = schema18 || schema17 || schema16 || schema15 || schema14 || schema13 || schema12 || schema11 || schema10 || schema9;
+    const bool schemaAtLeast11 = schema18 || schema17 || schema16 || schema15 || schema14 || schema13 || schema12 || schema11;
+    const bool schemaAtLeast12 = schema18 || schema17 || schema16 || schema15 || schema14 || schema13 || schema12;
+    const bool schemaAtLeast13 = schema18 || schema17 || schema16 || schema15 || schema14 || schema13;
+    const bool schemaAtLeast14 = schema18 || schema17 || schema16 || schema15 || schema14;
+    const bool schemaAtLeast15 = schema18 || schema17 || schema16 || schema15;
+    const bool schemaAtLeast16 = schema18 || schema17 || schema16;
+    const bool schemaAtLeast17 = schema18 || schema17;
+    const bool schemaAtLeast18 = schema18;
     s.r(tick); s.r(numPlayers); s.r(rng.s);
     s.r(cratesEnabled); s.r(aiAlliance);
     if (!s.ok || numPlayers <= 0 || numPlayers > MAX_PLAYERS || rng.s == 0) return false;
@@ -470,6 +474,13 @@ bool World::loadGame(FILE* f) {
             if (schemaAtLeast7) s.r(p.srcGarrisonSlot);
             deserWeapon(s, p.w, schemaAtLeast7);
             s.r(p.speed); s.r(p.trail); s.r(p.hp);
+            if (schemaAtLeast18) {
+                s.r(p.ox); s.r(p.oy); s.r(p.z); s.r(p.rot); s.r(p.arcing); s.r(p.proximity);
+            } else {
+                p.ox = p.x; p.oy = p.y; p.z = 0; p.rot = 0; p.arcing = false; p.proximity = false;
+                if (p.kind == ProjKind::Missile) p.rot = 8;
+                if (p.kind == ProjKind::Shell) p.arcing = true;
+            }
         }
     }
     {
@@ -611,6 +622,7 @@ void World::applyCmd(int player, const Cmd& c) {
         case Cmd::Move:        orderMove(own, c.x, c.y, c.attackMove, (c.a & 1) != 0); break;
         case Cmd::Attack:      orderAttack(own, c.a); break;
         case Cmd::Harvest:     if (map.inBounds(c.a, c.b)) orderHarvest(own, c.a, c.b); break;
+        case Cmd::ReturnHarvester: orderReturnToRefinery(own, c.a); break;
         case Cmd::Stop:        orderStop(own); break;
         case Cmd::Deploy:      if (!own.empty()) orderDeploy(own[0]); break;
         case Cmd::Capture:     orderCapture(own, c.a); break;
@@ -787,6 +799,7 @@ uint32_t World::checksum() const {
         h.boolean(p.alive); h.u8((uint8_t)p.kind); h.i32(p.player);
         h.fp(p.x); h.fp(p.y); h.fp(p.tx); h.fp(p.ty); h.i32(p.target); h.i32(p.src);
         h.i32(p.srcGarrisonSlot); weapon(p.w); h.i32(p.speed); h.i32(p.trail); h.i32(p.hp);
+        h.fp(p.ox); h.fp(p.oy); h.fp(p.z); h.i32(p.rot); h.boolean(p.arcing); h.boolean(p.proximity);
     }
     h.size(nukes.size());
     for (const Nuke& n : nukes) {

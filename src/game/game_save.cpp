@@ -179,6 +179,9 @@ int Game::statePersistenceTest() {
     projectile.player = 0;
     projectile.x = 10.0f; projectile.y = 10.0f;
     projectile.tx = 12.5f; projectile.ty = 14.0f;
+    projectile.ox = 10.0f; projectile.oy = 10.0f;
+    projectile.z = 0.4f; projectile.rot = 8;
+    projectile.arcing = false; projectile.proximity = true;
     projectile.target = unit; projectile.src = unit;
     projectile.speed = 5; projectile.hp = 25;
     projectile.w.damage = 90;
@@ -201,8 +204,8 @@ int Game::statePersistenceTest() {
         }
         fclose(f);
     }
-    check(bytes.size() > 8 && memcmp(bytes.data(), "RA2WRLDH", 8) == 0,
-          "current schema is explicit v17");
+    check(bytes.size() > 8 && memcmp(bytes.data(), "RA2WRLDI", 8) == 0,
+          "current schema is explicit v18");
     auto loadBytes = [](const std::vector<uint8_t>& data, World& out) {
         FILE* f = tmpfile();
         if (!f) return false;

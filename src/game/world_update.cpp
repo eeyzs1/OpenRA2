@@ -44,7 +44,7 @@ void World::update() {
                 if (sid != INVALID_EID) {
                     slaves++;
                     Vec2i ore;
-                    if (map.findNearestOre((int)sx, (int)sy, 40, ore))
+                    if (findNearestReachableOre((int)sx, (int)sy, 40, ore))
                         orderHarvest({sid}, ore.x, ore.y);
                 }
             }
@@ -193,24 +193,56 @@ void World::update() {
             }
             if (!pr.alive) continue;
         }
-        float tx = pr.tx, ty = pr.ty;
-        if (valid(pr.target)) {
+        // 瞄准：Arcing/无 ROT → 锁定开火落点；ROT>0 → 按 rulesmd ROT 有限转向；鱼雷 NavalOnly 全追踪
+        if (valid(pr.target) && !pr.arcing) {
             const Ent& t = ents[pr.target];
-            tx = t.x; ty = t.y;
-            if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
+            float wantX = t.x, wantY = t.y;
+            if (t.isBuilding) { wantX += bldDef(t.btype).w / 2.0f; wantY += bldDef(t.btype).h / 2.0f; }
+            if (pr.rot > 0) {
+                float adx = wantX - pr.tx, ady = wantY - pr.ty;
+                float ad = std::sqrt(adx * adx + ady * ady);
+                if (ad > 1e-4f) {
+                    float step = std::min(ad, rotAimStep(pr.rot));
+                    pr.tx += adx / ad * step;
+                    pr.ty += ady / ad * step;
+                }
+            } else if (pr.w.navalOnly) {
+                pr.tx = wantX; pr.ty = wantY;
+            }
         }
+        float tx = pr.tx, ty = pr.ty;
         float d = distf(pr.x, pr.y, tx, ty);
-        float spd = pr.kind == ProjKind::Missile ? 0.25f : 0.6f;
+        float spd = projMoveSpeed(pr);
+        // 弧线高度：距离越远弧越高（ModEnc Arcing 描述）
+        if (pr.arcing) {
+            float total = distf(pr.ox, pr.oy, tx, ty);
+            float done = total > 1e-3f ? (1.f - d / total) : 1.f;
+            done = std::clamp(done, 0.f, 1.f);
+            float peak = std::min(2.5f, 0.35f + total * 0.12f);
+            pr.z = 4.f * peak * done * (1.f - done); // 抛物线
+        } else if (valid(pr.target)) {
+            const Ent& t = ents[pr.target];
+            if (!t.isBuilding && unitDef(t.utype).isAir() && t.state != UState::Landed) {
+                float nearT = 1.0f / (1.0f + d);
+                pr.z = 1.2f * (0.35f + 0.65f * nearT); // 对空抬升（格）
+            }
+        }
         if (d < spd + 0.1f) {
-            // 命中
-            // 混乱无人机毒气：来源为 ChaosDrone，命中后施加混乱（自相残杀）
+            // 命中瞄准点；非制导弹若目标已移开则 miss（溅射仍结算）
             bool isChaosGas = valid(pr.src) && !ents[pr.src].isBuilding
                               && ents[pr.src].utype == UnitType::ChaosDrone;
-            if (valid(pr.target)) {
+            auto impactOk = [&](const Ent& t) {
+                float ox = t.x, oy = t.y;
+                if (t.isBuilding) { ox += bldDef(t.btype).w / 2.0f; oy += bldDef(t.btype).h / 2.0f; }
+                float hitR = std::max(1.15f, pr.w.splash > 0 ? pr.w.splash : 1.15f);
+                if (pr.proximity) hitR = std::max(hitR, 1.5f);
+                return distf(tx, ty, ox, oy) <= hitR;
+            };
+            bool alwaysHit = pr.rot > 0 || pr.w.navalOnly;
+            if (valid(pr.target) && (alwaysHit || impactOk(ents[pr.target]))) {
                 Ent& t = ents[pr.target];
                 float mult = weaponMultiplier(pr.w, t);
                 damage(pr.target, (int)(pr.w.damage * mult), pr.player, pr.src, pr.srcGarrisonSlot);
-                // 直接受击的地面单位同样陷入混乱（毒气主目标也受影响）
                 if (isChaosGas && !t.isBuilding && !unitDef(t.utype).isAir()
                     && !psychicImmune(t.utype) && t.invuln == 0) {
                     t.confused = 180;
@@ -258,28 +290,28 @@ void World::update() {
     for (auto& ef : effects) if (ef.alive && ++ef.age >= ef.maxAge) ef.alive = false;
     effects.erase(std::remove_if(effects.begin(), effects.end(), [](const Effect& e) { return !e.alive; }), effects.end());
 
-    // 自动采矿（空闲采矿车找矿；Stop 后 autoHarvest=false 直到再下采矿令）
+    // 自动采矿（空闲采矿车找矿；有货 Idle 仍回厂；Stop/Move 后 autoHarvest=false 卸完不自动再采）
     for (size_t i = 0; i < ents.size(); i++) {
         Ent& e = ents[i];
         if (!e.alive || e.isBuilding || !unitDef(e.utype).canHarvet()) continue;
         if (e.utype == UnitType::SlaveMiner && e.deployed) continue; // 已部署只作卸货点
-        if (e.state == UState::Idle && e.autoHarvest) {
-            // 有货却 Idle（回厂失败/无精炼厂等）：优先回厂，勿去找矿空转
-            if (e.oreLoad > 0) {
-                e.state = UState::HarvestReturn;
-                e.dockRefinery = INVALID_EID; // updateHarvester 内重寻停靠点
-                continue;
+        if (e.state != UState::Idle) continue;
+        // 有货却 Idle（回厂失败/无精炼厂/手动 Move 后）：优先回厂，勿去找矿空转
+        if (e.oreLoad > 0) {
+            e.state = UState::HarvestReturn;
+            e.dockRefinery = INVALID_EID; // updateHarvester 内重寻停靠点
+            continue;
+        }
+        if (!e.autoHarvest) continue;
+        Vec2i ore;
+        if (findNearestReachableOre((int)e.x, (int)e.y, 48, ore)) { // TiberiumFarScan
+            e.oreCell = ore;
+            std::vector<Vec2i> path;
+            if (map.findPath((int)e.x, (int)e.y, ore.x, ore.y, path)) {
+                e.path = std::move(path); e.pathIdx = 0;
+                e.state = UState::HarvestGo;
             }
-            Vec2i ore;
-            if (map.findNearestOre((int)e.x, (int)e.y, 48, ore)) { // TiberiumFarScan
-                e.oreCell = ore;
-                std::vector<Vec2i> path;
-                if (map.findPath((int)e.x, (int)e.y, ore.x, ore.y, path)) {
-                    e.path = std::move(path); e.pathIdx = 0;
-                    e.state = UState::HarvestGo;
-                }
-                // 寻路失败：保持 Idle，下轮再试（矿脉被挡时不卡在 HarvestGo）
-            }
+            // 寻路失败：保持 Idle，下轮再试（矿脉被挡时不卡在 HarvestGo）
         }
     }
 
@@ -445,14 +477,7 @@ void World::updateUnit(Ent& e, EID id) {
             pw.damage = (int)(pw.damage * 1.1f);
             EID tgt = findNearestEnemy(e.player, e.x, e.y, (float)pw.range, true, &pw, e.cargo[slot].type);
             if (tgt == INVALID_EID) continue;
-            const Ent& t = ents[tgt];
-            float tx = t.x, ty = t.y;
-            if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
-            Projectile p;
-            p.kind = strcmp(pw.projSprite, "flak") == 0 ? ProjKind::Flak : ProjKind::Bullet;
-            p.player = e.player; p.x = e.x; p.y = e.y; p.tx = tx; p.ty = ty;
-            p.target = tgt; p.src = id; p.w = pw;
-            projs.push_back(p);
+            emitWeaponProjectile(e.player, e.x, e.y, tgt, id, -1, pw);
         }
     }
     // 台风潜艇：开火暴露计时衰减
@@ -920,7 +945,7 @@ void World::updateUnit(Ent& e, EID id) {
             // 超时空军团兵：持续抹除期间保持开火姿势（neutron rifle 持续照射）
             if (e.utype == UnitType::Chrono) {
                 const UnitAnimInfo& fai = g_sprites.animInfo(e.utype);
-                if (fai.fire > 0) e.fireAnim = fai.fire * 2;
+                if (fai.fire > 0) e.fireAnim = fai.fire * std::max(1, fai.fireRate);
             }
             // 面向目标：有炮塔则仅转炮塔（车体保持移动朝向）；无炮塔转车体
             int wantDir = dirFromVec(tx - e.x, ty - e.y);

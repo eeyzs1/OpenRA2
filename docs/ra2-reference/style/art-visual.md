@@ -30,11 +30,15 @@ OpenRA2 表现层应对齐的 **Red Alert 2 / Yuri's Revenge** 视觉语言。�
 
 ## 4. UI 画风
 
-- 侧栏：深色金属面板 + 像素图标（Cameo）。
+对战前菜单与壳层的完整契约见 **[command-shell.md](./command-shell.md)（指挥壳）**。摘要：
+
+- 侧栏：深色金属面板 + 像素图标（Cameo）；菜单右栏是 PCB + CRT，不是现代导航栏。
+- 按钮族：主菜单 `sdbtn*`、侧栏 `sdmpbtn*`、值槽 `optbtn`、勾选 `pips`——**贴图优先，禁止霓虹盖图**。
 - Cameo：小尺寸、内斜角/玻璃高光、四角透明键色传统；**不要**扁平圆角 App 图标。
 - 金钱：侧栏 **青色像素数字 + 深描边**，点采样，非 7 段 LED、非矢量字。
 - 生产进度：`gclock2.shp` 扫臂；cameo **不旋转**。
 - 鼠标：`mouse.shp` 多帧动画光标（Move/Attack/Deploy/Sell/Repair/AttackMove…）。
+- 融合（中国等）只扩展内容与涂装，**不换壳层语法**。
 
 ## 5. 地形
 

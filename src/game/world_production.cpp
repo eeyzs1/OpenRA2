@@ -205,13 +205,19 @@ bool World::placeBuilding(int player, BldType t, int bx, int by) {
     pr = ProdItem{};
     if (p.placingBld == t) p.placingBld = BldType::COUNT;
     g_sfx.playAt(Sfx::Place, (float)bx + d.w / 2.0f, (float)by + d.h / 2.0f);
-    // 精炼厂附赠一辆采矿车（RA2 原作设定）：出生在厂房旁空格，Idle 后自动采矿
+    // 精炼厂附赠一辆采矿车（RA2 原作设定）：出生在厂房旁空格，立即自动寻矿
     // 矿车型号按阵营：盟军超时空矿车 / 苏军武装矿车 / 中国普通矿车
     if (t == BldType::OreRefinery) {
         for (int r = 1; r < 6; r++) {
             int sx = bx + d.w / 2, sy = by + d.h + r - 1;
             if (map.passable(sx, sy) && !bldBlocked(sx, sy) && unitAtCell(sx, sy) == INVALID_EID) {
-                spawnUnit(player, harvesterType(players[player].faction), sx + 0.5f, sy + 0.5f);
+                EID mid = spawnUnit(player, harvesterType(players[player].faction), sx + 0.5f, sy + 0.5f);
+                if (mid != INVALID_EID) {
+                    ents[mid].autoHarvest = true;
+                    Vec2i ore;
+                    if (findNearestReachableOre(sx, sy, 48, ore))
+                        orderHarvest({mid}, ore.x, ore.y);
+                }
                 break;
             }
         }
@@ -306,7 +312,7 @@ bool World::spawnFromFactory(int player, const UnitDef& u) {
                 if (u.canHarvet()) {
                     ne.autoHarvest = true;
                     Vec2i ore;
-                    if (map.findNearestOre(sx, sy, 48, ore))
+                    if (findNearestReachableOre(sx, sy, 48, ore))
                         orderHarvest({nu}, ore.x, ore.y);
                     return true;
                 }
