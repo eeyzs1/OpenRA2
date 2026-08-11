@@ -289,6 +289,17 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"电脑难度：影响思考频率、进攻与超武使用。", "AI difficulty: think rate, aggression, and superweapons."},
     {"玩家槽：名称、国家、颜色与（电脑）难度。", "Player slot: name, country, color, and AI difficulty."},
     {"增加一名电脑对手（受地图尺寸人数上限限制）。", "Add a computer opponent (capped by map size)."},
+    // 遭遇战换地图
+    {"地图定制", "Map Customize"},
+    {"种子", "Seed"},
+    {"随机新图", "Random Map"},
+    {"上一个种子", "Prev Seed"},
+    {"下一个种子", "Next Seed"},
+    {"切换类型", "Cycle Type"},
+    {"打开地图定制：种子历史、上一个/下一个、切换地形类型；尺寸与模式仍用下方下拉。",
+     "Open map customize: seed history, prev/next, cycle terrain type. Size/mode stay in the dropdowns below."},
+    {"随机生成一张新程序地图（新种子）。开始游戏将使用当前预览种子。",
+     "Roll a new procedural map (new seed). Starting the game uses the preview seed shown."},
 };
 
 const char* TR(S id) {
@@ -351,6 +362,8 @@ static const char* kSKey[(int)S::COUNT] = {
     "TipGameSpeed", "TipStartMoney", "TipMapSize",
     "TipMapContinent", "TipMapIslands", "TipMapLake", "TipMapArchipelago", "TipMapCoast", "TipMapRiver", "TipMapMountain",
     "TipCountry", "TipColor", "TipDiff", "TipPlayerSlot", "TipAddComputer",
+    "MapCustomTitle", "MapSeed", "RandomNewMap", "PrevSeed", "NextSeed", "CycleMapType",
+    "TipCustomizeBattle", "TipMapSeed",
 };
 
 static int sKeyByName(const char* s) {

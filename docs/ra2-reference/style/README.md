@@ -4,7 +4,8 @@
 
 | 文档 | 内容 |
 |------|------|
-| **[command-shell.md](./command-shell.md)** | **OpenRA2 指挥壳**：对战前菜单 + HUD 壳层气质、色票、控件族、反模式（改 UI 先读） |
+| **[gui-study-notes.md](./gui-study-notes.md)** | **GUI 学习笔记（先读）**：对照 Remaster / OpenRA / Tempest；v3 扁平壳失败诊断；改皮门禁 |
+| **[command-shell.md](./command-shell.md)** | **指挥壳契约（方向 B）**：工业现代钢板壳；暖琥珀字；稀缺钢青 |
 | Agent skill | 仓库 `.cursor/skills/openra2-gui/SKILL.md`（改 GUI 时给助手用） |
 | [art-visual.md](./art-visual.md) | 等距画风、阵营色、UI 概要、地形、造型语言 |
 | [music.md](./music.md) | Frank Klepacki 工业金属曲风与用曲场景 |

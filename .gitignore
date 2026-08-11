@@ -34,6 +34,14 @@ tools/ra2pack/out/
 assets/gui/menu/
 # Local GUI / audit dumps (not game content)
 gui_review/
-gui_review_prev_*/
+gui_review_*/
+gui_review_out/
+gui_review_fix/
+gui_review_after/
+review_out/
+playtest_out.txt
+/pt_*.png
+/shot_*.png
+/menu_setup.png
 assets/preview/
 tools/visual_audit/menu_ref/

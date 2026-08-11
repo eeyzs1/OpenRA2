@@ -69,6 +69,9 @@ enum class S : int {
     TipGameSpeed, TipStartMoney, TipMapSize,
     TipMapContinent, TipMapIslands, TipMapLake, TipMapArchipelago, TipMapCoast, TipMapRiver, TipMapMountain,
     TipCountry, TipColor, TipDiff, TipPlayerSlot, TipAddComputer,
+    // 遭遇战换地图（种子历史面板）
+    MapCustomTitle, MapSeed, RandomNewMap, PrevSeed, NextSeed, CycleMapType,
+    TipCustomizeBattle, TipMapSeed,
     COUNT
 };
 

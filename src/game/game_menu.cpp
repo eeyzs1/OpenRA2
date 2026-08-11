@@ -1,4 +1,4 @@
-// Game 的主菜单与遭遇战设置界面（RA2 风格复刻）
+// Game 的主菜单与遭遇战设置界面（Tech HUD 壳层）
 // 共享 UI 组件（drawTextM/textW/ra2Button/ra2TextButton/drawRa2Shell）供 settings/net 复用
 #include "game/game.h"
 #include "game/campaign.h"
@@ -39,9 +39,127 @@ int textW(Font f, const char* s, int size) {
     return (int)MeasureTextEx(f, s, (float)size, 0).x;
 }
 
-// 菜单黄字（原作偏纯黄高对比，非金棕）
-static constexpr Color MENU_YELLOW = {232, 196, 72, 255};
-static constexpr Color MENU_YELLOW_HI = {255, 236, 140, 255};
+// 方向 B 打磨：更强钢板层次；琥珀命令字略降饱和；钢青更稀缺
+static constexpr Color MENU_YELLOW = {224, 204, 158, 255};     // ink
+static constexpr Color MENU_YELLOW_HI = {248, 232, 196, 255};  // inkHot
+static constexpr Color MENU_ACCENT = {86, 158, 178, 255};      // 钢青（仅焦点）
+static constexpr Color MENU_ACCENT_DIM = {48, 92, 108, 160};
+static constexpr Color MENU_STEEL = {30, 34, 42, 255};
+static constexpr Color MENU_STEEL2 = {42, 48, 58, 255};
+static constexpr Color MENU_DEEP = {10, 12, 16, 255};
+static constexpr Color MENU_HI = {92, 100, 112, 220};
+static constexpr Color MENU_LO = {6, 8, 12, 255};
+static constexpr Color MENU_MUTE = {132, 140, 152, 255};
+static constexpr Color MENU_EDGE = {48, 54, 64, 200};
+static constexpr Color MENU_PANEL = MENU_STEEL;
+static constexpr Color MENU_PANEL2 = MENU_STEEL2;
+static constexpr Color MENU_ACCENT_SOFT = {86, 158, 178, 36};
+static constexpr Color MENU_PRIMARY = {52, 44, 32, 255};      // 主行动暖钢
+static constexpr Color MENU_PRIMARY_HI = {68, 56, 38, 255};
+
+// 遭遇战：地图种子历史（换地图面板）
+static constexpr int kSeedHistMax = 24;
+static uint64_t g_seedHist[kSeedHistMax]{};
+static int g_seedHistN = 0;
+static int g_seedHistI = -1;
+static bool g_setupMapCustom = false;
+
+static void seedHistPush(uint64_t s) {
+    if (g_seedHistI >= 0 && g_seedHistI < g_seedHistN - 1)
+        g_seedHistN = g_seedHistI + 1;
+    if (g_seedHistN > 0 && g_seedHist[g_seedHistN - 1] == s) {
+        g_seedHistI = g_seedHistN - 1;
+        return;
+    }
+    if (g_seedHistN >= kSeedHistMax) {
+        std::memmove(g_seedHist, g_seedHist + 1, sizeof(uint64_t) * (kSeedHistMax - 1));
+        g_seedHistN = kSeedHistMax - 1;
+    }
+    g_seedHist[g_seedHistN++] = s;
+    g_seedHistI = g_seedHistN - 1;
+}
+
+static void seedHistEnsure(uint64_t s) {
+    if (g_seedHistN <= 0) {
+        g_seedHist[0] = s;
+        g_seedHistN = 1;
+        g_seedHistI = 0;
+        return;
+    }
+    if (g_seedHistI >= 0 && g_seedHistI < g_seedHistN && g_seedHist[g_seedHistI] == s)
+        return;
+    seedHistPush(s);
+}
+
+static uint64_t seedRollNew(uint64_t cur) {
+    uint64_t t = (uint64_t)time(nullptr);
+    return t * 2654435761ull ^ (cur * 1315423911ull) + 97ull;
+}
+
+// 钢板明暗边（凸起/凹陷）— 禁止强调色描整框
+static void menuDrawSteelEdges(Rectangle r, bool raised) {
+    Color hi = raised ? MENU_HI : MENU_LO;
+    Color lo = raised ? MENU_LO : Color{56, 62, 72, 180};
+    int x = (int)r.x, y = (int)r.y, w = (int)r.width, h = (int)r.height;
+    DrawLine(x + 1, y + 1, x + w - 2, y + 1, hi);
+    DrawLine(x + 1, y + 1, x + 1, y + h - 2, hi);
+    DrawLine(x + 1, y + h - 2, x + w - 2, y + h - 2, lo);
+    DrawLine(x + w - 2, y + 1, x + w - 2, y + h - 2, lo);
+    DrawRectangleLinesEx(r, 1, Color{14, 16, 20, 255});
+}
+
+static void menuDrawPlate(Rectangle r, bool hot = false) {
+    DrawRectangleRec(r, Color{24, 28, 34, 255});
+    DrawRectangle((int)r.x + 1, (int)r.y + 1, (int)r.width - 2, (int)r.height - 2, MENU_STEEL2);
+    // 面内顶缘微亮（材质，非彩边）
+    DrawRectangle((int)r.x + 2, (int)r.y + 2, (int)r.width - 4, 1, Color{70, 78, 90, 90});
+    menuDrawSteelEdges(r, true);
+    if (hot)
+        DrawRectangle((int)r.x + 3, (int)r.y + 2, (int)r.width - 6, 2, Color{86, 158, 178, 100});
+}
+
+static void menuDrawWell(Rectangle r, bool hot = false) {
+    DrawRectangleRec(r, Color{8, 10, 14, 255});
+    DrawRectangle((int)r.x + 1, (int)r.y + 1, (int)r.width - 2, (int)r.height - 2, Color{14, 16, 22, 255});
+    menuDrawSteelEdges(r, false);
+    if (hot)
+        DrawLine((int)r.x + 2, (int)r.y + 2, (int)(r.x + r.width - 3), (int)r.y + 2, MENU_ACCENT_DIM);
+}
+
+static void menuDrawModernPanel(Rectangle r, bool hot, bool softFill = true) {
+    (void)softFill;
+    menuDrawPlate(r, hot);
+}
+
+static void menuDrawTechTitlePlate(Rectangle titlePlate, Font font, const char* sideTitle) {
+    menuDrawPlate(titlePlate, false);
+    DrawRectangle((int)titlePlate.x + 6, (int)(titlePlate.y + titlePlate.height - 3),
+                  (int)titlePlate.width - 12, 2, Color{86, 158, 178, 140});
+    if (sideTitle && sideTitle[0]) {
+        int tw = textW(font, sideTitle, 13);
+        drawTextS(font, sideTitle, (int)(titlePlate.x + (titlePlate.width - tw) * 0.5f),
+                  (int)(titlePlate.y + 6), 13, MENU_YELLOW);
+    }
+}
+
+// 监视器外圈仪器舱（让 CRT 不像空方框漂在侧栏上）
+static void menuDrawMonBay(Rectangle mon) {
+    Rectangle bay{mon.x - 5.f, mon.y - 5.f, mon.width + 10.f, mon.height + 10.f};
+    DrawRectangleRec(bay, Color{22, 26, 32, 255});
+    menuDrawSteelEdges(bay, true);
+    DrawRectangle((int)bay.x + 2, (int)bay.y + 2, (int)bay.width - 4, 1, Color{70, 78, 90, 70});
+}
+
+static void menuDrawModernSideRail(Rectangle side) {
+    // 钢板罩（L0 由 menuDrawSideL0 先画）
+    DrawRectangleRec(side, Color{18, 20, 26, 225});
+    DrawRectangle((int)side.x, (int)side.y, 3, (int)side.height, Color{8, 10, 14, 255});
+    DrawLine((int)side.x + 3, (int)side.y, (int)side.x + 3, (int)(side.y + side.height), MENU_HI);
+    DrawRectangle((int)side.x + 4, (int)side.y, (int)side.width - 4, 3, Color{58, 66, 78, 110});
+    // 底缘压暗，增强仪器厚度
+    DrawRectangle((int)side.x + 4, (int)(side.y + side.height - 4), (int)side.width - 4, 4,
+                  Color{8, 10, 14, 120});
+}
 
 // ===================== MIX 菜单 chrome（assets/gui/menu） =====================
 struct MenuGui {
@@ -90,6 +208,14 @@ static MenuGui g_menu;
 static Rectangle g_shellContent{};
 static Rectangle g_shellSide{};
 static Rectangle g_shellMonitor{};
+
+static void menuDrawSideL0(Rectangle side) {
+    if (g_menu.loadShell.id) {
+        DrawTexturePro(g_menu.loadShell,
+                       {(float)LOAD_SIDE_X, 0, (float)LOAD_SIDE_W, (float)UI_H},
+                       side, {0, 0}, 0, Color{130, 138, 150, 120});
+    }
+}
 
 static Texture2D menuLoadTex(const char* path) {
     if (!FileExists(path)) return Texture2D{};
@@ -180,17 +306,17 @@ void menuBlitUi() {
     DrawTexturePro(g_menu.uiRT.texture, src, dst, {0, 0}, 0, WHITE);
 }
 
-// 勾选：小程序灯（pips SHP 放大后雪花明显，主路径不用）
+// 勾选：钢环 + 琥珀亮心（对齐方向 B，勿青绿夜店灯）
 void drawMenuPip(float x, float y, bool on) {
     ensureMenuGui();
     float cx = x + 7.f, cy = y + 7.f;
-    DrawCircle((int)cx, (int)cy, 7, Color{18, 18, 22, 255});
-    DrawCircleLines((int)cx, (int)cy, 7, Color{90, 94, 104, 255});
+    DrawCircle((int)cx, (int)cy, 7, Color{10, 12, 16, 255});
+    DrawCircleLines((int)cx, (int)cy, 7, Color{64, 72, 84, 255});
     if (on) {
-        DrawCircle((int)cx, (int)cy, 4, Color{200, 100, 28, 255});
-        DrawCircle((int)cx, (int)cy, 2, Color{255, 190, 80, 255});
+        DrawCircle((int)cx, (int)cy, 4, Color{120, 96, 52, 255});
+        DrawCircle((int)cx, (int)cy, 2, Color{236, 210, 150, 255});
     } else {
-        DrawCircle((int)cx, (int)cy, 3, Color{32, 26, 22, 255});
+        DrawCircle((int)cx, (int)cy, 3, Color{20, 24, 30, 255});
     }
 }
 
@@ -217,7 +343,7 @@ bool menuValueSlot(Font font, Vector2 m, bool pressed, Rectangle r, const char* 
     bool hover = CheckCollisionPointRec(m, r) && enabled;
     drawMenuOptSlot(r, hover && enabled, showArrow);
     if (!enabled) DrawRectangleRec(r, Color{10, 12, 16, 180});
-    Color tc = enabled ? Color{255, 230, 90, 255} : Color{110, 100, 90, 255};
+    Color tc = enabled ? MENU_YELLOW : MENU_MUTE;
     int fs = 12;
     int tw = textW(font, value, fs);
     int tx = center ? (int)(r.x + (r.width - tw) * 0.5f) : (int)r.x + 8;
@@ -231,15 +357,15 @@ bool menuValueSlot(Font font, Vector2 m, bool pressed, Rectangle r, const char* 
 bool menuLabeledValue(Font font, Vector2 m, bool pressed, int lx, int y, const char* label,
                       int vx, int vw, int vh, const char* value, bool enabled) {
     drawTextS(font, label, lx, y + 4, 13,
-              enabled ? Color{200, 190, 150, 255} : Color{110, 100, 90, 255});
+              enabled ? MENU_MUTE : Color{70, 80, 82, 255});
     return menuValueSlot(font, m, pressed, {(float)vx, (float)y, (float)vw, (float)vh},
                          value, enabled, false, false);
 }
 
 void menuSectionHeader(Font font, int x, int y, const char* title, int underlineW, int accentW) {
-    drawTextS(font, title, x, y, 14, Color{255, 220, 110, 255});
-    DrawRectangle(x, y + 18, underlineW, 1, Color{70, 60, 40, 220});
-    DrawRectangle(x, y + 18, accentW, 2, Color{210, 170, 70, 255});
+    drawTextS(font, title, x, y, 14, MENU_YELLOW);
+    DrawRectangle(x, y + 18, underlineW, 1, Color{40, 46, 56, 200});
+    DrawRectangle(x, y + 18, accentW, 2, MENU_ACCENT);
 }
 
 void menuSlotText(Font font, Rectangle r, const char* text, Color c, int fontSize, int padX, bool shrinkToFit) {
@@ -254,8 +380,7 @@ void menuSlotText(Font font, Rectangle r, const char* text, Color c, int fontSiz
 }
 
 void menuInfoPanel(Font font, Rectangle r, const char* title, const char* body, int titleSize, int bodySize) {
-    DrawRectangleRec(r, Color{8, 10, 10, 230});
-    DrawRectangleLinesEx(r, 1, Color{70, 60, 40, 220});
+    menuDrawWell(r, false);
     int x = (int)r.x + 4;
     int y = (int)r.y + 4;
     int maxW = (int)r.width - 8;
@@ -266,7 +391,7 @@ void menuInfoPanel(Font font, Rectangle r, const char* title, const char* body, 
         y += titleSize + 4;
     }
     if (body && body[0])
-        drawWrapped(font, body, x, y, maxW, bodySize, Color{220, 200, 150, 255},
+        drawWrapped(font, body, x, y, maxW, bodySize, MENU_MUTE,
                     std::max(1, ((int)r.height - (y - (int)r.y) - 4) / (bodySize + 2)));
 }
 
@@ -407,29 +532,16 @@ void ensureMenuGui() {
 
 bool drawMenuPanelChrome(int x, int y, int w, int h) {
     ensureMenuGui();
-    Texture2D t = g_menu.pudlg.id ? g_menu.pudlg : (g_menu.bkgdlg.id ? g_menu.bkgdlg : g_menu.fsbkg);
-    if (!t.id) return false;
-    DrawRectangle(x + 6, y + 6, w - 12, h - 12, Color{8, 10, 14, 210});
-    menuDrawTex(t, {(float)x, (float)y, (float)w, (float)h}, Color{255, 255, 255, 230});
-    DrawRectangleLinesEx({(float)x, (float)y, (float)w, (float)h}, 1, GUI_GOLD);
+    menuDrawPlate({(float)x, (float)y, (float)w, (float)h}, false);
     return true;
 }
 
 void drawMenuOptSlot(Rectangle r, bool hover, bool showArrow) {
     ensureMenuGui();
-    // 值槽：深凹槽 + 冷金属边；悬停仅琥珀描边（无霓虹填、无硬拉 optbtn）
-    int x = (int)r.x, y = (int)r.y, w = (int)r.width, h = (int)r.height;
-    DrawRectangle(x, y, w, h, Color{8, 10, 14, 255});
-    DrawRectangle(x + 1, y + 1, w - 2, h - 2, Color{14, 16, 20, 255});
-    DrawLine(x + 1, y + 1, x + w - 2, y + 1, Color{28, 30, 36, 255});
-    DrawLine(x + 1, y + 1, x + 1, y + h - 2, Color{28, 30, 36, 255});
-    DrawLine(x + 1, y + h - 2, x + w - 2, y + h - 2, Color{4, 4, 6, 255});
-    DrawLine(x + w - 2, y + 1, x + w - 2, y + h - 2, Color{4, 4, 6, 255});
-    Color edge = hover ? Color{210, 175, 70, 220} : Color{70, 62, 48, 200};
-    DrawRectangleLinesEx({(float)x, (float)y, (float)w, (float)h}, 1, edge);
+    menuDrawWell(r, hover);
     if (showArrow) {
         float cx = r.x + r.width - 9.f, cy = r.y + r.height * 0.5f;
-        Color ac = hover ? MENU_YELLOW_HI : Color{200, 175, 90, 255};
+        Color ac = hover ? MENU_YELLOW_HI : MENU_MUTE;
         DrawTriangle({cx - 3.5f, cy - 2.5f}, {cx + 3.5f, cy - 2.5f}, {cx, cy + 3.5f}, ac);
     }
 }
@@ -437,9 +549,7 @@ void drawMenuOptSlot(Rectangle r, bool hover) { drawMenuOptSlot(r, hover, true);
 
 bool ra2TextButton(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size) {
     bool hover = CheckCollisionPointRec(m, r);
-    Color gold{232, 196, 96, 255};
-    Color hi{255, 236, 150, 255};
-    Color c = hover ? hi : gold;
+    Color c = hover ? MENU_YELLOW_HI : MENU_YELLOW;
     if (text && text[0]) {
         int tw = textW(font, text, size);
         int tx = (int)(r.x + r.width / 2 - tw / 2);
@@ -447,7 +557,7 @@ bool ra2TextButton(Font font, Vector2 m, bool pressed, Rectangle r, const char* 
         drawTextS(font, text, tx, ty, size, c);
         if (hover) {
             int uy = ty + size + 2;
-            DrawLine(tx, uy, tx + tw, uy, hi);
+            DrawLine(tx, uy, tx + tw, uy, MENU_ACCENT);
         }
     }
     bool clicked = hover && pressed;
@@ -455,112 +565,97 @@ bool ra2TextButton(Font font, Vector2 m, bool pressed, Rectangle r, const char* 
     return clicked;
 }
 
-// 钮面：单色暗红/暗蓝（禁止 Gradient / 多色横带）
-static void menuDrawButtonGlow(Rectangle r, bool hot, bool allied) {
+// 钮面：单层钢板心；悬停顶缘钢青；主行动用暖钢底
+static void menuDrawButtonFace(Rectangle r, bool hot, bool press, bool allied, bool danger, bool primary) {
     if (r.width < 4.f || r.height < 4.f) return;
-    Color fill = allied
-        ? (hot ? Color{32, 52, 96, 255} : Color{18, 28, 52, 255})
-        : (hot ? Color{78, 18, 16, 255} : Color{42, 12, 12, 255});
+    Color fill;
+    if (danger)
+        fill = hot ? Color{52, 24, 28, 255} : Color{36, 18, 20, 255};
+    else if (primary)
+        fill = hot ? MENU_PRIMARY_HI : MENU_PRIMARY;
+    else if (allied)
+        fill = hot ? Color{34, 46, 58, 255} : Color{26, 34, 46, 255};
+    else
+        fill = hot ? Color{46, 52, 62, 255} : Color{34, 38, 48, 255};
     DrawRectangle((int)r.x, (int)r.y, (int)r.width, (int)r.height, fill);
+    // 面内顶缘材质光（始终有，增强零件感）
+    DrawRectangle((int)r.x + 1, (int)r.y + 1, (int)r.width - 2, 1,
+                  Color{80, 88, 100, (unsigned char)(press ? 40 : 100)});
+    menuDrawSteelEdges(r, !press);
+    if (hot && !press) {
+        Color tip = primary ? Color{236, 200, 130, 200} : Color{86, 158, 178, 170};
+        DrawLine((int)r.x + 2, (int)r.y + 2, (int)(r.x + r.width - 3), (int)r.y + 2, tip);
+    }
 }
 
-static void menuDrawButtonChrome(Rectangle r, bool press) {
-    Color hi = press ? Color{48, 44, 40, 230} : Color{148, 140, 118, 230};
-    Color lo = press ? Color{70, 66, 60, 230} : Color{22, 18, 16, 240};
-    DrawRectangleLinesEx(r, 1, Color{8, 8, 10, 255});
-    DrawLine((int)r.x + 1, (int)r.y + 1, (int)(r.x + r.width - 2), (int)r.y + 1, hi);
-    DrawLine((int)r.x + 1, (int)r.y + 1, (int)r.x + 1, (int)(r.y + r.height - 2), hi);
-    DrawLine((int)r.x + 1, (int)(r.y + r.height - 2), (int)(r.x + r.width - 2), (int)(r.y + r.height - 2), lo);
-    DrawLine((int)(r.x + r.width - 2), (int)r.y + 1, (int)(r.x + r.width - 2), (int)(r.y + r.height - 2), lo);
-}
-
-// 监视器：工业 CRT（扫描线 + 短状态），禁止玩具示波 / WARNING 彩条
+// 监视器：仪器舱 + 深井 + 底状态条
 void menuDrawCrt(Font font, Rectangle mon, const char* statusLine) {
     if (mon.width < 8.f || mon.height < 8.f) return;
-    DrawRectangleRec(mon, Color{4, 8, 8, 255});
+    menuDrawMonBay(mon);
+    menuDrawWell(mon, false);
     int x0 = (int)mon.x, y0 = (int)mon.y, w = (int)mon.width, h = (int)mon.height;
-    for (int y = 2; y < h - 2; y += 3)
-        DrawLine(x0 + 2, y0 + y, x0 + w - 3, y0 + y, Color{16, 26, 20, 70});
-    DrawRectangleLinesEx({mon.x + 1, mon.y + 1, mon.width - 2, mon.height - 2}, 1, Color{36, 44, 36, 180});
+    // 极淡水平导引（非扫描线刷屏）
+    for (int y = 10; y < h - 22; y += 14)
+        DrawLine(x0 + 6, y0 + y, x0 + w - 7, y0 + y, Color{32, 38, 48, 28});
+    DrawRectangle(x0 + 1, y0 + h - 18, w - 2, 17, Color{8, 10, 14, 220});
+    DrawLine(x0 + 4, y0 + h - 18, x0 + w - 5, y0 + h - 18, Color{48, 56, 68, 120});
     if (statusLine && statusLine[0])
-        drawTextS(font, statusLine, x0 + 6, y0 + h - 16, 10, Color{160, 150, 90, 230});
+        drawTextS(font, statusLine, x0 + 8, y0 + h - 14, 10, MENU_MUTE);
 }
 
-// load.pcx 洞内近黑；原作有暗红战术地图 — 贴 content_map 或程序回退
+// 内容洞：深底 + 表单舱（减少空黑）
 static void menuDrawContentMapBg(Rectangle content) {
-    if (g_menu.contentMap.id) {
-        menuDrawTex(g_menu.contentMap, content, WHITE);
-        DrawRectangleRec(content, Color{0, 0, 0, 70});
-        return;
-    }
-    DrawRectangleRec(content, Color{10, 4, 4, 255});
-    for (int i = 0; i < 16; i++) {
-        float y0 = content.y + 24.f + i * (content.height - 48.f) / 15.f;
-        Vector2 prev{content.x + 12.f, y0};
-        for (int x = 12; x < (int)content.width - 12; x += 10) {
-            float y = y0 + sinf(x * 0.04f + i * 0.7f) * 10.f + sinf(x * 0.01f + i) * 6.f;
-            Vector2 p{content.x + (float)x, y};
-            DrawLineEx(prev, p, 1.2f, Color{(unsigned char)(55 + i * 2), 14, 12, 90});
-            prev = p;
-        }
-    }
-    for (int k = 0; k < 6; k++) {
-        int cx = (int)(content.x + 70 + k * 65);
-        int cy = (int)(content.y + 80 + (k % 3) * 90);
-        DrawCircleLines(cx, cy, 26 + k * 5, Color{80, 20, 16, 70});
-    }
-    DrawRectangleRec(content, Color{0, 0, 0, 80});
+    DrawRectangleRec(content, MENU_DEEP);
+    if (g_menu.contentMap.id)
+        menuDrawTex(g_menu.contentMap, content, Color{120, 128, 138, 48});
+    Rectangle bay{content.x + 6.f, content.y + 6.f, content.width - 12.f, content.height - 12.f};
+    DrawRectangleRec(bay, Color{24, 28, 36, 150});
+    DrawRectangle((int)bay.x + 1, (int)bay.y + 1, (int)bay.width - 2, 1, Color{70, 78, 90, 55});
+    menuDrawSteelEdges(content, false);
 }
 
 bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size,
-               bool enabled, bool danger) {
+               bool enabled, bool danger, bool primary) {
     ensureMenuGui();
     bool hover = CheckCollisionPointRec(m, r) && enabled;
     bool press = hover && pressed;
     const bool allied = g_menu.shellTheme == 1;
-    // 不用 sdmp 硬拉：提取件含雪花，宽槽放大后成红/灰杂色块
-    DrawRectangleRec(r, enabled ? Color{10, 10, 12, 255} : Color{22, 22, 26, 255});
-    menuDrawButtonChrome(r, press);
+    // 外框只做安静暗壳，避免双层彩边
+    DrawRectangleRec(r, Color{14, 16, 20, 255});
+    DrawRectangleLinesEx(r, 1, Color{10, 12, 16, 255});
     if (enabled) {
-        Rectangle inset{r.x + 3.f, r.y + 4.f, r.width - 6.f, r.height - 8.f};
-        if (danger) {
-            DrawRectangleRec(inset, Color{48, 12, 10, 255});
-            if (hover || press) DrawRectangleRec(inset, Color{120, 28, 20, 70});
-        } else {
-            menuDrawButtonGlow(inset, hover || press, allied);
-        }
+        Rectangle inset{r.x + 2.f, r.y + 2.f, r.width - 4.f, r.height - 4.f};
+        menuDrawButtonFace(inset, hover || press, press, allied, danger, primary);
     }
     if (text && text[0]) {
-        Color idle = Color{232, 196, 72, 255};
-        Color hiC = Color{255, 236, 140, 255};
         Vector2 sz = MeasureTextEx(font, text, (float)size, 0);
+        Color tc = !enabled ? Color{90, 96, 108, 255}
+                            : (hover ? MENU_YELLOW_HI : MENU_YELLOW);
         drawTextS(font, text,
                   (int)(r.x + (r.width - sz.x) * 0.5f),
                   (int)(r.y + (r.height - sz.y) * 0.5f),
-                  size, enabled ? (hover ? hiC : idle) : Color{96, 98, 102, 255});
+                  size, tc);
     }
     bool clicked = hover && pressed;
     if (clicked) g_sfx.play(Sfx::Click, 0.6f);
     return clicked;
 }
 
-// 主菜单：干净金属槽 + 柔和红亮心（不叠 sdbtnanm/sdbtnbkgd，避免雪花）
+// 主菜单仪器钮：居中字；外框安静、面层承载凹凸
 static bool ra2TitleButton(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size) {
     ensureMenuGui();
     bool hover = CheckCollisionPointRec(m, r);
     bool press = hover && pressed;
-    DrawRectangleRec(r, Color{8, 8, 10, 255});
-    menuDrawButtonChrome(r, press);
-    Rectangle inset{r.x + 3.f, r.y + 4.f, r.width - 6.f, r.height - 8.f};
-    menuDrawButtonGlow(inset, hover || press, false);
+    DrawRectangleRec(r, Color{14, 16, 20, 255});
+    DrawRectangleLinesEx(r, 1, Color{10, 12, 16, 255});
+    Rectangle inset{r.x + 2.f, r.y + 2.f, r.width - 4.f, r.height - 4.f};
+    menuDrawButtonFace(inset, hover || press, press, false, false, false);
     if (text && text[0]) {
-        Color idle = Color{232, 196, 72, 255};
-        Color hiC = Color{255, 236, 140, 255};
         Vector2 sz = MeasureTextEx(font, text, (float)size, 0);
         drawTextS(font, text,
                   (int)(r.x + (r.width - sz.x) * 0.5f),
                   (int)(r.y + (r.height - sz.y) * 0.5f),
-                  size, hover ? hiC : idle);
+                  size, hover ? MENU_YELLOW_HI : MENU_YELLOW);
     }
     bool clicked = hover && pressed;
     if (clicked) g_sfx.play(Sfx::Click, 0.6f);
@@ -572,23 +667,20 @@ bool ra2RedSlider(Font font, Vector2 m, bool pressed, int x, int y, int trackW,
     if (nSteps < 2) nSteps = 2;
     if (step < 0) step = 0;
     if (step >= nSteps) step = nSteps - 1;
-    // 金属轨 + 琥珀指示针 + 数值槽
     Rectangle frame{(float)x, (float)y + 1, (float)trackW, 14};
-    DrawRectangleRec(frame, Color{14, 16, 20, 255});
-    guiBevel(frame, true);
-    DrawRectangle((int)frame.x + 2, (int)frame.y + 5, (int)frame.width - 4, 4, Color{28, 18, 14, 255});
+    menuDrawWell(frame, false);
+    DrawRectangle((int)frame.x + 2, (int)frame.y + 5, (int)frame.width - 4, 4, Color{24, 28, 36, 255});
     float t = (float)step / (float)(nSteps - 1);
     int hx = (int)(frame.x + 3 + t * (frame.width - 6));
-    DrawRectangle(hx - 2, (int)frame.y + 2, 5, (int)frame.height - 4, Color{70, 72, 80, 255});
-    DrawRectangle(hx - 1, (int)frame.y + 3, 3, (int)frame.height - 6, Color{240, 140, 48, 255});
-    DrawLine(hx, (int)frame.y + 3, hx, (int)(frame.y + frame.height - 4), Color{255, 220, 140, 220});
+    DrawRectangle(hx - 2, (int)frame.y + 2, 5, (int)frame.height - 4, Color{48, 54, 64, 255});
+    DrawRectangle(hx - 1, (int)frame.y + 3, 3, (int)frame.height - 6, MENU_ACCENT);
     if (valueText && valueText[0]) {
         int vw = textW(font, valueText, 12) + 12;
         if (vw < 32) vw = 32;
         Rectangle vb{(float)(x + trackW + 8), (float)y, (float)vw, 16};
         drawMenuOptSlot(vb, false, false);
         drawTextS(font, valueText, (int)vb.x + (vw - textW(font, valueText, 12)) / 2, y + 2, 12,
-                  Color{255, 230, 90, 255});
+                  MENU_YELLOW);
     }
     Rectangle hit{frame.x - 2, frame.y - 4, frame.width + 4, frame.height + 8};
     if (CheckCollisionPointRec(m, hit) && pressed) {
@@ -613,9 +705,8 @@ void drawRa2Shell(Font font, const char* sideTitle, int theme, bool drawEmptyMon
     const bool allied = theme == 1;
     const bool useMulti = theme == 2;
     g_menu.shellTheme = theme;
-    ClearBackground(Color{0, 0, 0, 255});
+    ClearBackground(MENU_DEEP);
 
-    // 逻辑 640×480 槽位（UV 冻结见 menu-screens.md）
     g_shellContent = {0, 0, (float)LOAD_SIDE_X, (float)UI_H};
     g_shellSide = {(float)LOAD_SIDE_X, 0, (float)LOAD_SIDE_W, (float)UI_H};
     g_shellMonitor = {(float)LOAD_MON_X, (float)LOAD_MON_Y, (float)LOAD_MON_W, (float)LOAD_MON_H};
@@ -624,48 +715,38 @@ void drawRa2Shell(Font font, const char* sideTitle, int theme, bool drawEmptyMon
 
     if (allied) {
         Texture2D eagle = g_menu.bkgdMd.id ? g_menu.bkgdMd : (g_menu.pudlg.id ? g_menu.pudlg : g_menu.bkgdlg);
-        DrawRectangle(0, 0, LOAD_SIDE_X, UI_H, Color{4, 10, 24, 255});
+        DrawRectangle(0, 0, LOAD_SIDE_X, UI_H, MENU_DEEP);
         if (eagle.id) {
             float scale = std::min((float)LOAD_SIDE_X / (float)eagle.width, (float)UI_H / (float)eagle.height);
             float dw = eagle.width * scale, dh = eagle.height * scale;
-            menuDrawTex(eagle, {(LOAD_SIDE_X - dw) * 0.5f, (UI_H - dh) * 0.5f, dw, dh}, WHITE);
+            menuDrawTex(eagle, {(LOAD_SIDE_X - dw) * 0.5f, (UI_H - dh) * 0.5f, dw, dh},
+                        Color{170, 180, 190, 150});
         }
-        if (g_menu.loadShell.id) {
-            DrawTexturePro(g_menu.loadShell,
-                           {(float)LOAD_SIDE_X, 0, (float)LOAD_SIDE_W, (float)UI_H},
-                           g_shellSide, {0, 0}, 0, Color{200, 220, 255, 255});
-        } else {
-            guiMetalFill(LOAD_SIDE_X, 0, LOAD_SIDE_W, UI_H);
-            DrawRectangle(LOAD_SIDE_X, 0, LOAD_SIDE_W, UI_H, Color{40, 70, 130, 70});
-        }
+        DrawRectangle(0, 0, LOAD_SIDE_X, UI_H, Color{12, 14, 18, 70});
+        menuDrawSideL0(g_shellSide);
+        menuDrawModernSideRail(g_shellSide);
     } else if (shell.id) {
-        // 1:1 贴 load/multi；洞内补暗红战术地图（原作非纯黑）
-        menuDrawTex(shell, {0, 0, (float)UI_W, (float)UI_H}, WHITE);
+        // L0 整壳淡贴 + 洞/侧栏钢板（同世界金属）
+        menuDrawTex(shell, {0, 0, (float)UI_W, (float)UI_H}, Color{100, 110, 120, 100});
         menuDrawContentMapBg(g_shellContent);
+        menuDrawSideL0(g_shellSide);
+        menuDrawModernSideRail(g_shellSide);
     } else {
-        DrawRectangle(0, 0, LOAD_SIDE_X, UI_H, Color{12, 14, 18, 255});
         menuDrawContentMapBg(g_shellContent);
-        guiMetalFill(LOAD_SIDE_X, 0, LOAD_SIDE_W, UI_H);
+        menuDrawModernSideRail(g_shellSide);
     }
 
-    // 标题条：禁止硬拉 diplobtn(72×18)——雪花会被放大成蓝白杂色条
     Rectangle titlePlate{(float)LOAD_SIDE_X + 8, 10, (float)LOAD_SIDE_W - 16, 28};
-    DrawRectangleRec(titlePlate, Color{10, 12, 14, 255});
-    guiBevel(titlePlate, true);
-    DrawRectangle((int)titlePlate.x + 2, (int)titlePlate.y + 2,
-                  (int)titlePlate.width - 4, (int)titlePlate.height - 4, Color{16, 18, 20, 255});
-    if (sideTitle && sideTitle[0]) {
-        int tw = textW(font, sideTitle, 14);
-        drawTextS(font, sideTitle, (int)(titlePlate.x + titlePlate.width / 2 - tw / 2),
-                  (int)(titlePlate.y + 6), 14, Color{255, 230, 90, 255});
-    }
+    menuDrawTechTitlePlate(titlePlate, font, sideTitle);
 
     if (drawEmptyMonitor) {
         if (allied && g_menu.bkgdSm.id) {
-            DrawRectangleRec(g_shellMonitor, Color{4, 8, 8, 255});
+            menuDrawMonBay(g_shellMonitor);
+            menuDrawWell(g_shellMonitor, false);
             float pad = 4;
             menuDrawTex(g_menu.bkgdSm, {g_shellMonitor.x + pad, g_shellMonitor.y + pad,
-                                        g_shellMonitor.width - pad * 2, g_shellMonitor.height - pad * 2}, WHITE);
+                                        g_shellMonitor.width - pad * 2, g_shellMonitor.height - pad * 2},
+                        Color{170, 180, 190, 170});
         } else {
             menuDrawCrt(font, g_shellMonitor, TR(S::Ready));
         }
@@ -676,22 +757,22 @@ void drawMenuBackdrop(Font font, const char* title) {
     drawRa2Shell(font, title);
 }
 
-// 主菜单：BIK 只画进左内容洞（等比），右栏用 load 侧栏——禁止把 BIK 拉满再盖侧栏（会裁掉 CRT/自由女神等）
+// 主菜单：BIK 左洞；右栏 L0 淡贴 + 钢板仪器
 void Game::drawMainMenu() {
     ensureMenuGui();
     g_menu.shellTheme = 0;
-    ClearBackground(Color{4, 6, 10, 255});
+    ClearBackground(MENU_DEEP);
     g_shellContent = {0, 0, (float)LOAD_SIDE_X, (float)UI_H};
     g_shellSide = {(float)LOAD_SIDE_X, 0, (float)LOAD_SIDE_W, (float)UI_H};
     g_shellMonitor = {(float)LOAD_MON_X, (float)LOAD_MON_Y, (float)LOAD_MON_W, (float)LOAD_MON_H};
 
-    // 底：整张 load 壳（左洞近黑 + 右 PCB）
-    if (g_menu.loadShell.id)
-        menuDrawTex(g_menu.loadShell, {0, 0, (float)UI_W, (float)UI_H}, WHITE);
-    else
-        DrawRectangle(0, 0, LOAD_SIDE_X, UI_H, Color{4, 6, 10, 255});
+    if (g_menu.loadShell.id) {
+        menuDrawTex(g_menu.loadShell, {0, 0, (float)UI_W, (float)UI_H}, Color{90, 100, 110, 80});
+        DrawRectangle(0, 0, LOAD_SIDE_X, UI_H, Color{12, 14, 18, 160});
+    } else {
+        DrawRectangle(0, 0, LOAD_SIDE_X, UI_H, MENU_DEEP);
+    }
 
-    // BIK/title：等比放入左侧洞，完整 CRT 外框可见，不被侧栏裁切
     if (g_menu.bikN > 0 || g_menu.titlelg.id) {
         Texture2D art{};
         if (g_menu.bikN > 0) {
@@ -713,39 +794,31 @@ void Game::drawMainMenu() {
     } else {
         int cx = (int)(g_shellContent.width * 0.5f), cy = UI_H / 2 - 20;
         for (int r = 40; r <= 160; r += 40)
-            DrawCircleLines(cx, cy, (float)r, Color{80, 20, 16, 255});
+            DrawCircleLines(cx, cy, (float)r, Color{60, 70, 80, 160});
         const char* title = TR(S::GameTitle);
-        drawTextS(font, title, cx - textW(font, title, 28) / 2, 80, 28, Color{216, 48, 40, 255});
+        drawTextS(font, title, cx - textW(font, title, 28) / 2, 80, 28, MENU_YELLOW);
     }
 
-    // 右栏再贴一次，确保 PCB 盖住任何溢出
-    if (g_menu.loadShell.id) {
-        DrawTexturePro(g_menu.loadShell,
-                       {(float)LOAD_SIDE_X, 0, (float)LOAD_SIDE_W, (float)UI_H},
-                       g_shellSide, {0, 0}, 0, WHITE);
-    }
+    menuDrawSideL0(g_shellSide);
+    menuDrawModernSideRail(g_shellSide);
 
     Rectangle titlePlate{(float)LOAD_SIDE_X + 8, 10, (float)LOAD_SIDE_W - 16, 28};
-    DrawRectangleRec(titlePlate, Color{10, 12, 14, 255});
-    guiBevel(titlePlate, true);
-    DrawRectangle((int)titlePlate.x + 2, (int)titlePlate.y + 2,
-                  (int)titlePlate.width - 4, (int)titlePlate.height - 4, Color{16, 18, 20, 255});
     const char* mmTitle = g_lang ? "Main Menu" : "主菜单";
-    drawTextS(font, mmTitle,
-              (int)(titlePlate.x + titlePlate.width / 2 - textW(font, mmTitle, 14) / 2),
-              (int)(titlePlate.y + 6), 14, MENU_YELLOW);
+    menuDrawTechTitlePlate(titlePlate, font, mmTitle);
 
-    // 监视器：工业 CRT（勿玩具 WARNING/示波）
     menuDrawCrt(font, g_shellMonitor, TR(S::Ready));
 
     Vector2 m = menuUiFromCanvas(mousePos());
     bool pr = mPressed(MOUSE_LEFT_BUTTON);
-    // 侧栏动作钮：钮间必须露出壳层缝（勿焊成墙）
     const float bw = 148.f, bh = 34.f;
     const float bx = (float)LOAD_SIDE_X + ((float)LOAD_SIDE_W - bw) * 0.5f;
     float by = 176.f;
     const float gap = 10.f;
     const int fontSz = 13;
+    const int nBtn = 6;
+    // 按钮舱：整列凹入，像仪器槽而非漂浮方块
+    Rectangle btnBay{bx - 5.f, by - 6.f, bw + 10.f, nBtn * (bh + gap) - gap + 12.f};
+    menuDrawWell(btnBay, false);
 
     if (ra2TitleButton(font, m, pr, {bx, by, bw, bh}, TR(S::Skirmish), fontSz))
         phase = Phase::Setup;
@@ -774,7 +847,7 @@ void Game::drawMainMenu() {
         exit(0);
     }
 
-    drawTextS(font, "Version 1.0", (int)(g_shellSide.x + 10), UI_H - 16, 11, MENU_YELLOW);
+    drawTextS(font, "Version 1.0", (int)(g_shellSide.x + 10), UI_H - 16, 11, MENU_MUTE);
 }
 
 void Game::debugMenuShot(const char* file, bool setup) {
@@ -849,6 +922,10 @@ void Game::debugGuiReview(const char* outDir) {
     menuSetBikForceFrame(-1);
 
     shotPhase(Phase::Setup, "02_setup");
+    g_setupMapCustom = true;
+    seedHistEnsure(previewSeed);
+    shotPhase(Phase::Setup, "02b_setup_mapcustom");
+    g_setupMapCustom = false;
     shotPhase(Phase::MissionSelect, "03_campaign");
     shotPhase(Phase::Settings, "04_settings");
     shotPhase(Phase::NetLobby, "05_netlobby");
@@ -927,12 +1004,17 @@ void Game::drawMissionSelect() {
         float iw = mon.width - pad * 2, ih = mon.height - pad * 2;
         float sc = std::min(iw / aw, ih / ah);
         float dw = aw * sc, dh = ah * sc;
-        DrawRectangleRec(mon, Color{6, 10, 10, 255});
+        menuDrawWell(mon, false);
         menuDrawTex(g_menu.fsbkgSm,
                     {mon.x + (mon.width - dw) * 0.5f, mon.y + (mon.height - dh) * 0.5f, dw, dh}, WHITE);
     }
 
     static int campTab = 0;
+    static int campTabPrev = -1;
+    static float campScroll = 0.f;
+    static bool campSbDrag = false;
+    static float campSbGrab = 0.f;
+
     const auto& tbl = missionTable();
     const int perCamp = 8;
     const Faction campFac[4] = {Faction::China, Faction::Allies, Faction::Soviet, Faction::Yuri};
@@ -943,20 +1025,35 @@ void Game::drawMissionSelect() {
         bool sel = campTab == t;
         bool hover = CheckCollisionPointRec(m, r);
         drawMenuOptSlot(r, sel || hover, false);
-        if (sel) DrawRectangleLinesEx(r, 1, Color{230, 190, 70, 255});
+        if (sel) DrawRectangleLinesEx(r, 1, MENU_ACCENT);
         const char* fn = t < 4 ? factName(campFac[t]) : (g_lang ? "Official" : "官方");
         drawTextS(font, fn, (int)r.x + tabW / 2 - textW(font, fn, 12) / 2, (int)r.y + 7, 12,
-                  sel ? Color{255, 235, 120, 255} : Color{190, 175, 130, 255});
-        if (hover && mPressed(MOUSE_LEFT_BUTTON)) { g_sfx.play(Sfx::Click, 0.6f); campTab = t; }
+                  sel ? MENU_YELLOW_HI : MENU_MUTE);
+        if (hover && mPressed(MOUSE_LEFT_BUTTON)) {
+            g_sfx.play(Sfx::Click, 0.6f);
+            campTab = t;
+        }
+    }
+    if (campTabPrev != campTab) {
+        campScroll = 0.f;
+        campSbDrag = false;
+        campTabPrev = campTab;
     }
 
-    // 640 内容区仅 ~472 宽：2 列任务卡
+    // 640 内容区：2 列任务卡 + 右侧滚动条
     const int cols = 2;
-    int cardW = 210, cardH = 110, gapX = 10, gapY = 8;
+    const int cardW = 210, cardH = 110, gapX = 10, gapY = 10;
+    const int sbW = 12;
+    const int viewTop = 78;
+    const int viewBottom = UI_H - 8;
+    const float viewH = (float)(viewBottom - viewTop);
+    const float listLeft = content.x + 10.f;
+    const float listRight = content.x + content.width - 20.f - (float)sbW;
+    const float listW = listRight - listLeft;
     int totalW = cols * cardW + (cols - 1) * gapX;
-    int x0 = (int)content.x + ((int)content.width - totalW) / 2;
-    if (x0 < (int)content.x + 10) x0 = (int)content.x + 10;
-    int y0 = 78;
+    int x0 = (int)(listLeft + (listW - (float)totalW) * 0.5f);
+    if (x0 < (int)listLeft) x0 = (int)listLeft;
+
     std::vector<int> indices;
     if (campTab < 4) {
         int begin = campTab * perCamp, end = std::min(begin + perCamp, (int)tbl.size());
@@ -966,39 +1063,110 @@ void Game::drawMissionSelect() {
         for (int i = 0; i < (int)tbl.size(); i++)
             if (tbl[i].track == 1) indices.push_back(i);
     }
-    for (int j = 0; j < (int)indices.size() && j < 8; j++) {
+
+    const int n = (int)indices.size();
+    const int rows = n > 0 ? (n + cols - 1) / cols : 0;
+    const float contentH = rows > 0 ? (float)(rows * (cardH + gapY) - gapY) : 0.f;
+    const float maxScroll = std::max(0.f, contentH - viewH);
+    if (campScroll > maxScroll) campScroll = maxScroll;
+    if (campScroll < 0.f) campScroll = 0.f;
+
+    Rectangle view{listLeft, (float)viewTop, listW, viewH};
+    Rectangle sbTrack{content.x + content.width - 16.f, (float)viewTop, (float)sbW, viewH};
+    const bool needSb = maxScroll > 0.5f;
+    const float thumbH = needSb ? std::max(36.f, viewH * (viewH / std::max(contentH, 1.f))) : viewH;
+    const float thumbTravel = std::max(1.f, viewH - thumbH);
+    float thumbY = (float)viewTop + (needSb ? thumbTravel * (campScroll / maxScroll) : 0.f);
+    Rectangle thumb{sbTrack.x, thumbY, sbTrack.width, thumbH};
+
+    // 滚轮：指针在内容洞或滚动条上时滑动列表
+    if (CheckCollisionPointRec(m, content) || CheckCollisionPointRec(m, sbTrack)) {
+        float wh = GetMouseWheelMove();
+        if (wh != 0.f)
+            campScroll = std::clamp(campScroll - wh * 48.f, 0.f, maxScroll);
+    }
+
+    // 滚动条拖拽 / 点轨道跳转
+    if (needSb) {
+        if (mPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(m, thumb)) {
+            campSbDrag = true;
+            campSbGrab = m.y - thumb.y;
+        }
+        if (!mDown(MOUSE_LEFT_BUTTON)) campSbDrag = false;
+        if (campSbDrag) {
+            float ty = m.y - campSbGrab;
+            float t = (ty - (float)viewTop) / thumbTravel;
+            campScroll = std::clamp(t, 0.f, 1.f) * maxScroll;
+            thumbY = (float)viewTop + thumbTravel * (campScroll / maxScroll);
+            thumb.y = thumbY;
+        } else if (mPressed(MOUSE_LEFT_BUTTON) && CheckCollisionPointRec(m, sbTrack)
+                   && !CheckCollisionPointRec(m, thumb)) {
+            float t = (m.y - (float)viewTop - thumbH * 0.5f) / thumbTravel;
+            campScroll = std::clamp(t, 0.f, 1.f) * maxScroll;
+            thumbY = (float)viewTop + thumbTravel * (campScroll / maxScroll);
+            thumb.y = thumbY;
+        }
+    } else {
+        campSbDrag = false;
+    }
+
+    // 滚动条绘制（指挥壳：凹陷轨 + 琥珀拇指，对比要够）
+    DrawRectangleRec(sbTrack, Color{8, 10, 12, 255});
+    guiBevel(sbTrack, true);
+    if (needSb) {
+        bool thHot = campSbDrag || CheckCollisionPointRec(m, thumb);
+        DrawRectangleRec(thumb, thHot ? Color{120, 36, 28, 255} : Color{72, 22, 18, 255});
+        DrawRectangleLinesEx(thumb, 1, thHot ? MENU_YELLOW_HI : MENU_ACCENT);
+        // 中间抓手纹
+        int mid = (int)(thumb.y + thumb.height * 0.5f);
+        for (int k = -1; k <= 1; k++)
+            DrawLine((int)thumb.x + 3, mid + k * 3, (int)(thumb.x + thumb.width - 4), mid + k * 3,
+                     thHot ? Color{120, 230, 220, 220} : Color{60, 140, 135, 200});
+    } else {
+        // 无需滚动时也画空轨，避免布局跳变
+        DrawRectangle((int)sbTrack.x + 2, (int)sbTrack.y + 2, (int)sbTrack.width - 4, (int)sbTrack.height - 4,
+                      Color{18, 20, 22, 255});
+    }
+
+    const bool blockCardClick = campSbDrag || CheckCollisionPointRec(m, sbTrack);
+    menuScissorUi((int)view.x, (int)view.y, (int)view.width, (int)view.height);
+    for (int j = 0; j < n; j++) {
         int i = indices[j];
         const MissionDef& md = tbl[i];
-        int gx = x0 + (j % cols) * (cardW + gapX), gy = y0 + (j / cols) * (cardH + gapY);
-        Rectangle r{(float)gx, (float)gy, (float)cardW, (float)cardH};
-        bool hover = CheckCollisionPointRec(m, r);
-        DrawRectangleRec(r, Color{16, 18, 22, 255});
+        int gx = x0 + (j % cols) * (cardW + gapX);
+        float gy = (float)viewTop + (float)(j / cols) * (cardH + gapY) - campScroll;
+        if (gy + cardH < view.y - 2.f || gy > view.y + view.height + 2.f) continue;
+        Rectangle r{(float)gx, gy, (float)cardW, (float)cardH};
+        bool hover = !blockCardClick && CheckCollisionPointRec(m, r) && CheckCollisionPointRec(m, view);
+        DrawRectangleRec(r, Color{10, 16, 20, 255});
         guiBevel(r, false);
-        DrawRectangle(gx + 3, gy + 3, cardW - 6, cardH - 6, hover ? Color{28, 22, 16, 230} : Color{12, 14, 18, 230});
-        guiBevel({(float)(gx + 3), (float)(gy + 3), (float)(cardW - 6), (float)(cardH - 6)}, true);
-        DrawRectangleLinesEx(r, 1, hover ? Color{230, 190, 70, 255} : Color{70, 74, 82, 220});
-        // 左色条：目标类型速识
+        DrawRectangle((int)r.x + 3, (int)r.y + 3, cardW - 6, cardH - 6,
+                      hover ? Color{16, 32, 36, 230} : Color{8, 14, 18, 230});
+        guiBevel({r.x + 3.f, r.y + 3.f, (float)(cardW - 6), (float)(cardH - 6)}, true);
+        DrawRectangleLinesEx(r, 1, hover ? MENU_ACCENT : Color{40, 60, 64, 220});
         Color stripe = md.objective == 1 ? Color{70, 160, 220, 255}
-                      : md.objective == 2 ? Color{200, 140, 60, 255}
+                      : md.objective == 2 ? Color{60, 150, 160, 255}
                                           : Color{200, 70, 55, 255};
-        DrawRectangle(gx + 4, gy + 4, 4, cardH - 8, stripe);
+        DrawRectangle((int)r.x + 4, (int)r.y + 4, 4, cardH - 8, stripe);
         int rx = (int)r.x, ry = (int)r.y;
-        drawTextS(font, TextFormat(TR(S::MissionN), i + 1), rx + 14, ry + 6, 11, Color{170, 150, 100, 255});
-        drawTextS(font, missionName(i), rx + 14, ry + 20, 15, Color{255, 230, 110, 255});
-        DrawRectangle(rx + 14, ry + 40, cardW - 24, 1, Color{90, 78, 50, 200});
-        int blines = drawWrapped(font, missionBrief(i), rx + 14, ry + 44, cardW - 24, 11, Color{210, 200, 170, 255}, 2);
+        drawTextS(font, TextFormat(TR(S::MissionN), i + 1), rx + 14, ry + 6, 11, MENU_MUTE);
+        drawTextS(font, missionName(i), rx + 14, ry + 20, 15, MENU_YELLOW_HI);
+        DrawRectangle(rx + 14, ry + 40, cardW - 24, 1, Color{36, 70, 72, 200});
+        int blines = drawWrapped(font, missionBrief(i), rx + 14, ry + 44, cardW - 24, 11, Color{170, 200, 195, 255}, 2);
         const char* objText = md.objective == 1 ? TextFormat(TR(S::ObjSurvive), md.objectiveTick / (30 * 60))
                               : md.objective == 2 ? TR(S::ObjTrigger) : TR(S::ObjEliminate);
-        drawTextS(font, objText, rx + 14, ry + 46 + blines * 13, 11, Color{255, 190, 90, 255});
+        drawTextS(font, objText, rx + 14, ry + 46 + blines * 13, 11, Color{140, 210, 200, 255});
         if (hover) {
-            drawTextS(font, TR(S::ClickEnter), rx + 14, ry + cardH - 18, 12, Color{255, 236, 150, 255});
+            drawTextS(font, TR(S::ClickEnter), rx + 14, ry + cardH - 18, 12, MENU_YELLOW_HI);
             if (mPressed(MOUSE_LEFT_BUTTON)) {
                 g_sfx.play(Sfx::Click, 0.6f);
                 newCampaignGame(i);
+                EndScissorMode();
                 return;
             }
         }
     }
+    EndScissorMode();
 
     float bx = side.x + 6, bw = side.width - 12;
     if (ra2Button(font, m, mPressed(MOUSE_LEFT_BUTTON),
@@ -1007,15 +1175,18 @@ void Game::drawMissionSelect() {
 }
 
 // ===================== 地图预览（与 bakeTerrain 同源 TMP 采样缩略） =====================
-static uint32_t previewTileHash(int x, int y, uint64_t s) {
-    uint32_t n = (uint32_t)(x * 374761393u + y * 668265263u) ^ (uint32_t)s;
-    n = (n ^ (n >> 13)) * 1274126177u;
-    return n ^ (n >> 16);
+// 与 game_render_world.cpp::tHash 同算法，保证变体选择与局内一致
+static uint32_t previewTileHash(int x, int y, uint64_t seed) {
+    uint32_t h = ((uint32_t)x * 73856093u) ^ ((uint32_t)y * 19349663u) ^ ((uint32_t)seed * 83492791u);
+    h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+    return h;
 }
 
 void Game::refreshMapPreview() {
     std::vector<Vec2i> spawns;
-    previewMap.generate(cfgMapSize, cfgMapSize, previewSeed, cfgAI + 1, spawns, cfgMapType);
+    // 与 newGame 一致：海战强制岛屿类地形
+    int mapType = (cfgGameMode == (int)SkirmishMode::NavalWar) ? 1 : cfgMapType;
+    previewMap.generate(cfgMapSize, cfgMapSize, previewSeed, cfgAI + 1, spawns, mapType);
     const int w = cfgMapSize, h = cfgMapSize;
     const uint64_t seed = 20260723; // 与 bakeTerrain 同种子
 
@@ -1059,8 +1230,8 @@ void Game::refreshMapPreview() {
     const int Pw = 280, Ph = 200;
     float sc = std::min((float)Pw / terrainW, (float)Ph / terrainH);
     int bw = (int)(terrainW * sc) + 1, bh = (int)(terrainH * sc) + 1;
+    // 透明底：与 bakeTerrain 一样，地图外不填色 → CRT 里呈菱形轮廓
     PixBuf pb(bw, bh);
-    pb.clear(Color{22, 24, 28, 255});
 
     auto fallbackCol = [](Terrain t) -> Color {
         switch (t) {
@@ -1079,7 +1250,7 @@ void Game::refreshMapPreview() {
             float sx = bx / sc - terrainOX;
             float fx = sx / (TILE_W / 2.0f), fy = sy / (TILE_H / 2.0f);
             int tx = (int)floorf((fx + fy) / 2.0f), ty = (int)floorf((fy - fx) / 2.0f);
-            if (!previewMap.inBounds(tx, ty)) continue;
+            if (!previewMap.inBounds(tx, ty)) continue; // 菱形外透明（同 bakeTerrain）
             Terrain t = previewMap.at(tx, ty).terrain;
             Color c = fallbackCol(t);
             int ti = (int)t;
@@ -1192,8 +1363,8 @@ static bool setupDropConsumeClick(Vector2 m, bool pr, int nItems, float rowH, in
 static void setupDropDrawPanel(int nItems, float rowH) {
     if (g_sdrop.kind == SetupDrop::None || nItems <= 0) return;
     Rectangle list = setupDropListRect(nItems, rowH);
-    DrawRectangleRec(list, Color{8, 8, 10, 250});
-    DrawRectangleLinesEx(list, 1, Color{200, 48, 36, 255});
+    DrawRectangleRec(list, MENU_STEEL);
+    menuDrawSteelEdges(list, true);
 }
 
 // ===================== 遭遇战设置（640 逻辑：左玩家/规则 + 右地图轨） =====================
@@ -1208,21 +1379,22 @@ void Game::drawSetup() {
     int maxAI = cfgMapSize <= 64 ? 3 : (cfgMapSize <= 96 ? 5 : (cfgMapSize <= 160 ? 7 : 7));
     if (cfgAI > maxAI) cfgAI = maxAI;
 
-    // ---------- 右栏：监视器 + 信息 + sdmp 按钮 ----------
+    // ---------- 右栏：CRT 内等距菱形预览（等比 contain，与局内投影一致） ----------
     Rectangle mon = menuShellMonitor();
-    DrawRectangleRec(mon, Color{22, 24, 28, 255});
+    DrawRectangleRec(mon, Color{0, 0, 0, 255});
+    menuDrawSteelEdges(mon, false);
     if (previewTex.id > 0) {
-        float pad = 4;
+        float pad = 2.f;
         float aw = (float)previewTex.width, ah = (float)previewTex.height;
-        // 预留监视器下半给 tip 叠字时仍可辨地图：预览略偏上半
-        float iw = mon.width - pad * 2, ih = mon.height - pad * 2;
-        float scale = std::min(iw / aw, ih / ah);
+        float iw = mon.width - pad * 2.f, ih = mon.height - pad * 2.f;
+        // contain：保持等距 AABB 比例；CRT 四角黑底 = 菱形外正常空隙（勿拉伸填满）
+        float scale = std::min(iw / std::max(1.f, aw), ih / std::max(1.f, ah));
         float dw = aw * scale, dh = ah * scale;
-        Rectangle dst{mon.x + (mon.width - dw) * 0.5f, mon.y + pad + 2.f, dw, dh};
+        Rectangle dst{mon.x + (mon.width - dw) * 0.5f, mon.y + (mon.height - dh) * 0.5f, dw, dh};
         DrawTexturePro(previewTex, {0, 0, aw, ah}, dst, {0, 0}, 0, WHITE);
     }
-    // 状态条仅默认摘要用；悬停 tip 改画在监视器内（更高，避免又宽又矮的扁条）
-    Rectangle statusBar = {mon.x, mon.y + mon.height + 4, mon.width, 36.f};
+    // 监视器下短状态（单行），省出侧栏钮位
+    Rectangle statusBar = {mon.x, mon.y + mon.height + 3.f, mon.width, 22.f};
     const char* tipTitle = nullptr;
     const char* tipBody = nullptr;
     auto setTip = [&](const char* title, const char* body) {
@@ -1289,10 +1461,9 @@ void Game::drawSetup() {
                 cfgGameMode = dropSel;
                 if (cfgGameMode == (int)SkirmishMode::FreeForAll) cfgAlliance = false;
                 if (cfgGameMode == (int)SkirmishMode::LandRush) cfgCrates = true;
-                if (cfgGameMode == (int)SkirmishMode::NavalWar && cfgMapType != 1) {
+                if (cfgGameMode == (int)SkirmishMode::NavalWar && cfgMapType != 1)
                     cfgMapType = 1;
-                    previewDirty = true;
-                }
+                previewDirty = true;
                 break;
             case SetupDrop::MapSize:
                 cfgMapSize = mapSizes[dropSel];
@@ -1311,24 +1482,45 @@ void Game::drawSetup() {
     }
     bool prUi = pr && !dropAte;
 
-    // 侧栏：钮间留缝；勿贴成金属墙
+    // 侧栏：开始 / 随机新图 / 地图定制 / 返回（贴近原作动作密度；钮略矮以装下）
     float bw = std::min(side.width - 14.f, 148.f);
-    float bhSide = bw * (83.f / 156.f); // ≈79 @148
+    float bhSide = 40.f;
     float bx = side.x + (side.width - bw) * 0.5f;
-    const float sideGap = 10.f;
-    float byBtn = statusBar.y + statusBar.height + 8.f;
-    const float backY = UI_H - 16.f - bhSide;
-    if (byBtn + bhSide * 2 + sideGap > backY - 10.f)
-        byBtn = std::max(statusBar.y + statusBar.height + 4.f, backY - 10.f - bhSide * 2 - sideGap);
-    if (ra2Button(font, m, prUi, {bx, byBtn, bw, bhSide}, TR(S::StartGame), 14))
-        newGame(previewSeed);
-    if (ra2Button(font, m, prUi, {bx, byBtn + bhSide + sideGap, bw, bhSide}, TR(S::CustomizeBattle), 12)) {
-        previewSeed = (uint64_t)time(nullptr) * 2654435761u + 97;
+    const float sideGap = 6.f;
+    float byBtn = statusBar.y + statusBar.height + 6.f;
+    const float backY = UI_H - 12.f - bhSide;
+    // 中间两钮：随机新图 + 地图定制
+    const float midH = bhSide * 2.f + sideGap;
+    if (byBtn + bhSide + sideGap + midH > backY - 8.f)
+        byBtn = std::max(statusBar.y + statusBar.height + 4.f, backY - 8.f - bhSide - sideGap - midH);
+
+    auto rollRandomMap = [&]() {
+        uint64_t ns = seedRollNew(previewSeed);
+        previewSeed = ns;
+        seedHistPush(ns);
         previewDirty = true;
         g_sfx.play(Sfx::Click, 0.55f);
+    };
+
+    menuDrawWell({bx - 4.f, byBtn - 4.f, bw + 8.f, bhSide + sideGap + midH + 8.f}, false);
+    if (ra2Button(font, m, prUi, {bx, byBtn, bw, bhSide}, TR(S::StartGame), 13, true, false, true))
+        newGame(previewSeed);
+    float y2 = byBtn + bhSide + sideGap;
+    if (ra2Button(font, m, prUi, {bx, y2, bw, bhSide}, TR(S::RandomNewMap), 12))
+        rollRandomMap();
+    if (CheckCollisionPointRec(m, {bx, y2, bw, bhSide}) && cfgUiTips)
+        setTip(TR(S::RandomNewMap), TR(S::TipMapSeed));
+    float y3 = y2 + bhSide + sideGap;
+    if (ra2Button(font, m, prUi, {bx, y3, bw, bhSide}, TR(S::CustomizeBattle), 12)) {
+        g_setupMapCustom = !g_setupMapCustom;
+        if (g_setupMapCustom) seedHistEnsure(previewSeed);
+        g_sfx.play(Sfx::Click, 0.55f);
     }
-    if (ra2Button(font, m, prUi, {bx, backY, bw, bhSide}, TR(S::Back), 14)) {
+    if (CheckCollisionPointRec(m, {bx, y3, bw, bhSide}) && cfgUiTips)
+        setTip(TR(S::CustomizeBattle), TR(S::TipCustomizeBattle));
+    if (ra2Button(font, m, prUi, {bx, backY, bw, bhSide}, TR(S::Back), 13)) {
         setupDropClose();
+        g_setupMapCustom = false;
         phase = Phase::MainMenu;
     }
 
@@ -1364,10 +1556,10 @@ void Game::drawSetup() {
     auto slotRow = [&](int idx, const char* name, int& color, int& country, int& diff, int& pers, bool isLocal) {
         (void)pers;
         int y = slotY + idx * rowH;
-        DrawRectangle(sx, y, sw, rowH - 2, idx % 2 ? Color{16, 14, 16, 160} : Color{22, 16, 16, 160});
+        DrawRectangle(sx, y, sw, rowH - 2, idx % 2 ? Color{18, 22, 28, 170} : Color{26, 30, 38, 170});
         Rectangle nr{(float)nameX, (float)y + 2, (float)nameW, (float)(rowH - 6)};
         drawMenuOptSlot(nr, CheckCollisionPointRec(m, nr), false);
-        menuSlotText(font, nr, name, isLocal ? MENU_YELLOW : Color{220, 200, 160, 255}, 11, 3, true);
+        menuSlotText(font, nr, name, isLocal ? MENU_YELLOW : MENU_MUTE, 11, 3, true);
         if (CheckCollisionPointRec(m, nr) && cfgUiTips) setTip(name, TR(S::TipPlayerSlot));
 
         Texture2D fi = factionIconFor(country);
@@ -1410,8 +1602,9 @@ void Game::drawSetup() {
         bool chover = CheckCollisionPointRec(m, cr);
         bool copen = g_sdrop.kind == SetupDrop::Color && g_sdrop.slot == idx;
         DrawRectangleRec(cr, HOUSE_COLORS[color]);
-        guiBevel(cr, true);
-        DrawRectangleLinesEx(cr, 1, (chover || copen) ? Color{230, 190, 70, 255} : Color{70, 74, 82, 220});
+        menuDrawSteelEdges(cr, false);
+        if (chover || copen)
+            DrawLine((int)cr.x + 1, (int)cr.y + 1, (int)(cr.x + cr.width - 2), (int)cr.y + 1, MENU_ACCENT);
         {
             float cx = cr.x + cr.width - 7.f, cy = cr.y + cr.height * 0.5f;
             Color ac = (chover || copen) ? MENU_YELLOW_HI : MENU_YELLOW;
@@ -1465,18 +1658,21 @@ void Game::drawSetup() {
         slotBottom = y + 24;
     }
 
-    auto dropField = [&](int x, int y, int colW, const char* label, const char* value, SetupDrop kind,
-                         const char* tipT, const char* tipB) {
+    auto dropField = [&](int x, int y, int labelW, int slotW, const char* label, const char* value,
+                         SetupDrop kind, const char* tipT, const char* tipB) {
+        // 紧凑表单：标签左对齐 + 定宽值槽（勿拉满整行，短字不会漂在超长条中间）
         const int fs = 11;
+        const int slotH = 20;
         drawTextS(font, label, x, y + 4, fs, MENU_YELLOW);
-        int lw = textW(font, label, fs);
-        int lx = x + lw + 6;
-        int vw = std::max(48, colW - lw - 6);
-        Rectangle r{(float)lx, (float)y, (float)vw, 20};
+        int lx = x + labelW;
+        Rectangle r{(float)lx, (float)y, (float)slotW, (float)slotH};
         bool hover = CheckCollisionPointRec(m, r);
         bool open = g_sdrop.kind == kind;
         drawMenuOptSlot(r, hover || open);
-        menuSlotText(font, r, value, MENU_YELLOW, fs, 4, true);
+        // 左对齐 + 右侧留箭头位
+        menuScissorUi((int)r.x + 6, (int)r.y, std::max(4, (int)r.width - 18), (int)r.height);
+        drawTextS(font, value, (int)r.x + 6, (int)r.y + (slotH - fs) / 2, fs, MENU_YELLOW);
+        EndScissorMode();
         if (hover && cfgUiTips && tipT) setTip(tipT, tipB);
         if (hover && prUi) {
             setupDropToggle(kind, -1, r);
@@ -1484,9 +1680,13 @@ void Game::drawSetup() {
         }
     };
 
-    // 选项区：勾选双列；底栏模式/地图分行，区间留缝
-    const int oyMode = 378;
-    const int oyMap = 428;
+    // 选项区：勾选双列；底栏定宽表单（oyMode/oyMap 给上方规则区让位）
+    const int formX = 12;
+    const int labelW = 78;   // 容纳 "Game Mode" / 「游戏模式」
+    const int modeSlotW = 150;
+    const int mapSlotW = 110;
+    const int oyMode = 390;
+    const int oyMap = oyMode + 30;
     const int optBlockH = 100;
     int optGap = 20;
     int ty = std::max(slotBottom + 14, 200);
@@ -1495,8 +1695,8 @@ void Game::drawSetup() {
         optGap = 16;
     }
     // 分区细线：玩家表 ↔ 规则
-    DrawRectangle(sx, ty - 8, sw, 1, Color{70, 60, 40, 180});
-    DrawRectangle(sx, ty - 8, 48, 2, Color{200, 160, 60, 220});
+    DrawRectangle(sx, ty - 8, sw, 1, Color{28, 50, 52, 180});
+    DrawRectangle(sx, ty - 8, 48, 2, MENU_ACCENT);
     bool hov = false;
     menuPipToggle(font, m, prUi, 12, ty, TR(S::ShortGame), cfgShortGame, 11, &hov);
     if (hov && cfgUiTips) setTip(TR(S::ShortGame), TR(S::TipShortGame));
@@ -1529,21 +1729,76 @@ void Game::drawSetup() {
         cfgMoney = monies[moneyStep];
     if (CheckCollisionPointRec(m, moneyHit) && cfgUiTips) setTip(TR(S::StartMoney), TR(S::TipStartMoney));
 
-    // 底栏：模式独占一行；尺寸/类型第二行，避免三列挤扁
-    int colWMode = (int)content.width - 24;
-    dropField(10, oyMode, colWMode, TR(S::GameMode), TR(modeNames[cfgGameMode]), SetupDrop::Mode,
+    // 底栏：定宽值槽（模式一行；尺寸/类型并排，左对齐短字）
+    dropField(formX, oyMode, labelW, modeSlotW, TR(S::GameMode), TR(modeNames[cfgGameMode]), SetupDrop::Mode,
               TR(S::GameMode), TR(modeTips[cfgGameMode]));
     int si = 0;
     while (si < kMapSizeN && mapSizes[si] != cfgMapSize) si++;
     if (si >= kMapSizeN) si = 2;
-    int col1 = 10, col2 = 240;
-    int colW1 = col2 - col1 - 10, colW2 = (int)content.width - col2 - 12;
-    dropField(col1, oyMap, colW1, TR(S::MapSize), TR(sizeNames[si]), SetupDrop::MapSize,
+    dropField(formX, oyMap, labelW, mapSlotW, TR(S::MapSize), TR(sizeNames[si]), SetupDrop::MapSize,
               TR(S::MapSize), TR(S::TipMapSize));
     int ti = cfgMapType;
     if (ti < 0 || ti >= kMapTypeN) ti = 0;
-    dropField(col2, oyMap, colW2, TR(S::MapType), TR(typeNames[ti]), SetupDrop::MapType,
+    int typeX = formX + labelW + mapSlotW + 18;
+    dropField(typeX, oyMap, labelW, mapSlotW, TR(S::MapType), TR(typeNames[ti]), SetupDrop::MapType,
               TR(S::MapType), TR(typeTips[ti]));
+
+    // ---------- 地图定制面板（换地图展开）：种子 + 随机/上一个/下一个/切换类型 ----------
+    if (g_setupMapCustom) {
+        seedHistEnsure(previewSeed);
+        const int panelY = 318;
+        Rectangle panel{(float)formX, (float)panelY, (float)(content.width - 24), 66.f};
+        menuDrawPlate(panel, false);
+        DrawRectangle((int)panel.x + 6, (int)(panel.y + panel.height - 3), (int)panel.width - 12, 2,
+                      Color{72, 168, 196, 100});
+        drawTextS(font, TR(S::MapCustomTitle), (int)panel.x + 8, (int)panel.y + 5, 11, MENU_YELLOW);
+        const char* seedStr = TextFormat("%llu", (unsigned long long)previewSeed);
+        drawTextS(font, TR(S::MapSeed), (int)panel.x + 8, (int)panel.y + 24, 11, MENU_MUTE);
+        Rectangle seedSlot{panel.x + 52.f, panel.y + 22.f, 150.f, 18.f};
+        drawMenuOptSlot(seedSlot, false, false);
+        menuSlotText(font, seedSlot, seedStr, MENU_YELLOW_HI, 11, 4, true);
+        if (CheckCollisionPointRec(m, seedSlot) && cfgUiTips)
+            setTip(TR(S::MapSeed), TR(S::TipMapSeed));
+
+        const float btnH = 20.f;
+        const float btnY = panel.y + 42.f;
+        float ax = panel.x + 8.f;
+        auto miniBtn = [&](float& x, float w, const char* label, bool enabled = true) -> bool {
+            Rectangle br{x, btnY, w, btnH};
+            x += w + 6.f;
+            return ra2Button(font, m, prUi, br, label, 10, enabled);
+        };
+        if (miniBtn(ax, 78.f, TR(S::RandomNewMap))) {
+            uint64_t ns = seedRollNew(previewSeed);
+            previewSeed = ns;
+            seedHistPush(ns);
+            previewDirty = true;
+        }
+        bool canPrev = g_seedHistI > 0;
+        if (miniBtn(ax, 78.f, TR(S::PrevSeed), canPrev) && canPrev) {
+            g_seedHistI--;
+            previewSeed = g_seedHist[g_seedHistI];
+            previewDirty = true;
+        }
+        if (miniBtn(ax, 78.f, TR(S::NextSeed))) {
+            if (g_seedHistI >= 0 && g_seedHistI < g_seedHistN - 1) {
+                g_seedHistI++;
+                previewSeed = g_seedHist[g_seedHistI];
+            } else {
+                uint64_t ns = seedRollNew(previewSeed);
+                previewSeed = ns;
+                seedHistPush(ns);
+            }
+            previewDirty = true;
+        }
+        bool canCycleType = cfgGameMode != (int)SkirmishMode::NavalWar;
+        if (miniBtn(ax, 78.f, TR(S::CycleMapType), canCycleType) && canCycleType) {
+            cfgMapType = (cfgMapType + 1) % kMapTypeN;
+            previewDirty = true;
+        }
+        if (CheckCollisionPointRec(m, panel) && cfgUiTips && !tipTitle)
+            setTip(TR(S::MapCustomTitle), TR(S::TipCustomizeBattle));
+    }
 
     // 下拉列表（先收集悬停 tip，再画 tip，保证下拉项也有说明）
     int nDrop = dropItemCount();
@@ -1553,7 +1808,7 @@ void Game::drawSetup() {
         for (int i = 0; i < nDrop; i++) {
             Rectangle row{list.x + 1, list.y + 2 + i * dropRowH, list.width - 2, dropRowH};
             bool hover = CheckCollisionPointRec(m, row);
-            if (hover) DrawRectangleRec(row, Color{48, 20, 16, 255});
+            if (hover) DrawRectangleRec(row, Color{16, 40, 44, 255});
             switch (g_sdrop.kind) {
                 case SetupDrop::Country: {
                     const char* cn = nullptr;
@@ -1612,24 +1867,27 @@ void Game::drawSetup() {
         }
     }
 
-    // tip：监视器下半叠字（更高可读）；无 tip 时用监视器下短状态条
-    // 下拉画完后再刷 tip，确保下拉项悬停也能更新说明
+    // tip：叠在地图下半（半透明），不预留空黑；无 tip 时短状态条
     if (cfgUiTips && tipTitle && tipBody) {
-        float tipH = mon.height * 0.58f;
+        float tipH = mon.height * 0.42f;
         Rectangle tipR{mon.x, mon.y + mon.height - tipH, mon.width, tipH};
-        DrawRectangleRec(tipR, Color{6, 8, 10, 240});
-        DrawRectangleLinesEx(tipR, 1, Color{200, 48, 36, 200});
-        // 只画字，避免 menuInfoPanel 再铺一层底
-        int x = (int)tipR.x + 4, y = (int)tipR.y + 4;
+        DrawRectangleRec(tipR, Color{10, 12, 16, 220});
+        DrawLine((int)tipR.x + 2, (int)tipR.y, (int)(tipR.x + tipR.width - 2), (int)tipR.y,
+                 Color{70, 78, 90, 140});
+        int x = (int)tipR.x + 4, y = (int)tipR.y + 3;
         int maxW = (int)tipR.width - 8;
         menuScissorUi(x, y, maxW, 14);
         drawTextS(font, tipTitle, x, y, 11, MENU_YELLOW);
         EndScissorMode();
-        drawWrapped(font, tipBody, x, y + 16, maxW, 10, Color{220, 200, 150, 255},
-                    std::max(1, ((int)tipH - 24) / 12));
+        drawWrapped(font, tipBody, x, y + 15, maxW, 10, MENU_MUTE,
+                    std::max(1, ((int)tipH - 22) / 12));
     } else {
-        menuInfoPanel(font, statusBar, TR(modeNames[cfgGameMode]),
-                      TextFormat("%s (%d)", TR(typeNames[ti < 0 || ti >= kMapTypeN ? 0 : ti]), cfgAI + 1),
-                      12, 11);
+        char seedLine[48];
+        std::snprintf(seedLine, sizeof(seedLine), "%s %llu", TR(S::MapSeed), (unsigned long long)previewSeed);
+        menuDrawWell(statusBar, false);
+        menuScissorUi((int)statusBar.x + 3, (int)statusBar.y + 2, (int)statusBar.width - 6, 16);
+        drawTextS(font, TextFormat("%s · %s", TR(modeNames[cfgGameMode]), seedLine),
+                  (int)statusBar.x + 4, (int)statusBar.y + 4, 10, MENU_MUTE);
+        EndScissorMode();
     }
 }

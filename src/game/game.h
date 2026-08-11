@@ -339,7 +339,7 @@ private:
 void drawTextM(Font f, const char* s, int x, int y, int size, Color c);
 int textW(Font f, const char* s, int size);
 bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size = 20,
-               bool enabled = true, bool danger = false);
+               bool enabled = true, bool danger = false, bool primary = false);
 bool ra2TextButton(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size = 28);
 void drawMenuBackdrop(Font font, const char* title); // 兼容旧调用 → RA2 shell
 // theme: 0=load 选项/遭遇战/战役 / 1=盟军暂停 / 2=multi 联机大厅；drawEmptyMonitor=false 时监视器留给调用方

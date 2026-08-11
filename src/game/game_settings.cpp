@@ -1,4 +1,4 @@
-// 设置页：原作壳层 — 左分区选项 / 右栏 键盘·网络·主选单（640 逻辑画布）
+// 设置页：Tech HUD 壳层 — 左分区选项 / 右栏 键盘·网络·主选单（640 逻辑画布）
 #include "game/game.h"
 #include "sfx/sound.h"
 #include <cmath>
@@ -14,7 +14,7 @@ int Game::pollAnyKey() {
 }
 
 void Game::drawSettings() {
-    // 空监视器由 shell 画工业 CRT；本页不再叠玩具示波
+    // 空监视器由 shell 画科技 CRT
     drawRa2Shell(font, TR(S::OptionsMenu), 0, true);
     Rectangle content = menuShellContent();
     Rectangle side = menuShellSide();
@@ -85,7 +85,7 @@ void Game::drawSettings() {
         menuSectionHeader(font, cx, y, TR(S::GameOptsSection));
         y += 26;
         const S speedNames[] = {S::SpeedSlow, S::SpeedNormal, S::SpeedFast};
-        drawTextS(font, TR(S::GameSpeed), cx, y + 4, 13, Color{200, 190, 150, 255});
+        drawTextS(font, TR(S::GameSpeed), cx, y + 4, 13, Color{140, 180, 175, 255});
         if (ra2RedSlider(font, m, pr, cx + 140, y + 2, 180, gameSpeed, 3, TR(speedNames[gameSpeed])))
             saveSettings();
 
@@ -101,7 +101,7 @@ void Game::drawSettings() {
         menuSectionHeader(font, cx, y, TR(S::SoundSection));
         y += 26;
         static const int vols[] = {0, 25, 50, 75, 100};
-        drawTextS(font, TR(S::Volume), cx, y + 4, 13, Color{200, 190, 150, 255});
+        drawTextS(font, TR(S::Volume), cx, y + 4, 13, Color{140, 180, 175, 255});
         if (ra2RedSlider(font, m, pr, cx + 140, y + 2, 180, cfgVolume, 5,
                          TextFormat("%d", vols[cfgVolume]))) {
             g_sfx.setMasterVol(vols[cfgVolume] / 100.0f);
@@ -109,7 +109,7 @@ void Game::drawSettings() {
         }
     } else {
         menuSectionHeader(font, cx, cy, TR(S::KeysSection));
-        drawTextS(font, TR(S::KeysTip), cx + 120, cy + 2, 11, Color{160, 150, 120, 255});
+        drawTextS(font, TR(S::KeysTip), cx + 120, cy + 2, 11, Color{100, 140, 135, 255});
         static const S names[KA_COUNT] = {
             S::KaStop, S::KaUnload, S::KaDeploy, S::KaScatter, S::KaGuard, S::KaSameType,
             S::KaMusic, S::KaViewBase, S::KaPause, S::KaRally, S::KaSell,
