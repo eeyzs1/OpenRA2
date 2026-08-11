@@ -1,0 +1,19 @@
+# ExampleCustom demo map 64x64
+size 64 64
+fill clear
+rect rough 8 8 12 8
+rect rough 44 44 12 8
+blob ore 20 20 3
+blob ore 44 40 3
+blob gems 32 32 2
+spawn 0 16 48
+spawn 1 48 16
+bld 0 FortifiedConYard 14 46
+bld 0 PowerPlant 18 46
+unit 0 HeavyGrizzly 20 48
+unit 0 GI 22 48
+unit 0 GI 22 50
+bld 1 ConYard 46 14
+bld 1 TeslaReactor 50 14
+unit 1 Rhino 48 18 guard
+unit 1 Conscript 50 18 guard

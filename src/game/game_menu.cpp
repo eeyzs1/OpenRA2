@@ -5,6 +5,7 @@
 #include "gfx/sprites.h"
 #include "gfx/pixel.h"
 #include "sfx/sound.h"
+#include "core/content.h"
 #include "rlgl.h"
 #include <ctime>
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cmath>
+#include <string>
 #ifdef _WIN32
 #include <direct.h>
 #else
@@ -218,8 +220,10 @@ static void menuDrawSideL0(Rectangle side) {
 }
 
 static Texture2D menuLoadTex(const char* path) {
-    if (!FileExists(path)) return Texture2D{};
-    Image img = LoadImage(path);
+    std::string resolved = contentResolve(path);
+    const char* p = resolved.empty() ? path : resolved.c_str();
+    if (!FileExists(p)) return Texture2D{};
+    Image img = LoadImage(p);
     if (!img.data) return Texture2D{};
     Texture2D t = LoadTextureFromImage(img);
     SetTextureFilter(t, TEXTURE_FILTER_POINT);
@@ -246,7 +250,7 @@ float menuUiScale() {
 
 bool menuShellPhase(Phase p) {
     return p == Phase::MainMenu || p == Phase::Setup || p == Phase::Settings
-        || p == Phase::MissionSelect || p == Phase::NetLobby;
+        || p == Phase::MissionSelect || p == Phase::MissionBrief || p == Phase::NetLobby;
 }
 
 void menuBeginUi() {
@@ -422,7 +426,8 @@ static void menuEnsureBikTex(int fi) {
     if (fi < 0) fi = 0;
     if (fi >= g_menu.bikN) fi = g_menu.bikN - 1;
     if (fi == g_menu.bikLast && g_menu.bikTex.id) return;
-    const char* path = TextFormat("assets/gui/menu/ra2ts_l/f%04d.jpg", fi + 1);
+    std::string resolved = contentResolve(TextFormat("assets/gui/menu/ra2ts_l/f%04d.jpg", fi + 1));
+    const char* path = resolved.empty() ? TextFormat("assets/gui/menu/ra2ts_l/f%04d.jpg", fi + 1) : resolved.c_str();
     Image img = LoadImage(path);
     if (!img.data) return;
     ImageFormat(&img, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
@@ -509,20 +514,23 @@ void ensureMenuGui() {
     }
     g_menu.bikN = 0;
     g_menu.bikFps = 15;
-    if (FileExists("assets/gui/menu/ra2ts_l/meta.ini")) {
-        FILE* f = fopen("assets/gui/menu/ra2ts_l/meta.ini", "rb");
-        if (f) {
-            char line[128];
-            while (fgets(line, sizeof line, f)) {
-                if (strncmp(line, "frames=", 7) == 0) g_menu.bikN = atoi(line + 7);
-                if (strncmp(line, "fps=", 4) == 0) g_menu.bikFps = atoi(line + 4);
+    {
+        std::string meta = contentResolve("assets/gui/menu/ra2ts_l/meta.ini");
+        if (!meta.empty()) {
+            FILE* f = fopen(meta.c_str(), "rb");
+            if (f) {
+                char line[128];
+                while (fgets(line, sizeof line, f)) {
+                    if (strncmp(line, "frames=", 7) == 0) g_menu.bikN = atoi(line + 7);
+                    if (strncmp(line, "fps=", 4) == 0) g_menu.bikFps = atoi(line + 4);
+                }
+                fclose(f);
             }
-            fclose(f);
-        }
-    } else {
-        for (int i = 1; i <= 512; i++) {
-            if (!FileExists(TextFormat("assets/gui/menu/ra2ts_l/f%04d.jpg", i))) break;
-            g_menu.bikN = i;
+        } else {
+            for (int i = 1; i <= 512; i++) {
+                if (!contentExists(TextFormat("assets/gui/menu/ra2ts_l/f%04d.jpg", i))) break;
+                g_menu.bikN = i;
+            }
         }
     }
     if (g_menu.bikFps <= 0) g_menu.bikFps = 15;
@@ -892,6 +900,7 @@ void Game::debugGuiReview(const char* outDir) {
             menuBeginUi();
             if (p == Phase::MainMenu) drawMainMenu();
             else if (p == Phase::MissionSelect) drawMissionSelect();
+            else if (p == Phase::MissionBrief) drawMissionBrief();
             else if (p == Phase::Settings) drawSettings();
             else if (p == Phase::NetLobby) drawNetLobby();
             else drawSetup();
@@ -1026,7 +1035,7 @@ void Game::drawMissionSelect() {
         bool hover = CheckCollisionPointRec(m, r);
         drawMenuOptSlot(r, sel || hover, false);
         if (sel) DrawRectangleLinesEx(r, 1, MENU_ACCENT);
-        const char* fn = t < 4 ? factName(campFac[t]) : (g_lang ? "Official" : "官方");
+        const char* fn = t < 4 ? factName(campFac[t]) : TR(S::OfficialLabel);
         drawTextS(font, fn, (int)r.x + tabW / 2 - textW(font, fn, 12) / 2, (int)r.y + 7, 12,
                   sel ? MENU_YELLOW_HI : MENU_MUTE);
         if (hover && mPressed(MOUSE_LEFT_BUTTON)) {
@@ -1128,20 +1137,41 @@ void Game::drawMissionSelect() {
                       Color{18, 20, 22, 255});
     }
 
+    // 难度三档（侧栏上方）
+    {
+        float dbx = side.x + 6, dbw = (side.width - 12 - 8) / 3.0f;
+        const char* dlab[3] = {TR(S::DiffEasy), TR(S::DiffNormal), TR(S::DiffHard)};
+        for (int d = 0; d < 3; d++) {
+            Rectangle dr{dbx + d * (dbw + 4), side.y + 8, dbw, 28};
+            bool sel = campaignDifficulty == d;
+            drawMenuOptSlot(dr, sel || CheckCollisionPointRec(m, dr), false);
+            if (sel) DrawRectangleLinesEx(dr, 1, MENU_ACCENT);
+            drawTextS(font, dlab[d], (int)dr.x + (int)dbw / 2 - textW(font, dlab[d], 11) / 2,
+                      (int)dr.y + 7, 11, sel ? MENU_YELLOW_HI : MENU_MUTE);
+            if (CheckCollisionPointRec(m, dr) && mPressed(MOUSE_LEFT_BUTTON)) {
+                g_sfx.play(Sfx::Click, 0.6f);
+                campaignDifficulty = d;
+            }
+        }
+        const char* trackHint = campTab < 4 ? TR(S::FusionLabel) : TR(S::OfficialLabel);
+        drawTextS(font, trackHint, (int)(side.x + 10), (int)(side.y + 44), 12, MENU_MUTE);
+    }
+
     const bool blockCardClick = campSbDrag || CheckCollisionPointRec(m, sbTrack);
     menuScissorUi((int)view.x, (int)view.y, (int)view.width, (int)view.height);
     for (int j = 0; j < n; j++) {
         int i = indices[j];
         const MissionDef& md = tbl[i];
+        bool unlocked = campaignMissionUnlocked(i);
         int gx = x0 + (j % cols) * (cardW + gapX);
         float gy = (float)viewTop + (float)(j / cols) * (cardH + gapY) - campScroll;
         if (gy + cardH < view.y - 2.f || gy > view.y + view.height + 2.f) continue;
         Rectangle r{(float)gx, gy, (float)cardW, (float)cardH};
-        bool hover = !blockCardClick && CheckCollisionPointRec(m, r) && CheckCollisionPointRec(m, view);
+        bool hover = unlocked && !blockCardClick && CheckCollisionPointRec(m, r) && CheckCollisionPointRec(m, view);
         DrawRectangleRec(r, Color{10, 16, 20, 255});
         guiBevel(r, false);
         DrawRectangle((int)r.x + 3, (int)r.y + 3, cardW - 6, cardH - 6,
-                      hover ? Color{16, 32, 36, 230} : Color{8, 14, 18, 230});
+                      hover ? Color{16, 32, 36, 230} : Color{8, 14, 18, (unsigned char)(unlocked ? 230 : 180)});
         guiBevel({r.x + 3.f, r.y + 3.f, (float)(cardW - 6), (float)(cardH - 6)}, true);
         DrawRectangleLinesEx(r, 1, hover ? MENU_ACCENT : Color{40, 60, 64, 220});
         Color stripe = md.objective == 1 ? Color{70, 160, 220, 255}
@@ -1149,18 +1179,22 @@ void Game::drawMissionSelect() {
                                           : Color{200, 70, 55, 255};
         DrawRectangle((int)r.x + 4, (int)r.y + 4, 4, cardH - 8, stripe);
         int rx = (int)r.x, ry = (int)r.y;
-        drawTextS(font, TextFormat(TR(S::MissionN), i + 1), rx + 14, ry + 6, 11, MENU_MUTE);
-        drawTextS(font, missionName(i), rx + 14, ry + 20, 15, MENU_YELLOW_HI);
+        drawTextS(font, TextFormat(TR(S::MissionN), md.lineIndex > 0 || !md.lineId.empty() ? md.lineIndex + 1 : i + 1),
+                  rx + 14, ry + 6, 11, MENU_MUTE);
+        drawTextS(font, missionName(i), rx + 14, ry + 20, 15, unlocked ? MENU_YELLOW_HI : Color{100, 100, 100, 255});
         DrawRectangle(rx + 14, ry + 40, cardW - 24, 1, Color{36, 70, 72, 200});
-        int blines = drawWrapped(font, missionBrief(i), rx + 14, ry + 44, cardW - 24, 11, Color{170, 200, 195, 255}, 2);
-        const char* objText = md.objective == 1 ? TextFormat(TR(S::ObjSurvive), md.objectiveTick / (30 * 60))
+        int blines = drawWrapped(font, missionBrief(i), rx + 14, ry + 44, cardW - 24, 11,
+                                 unlocked ? Color{170, 200, 195, 255} : Color{90, 100, 100, 255}, 2);
+        const char* objText = !unlocked ? TR(S::MissionLocked)
+                              : md.objective == 1 ? TextFormat(TR(S::ObjSurvive), md.objectiveTick / (30 * 60))
                               : md.objective == 2 ? TR(S::ObjTrigger) : TR(S::ObjEliminate);
-        drawTextS(font, objText, rx + 14, ry + 46 + blines * 13, 11, Color{140, 210, 200, 255});
+        drawTextS(font, objText, rx + 14, ry + 46 + blines * 13, 11,
+                  unlocked ? Color{140, 210, 200, 255} : Color{140, 80, 70, 255});
         if (hover) {
             drawTextS(font, TR(S::ClickEnter), rx + 14, ry + cardH - 18, 12, MENU_YELLOW_HI);
             if (mPressed(MOUSE_LEFT_BUTTON)) {
                 g_sfx.play(Sfx::Click, 0.6f);
-                newCampaignGame(i);
+                openMissionBrief(i);
                 EndScissorMode();
                 return;
             }
@@ -1172,6 +1206,66 @@ void Game::drawMissionSelect() {
     if (ra2Button(font, m, mPressed(MOUSE_LEFT_BUTTON),
                   {bx, side.y + side.height - 56, bw, 44}, TR(S::Back), 16))
         phase = Phase::MainMenu;
+}
+
+void Game::drawMissionBrief() {
+    drawRa2Shell(font, TR(S::BriefingTitle), 0);
+    Rectangle content = menuShellContent();
+    Rectangle side = menuShellSide();
+    Vector2 m = menuUiFromCanvas(mousePos());
+    if (pendingMission < 0 || pendingMission >= (int)missionTable().size()) {
+        unloadBriefArt();
+        phase = Phase::MissionSelect;
+        return;
+    }
+    const MissionDef& md = missionTable()[pendingMission];
+    ensureBriefArt(md);
+    int tx = (int)content.x + 16;
+    int ty = 48;
+    drawTextS(font, missionName(pendingMission), tx, ty, 22, MENU_YELLOW_HI);
+    ty += 28;
+    DrawRectangle(tx, ty, (int)content.width - 40, 1, Color{36, 70, 72, 200});
+    ty += 10;
+    if (briefArtLoaded && briefArtTex.id) {
+        float maxW = content.width - 40.f;
+        float maxH = 120.f;
+        float sc = std::min(maxW / (float)briefArtTex.width, maxH / (float)briefArtTex.height);
+        float dw = briefArtTex.width * sc, dh = briefArtTex.height * sc;
+        Rectangle dst{(float)tx, (float)ty, dw, dh};
+        DrawTexturePro(briefArtTex, {0, 0, (float)briefArtTex.width, (float)briefArtTex.height},
+                       dst, {0, 0}, 0, WHITE);
+        DrawRectangleLinesEx(dst, 1.f, Color{60, 90, 95, 220});
+        ty += (int)dh + 8;
+    }
+    ty += 14 * drawWrapped(font, missionBrief(pendingMission), tx, ty, (int)content.width - 40, 14,
+                           Color{180, 210, 205, 255}, 8);
+    ty += 12;
+    drawTextS(font, TR(S::ObjTrigger), tx, ty, 13, MENU_ACCENT);
+    ty += 20;
+    if (!md.objectives.empty()) {
+        for (size_t oi = 0; oi < md.objectives.size(); oi++) {
+            const auto& o = md.objectives[oi];
+            const char* ot = (g_lang && !o.textEn.empty()) ? o.textEn.c_str() : o.text.c_str();
+            drawTextS(font, TextFormat("%s %s", o.primary ? "●" : "○", ot), tx, ty, 12, Color{170, 200, 195, 255});
+            ty += 16;
+        }
+    } else {
+        drawTextS(font, missionBrief(pendingMission), tx, ty, 12, Color{170, 200, 195, 255});
+    }
+
+    float bx = side.x + 6, bw = side.width - 12;
+    if (ra2Button(font, m, mPressed(MOUSE_LEFT_BUTTON),
+                  {bx, side.y + side.height - 110, bw, 44}, TR(S::StartMission), 16, true, false, true)) {
+        g_sfx.play(Sfx::Click, 0.6f);
+        unloadBriefArt();
+        newCampaignGame(pendingMission);
+        return;
+    }
+    if (ra2Button(font, m, mPressed(MOUSE_LEFT_BUTTON),
+                  {bx, side.y + side.height - 56, bw, 44}, TR(S::Back), 16)) {
+        unloadBriefArt();
+        phase = Phase::MissionSelect;
+    }
 }
 
 // ===================== 地图预览（与 bakeTerrain 同源 TMP 采样缩略） =====================
@@ -1196,9 +1290,7 @@ void Game::refreshMapPreview() {
     for (int ti = 0; ti < 6; ti++) {
         if (ti == (int)Terrain::Ore || ti == (int)Terrain::Gems) continue;
         for (int v = 0; v < 8; v++) {
-            char path[192];
-            snprintf(path, sizeof(path), "assets/sprites/tile_%s_%d.png", kTileNames[ti], v);
-            tileOk[ti][v] = tilePx[ti][v].loadFromFile(path)
+            tileOk[ti][v] = tilePx[ti][v].loadFromFile(contentPathFmt("assets/sprites/tile_%s_%d.png", kTileNames[ti], v))
                          && tilePx[ti][v].w == TILE_W && tilePx[ti][v].h == TILE_H;
         }
     }
@@ -1206,9 +1298,7 @@ void Game::refreshMapPreview() {
     bool shoreOk[16][2] = {};
     for (int m = 1; m < 16; m++)
         for (int v = 0; v < 2; v++) {
-            char path[192];
-            snprintf(path, sizeof(path), "assets/sprites/tile_shore_m%d_%d.png", m, v);
-            shoreOk[m][v] = shorePx[m][v].loadFromFile(path)
+            shoreOk[m][v] = shorePx[m][v].loadFromFile(contentPathFmt("assets/sprites/tile_shore_m%d_%d.png", m, v))
                          && shorePx[m][v].w == TILE_W && shorePx[m][v].h == TILE_H;
         }
     std::vector<uint8_t> shoreMask((size_t)w * h, 0);

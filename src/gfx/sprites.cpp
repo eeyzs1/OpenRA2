@@ -1,11 +1,13 @@
 #include "gfx/sprites.h"
 #include "gfx/assets.h"
 #include "gfx/vxl.h"
+#include "core/content.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 const Color HOUSE_COLORS[MAX_PLAYERS] = {
@@ -45,7 +47,8 @@ static bool loadSpr(PixBuf& out, const char* fmt, ...) {
     va_list ap; va_start(ap, fmt);
     vsnprintf(path, sizeof(path), fmt, ap);
     va_end(ap);
-    return out.loadFromFile(path);
+    std::string resolved = contentResolve(path);
+    return out.loadFromFile(resolved.empty() ? path : resolved.c_str());
 }
 
 // 外部 PNG 清洗：去黑/灰 fringe、半透明白边；弱化底部烘焙地皮；剔除孤立伪影色斑（如蓝斑）
@@ -377,7 +380,7 @@ const char* SpriteBank::bldSpriteStem(BldType t, Country country) {
     }
     cands[n++] = base;
     for (int i = 0; i < n; i++) {
-        if (FileExists(TextFormat("assets/sprites/bld_%s.png", cands[i]))) {
+        if (FileExists(contentPathFmt("assets/sprites/bld_%s.png", cands[i]))) {
             snprintf(chosen, sizeof(chosen), "%s", cands[i]);
             return chosen;
         }
@@ -459,7 +462,11 @@ const Sprite& SpriteBank::buildingGhost(BldType t, int player, Country country) 
 
 // ===================== 动画系统（art.ini 序列 + mk 建造动画） =====================
 void SpriteBank::loadAnimsIni() {
-    FILE* f = fopen("assets/sprites/anims.ini", "rb");
+    FILE* f = fopen(contentPathFmt("assets/sprites/anims.ini"), "rb");
+    if (!f) {
+        std::string alt = contentResolve("assets/sprites/anims.ini");
+        if (!alt.empty()) f = fopen(alt.c_str(), "rb");
+    }
     if (!f) return;
     char line[256];
     char sec[64] = "";

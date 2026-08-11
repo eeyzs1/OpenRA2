@@ -4,12 +4,14 @@
 #include "gfx/sprites.h"
 #include "gfx/assets.h"
 #include "sfx/sound.h"
+#include "core/content.h"
 #include "rlgl.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
 #include <unordered_set>
 #include <vector>
+#include <string>
 
 #include "gfx/bld_cage_data.inc"
 
@@ -138,9 +140,7 @@ void Game::bakeTerrain() {
         for (int ti = 0; ti < 6; ti++) {
             if (ti == (int)Terrain::Ore || ti == (int)Terrain::Gems) continue;
             for (int v = 0; v < 8; v++) {
-                char path[192];
-                snprintf(path, sizeof(path), "assets/sprites/tile_%s_%d.png", kTileNames[ti], v);
-                tileOk[ti][v] = tilePx[ti][v].loadFromFile(path)
+                tileOk[ti][v] = tilePx[ti][v].loadFromFile(contentPathFmt("assets/sprites/tile_%s_%d.png", kTileNames[ti], v))
                              && tilePx[ti][v].w == TILE_W && tilePx[ti][v].h == TILE_H;
             }
         }
@@ -150,9 +150,7 @@ void Game::bakeTerrain() {
     bool shoreOk[16][2] = {};
     for (int m = 1; m < 16; m++)
         for (int v = 0; v < 2; v++) {
-            char path[192];
-            snprintf(path, sizeof(path), "assets/sprites/tile_shore_m%d_%d.png", m, v);
-            shoreOk[m][v] = shorePx[m][v].loadFromFile(path)
+            shoreOk[m][v] = shorePx[m][v].loadFromFile(contentPathFmt("assets/sprites/tile_shore_m%d_%d.png", m, v))
                          && shorePx[m][v].w == TILE_W && shorePx[m][v].h == TILE_H;
         }
     // 预计算每格邻水 mask（仅陆格：bit0 +x / bit1 +y / bit2 -x / bit3 -y 邻格为水）
@@ -654,9 +652,9 @@ void Game::drawEntities() {
                 if (oilAN < 0) {
                     oilAN = 0;
                     for (int fi = 0; fi < 128; fi++) {
-                        const char* path = TextFormat("assets/sprites/bld_oilderrick_a_f%d.png", fi);
-                        if (!FileExists(path)) break;
-                        Image im = LoadImage(path);
+                        std::string path = contentResolve(TextFormat("assets/sprites/bld_oilderrick_a_f%d.png", fi));
+                        if (path.empty()) break;
+                        Image im = LoadImage(path.c_str());
                         if (!im.data) break;
                         oilA[fi] = LoadTextureFromImage(im);
                         SetTextureFilter(oilA[fi], TEXTURE_FILTER_POINT);
@@ -667,9 +665,9 @@ void Game::drawEntities() {
                 if (hospAN < 0) {
                     hospAN = 0;
                     for (int fi = 0; fi < 8; fi++) {
-                        const char* path = TextFormat("assets/sprites/bld_hospital_a_f%d.png", fi);
-                        if (!FileExists(path)) break;
-                        Image im = LoadImage(path);
+                        std::string path = contentResolve(TextFormat("assets/sprites/bld_hospital_a_f%d.png", fi));
+                        if (path.empty()) break;
+                        Image im = LoadImage(path.c_str());
                         if (!im.data) break;
                         hospA[fi] = LoadTextureFromImage(im);
                         SetTextureFilter(hospA[fi], TEXTURE_FILTER_POINT);
@@ -759,9 +757,9 @@ void Game::drawEntities() {
                 if (wrenchN < 0) {
                     wrenchN = 0;
                     for (int fi = 0; fi < 8; fi++) {
-                        const char* path = TextFormat("assets/gui/wrench/wrench_%02d.png", fi);
-                        if (!FileExists(path)) break;
-                        Image im = LoadImage(path);
+                        std::string path = contentResolve(TextFormat("assets/gui/wrench/wrench_%02d.png", fi));
+                        if (path.empty()) break;
+                        Image im = LoadImage(path.c_str());
                         if (!im.data) break;
                         wrench[fi] = LoadTextureFromImage(im);
                         SetTextureFilter(wrench[fi], TEXTURE_FILTER_POINT);

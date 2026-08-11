@@ -1,0 +1,58 @@
+# oa12 Chrono Storm
+size 96 96
+fill clear
+rect rough 14 14 68 68
+bld -1 CivHouse 28 28
+bld -1 CivHouse 34 30
+bld -1 CivHouse 40 28
+bld -1 CivHouse 32 36
+bld -1 CivHouse 38 38
+bld -1 CivHouse 44 34
+bld -1 CivHouse 30 42
+bld -1 CivHouse 42 44
+bld -1 CivHouse 48 40
+blob ore 12 76 4
+blob ore 74 16 4
+blob gems 48 80 3
+blob ore 36 24 3
+unit 0 Tanya 12 80
+unit 0 Chrono 14 80
+unit 0 Chrono 16 80
+unit 0 GI 18 80
+unit 0 GI 12 82
+unit 0 PrismTank 14 82
+unit 0 IFV 16 82
+unit 0 Engineer 18 82
+unit 0 NavySEAL 12 84
+bld 1 ConYard 70 18
+bld 1 TeslaReactor 64 18
+bld 1 Barracks 70 26
+bld 1 WarFactory 76 24
+bld 1 OreRefinery 62 26
+bld 1 Radar 72 32
+bld 1 TeslaCoil 66 34
+bld 1 FlakCannon 78 34
+bld 1 TeslaCoil 66 38
+bld 1 IronCurtain 72 38
+bld 1 FlakCannon 78 38
+unit 1 Conscript 68 28 guard
+unit 1 TeslaTrooper 71 28 guard
+unit 1 Apocalypse 74 28 guard
+unit 1 Apocalypse 77 28 guard
+unit 1 Kirov 68 31 guard
+bld 1 BattleBunker 64 30
+unit 1 Apocalypse 66 28 guard
+# ENRICHED layout pass
+deco tree2 6 6 24 24 8
+deco tree3 48 6 19 19 6
+deco rock2 72 32 14 12 5
+blob ore 24 68 3
+blob gems 66 24 2
+bld -1 OilDerrick 32 66
+bld -1 Hospital 44 64
+bld -1 CivHouse 48 56
+bld -1 CivHouse 54 58
+unit 1 Conscript 66 28 guard
+unit 1 Conscript 70 32 guard
+unit 1 AttackDog 68 36 guard
+unit 0 Engineer 12 84

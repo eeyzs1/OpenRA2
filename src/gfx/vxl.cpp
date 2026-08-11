@@ -1,5 +1,6 @@
 #include "gfx/vxl.h"
 #include "gfx/assets.h"
+#include "core/content.h"
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -75,7 +76,9 @@ static bool readFile(const char* path, std::vector<uint8_t>& out) {
 
 static void loadPal() {
     std::vector<uint8_t> raw;
-    if (!readFile("assets/palettes/unittem.pal", raw) || raw.size() < 768) {
+    std::string palPath = contentResolve("assets/palettes/unittem.pal");
+    if (palPath.empty()) palPath = "assets/palettes/unittem.pal";
+    if (!readFile(palPath.c_str(), raw) || raw.size() < 768) {
         fprintf(stderr, "VXL: missing assets/palettes/unittem.pal\n");
         return;
     }
@@ -90,7 +93,9 @@ static void loadPal() {
 
 static void loadVpl() {
     std::vector<uint8_t> raw;
-    if (!readFile("assets/voxels/voxels.vpl", raw) || raw.size() < 16 + 768 + 256) {
+    std::string vplPath = contentResolve("assets/voxels/voxels.vpl");
+    if (vplPath.empty()) vplPath = "assets/voxels/voxels.vpl";
+    if (!readFile(vplPath.c_str(), raw) || raw.size() < 16 + 768 + 256) {
         fprintf(stderr, "VXL: missing assets/voxels/voxels.vpl\n");
         return;
     }
@@ -191,11 +196,13 @@ static const VxlFile* getVxl(const char* stem) {
     if (!stem || !stem[0]) return nullptr;
     auto it = gVxlCache.find(stem);
     if (it != gVxlCache.end()) return it->second.valid ? &it->second : nullptr;
-    char path[256];
-    snprintf(path, sizeof(path), "assets/voxels/%s.vxl", stem);
+    char virt[256];
+    snprintf(virt, sizeof(virt), "assets/voxels/%s.vxl", stem);
+    std::string path = contentResolve(virt);
+    if (path.empty()) path = virt;
     std::vector<uint8_t> raw;
     VxlFile vf;
-    if (!readFile(path, raw) || !parseVxl(raw, vf)) {
+    if (!readFile(path.c_str(), raw) || !parseVxl(raw, vf)) {
         gVxlCache.emplace(stem, VxlFile{});
         return nullptr;
     }
@@ -239,11 +246,13 @@ static const HvaFile* getHva(const char* stem) {
     if (!stem || !stem[0]) return nullptr;
     auto it = gHvaCache.find(stem);
     if (it != gHvaCache.end()) return it->second.valid ? &it->second : nullptr;
-    char path[256];
-    snprintf(path, sizeof(path), "assets/voxels/%s.hva", stem);
+    char virt[256];
+    snprintf(virt, sizeof(virt), "assets/voxels/%s.hva", stem);
+    std::string path = contentResolve(virt);
+    if (path.empty()) path = virt;
     std::vector<uint8_t> raw;
     HvaFile hf;
-    if (!readFile(path, raw) || !parseHva(raw, hf)) {
+    if (!readFile(path.c_str(), raw) || !parseHva(raw, hf)) {
         gHvaCache.emplace(stem, HvaFile{});
         return nullptr;
     }

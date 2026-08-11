@@ -201,6 +201,18 @@ bool World::modeAllowsUnit(int player, UnitType t) const {
     return true;
 }
 
+bool World::campaignAllowsBuilding(BldType t) const {
+    if (!campaignTechGate || campaignAllowedBlds.empty()) return true;
+    for (BldType a : campaignAllowedBlds) if (a == t) return true;
+    return false;
+}
+
+bool World::campaignAllowsUnit(UnitType t) const {
+    if (!campaignTechGate || campaignAllowedUnits.empty()) return true;
+    for (UnitType a : campaignAllowedUnits) if (a == t) return true;
+    return false;
+}
+
 void World::ensureMegawealthOilDerricks(int perPlayer) {
     int existing = 0;
     for (const Ent& e : ents)
@@ -231,6 +243,7 @@ void World::ensureMegawealthOilDerricks(int perPlayer) {
 
 bool World::prereqMet(int player, const BldDef& d) const {
     if (!modeAllowsBuilding(player, d.type)) return false;
+    if (!campaignAllowsBuilding(d.type)) return false;
     // 国家限制（RA2 原作：如巨炮仅法国可建）；秘密实验室占领后可解锁（见 capture 处理）
     if (d.countryReq != Country::None && players[player].country != d.countryReq
         && players[player].secretLabUnlock != (int)d.countryReq) return false;
@@ -247,6 +260,7 @@ bool World::prereqMet(int player, const BldDef& d) const {
 
 bool World::unitPrereqMet(int player, const UnitDef& u) const {
     if (!modeAllowsUnit(player, u.type)) return false;
+    if (!campaignAllowsUnit(u.type)) return false;
     // 国家限制（RA2 原作：如狙击手仅英国、磁能坦克仅苏俄）；秘密实验室解锁亦放行
     // 融合：共和国之辉中国可造黑鹰（忽略韩国国别锁）
     if (u.countryReq != Country::None && players[player].country != u.countryReq

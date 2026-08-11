@@ -1,0 +1,41 @@
+# mission07 Plateau Showdown
+size 80 80
+fill clear
+rect rough 10 10 60 60
+deco tree1 4 4 18 18 6
+blob ore 12 60 4
+blob ore 58 16 4
+blob gems 40 64 3
+blob ore 36 24 3
+unit 0 MCV 12 64
+unit 0 PLA 10 66
+unit 0 PLA 14 66
+unit 0 Engineer 12 67
+unit 0 Harvester 16 64
+bld 1 ConYard 58 12
+bld 1 TeslaReactor 52 12
+bld 1 Barracks 58 20
+bld 1 WarFactory 64 18
+bld 1 OreRefinery 50 20
+bld 1 Radar 60 26
+bld 1 TeslaCoil 54 28
+bld 1 FlakCannon 66 28
+unit 1 Conscript 56 22 guard
+unit 1 Conscript 59 22 guard
+unit 1 TeslaTrooper 62 22 guard
+unit 1 Rhino 65 22 guard
+unit 1 FlakTrack 56 25 guard
+# ENRICHED layout pass
+deco tree2 6 6 20 20 8
+deco tree3 40 6 16 16 6
+deco rock2 56 26 14 12 5
+blob ore 20 52 3
+blob gems 50 20 2
+bld -1 OilDerrick 26 50
+bld -1 Hospital 36 48
+bld -1 CivHouse 40 48
+bld -1 CivHouse 46 50
+unit 1 Conscript 50 28 guard
+unit 1 Conscript 54 32 guard
+unit 1 AttackDog 52 36 guard
+unit 0 Engineer 12 68

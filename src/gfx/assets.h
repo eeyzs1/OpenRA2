@@ -182,6 +182,9 @@ inline const char* bldAssetName(BldType t) {
         case BldType::RobotControl: return "robotcontrol";
         case BldType::TechPowerPlant: return "techpowerplant";
         case BldType::TechOutpost: return "techoutpost";
+        case BldType::PsychicBeacon: return "psychicbeacon";
+        case BldType::PsychicAmplifier: return "psychicamplifier";
+        case BldType::TimeMachine: return "timemachine";
         default: return "unknown";
     }
 }

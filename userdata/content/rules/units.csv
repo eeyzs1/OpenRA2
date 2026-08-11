@@ -1,0 +1,10 @@
+# OpenRA2 用户单位表（UTF-8，不要用 Excel「另存为」乱改编码）
+#
+# 用法：删掉某行开头的 # 即可启用；保存后重新启动游戏。
+# 完整说明见同目录上级 README.txt（userdata\content\README.txt）
+#
+Name,Base,HP,Cost,Speed,Sight,WeaponDamage,WeaponRange,Buildable,DisplayName
+# 直接改灰熊（遭遇战侧栏造价/血量会变）：
+# Grizzly,,500,900,,,,,,
+# 变体名 + 写回灰熊本体：
+# HeavyGrizzly,Grizzly,600,1200,,,50,6,replace,重装灰熊

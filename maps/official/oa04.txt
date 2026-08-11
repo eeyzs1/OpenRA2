@@ -1,0 +1,44 @@
+# oa04 Last Chance
+size 96 96
+fill clear
+rect water 0 40 96 56
+rect rough 8 8 48 36
+rect rough 48 52 40 36
+blob ore 12 76 4
+blob ore 74 16 4
+blob gems 48 80 3
+blob ore 36 24 3
+unit 0 MCV 14 18
+unit 0 GI 12 20
+unit 0 GI 16 20
+unit 0 Engineer 14 21
+unit 0 Harvester 18 18
+unit 0 AmphTransport 20 36
+unit 0 Grizzly 18 16
+bld 1 PsychicAmplifier 70 70
+bld 1 ConYard 78 58
+bld 1 TeslaReactor 72 58
+bld 1 Barracks 78 66
+bld 1 WarFactory 84 64
+bld 1 OreRefinery 70 66
+bld 1 Radar 80 72
+bld 1 TeslaCoil 74 74
+bld 1 FlakCannon 86 74
+unit 1 Conscript 76 68 guard
+unit 1 Rhino 79 68 guard
+unit 1 Apocalypse 82 68 guard
+unit 1 FlakTrack 85 68 guard
+# ENRICHED layout pass
+deco tree2 6 6 24 24 8
+deco tree3 48 6 19 19 6
+deco rock2 72 32 14 12 5
+blob ore 24 68 3
+blob gems 66 24 2
+bld -1 OilDerrick 32 66
+bld -1 Hospital 44 64
+bld -1 CivHouse 48 56
+bld -1 CivHouse 54 58
+unit 1 Conscript 66 28 guard
+unit 1 Conscript 70 32 guard
+unit 1 AttackDog 68 36 guard
+unit 0 Engineer 12 84

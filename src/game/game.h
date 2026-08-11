@@ -3,6 +3,7 @@
 #include "game/ai.h"
 #include "game/lang.h"
 #include "game/campaign.h"
+#include "game/campaign_runtime.h"
 #include "net/net.h"
 #include "raylib.h"
 #include <vector>
@@ -17,7 +18,7 @@ constexpr int UI_W = 640;
 constexpr int UI_H = 480;
 
 // 游戏阶段
-enum class Phase { MainMenu, Setup, MissionSelect, Settings, NetLobby, InGame, MapEditor };
+enum class Phase { MainMenu, Setup, MissionSelect, MissionBrief, Settings, NetLobby, InGame, MapEditor };
 
 // 可重绑定按键动作（设置页修改，settings.ini 持久化，默认值为 RA2 原作键位）
 enum KeyAction : int {
@@ -107,11 +108,21 @@ private:
 
     // 战役状态（campaignMission < 0 = 遭遇战）
     int campaignMission = -1;
+    int pendingMission = -1;       // 简报页待开始的关卡
+    int campaignDifficulty = 1;    // 0 Easy 1 Normal 2 Hard
     size_t nextWave = 0;
     // P7 触发器运行时：开局从 MissionDef 拷贝（fired/armed 为可变状态），HUD 目标文本
     std::vector<Trigger> missionTriggers;
     std::string objectiveText;
+    std::vector<bool> campaignObjDone; // 多目标完成态（与 MissionDef.objectives 对齐）
+    struct CampaignRuntime campRuntime; // 阶段 / 限时 / 主目标门闩（见 campaign_runtime.h）
+    Texture2D briefArtTex{};
+    bool briefArtLoaded = false;
+    std::string briefArtPath;
+    void unloadBriefArt();
+    void ensureBriefArt(const MissionDef& md);
     void updateTriggers(); // 战役触发器求值与执行（logic 内每帧调用）
+    void openMissionBrief(int mission);
 
     // ---- P8 LAN 联机（确定性 lockstep，1v1 遭遇战） ----
     NetLink net;
@@ -271,6 +282,7 @@ private:
     void drawMainMenu();
     void drawSetup();
     void drawMissionSelect();
+    void drawMissionBrief();
     void drawSettings();     // 设置页（语言/显示/音量/按键）
     void drawGameMenuOverlay(); // ESC/结算：画在 640 UI RT 上（勿嵌套 canvas）
     int pollAnyKey();        // 重绑定捕获：真实 GetKeyPressed 或脚本注入

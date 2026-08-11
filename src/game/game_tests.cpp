@@ -1517,7 +1517,7 @@ int Game::smokeTest(int frames) {
         bool tblOk = missionTable().size() >= 32;
         int officialN = 0;
         for (const auto& md : missionTable()) if (md.track == 1) officialN++;
-        bool officialOk = officialN >= 3;
+        bool officialOk = officialN >= 24; // RA2 12+12 官方轨最低验收
         newCampaignGame(0);
         int before = 0;
         for (auto& e : world.ents) if (e.alive && e.player == 1 && !e.isBuilding) before++;
@@ -1596,6 +1596,30 @@ int Game::campaignSmokeTest(int mission, int frames) {
                  p, blds, units, world.players[p].money, (int)world.players[p].defeated);
     }
     check(world.tick > 0 || frames == 0, "mission simulation advances");
+    // 打样关：主目标门闩语义（oa01/oa05/oa08）
+    if (md.lineId == "oa" && (md.lineIndex == 0 || md.lineIndex == 4 || md.lineIndex == 7)) {
+        check(md.objective == 2 && md.winOnAllPrimary, "showcase uses AllPrimary win gate");
+        bool hasGate = false, hasSurviveGateOff = false;
+        for (const auto& o : md.objectives) {
+            if (o.primary && o.gateWin) hasGate = true;
+            if (o.primary && !o.gateWin) hasSurviveGateOff = true;
+        }
+        check(hasGate, "showcase declares GateWin primary objectives");
+        if (md.lineIndex == 0 || md.lineIndex == 4)
+            check(hasSurviveGateOff, "showcase Tanya survive is GateWin=no");
+        // 强制完成全部 GateWin → 应胜利
+        newCampaignGame(mission, false);
+        for (size_t i = 0; i < campaignObjDone.size(); ++i)
+            if (i < md.objectives.size() && md.objectives[i].primary && md.objectives[i].gateWin)
+                campaignObjDone[i] = true;
+        updateTriggers();
+        check(gameOver && victory, "showcase AllPrimary latch wins");
+        if (md.lineIndex == 7) {
+            newCampaignGame(mission, false);
+            updateTriggers(); // Always → TimerStart
+            check(campRuntime.timerDeadline >= 0 && campRuntime.timerVisible, "oa08 timer armed visible");
+        }
+    }
     TraceLog(failed == 0 ? LOG_INFO : LOG_ERROR,
              "CAMPAIGN SMOKE SUMMARY: %s passed=%d failed=%d mission=%d frames=%d",
              failed == 0 ? "PASS" : "FAIL", passed, failed, mission, frames);
@@ -1613,7 +1637,7 @@ int Game::campaignMatrixTest(int frames) {
     check(table.size() >= 32, 0, "mission table contains fusion + optional official tracks");
     int officialN = 0;
     for (const auto& md : table) if (md.track == 1) officialN++;
-    check(officialN >= 3, 0, "official track lists at least 3 Allied prototype missions");
+    check(officialN >= 24, 0, "official track lists RA2 Allied+Soviet missions");
     for (int mission = 0; mission < (int)table.size(); ++mission) {
         const MissionDef& md = table[mission];
         newCampaignGame(mission, false);
@@ -1624,29 +1648,36 @@ int Game::campaignMatrixTest(int frames) {
         check(world.numPlayers == 1 + (int)md.aiFactions.size(), mission, "declared player matrix starts");
         check(hasPlayerForce, mission, "player has a valid starting force");
 
-        bool refsOk = true, hasWin = false, hasLose = false;
+        bool refsOk = true, hasWin = false, hasLose = false, hasCompleteObj = false;
         for (const Trigger& t : md.triggers) {
             if ((t.cond == TrigCond::PlayerBldLost || t.cond == TrigCond::PlayerAllDead
-                 || t.cond == TrigCond::UnitInRect || t.cond == TrigCond::MoneyBelow)
+                 || t.cond == TrigCond::UnitInRect || t.cond == TrigCond::MoneyBelow
+                 || t.cond == TrigCond::BldCaptured || t.cond == TrigCond::UnitCountBelow)
                 && (t.c[0] < 0 || t.c[0] >= world.numPlayers)) refsOk = false;
-            if (t.cond == TrigCond::PlayerBldLost
+            if ((t.cond == TrigCond::PlayerBldLost || t.cond == TrigCond::BldCaptured)
                 && (t.c[1] < 0 || t.c[1] >= (int)BldType::COUNT)) refsOk = false;
-            if ((t.act == TrigAct::SpawnAt || t.act == TrigAct::GiveMoney || t.act == TrigAct::RevealMap)
+            if ((t.act == TrigAct::SpawnAt || t.act == TrigAct::GiveMoney || t.act == TrigAct::RevealMap
+                 || t.act == TrigAct::Reinforce)
                 && (t.a[0] < 0 || t.a[0] >= world.numPlayers)) refsOk = false;
             hasWin = hasWin || t.act == TrigAct::Win;
             hasLose = hasLose || t.act == TrigAct::Lose;
+            hasCompleteObj = hasCompleteObj || t.act == TrigAct::CompleteObj;
         }
         check(refsOk, mission, "trigger references are in range");
+        bool hasGateWin = false;
+        for (const auto& o : md.objectives)
+            if (o.primary && o.gateWin) hasGateWin = true;
         bool objectiveOk = (md.objective == 0)
                         || (md.objective == 1 && md.objectiveTick > 0)
-                        || (md.objective == 2 && hasWin && hasLose);
+                        || (md.objective == 2 && hasLose
+                            && (hasWin || (md.winOnAllPrimary && hasGateWin && hasCompleteObj)));
         check(objectiveOk, mission, "objective has complete win/loss semantics");
 
         for (int i = 0; i < frames && !gameOver; ++i) logic();
         check(world.tick > 0 || frames == 0, mission, "startup simulation advances");
         bool alwaysFired = true;
         for (const Trigger& t : missionTriggers)
-            if (t.cond == TrigCond::Always && t.once && !t.fired) alwaysFired = false;
+            if (t.enabled && t.cond == TrigCond::Always && t.once && !t.fired) alwaysFired = false;
         check(alwaysFired, mission, "startup triggers fire");
 
         // 失败矩阵：任何任务在玩家被判负后都必须结束为失败。
@@ -1655,7 +1686,7 @@ int Game::campaignMatrixTest(int frames) {
         logic();
         check(gameOver && !victory, mission, "player defeat resolves as loss");
 
-        // 胜利矩阵：分别驱动默认歼灭、坚守计时或显式 Win 触发器。
+        // 胜利矩阵：歼灭 / 坚守 / 显式 Win / AllPrimary 门闩
         newCampaignGame(mission, false);
         if (md.objective == 0) {
             nextWave = md.waves.size();
@@ -1664,9 +1695,10 @@ int Game::campaignMatrixTest(int frames) {
         } else if (md.objective == 1) {
             world.tick = (uint64_t)std::max(0, md.objectiveTick - 1);
             logic();
-        } else {
+        } else if (hasWin) {
             for (Trigger& t : missionTriggers) {
                 if (t.act != TrigAct::Win) continue;
+                t.enabled = true;
                 switch (t.cond) {
                     case TrigCond::Always: break;
                     case TrigCond::Time: world.tick = (uint64_t)std::max(0, t.c[0]); break;
@@ -1682,11 +1714,28 @@ int Game::campaignMatrixTest(int frames) {
                     case TrigCond::UnitInRect:
                         world.spawnUnit(t.c[0], UnitType::Engineer, t.c[1] + 0.5f, t.c[2] + 0.5f);
                         break;
+                    case TrigCond::BldCaptured:
+                        world.spawnBuilding(t.c[0], (BldType)t.c[1], 4, 4);
+                        break;
+                    case TrigCond::ObjAllPrimary:
+                        for (size_t i = 0; i < campaignObjDone.size(); ++i)
+                            if (i < md.objectives.size() && md.objectives[i].primary && md.objectives[i].gateWin)
+                                campaignObjDone[i] = true;
+                        break;
+                    case TrigCond::PhaseAt: campRuntime.setPhase(t.c[0]); break;
                     case TrigCond::Script: break;
+                    default: break;
                 }
                 break;
             }
             updateTriggers();
+        } else {
+            // AllPrimary 门闩：标记全部 GateWin 目标完成
+            for (size_t i = 0; i < campaignObjDone.size(); ++i)
+                if (i < md.objectives.size() && md.objectives[i].primary && md.objectives[i].gateWin)
+                    campaignObjDone[i] = true;
+            updateTriggers();
+            if (!gameOver) logic();
         }
         check(gameOver && victory, mission, "declared victory path resolves");
     }
@@ -2109,7 +2158,9 @@ int Game::playTest() {
     check(phase == Phase::MissionSelect, "点击[战役模式]");
     shot("pt_07_missions.png");
     clickUi(126, 133); // 第一张任务卡（2 列 cardW=210 y0=78）
-    check(phase == Phase::InGame && campaignMission == 0, "点击任务1进入战役");
+    check(phase == Phase::MissionBrief && pendingMission == 0, "点击任务1进入简报");
+    clickUi(556, 400); // 简报页「开始任务」侧栏按钮
+    check(phase == Phase::InGame && campaignMission == 0, "简报开始进入战役");
     frame(10);
     shot("pt_08_campaign.png");
 

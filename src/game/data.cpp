@@ -1,7 +1,9 @@
 #include "game/data.h"
 #include "core/ini.h"
+#include "core/content.h"
 #include "raylib.h"
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -273,6 +275,10 @@ static BldDef g_blds[(int)BldType::COUNT] = {
     {BldType::RobotControl, "机器人指挥中心",600, 140, 600, 2,2, -100, 5, wNone(), FA, BldType::Radar, true},
     {BldType::TechPowerPlant,"科技电厂",    0,   0,   600, 2,2, 200,  4, wNone(), 0, BldType::COUNT, true},
     {BldType::TechOutpost,  "科技前哨站",   0,   0,   800, 4,3, 50,   6, wNone(), 0, BldType::COUNT, true},
+    // 战役专用（不可建造 factionMask=0）
+    {BldType::PsychicBeacon, "心灵信标", 0, 0, 1500, 2,2, -100, 8, wPsychicTowerMC(), 0, BldType::COUNT, true},
+    {BldType::PsychicAmplifier, "心灵放大器", 0, 0, 2000, 3,3, -150, 10, wPsychicTowerMC(), 0, BldType::COUNT, true},
+    {BldType::TimeMachine, "时间机器", 0, 0, 2500, 3,3, -200, 6, wNone(), 0, BldType::COUNT, true},
 };
 
 // ===================== 超武表 =====================
@@ -379,6 +385,7 @@ static const char* kBldKey[(int)BldType::COUNT] = {
     "TechAirport", "SecretLab", "CivHouse",
     "BioReactor", "GatlingCannon", "Grinder", "GeneticMutator", "PsychicDominator",
     "PsychicTower", "RobotControl", "TechPowerPlant", "TechOutpost",
+    "PsychicBeacon", "PsychicAmplifier", "TimeMachine",
 };
 static const char* kCountryKey[(int)Country::COUNT] = {
     "None", "America", "Korea", "France", "Germany", "UK",
@@ -415,9 +422,34 @@ const char* swTypeKey(SWType t) { int i = (int)t; return (i >= 0 && i < (int)SWT
 GameRules g_gameRules;
 AIBuildConfig g_aiBuild[4];
 std::vector<UnitVariant> g_variants;
+std::vector<BldVariant> g_bldVariants;
 const UnitVariant* findVariant(const std::string& name) {
     for (const auto& v : g_variants) if (v.name == name) return &v;
     return nullptr;
+}
+const BldVariant* findBldVariant(const std::string& name) {
+    for (const auto& v : g_bldVariants) if (v.name == name) return &v;
+    return nullptr;
+}
+bool resolveUnitSpawn(const char* name, UnitType& out, const UnitVariant** varOut) {
+    if (varOut) *varOut = nullptr;
+    if (!name) return false;
+    if (unitTypeByName(name, out)) return true;
+    const UnitVariant* v = findVariant(name);
+    if (!v) return false;
+    out = v->base;
+    if (varOut) *varOut = v;
+    return true;
+}
+bool resolveBldSpawn(const char* name, BldType& out, const BldVariant** varOut) {
+    if (varOut) *varOut = nullptr;
+    if (!name) return false;
+    if (bldTypeByName(name, out)) return true;
+    const BldVariant* v = findBldVariant(name);
+    if (!v) return false;
+    out = v->base;
+    if (varOut) *varOut = v;
+    return true;
 }
 
 static std::string g_unitNameStr[(int)UnitType::COUNT];
@@ -430,6 +462,48 @@ static std::string g_deployProjStr[2];
 // 精英武器可写池：首次 loadRules 时把内置精英武器复制入池并重指 UnitDef.elite
 static WeaponDef g_elitePool[(int)UnitType::COUNT];
 static bool g_elitePooled = false;
+
+static int parseBuildableMode(const char* s) {
+    if (!s || !*s) return 0;
+    if (!strcmp(s, "replace") || !strcmp(s, "Replace")) return 2;
+    if (Ini::toBool(s, false)) return 1;
+    return 0;
+}
+
+static void applyUnitVariantToBase(const UnitVariant& var) {
+    if (var.base == UnitType::COUNT) return;
+    UnitDef& d = g_units[(int)var.base];
+    if (var.cost >= 0) d.cost = var.cost;
+    if (var.hp > 0) d.hp = var.hp;
+    if (var.speed > 0) d.speed = var.speed;
+    if (var.sight > 0) d.sight = var.sight;
+    if (var.weaponDmg >= 0) d.weapon.damage = var.weaponDmg;
+    if (var.weaponRange >= 0) d.weapon.range = var.weaponRange;
+    if (var.weaponCooldown >= 0) d.weapon.cooldown = var.weaponCooldown;
+    if (var.vsInf >= 0) d.weapon.vsInfantry = var.vsInf;
+    if (var.vsVeh >= 0) d.weapon.vsVehicle = var.vsVeh;
+    if (var.vsBld >= 0) d.weapon.vsBuilding = var.vsBld;
+    if (!var.weaponProj.empty()) {
+        g_unitProjStr[(int)var.base] = var.weaponProj;
+        d.weapon.projSprite = g_unitProjStr[(int)var.base].c_str();
+    }
+    if (!var.displayName.empty()) {
+        g_unitNameStr[(int)var.base] = var.displayName;
+        d.name = g_unitNameStr[(int)var.base].c_str();
+    }
+}
+
+static void applyBldVariantToBase(const BldVariant& var) {
+    if (var.base == BldType::COUNT) return;
+    BldDef& d = g_blds[(int)var.base];
+    if (var.cost >= 0) d.cost = var.cost;
+    if (var.hp > 0) d.hp = var.hp;
+    if (var.overridePower) d.power = var.power;
+    if (!var.displayName.empty()) {
+        g_bldNameStr[(int)var.base] = var.displayName;
+        d.name = g_bldNameStr[(int)var.base].c_str();
+    }
+}
 
 static void poolEliteWeapons() {
     if (g_elitePooled) return;
@@ -541,6 +615,8 @@ void loadRules(const char* path) {
                     var.name = unitName;
                     var.base = ut;
                     const char* v;
+                    if ((v = sec.get("Name"))) var.displayName = v;
+                    if ((v = sec.get("Art"))) var.art = v;
                     if ((v = sec.get("Cost"))) var.cost = Ini::toInt(v, -1);
                     if ((v = sec.get("HP"))) var.hp = Ini::toInt(v, -1);
                     if ((v = sec.get("Speed"))) var.speed = Ini::toInt(v, -1);
@@ -552,8 +628,15 @@ void loadRules(const char* path) {
                     if ((v = sec.get("Weapon.VsInf"))) var.vsInf = Ini::toFloat(v, -1);
                     if ((v = sec.get("Weapon.VsVeh"))) var.vsVeh = Ini::toFloat(v, -1);
                     if ((v = sec.get("Weapon.VsBld"))) var.vsBld = Ini::toFloat(v, -1);
-                    g_variants.push_back(std::move(var));
-                    TraceLog(LOG_INFO, "RA2 rules: variant '%s' registered (base=%s)", unitName, baseStr);
+                    if ((v = sec.get("Buildable"))) var.buildable = parseBuildableMode(v);
+                    g_variants.push_back(var);
+                    if (var.buildable == 2) {
+                        applyUnitVariantToBase(var);
+                        TraceLog(LOG_INFO, "RA2 rules: variant '%s' replace -> base %s", unitName, baseStr);
+                    } else {
+                        TraceLog(LOG_INFO, "RA2 rules: variant '%s' registered (base=%s)", unitName, baseStr);
+                    }
+                    patched++;
                 } else {
                     warn("unit (use Base=<existing> to define a variant)");
                 }
@@ -586,7 +669,33 @@ void loadRules(const char* path) {
             patched++;
         } else if (sn.rfind("Bld.", 0) == 0) {
             BldType bt;
-            if (!bldTypeByName(sn.c_str() + 4, bt) || bt == BldType::COUNT) { warn("building"); continue; }
+            const char* bldName = sn.c_str() + 4;
+            if (!bldTypeByName(bldName, bt) || bt == BldType::COUNT) {
+                const char* baseStr = sec.get("Base");
+                if (baseStr && bldTypeByName(baseStr, bt) && bt != BldType::COUNT) {
+                    BldVariant var;
+                    var.name = bldName;
+                    var.base = bt;
+                    const char* v;
+                    if ((v = sec.get("Name"))) var.displayName = v;
+                    if ((v = sec.get("Art"))) var.art = v;
+                    if ((v = sec.get("Cost"))) var.cost = Ini::toInt(v, -1);
+                    if ((v = sec.get("HP"))) var.hp = Ini::toInt(v, -1);
+                    if ((v = sec.get("Power"))) { var.overridePower = true; var.power = Ini::toInt(v, 0); }
+                    if ((v = sec.get("Buildable"))) var.buildable = parseBuildableMode(v);
+                    g_bldVariants.push_back(var);
+                    if (var.buildable == 2) {
+                        applyBldVariantToBase(var);
+                        TraceLog(LOG_INFO, "RA2 rules: bld variant '%s' replace -> base %s", bldName, baseStr);
+                    } else {
+                        TraceLog(LOG_INFO, "RA2 rules: bld variant '%s' registered (base=%s)", bldName, baseStr);
+                    }
+                    patched++;
+                } else {
+                    warn("building");
+                }
+                continue;
+            }
             BldDef& d = g_blds[(int)bt];
             const char* v;
             if ((v = sec.get("Name"))) { g_bldNameStr[(int)bt] = v; d.name = g_bldNameStr[(int)bt].c_str(); }
@@ -699,6 +808,183 @@ void loadRules(const char* path) {
         }
     }
     TraceLog(LOG_INFO, "RA2 rules: %s loaded, %d sections applied", path, patched);
+}
+
+static void loadUnitsCsv(const char* path);
+static void loadBuildingsCsv(const char* path);
+
+void loadRulesFromContent() {
+    g_variants.clear();
+    g_bldVariants.clear();
+    auto stack = contentResolveStack("assets/rules/rules.ini");
+    if (stack.empty()) {
+        TraceLog(LOG_INFO, "RA2 rules: no rules.ini in content roots, using built-in defaults");
+    } else {
+        for (const auto& p : stack)
+            loadRules(p.c_str());
+    }
+    // CSV 表格补丁（后于 INI；同名后写覆盖）
+    for (const auto& p : contentResolveStack("assets/rules/units.csv"))
+        loadUnitsCsv(p.c_str());
+    for (const auto& p : contentResolveStack("assets/rules/buildings.csv"))
+        loadBuildingsCsv(p.c_str());
+}
+
+void loadProjectilesFromContent() {
+    auto stack = contentResolveStack("assets/rules/projectiles.ini");
+    if (stack.empty()) {
+        loadProjectiles("assets/rules/projectiles.ini");
+        return;
+    }
+    for (const auto& p : stack)
+        loadProjectiles(p.c_str());
+}
+
+// ===================== CSV 规则表（用户友好） =====================
+static std::string trimCsv(std::string s) {
+    // UTF-8 BOM（记事本/部分编辑器会写入）
+    if (s.size() >= 3 && (unsigned char)s[0] == 0xEF && (unsigned char)s[1] == 0xBB && (unsigned char)s[2] == 0xBF)
+        s = s.substr(3);
+    while (!s.empty() && (s.back() == '\r' || s.back() == '\n' || s.back() == ' ' || s.back() == '\t')) s.pop_back();
+    size_t i = 0;
+    while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) i++;
+    return s.substr(i);
+}
+
+static std::vector<std::string> splitCsvLine(const std::string& line) {
+    std::vector<std::string> cols;
+    std::string cur;
+    bool inQ = false;
+    for (char c : line) {
+        if (c == '"') { inQ = !inQ; continue; }
+        if (c == ',' && !inQ) { cols.push_back(trimCsv(cur)); cur.clear(); continue; }
+        cur += c;
+    }
+    cols.push_back(trimCsv(cur));
+    return cols;
+}
+
+static bool csvCol(const std::unordered_map<std::string, int>& hdr, const std::vector<std::string>& cols,
+                   const char* key, std::string& out) {
+    auto it = hdr.find(key);
+    if (it == hdr.end() || it->second < 0 || it->second >= (int)cols.size()) return false;
+    out = cols[it->second];
+    return !out.empty();
+}
+
+static void loadUnitsCsv(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return;
+    char buf[1024];
+    std::unordered_map<std::string, int> hdr;
+    bool haveHdr = false;
+    int patched = 0;
+    while (fgets(buf, sizeof(buf), f)) {
+        std::string line = trimCsv(buf);
+        if (line.empty() || line[0] == '#' || line[0] == ';') continue;
+        auto cols = splitCsvLine(line);
+        if (!haveHdr) {
+            for (int i = 0; i < (int)cols.size(); i++) hdr[cols[i]] = i;
+            haveHdr = true;
+            continue;
+        }
+        std::string name, base, s;
+        if (!csvCol(hdr, cols, "Name", name)) continue;
+        UnitType ut = UnitType::COUNT;
+        UnitVariant var;
+        var.name = name;
+        bool isEnum = unitTypeByName(name.c_str(), ut);
+        if (csvCol(hdr, cols, "Base", base) && unitTypeByName(base.c_str(), ut)) {
+            var.base = ut;
+            isEnum = false;
+        } else if (isEnum) {
+            var.base = ut;
+        } else {
+            TraceLog(LOG_WARNING, "RA2 units.csv: unknown Name/Base '%s' in %s", name.c_str(), path);
+            continue;
+        }
+        if (csvCol(hdr, cols, "HP", s)) var.hp = Ini::toInt(s.c_str(), -1);
+        if (csvCol(hdr, cols, "Cost", s)) var.cost = Ini::toInt(s.c_str(), -1);
+        if (csvCol(hdr, cols, "Speed", s)) var.speed = Ini::toInt(s.c_str(), -1);
+        if (csvCol(hdr, cols, "Sight", s)) var.sight = Ini::toInt(s.c_str(), -1);
+        if (csvCol(hdr, cols, "WeaponDamage", s)) var.weaponDmg = Ini::toInt(s.c_str(), -1);
+        if (csvCol(hdr, cols, "WeaponRange", s)) var.weaponRange = Ini::toInt(s.c_str(), -1);
+        if (csvCol(hdr, cols, "Buildable", s)) var.buildable = parseBuildableMode(s.c_str());
+        if (csvCol(hdr, cols, "DisplayName", s)) var.displayName = s;
+
+        // Name 即为已有枚举且无独立变体意图：直接改 UnitDef
+        bool directPatch = unitTypeByName(name.c_str(), ut) && (base.empty() || base == name);
+        if (directPatch) {
+            UnitVariant tmp = var;
+            tmp.base = ut;
+            if (tmp.buildable == 0) tmp.buildable = 2; // 直接改表 = 侧栏生效
+            applyUnitVariantToBase(tmp);
+            patched++;
+            continue;
+        }
+        // 变体：注册；replace 时写回 Base
+        g_variants.push_back(var);
+        if (var.buildable == 2) applyUnitVariantToBase(var);
+        patched++;
+    }
+    fclose(f);
+    if (patched > 0)
+        TraceLog(LOG_INFO, "RA2 units.csv: %s applied %d row(s)", path, patched);
+}
+
+static void loadBuildingsCsv(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return;
+    char buf[1024];
+    std::unordered_map<std::string, int> hdr;
+    bool haveHdr = false;
+    int patched = 0;
+    while (fgets(buf, sizeof(buf), f)) {
+        std::string line = trimCsv(buf);
+        if (line.empty() || line[0] == '#' || line[0] == ';') continue;
+        auto cols = splitCsvLine(line);
+        if (!haveHdr) {
+            for (int i = 0; i < (int)cols.size(); i++) hdr[cols[i]] = i;
+            haveHdr = true;
+            continue;
+        }
+        std::string name, base, s;
+        if (!csvCol(hdr, cols, "Name", name)) continue;
+        BldType bt = BldType::COUNT;
+        BldVariant var;
+        var.name = name;
+        bool isEnum = bldTypeByName(name.c_str(), bt) && bt != BldType::COUNT;
+        if (csvCol(hdr, cols, "Base", base) && bldTypeByName(base.c_str(), bt) && bt != BldType::COUNT) {
+            var.base = bt;
+            isEnum = false;
+        } else if (isEnum) {
+            var.base = bt;
+        } else {
+            TraceLog(LOG_WARNING, "RA2 buildings.csv: unknown Name/Base '%s' in %s", name.c_str(), path);
+            continue;
+        }
+        if (csvCol(hdr, cols, "HP", s)) var.hp = Ini::toInt(s.c_str(), -1);
+        if (csvCol(hdr, cols, "Cost", s)) var.cost = Ini::toInt(s.c_str(), -1);
+        if (csvCol(hdr, cols, "Power", s)) { var.overridePower = true; var.power = Ini::toInt(s.c_str(), 0); }
+        if (csvCol(hdr, cols, "Buildable", s)) var.buildable = parseBuildableMode(s.c_str());
+        if (csvCol(hdr, cols, "DisplayName", s)) var.displayName = s;
+
+        bool directPatch = bldTypeByName(name.c_str(), bt) && bt != BldType::COUNT && (base.empty() || base == name);
+        if (directPatch) {
+            BldVariant tmp = var;
+            tmp.base = bt;
+            if (tmp.buildable == 0) tmp.buildable = 2;
+            applyBldVariantToBase(tmp);
+            patched++;
+            continue;
+        }
+        g_bldVariants.push_back(var);
+        if (var.buildable == 2) applyBldVariantToBase(var);
+        patched++;
+    }
+    fclose(f);
+    if (patched > 0)
+        TraceLog(LOG_INFO, "RA2 buildings.csv: %s applied %d row(s)", path, patched);
 }
 
 // ===================== 规则导出（--export-assets）：全量数值写成 rules.ini 模板 =====================

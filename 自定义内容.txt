@@ -1,0 +1,14 @@
+# OpenRA2 — 自定义内容入口
+
+想改数值、加关卡、换贴图？
+
+请打开并阅读：
+
+  userdata\content\README.txt
+
+把文件放进 userdata\content\ ，保存后重新启动游戏即可。
+
+自检命令（可选）：
+
+  build\Release\ra2.exe --content-check
+  tools\test_user_content.cmd

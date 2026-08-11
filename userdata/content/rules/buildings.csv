@@ -1,0 +1,6 @@
+# OpenRA2 用户建筑表（UTF-8）
+# 用法同 units.csv。说明见 userdata\content\README.txt
+#
+Name,Base,HP,Cost,Power,Buildable,DisplayName
+# ConYard,,4000,,,,
+# FortYard,ConYard,5000,3000,0,replace,加固建造厂

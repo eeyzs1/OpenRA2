@@ -72,6 +72,9 @@ enum class S : int {
     // 遭遇战换地图（种子历史面板）
     MapCustomTitle, MapSeed, RandomNewMap, PrevSeed, NextSeed, CycleMapType,
     TipCustomizeBattle, TipMapSeed,
+    // 战役壳（追加在末尾）
+    NextMission, StartMission, MissionLocked, FusionLabel, OfficialLabel,
+    DiffEasy, DiffNormal, DiffHard, BriefingTitle, MissionCompleteObj,
     COUNT
 };
 
@@ -82,6 +85,7 @@ const char* TR(S id); // 当前语言文本
 // 启动时双语均加载（字体字模需双语全量预载）。
 // en.ini 另有 [Unit]/[Bld]/[SW]/[Faction]/[Country] 英文名称节；zh.ini 另有 [Country] 节。
 void loadStrings(const char* path, int lang);
+void loadStringsFromContent(); // 内容根叠加载 zh/en
 
 // 字符串导出（--export-assets）：把内置文本写成 zh.ini / en.ini 模板
 void exportStrings(const char* dir);

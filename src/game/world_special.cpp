@@ -190,6 +190,68 @@ void World::mindControlTake(Ent& yuri, EID yid, EID tid) {
     if (tt.origPlayer == 0) eva(0, TR(S::EvaMindLost));
 }
 
+void World::psychicAreaReleaseAll(Ent& beacon, EID bid) {
+    for (EID tid : beacon.mindTargets) {
+        if (!valid(tid)) continue;
+        Ent& t = ents[tid];
+        if (t.mindBy == bid && !t.permaControlled) {
+            t.player = t.origPlayer;
+            t.mindBy = INVALID_EID;
+            t.origPlayer = -1;
+            t.state = UState::Idle; t.target = INVALID_EID; t.path.clear();
+        }
+    }
+    beacon.mindTargets.clear();
+    beacon.mindTarget = INVALID_EID;
+}
+
+void World::psychicAreaTake(Ent& beacon, EID bid, EID tid) {
+    if (!valid(tid)) return;
+    Ent& t = ents[tid];
+    if (t.isBuilding || psychicImmune(t.utype) || t.permaControlled || t.mindBy != INVALID_EID) return;
+    if (t.player < 0 || !isEnemy(beacon.player, t.player)) return;
+    int cap = (beacon.btype == BldType::PsychicAmplifier) ? 8 : 5;
+    if ((int)beacon.mindTargets.size() >= cap) return;
+    Ent& tt = ents[tid];
+    tt.origPlayer = tt.player;
+    tt.player = beacon.player;
+    tt.mindBy = bid;
+    beacon.mindTargets.push_back(tid);
+    tt.state = UState::Idle; tt.target = INVALID_EID; tt.path.clear();
+    Effect fx; fx.kind = 2; fx.x = beacon.x; fx.y = beacon.y; fx.x2 = tt.x; fx.y2 = tt.y; fx.maxAge = 12;
+    effects.push_back(fx);
+    if (tt.origPlayer == 0) eva(0, TR(S::EvaMindLost));
+}
+
+void World::updatePsychicAreaDevices() {
+    for (size_t i = 0; i < ents.size(); i++) {
+        Ent& e = ents[i];
+        if (!e.alive || !e.isBuilding || e.player < 0) continue;
+        if (!isPsychicAreaBld(e.btype)) continue;
+        EID id = (EID)i;
+        // 清理失效链接
+        e.mindTargets.erase(std::remove_if(e.mindTargets.begin(), e.mindTargets.end(),
+            [&](EID t) { return !valid(t) || ents[t].mindBy != id; }), e.mindTargets.end());
+        // 断电：释放全部（TimeMachine 不心控，仅占位）
+        if (players[e.player].lowPower()) {
+            psychicAreaReleaseAll(e, id);
+            continue;
+        }
+        const BldDef& bd = bldDef(e.btype);
+        float cx = e.x + bd.w / 2.0f, cy = e.y + bd.h / 2.0f;
+        float range = (e.btype == BldType::PsychicAmplifier) ? 14.0f : 10.0f;
+        if ((tick + (uint64_t)id) % 15 != 0) continue; // 节流扫描
+        for (size_t j = 0; j < ents.size(); j++) {
+            Ent& t = ents[j];
+            if (!t.alive || t.isBuilding || t.player < 0) continue;
+            if (!isEnemy(e.player, t.player)) continue;
+            float tx = t.x, ty = t.y;
+            if (distf(cx, cy, tx, ty) > range) continue;
+            psychicAreaTake(e, id, (EID)j);
+        }
+    }
+}
+
 // ===================== 间谍渗透 =====================
 // RA2 原作效果：精炼厂=偷钱，电厂=断电，雷达=获取视野，兵营/工厂=新单位直接老兵，高科=破坏超武
 void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {

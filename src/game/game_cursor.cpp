@@ -3,10 +3,12 @@
 #include "game/script.h"
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
+#include "core/content.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
 #include <unordered_set>
+#include <string>
 
 void Game::updateHoverCursor(int mx, int my) {
     cursorKind = CursorKind::Arrow;
@@ -213,11 +215,11 @@ void Game::loadGameCursors() {
     // 全量 mouse.shp：优先 cursor_XXX.png（≥404），兼容旧 cursor_XX.png；允许中间空洞
     cursorFrameN = 0;
     for (int i = 0; i < CURSOR_MAX_FRAMES; i++) {
-        const char* path3 = TextFormat("assets/gui/cursors/cursor_%03d.png", i);
-        const char* path2 = TextFormat("assets/gui/cursors/cursor_%02d.png", i);
-        const char* path = FileExists(path3) ? path3 : (i < 100 && FileExists(path2) ? path2 : nullptr);
+        std::string path3 = contentResolve(TextFormat("assets/gui/cursors/cursor_%03d.png", i));
+        std::string path2 = contentResolve(TextFormat("assets/gui/cursors/cursor_%02d.png", i));
+        const std::string* path = !path3.empty() ? &path3 : (i < 100 && !path2.empty() ? &path2 : nullptr);
         if (!path) continue;
-        Image img = LoadImage(path);
+        Image img = LoadImage(path->c_str());
         if (!img.data) continue;
         cursorFrames[i] = LoadTextureFromImage(img);
         SetTextureFilter(cursorFrames[i], TEXTURE_FILTER_POINT);

@@ -1,0 +1,44 @@
+# os02 Hostile Shore
+size 96 96
+fill clear
+rect water 0 40 96 56
+rect rough 8 8 48 36
+rect rough 48 52 40 36
+blob ore 12 76 4
+blob ore 74 16 4
+blob gems 48 80 3
+blob ore 36 24 3
+unit 0 MCV 14 70
+unit 0 Conscript 12 72
+unit 0 Conscript 16 72
+unit 0 Engineer 14 73
+unit 0 WarMiner 18 70
+unit 0 AmphTransport 20 55
+unit 0 Rhino 18 72
+bld 1 ConYard 70 16
+bld 1 PowerPlant 64 16
+bld 1 Barracks 70 24
+bld 1 WarFactory 76 22
+bld 1 OreRefinery 62 24
+bld 1 Radar 72 30
+bld 1 PrismTower 66 32
+bld 1 PatriotMissile 78 32
+unit 1 GI 68 26 guard
+unit 1 GI 71 26 guard
+unit 1 GuardianGI 74 26 guard
+unit 1 Grizzly 77 26 guard
+unit 1 IFV 68 29 guard
+# ENRICHED layout pass
+deco tree2 6 6 24 24 8
+deco tree3 48 6 19 19 6
+deco rock2 72 32 14 12 5
+blob ore 24 68 3
+blob gems 66 24 2
+bld -1 OilDerrick 32 66
+bld -1 Hospital 44 64
+bld -1 CivHouse 48 56
+bld -1 CivHouse 54 58
+unit 1 Conscript 66 28 guard
+unit 1 Conscript 70 32 guard
+unit 1 AttackDog 68 36 guard
+unit 0 Engineer 12 84

@@ -2,9 +2,11 @@
 #include "game/data.h"
 #include "gfx/assets.h"
 #include "core/util.h"
+#include "core/content.h"
 #include <raylib.h>
 #include <cstring>
 #include <cstdio>
+#include <string>
 
 extern "C" {
 #include <lua.h>
@@ -56,25 +58,15 @@ static int l_spawnUnit(lua_State* L) {
     float x = (float)luaL_checknumber(L, 3);
     float y = (float)luaL_checknumber(L, 4);
     UnitType ut;
-    if (unitTypeByName(name, ut)) {
-        EID id = W(L)->spawnUnit(p, ut, x, y);
-        lua_pushinteger(L, id);
+    const UnitVariant* var = nullptr;
+    if (!resolveUnitSpawn(name, ut, &var)) {
+        lua_pushinteger(L, -1);
         return 1;
     }
-    // 自定义变体：spawnUnit(base) + 数值覆盖
-    const UnitVariant* var = findVariant(name);
-    if (var) {
-        EID id = W(L)->spawnUnit(p, var->base, x, y);
-        if (id >= 0) {
-            World::Ent& e = W(L)->ents[id];
-            if (var->hp > 0) e.hp = var->hp;
-            // cost/speed/weapon 在 unitDef 中读取，变体仅影响 spawn 时 HP
-            // （完整覆盖需要修改 unitDef，此处保持简单：HP 覆盖已满足多数变体需求）
-        }
-        lua_pushinteger(L, id);
-        return 1;
-    }
-    lua_pushinteger(L, -1);
+    EID id = W(L)->spawnUnit(p, ut, x, y);
+    if (id >= 0 && var && var->hp > 0)
+        W(L)->ents[id].hp = var->hp;
+    lua_pushinteger(L, id);
     return 1;
 }
 static int l_spawnBuilding(lua_State* L) {
@@ -83,8 +75,11 @@ static int l_spawnBuilding(lua_State* L) {
     int x = (int)luaL_checkinteger(L, 3);
     int y = (int)luaL_checkinteger(L, 4);
     BldType bt;
-    if (!bldTypeByName(name, bt)) { lua_pushinteger(L, -1); return 1; }
+    const BldVariant* var = nullptr;
+    if (!resolveBldSpawn(name, bt, &var)) { lua_pushinteger(L, -1); return 1; }
     EID id = W(L)->spawnBuilding(p, bt, x, y, true);
+    if (id >= 0 && var && var->hp > 0)
+        W(L)->ents[id].hp = var->hp;
     lua_pushinteger(L, id);
     return 1;
 }
@@ -646,24 +641,23 @@ void ScriptEngine::registerApi() {
 }
 
 bool ScriptEngine::loadScripts() {
-    if (!DirectoryExists("assets/scripts")) return false;
-    FilePathList files = LoadDirectoryFiles("assets/scripts");
+    auto names = contentListFiles("assets/scripts", ".lua");
+    if (names.empty()) return false;
     lua_State* Ls = (lua_State*)L;
     int loaded = 0;
-    for (unsigned i = 0; i < files.count; i++) {
-        const char* path = files.paths[i];
-        const char* ext = strrchr(path, '.');
-        if (!ext || strcmp(ext, ".lua") != 0) continue;
-        if (luaL_dofile(Ls, path) != LUA_OK) {
+    for (const std::string& name : names) {
+        std::string virt = std::string("assets/scripts/") + name;
+        std::string path = contentResolve(virt.c_str());
+        if (path.empty()) continue;
+        if (luaL_dofile(Ls, path.c_str()) != LUA_OK) {
             const char* err = lua_tostring(Ls, -1);
-            TraceLog(LOG_WARNING, "Lua script error in %s: %s", path, err ? err : "?");
+            TraceLog(LOG_WARNING, "Lua script error in %s: %s", path.c_str(), err ? err : "?");
             lua_pop(Ls, 1);
         } else {
             loaded++;
         }
     }
-    UnloadDirectoryFiles(files);
-    if (loaded > 0) TraceLog(LOG_INFO, "Lua: %d script(s) loaded from assets/scripts/", loaded);
+    if (loaded > 0) TraceLog(LOG_INFO, "Lua: %d script(s) loaded from content roots", loaded);
     return loaded > 0;
 }
 

@@ -9,10 +9,12 @@
 #include "game/campaign.h"
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
+#include "core/content.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <ctime>
+#include <string>
 
 extern const int HUD_UNUSED; // 占位
 
@@ -547,9 +549,9 @@ static OrigGui g_orig;
 static void loadMoneyAndClock() {
     g_orig.moneyOk = false;
     for (int d = 0; d < 10; d++) {
-        const char* path = TextFormat("assets/gui/money_digits/num_%d.png", d);
-        if (!FileExists(path)) continue;
-        Image img = LoadImage(path);
+        std::string path = contentResolve(TextFormat("assets/gui/money_digits/num_%d.png", d));
+        if (path.empty()) continue;
+        Image img = LoadImage(path.c_str());
         if (!img.data) continue;
         g_orig.moneyDigit[d] = LoadTextureFromImage(img);
         SetTextureFilter(g_orig.moneyDigit[d], TEXTURE_FILTER_POINT);
@@ -558,9 +560,9 @@ static void loadMoneyAndClock() {
     }
     g_orig.gclockN = 0;
     for (int i = 0; i < 55; i++) {
-        const char* path = TextFormat("assets/gui/gclock2/gclock2_%02d.png", i);
-        if (!FileExists(path)) break;
-        Image img = LoadImage(path);
+        std::string path = contentResolve(TextFormat("assets/gui/gclock2/gclock2_%02d.png", i));
+        if (path.empty()) break;
+        Image img = LoadImage(path.c_str());
         if (!img.data) break;
         g_orig.gclock[i] = LoadTextureFromImage(img);
         SetTextureFilter(g_orig.gclock[i], TEXTURE_FILTER_POINT);
@@ -620,7 +622,7 @@ static void loadOrigGui() {
     g_orig.tried = true;
     loadMoneyAndClock();
     PixBuf sb;
-    if (!sb.loadFromFile("assets/gui/sidebar_allied.png")) return;
+    if (!sb.loadFromFile(contentPathFmt("assets/gui/sidebar_allied.png"))) return;
     if (sb.w != 171 || sb.h != 768) return;
     g_orig.sidebar[0] = sb.toTexture();
     SetTextureFilter(g_orig.sidebar[0], TEXTURE_FILTER_POINT); // 点采样：像素锐利（RA2 原作观感）
@@ -631,7 +633,7 @@ static void loadOrigGui() {
         SetTextureFilter(g_orig.sidebar[st], TEXTURE_FILTER_POINT);
     }
     PixBuf bb;
-    if (bb.loadFromFile("assets/gui/bottombar.png") && bb.w == 1366) {
+    if (bb.loadFromFile(contentPathFmt("assets/gui/bottombar.png")) && bb.w == 1366) {
         g_orig.bottombar = bb.toTexture();
         SetTextureFilter(g_orig.bottombar, TEXTURE_FILTER_POINT);
     }
@@ -1651,6 +1653,13 @@ void Game::drawHUD() {
         const MissionDef& md = missionTable()[campaignMission];
         std::string obj = missionName(campaignMission);
         obj += " · ";
+        if (campRuntime.timerVisible && campRuntime.timerDeadline >= 0) {
+            int sec = campRuntime.timerRemaining(world.tick);
+            if (sec < 0) sec = 0;
+            obj += TextFormat("[%02d:%02d] ", sec / 60, sec % 60);
+        }
+        if (campRuntime.phase > 0)
+            obj += TextFormat("P%d · ", campRuntime.phase);
         if (!objectiveText.empty()) {
             obj += objectiveText;
         } else if (md.objective == 1) {
@@ -1666,7 +1675,25 @@ void Game::drawHUD() {
         int oy = msgTimer > 0 ? 28 : 6;
         DrawRectangle(4, oy, ow, 20, Color{0, 0, 0, 150});
         guiBevel({4, (float)oy, (float)ow, 20}, true);
-        drawTextS(font, obj.c_str(), 12, oy + 3, 13, Color{235, 205, 140, 255});
+        Color objCol = (campRuntime.timerVisible && campRuntime.timerRemaining(world.tick) <= 30)
+                           ? Color{255, 120, 90, 255} : Color{235, 205, 140, 255};
+        drawTextS(font, obj.c_str(), 12, oy + 3, 13, objCol);
+        // 多目标清单（简要）
+        if (!md.objectives.empty()) {
+            int ly = oy + 22;
+            for (size_t oi = 0; oi < md.objectives.size() && oi < 6; oi++) {
+                const auto& o = md.objectives[oi];
+                const char* ot = (g_lang && !o.textEn.empty()) ? o.textEn.c_str() : o.text.c_str();
+                bool done = oi < campaignObjDone.size() && campaignObjDone[oi];
+                // 阶段过滤：RequiresPhase 目标暂不显示未解锁文案——清单仍显示全部，完成态刷新
+                const char* line = done ? TextFormat(TR(S::MissionCompleteObj), ot)
+                                        : TextFormat("%s %s", o.primary ? "●" : "○", ot);
+                int lw = (int)MeasureTextEx(font, line, 11, 0).x + 12;
+                DrawRectangle(4, ly, lw, 16, Color{0, 0, 0, 130});
+                drawTextS(font, line, 10, ly + 2, 11, done ? Color{120, 220, 140, 255} : Color{190, 200, 195, 255});
+                ly += 17;
+            }
+        }
     }
 
     // ---- F3 帧率显示 ----
@@ -1720,6 +1747,13 @@ void Game::drawGameMenuOverlay() {
     };
     int row = 0;
     if (gameOver) {
+        if (victory && campaignMission >= 0) {
+            int next = campaignFindNextMission(campaignMission);
+            if (next >= 0 && listItem(row++, TR(S::NextMission), !netGame)) {
+                openMissionBrief(next);
+                showMenu = false;
+            }
+        }
         if (listItem(row++, TR(S::PlayAgain), !netGame))
             restart();
     }

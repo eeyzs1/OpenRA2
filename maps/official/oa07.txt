@@ -1,0 +1,49 @@
+# oa07 Deep Sea
+size 96 96
+fill clear
+rect water 0 0 96 96
+rect rough 14 14 68 68
+rect rough 56 56 24 24
+blob ore 12 76 4
+blob ore 74 16 4
+blob gems 48 80 3
+blob ore 36 24 3
+unit 0 MCV 16 20
+unit 0 GI 14 22
+unit 0 GI 18 22
+unit 0 Engineer 16 23
+unit 0 Harvester 20 20
+bld 0 NavalYard 22 30
+unit 0 Destroyer 28 36
+unit 0 Destroyer 32 34
+unit 0 Aegis 26 38
+bld 1 NavalYard 70 70
+unit 1 Dreadnought 76 74 guard
+unit 1 Typhoon 68 72 guard
+bld 1 ConYard 72 52
+bld 1 TeslaReactor 66 52
+bld 1 Barracks 72 60
+bld 1 WarFactory 78 58
+bld 1 OreRefinery 64 60
+bld 1 Radar 74 66
+bld 1 TeslaCoil 68 68
+bld 1 FlakCannon 80 68
+unit 1 Conscript 70 62 guard
+unit 1 Conscript 73 62 guard
+unit 1 TeslaTrooper 76 62 guard
+unit 1 Rhino 79 62 guard
+unit 1 FlakTrack 70 65 guard
+# ENRICHED layout pass
+deco tree2 6 6 24 24 8
+deco tree3 48 6 19 19 6
+deco rock2 72 32 14 12 5
+blob ore 24 68 3
+blob gems 66 24 2
+bld -1 OilDerrick 32 66
+bld -1 Hospital 44 64
+bld -1 CivHouse 48 56
+bld -1 CivHouse 54 58
+unit 1 Conscript 66 28 guard
+unit 1 Conscript 70 32 guard
+unit 1 AttackDog 68 36 guard
+unit 0 Engineer 12 84

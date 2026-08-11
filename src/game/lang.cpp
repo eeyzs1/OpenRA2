@@ -1,6 +1,7 @@
 #include "game/lang.h"
 #include "game/campaign.h"
 #include "core/ini.h"
+#include "core/content.h"
 #include "raylib.h"
 #include <cstdio>
 #include <cstring>
@@ -300,6 +301,17 @@ static const char* TBL[(int)S::COUNT][2] = {
      "Open map customize: seed history, prev/next, cycle terrain type. Size/mode stay in the dropdowns below."},
     {"随机生成一张新程序地图（新种子）。开始游戏将使用当前预览种子。",
      "Roll a new procedural map (new seed). Starting the game uses the preview seed shown."},
+    // 战役壳
+    {"下一关", "Next Mission"},
+    {"开始任务", "Start Mission"},
+    {"未解锁", "Locked"},
+    {"自制/融合", "Fusion"},
+    {"官方战役", "Official"},
+    {"简单", "Easy"},
+    {"普通", "Normal"},
+    {"困难", "Hard"},
+    {"任务简报", "Mission Briefing"},
+    {"✓ %s", "✓ %s"},
 };
 
 const char* TR(S id) {
@@ -364,6 +376,8 @@ static const char* kSKey[(int)S::COUNT] = {
     "TipCountry", "TipColor", "TipDiff", "TipPlayerSlot", "TipAddComputer",
     "MapCustomTitle", "MapSeed", "RandomNewMap", "PrevSeed", "NextSeed", "CycleMapType",
     "TipCustomizeBattle", "TipMapSeed",
+    "NextMission", "StartMission", "MissionLocked", "FusionLabel", "OfficialLabel",
+    "DiffEasy", "DiffNormal", "DiffHard", "BriefingTitle", "MissionCompleteObj",
 };
 
 static int sKeyByName(const char* s) {
@@ -431,6 +445,7 @@ static const char* BLD_EN[(int)BldType::COUNT] = {
     "Tech Airport", "Secret Lab", "Civilian House",
     "Bio Reactor", "Gatling Cannon", "Grinder", "Genetic Mutator", "Psychic Dominator",
     "Psychic Tower", "Robot Control Center", "Tech Power Plant", "Tech Outpost",
+    "Psychic Beacon", "Psychic Amplifier", "Time Machine",
 };
 
 static const char* SW_EN[(int)SWType::COUNT] = {
@@ -565,6 +580,13 @@ void loadStrings(const char* path, int lang) {
             }
     }
     TraceLog(LOG_INFO, "RA2 strings: %s loaded, %d entries applied (lang=%d)", path, patched, lang);
+}
+
+void loadStringsFromContent() {
+    for (const auto& p : contentResolveStack("assets/strings/zh.ini"))
+        loadStrings(p.c_str(), 0);
+    for (const auto& p : contentResolveStack("assets/strings/en.ini"))
+        loadStrings(p.c_str(), 1);
 }
 
 // ===================== 字符串导出（--export-assets） =====================

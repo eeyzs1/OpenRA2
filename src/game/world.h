@@ -267,6 +267,10 @@ public:
     bool shortGame = false;          // 无建筑且无 MCV 即判负
     bool mcvRepacks = false;         // 建造厂可打包为 MCV（官方遭遇战选项）
     bool superweaponsEnabled = true; // 禁用时不充能、不可发射且不可建造超武建筑
+    // 战役科技门：true 且白名单非空时，仅允许列表内建筑/单位（遭遇战保持 false）
+    bool campaignTechGate = false;
+    std::vector<BldType> campaignAllowedBlds;
+    std::vector<UnitType> campaignAllowedUnits;
 
     // 敌对判定（考虑 AI 结盟）
     bool isEnemy(int a, int b) const {
@@ -279,6 +283,8 @@ public:
     }
     bool modeAllowsBuilding(int player, BldType t) const;
     bool modeAllowsUnit(int player, UnitType t) const;
+    bool campaignAllowsBuilding(BldType t) const;
+    bool campaignAllowsUnit(UnitType t) const;
     void ensureMegawealthOilDerricks(int perPlayer = 2);
 
     // 建筑占格（cellIdx -> eid+1）
@@ -302,6 +308,7 @@ public:
         int typeIdx = 0;     // UnitType / BldType
         int x = 0, y = 0;
         bool guard = false;  // 单位警戒（AI 防守部队）
+        int hpOverride = -1; // 变体 HP（>=0 时覆盖默认）
     };
 
     // 创建
@@ -489,9 +496,12 @@ private:
     void garrisonFire(Ent& b, EID id);          // 驻军轮流出击（民房/战斗碉堡/坦克碉堡）
     void applyGapShroud();                      // 裂缝产生器：敌军在黑幕半径内的迷雾降为不可见
     void updateParadrop();                      // 伞兵充能（美国空指部/科技机场）
+    void updatePsychicAreaDevices();            // 战役心灵信标/放大器范围心控
     // ---- P6：心灵控制 ----
     void mindControlTake(Ent& yuri, EID yid, EID tid); // 夺取目标控制权（先释放旧目标）
     void mindControlRelease(Ent& yuri);                // 释放当前控制（目标恢复原属）
+    void psychicAreaTake(Ent& beacon, EID bid, EID tid);
+    void psychicAreaReleaseAll(Ent& beacon, EID bid);
     void applyCaptureEffect(Ent& b, int newOwner); // 工程师占领建筑的特殊效果（科技机场/秘密实验室）
     EID allocEnt();
 };

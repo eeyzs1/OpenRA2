@@ -793,6 +793,30 @@ bool buildBldModel3D(BldType t, M3Builder& mb) {
             b.box(1.2f, 1.0f, 13.6f, 0.4f, 0.3f, 0.8f, Pal::REMAP, M3FACE_ALL);
             break;
         }
+        case BldType::PsychicBeacon: { // 战役心灵信标：矮台座 + 心灵球
+            b.slab(2, 2);
+            b.box(0.4f, 0.4f, 0.0f, 1.2f, 1.2f, 4.0f, N_WALL);
+            b.cyl(1.0f, 1.0f, 4.0f, 0.55f, 3.5f, Color{180, 80, 220, 255}, 10, true, true);
+            b.cyl(1.0f, 1.0f, 7.2f, 0.22f, 1.2f, E_ORANGE, 8, false, true);
+            break;
+        }
+        case BldType::PsychicAmplifier: { // 战役心灵放大器：更大基座 + 双球
+            b.slab(3, 3);
+            b.box(0.5f, 0.5f, 0.0f, 2.0f, 2.0f, 5.0f, N_WALL_D);
+            b.cyl(1.5f, 1.5f, 5.0f, 0.7f, 4.0f, Color{200, 90, 240, 255}, 12, true, true);
+            b.cyl(0.7f, 0.7f, 8.5f, 0.35f, 2.0f, Color{160, 60, 200, 255}, 8, true, true);
+            b.cyl(1.5f, 1.5f, 10.0f, 0.25f, 1.4f, E_ORANGE, 8, false, true);
+            break;
+        }
+        case BldType::TimeMachine: { // YR 时间机器：拱门 + 核心柱
+            b.slab(3, 3);
+            b.box(0.3f, 0.4f, 0.0f, 0.4f, 2.2f, 14.0f, PIPE);
+            b.box(2.3f, 0.4f, 0.0f, 0.4f, 2.2f, 14.0f, PIPE);
+            b.box(0.3f, 0.4f, 14.0f, 2.4f, 0.35f, 1.2f, CONC);
+            b.cyl(1.5f, 1.5f, 2.0f, 0.45f, 10.0f, Color{80, 180, 220, 255}, 10, true, true);
+            b.box(1.1f, 1.1f, 12.0f, 0.8f, 0.8f, 2.0f, Pal::REMAP, M3FACE_ALL);
+            break;
+        }
         default:
             return false;
     }

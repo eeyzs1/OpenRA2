@@ -1,11 +1,13 @@
 #include "game/world.h"
 #include "game/lang.h"
 #include "game/script.h"
+#include "core/content.h"
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <string>
 
 
 // ===================== 初始化 =====================
@@ -24,8 +26,14 @@ void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const st
     // P7：手工地图（地形/实体/出生点来自 maps/xxx.txt）；加载失败回退程序生成
     std::vector<Vec2i> spawns;
     std::vector<PendingEnt> pend;
-    bool hand = mapFile && loadHandMap(mapFile, numPlayers, spawns, pend);
-    if (mapFile && !hand) TraceLog(LOG_WARNING, "RA2 hand map failed, fallback to generate: %s", mapFile);
+    bool hand = false;
+    std::string resolvedMap;
+    if (mapFile && mapFile[0]) {
+        resolvedMap = contentResolve(mapFile);
+        if (resolvedMap.empty()) resolvedMap = mapFile;
+        hand = loadHandMap(resolvedMap.c_str(), numPlayers, spawns, pend);
+        if (!hand) TraceLog(LOG_WARNING, "RA2 hand map failed, fallback to generate: %s", resolvedMap.c_str());
+    }
     if (!hand) map.generate(w, h, seed, numPlayers, spawns, mapType);
     map.initFog(numPlayers);
     bldOcc.assign((size_t)map.w * map.h, -1);
@@ -66,7 +74,8 @@ void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const st
         for (const PendingEnt& pe : pend) {
             if (pe.isBld) {
                 BldType bt = (BldType)pe.typeIdx;
-                spawnBuilding(pe.player, bt, pe.x, pe.y, true);
+                EID bid = spawnBuilding(pe.player, bt, pe.x, pe.y, true);
+                if (pe.hpOverride > 0 && valid(bid)) ents[bid].hp = pe.hpOverride;
                 if (bt == BldType::OreRefinery && pe.player >= 0) {
                     const BldDef& d = bldDef(bt);
                     for (int r = 1; r < 6; r++) {
@@ -79,6 +88,7 @@ void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const st
                 }
             } else {
                 EID uid = spawnUnit(pe.player, (UnitType)pe.typeIdx, pe.x + 0.5f, pe.y + 0.5f);
+                if (pe.hpOverride > 0 && valid(uid)) ents[uid].hp = pe.hpOverride;
                 if (pe.guard && valid(uid) && unitDef(ents[uid].utype).weapon.damage > 0)
                     ents[uid].guard = true;
             }
@@ -252,18 +262,22 @@ bool World::loadHandMap(const char* path, int numPlayers, std::vector<Vec2i>& sp
         } else if (!strcmp(kw, "unit")) {
             int p, x, y; char tn[32], extra[32] = "";
             UnitType ut;
+            const UnitVariant* uv = nullptr;
             int got = sscanf(line, "%*s %d %31s %d %d %31s", &p, tn, &x, &y, extra);
-            if (got < 4 || !hm::lookup(hm::kUnit, tn, ut) || p >= numPlayers) { bad("unit"); break; }
+            if (got < 4 || !resolveUnitSpawn(tn, ut, &uv) || p >= numPlayers) { bad("unit"); break; }
             PendingEnt pe;
             pe.isBld = false; pe.player = p; pe.typeIdx = (int)ut; pe.x = x; pe.y = y;
             pe.guard = got >= 5 && !strcmp(extra, "guard");
+            if (uv && uv->hp > 0) pe.hpOverride = uv->hp;
             out.push_back(pe);
         } else if (!strcmp(kw, "bld")) {
             int p, x, y; char tn[32];
             BldType bt;
-            if (sscanf(line, "%*s %d %31s %d %d", &p, tn, &x, &y) != 4 || !hm::lookup(hm::kBld, tn, bt) || p >= numPlayers) { bad("bld"); break; }
+            const BldVariant* bv = nullptr;
+            if (sscanf(line, "%*s %d %31s %d %d", &p, tn, &x, &y) != 4 || !resolveBldSpawn(tn, bt, &bv) || p >= numPlayers) { bad("bld"); break; }
             PendingEnt pe;
             pe.isBld = true; pe.player = p; pe.typeIdx = (int)bt; pe.x = x; pe.y = y;
+            if (bv && bv->hp > 0) pe.hpOverride = bv->hp;
             out.push_back(pe);
         } else {
             bad("unknown directive");

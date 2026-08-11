@@ -61,11 +61,11 @@ void Game::logic() {
                 spawnCampaignWave();
                 nextWave++;
             }
-            updateTriggers(); // P7 触发器脚本（可在判定前直接 Win/Lose）
-            if (gameOver) { /* 触发器已终结本局 */ }
+            updateTriggers(); // P7 触发器脚本（可在判定前直接 Win/Lose；含 AllPrimary 门闩）
+            if (gameOver) { /* 触发器/门闩已终结本局 */ }
             else if (meDead) { gameOver = true; victory = false; }
             else if (md.objective == 2) {
-                // 触发器决定胜负：等待 Win/Lose 动作，无默认胜负
+                // 触发器 / AllPrimary 门闩决定胜负：无歼灭默认捷径
             } else if (md.objective == 1) {
                 // 存活目标：坚守到指定帧数
                 if (world.tick >= (uint64_t)md.objectiveTick) { gameOver = true; victory = true; }
@@ -75,6 +75,10 @@ void Game::logic() {
                 for (int i = 1; i < world.numPlayers; i++)
                     if (!world.players[i].defeated) allAIDead = false;
                 if (allAIDead && nextWave >= md.waves.size()) { gameOver = true; victory = true; }
+            }
+            if (gameOver && victory) {
+                if (!md.lineId.empty())
+                    campaignSetProgress(md.lineId, md.lineIndex + 1);
             }
         } else {
             bool allAIDead = true;

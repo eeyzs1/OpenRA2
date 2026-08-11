@@ -1,6 +1,7 @@
 #include "game/game.h"
 #include "game/campaign.h"
 #include "game/script.h"
+#include "core/content.h"
 #include "gfx/sprites.h"
 #include "gfx/bitfont.h"
 #include "sfx/sound.h"
@@ -18,12 +19,10 @@ void Game::init(bool windowed, bool hidden) {
     // letterbox 代码一致工作。
     if (hidden) SetConfigFlags(FLAG_WINDOW_HIDDEN); // 测试模式：不弹窗不抢焦点
     loadSettings(); // settings.ini：语言/显示模式/分辨率/音量/键位（文件缺失则全默认）
-    // 素材外置化：规则数值与字符串须在字体字模收集（appendAllFontText）与任何数据使用前加载；
-    // 文件缺失/键缺失均回退内置默认（见 assets/README.txt）
-    loadRules("assets/rules/rules.ini");
-    loadProjectiles("assets/rules/projectiles.ini");
-    loadStrings("assets/strings/zh.ini", 0);
-    loadStrings("assets/strings/en.ini", 1);
+    // 素材外置化：经内容根叠加载（assets + mods/*）
+    loadRulesFromContent();
+    loadProjectilesFromContent();
+    loadStringsFromContent();
     // 初始窗口用小尺寸创建（确保任何屏幕都能完整显示），随后 applyDisplay 切换到目标模式
     InitWindow(960, 600, "OpenRA2 - 共和国之辉 复刻");
     if (windowed) cfgWindowMode = 1; // 调试参数：强制窗口模式
@@ -48,7 +47,7 @@ void Game::init(bool windowed, bool hidden) {
         TraceLog(LOG_ERROR, "ASSET-CHECK: %d sprite asset(s) missing — refuse start", g_sprites.missingCount());
     }
     // 侧栏/底栏铬面：无文件则程序化兜底已禁用，启动失败
-    if (!FileExists("assets/gui/sidebar_allied.png") || !FileExists("assets/gui/bottombar.png")) {
+    if (!contentExists("assets/gui/sidebar_allied.png") || !contentExists("assets/gui/bottombar.png")) {
         assetsOk_ = false;
         TraceLog(LOG_ERROR, "GUI-MISSING: assets/gui/sidebar_allied.png or bottombar.png");
         fprintf(stderr, "GUI-MISSING: assets/gui/sidebar_allied.png or bottombar.png\n");
@@ -94,6 +93,10 @@ void Game::newGame(uint64_t seed) {
     nextWave = 0;
     missionTriggers.clear();
     objectiveText.clear();
+    campaignObjDone.clear();
+    world.campaignTechGate = false;
+    world.campaignAllowedBlds.clear();
+    world.campaignAllowedUnits.clear();
     Rng frng(seed);
     auto pickCountry = [&](int c) {
         return c >= (int)Country::COUNT ? (Country)frng.range(1, (int)Country::COUNT - 1) : (Country)c;
@@ -254,7 +257,9 @@ void Game::loadFont() {
         font = {};
     }
     if (!fontOk) {
-        font = LoadFontFromRa2Fnt("assets/gui/menu/fonts/game.fnt", uniq.data(), (int)uniq.size());
+        std::string fnt = contentResolve("assets/gui/menu/fonts/game.fnt");
+        font = LoadFontFromRa2Fnt(fnt.empty() ? "assets/gui/menu/fonts/game.fnt" : fnt.c_str(),
+                                 uniq.data(), (int)uniq.size());
         if (font.baseSize > 0 && font.glyphCount > 64) fontOk = true;
         else if (font.texture.id) { UnloadFont(font); font = {}; }
     }
@@ -264,6 +269,7 @@ void Game::loadFont() {
 void Game::shutdown() {
     g_script.shutdown();
     g_sfx.shutdown();
+    unloadBriefArt();
     unloadGameCursors();
     UnloadRenderTexture(canvas);
     UnloadRenderTexture(minimap);
@@ -315,6 +321,7 @@ void Game::render() {
             menuBeginUi();
             if (phase == Phase::MainMenu) drawMainMenu();
             else if (phase == Phase::MissionSelect) drawMissionSelect();
+            else if (phase == Phase::MissionBrief) drawMissionBrief();
             else if (phase == Phase::Settings) drawSettings();
             else if (phase == Phase::NetLobby) drawNetLobby();
             else drawSetup();

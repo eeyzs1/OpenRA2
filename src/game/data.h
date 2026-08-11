@@ -166,6 +166,10 @@ enum class BldType : uint8_t {
     RobotControl,                               // 机器人指挥中心（YR 盟军；遥控坦克前置，断电则停摆）
     TechPowerPlant,                             // 科技电厂（中立，占领后提供 200 电力）
     TechOutpost,                                // 科技前哨站（中立，占领后维修/治疗周边单位）
+    // ---- 战役专用装置（不可建造；地图/触发器放置）----
+    PsychicBeacon,                              // 心灵信标：范围心控；摧毁以解放
+    PsychicAmplifier,                           // 心灵放大器：更大范围心控（限时关）
+    TimeMachine,                                // 时间机器（YR）：需供电；可损毁脚本装置
     COUNT
 };
 
@@ -316,6 +320,51 @@ bool unitHasTurret(UnitType t);
 // 启动时读取 assets/rules/rules.ini，逐项覆盖内置数值；文件/键缺失保持内置默认。
 // INI 节格式：[Unit.Grizzly] [Bld.ConYard] [SW.Nuke] [DeployWeapon.GI]，键见 assets/README.txt。
 void loadRules(const char* path);
+void loadProjectiles(const char* path);
+// 内容根叠加载：按 contentResolveStack 顺序依次 patch（后写覆盖）
+void loadRulesFromContent();
+void loadProjectilesFromContent();
+
+// 自定义单位变体（rules.ini [Unit.XXX] 带 Base= 键；或 units.csv）
+// 变体复用基础类型的全部游戏逻辑，仅覆盖数值；可通过 Lua / 战役 / 地图名调用
+// Buildable: 0=仅刷出名 1=仅刷出名(yes) 2=replace 写回 Base 的 UnitDef（遭遇战侧栏生效）
+struct UnitVariant {
+    std::string name;            // 变体名（如 "HeavyGrizzly"）
+    UnitType base = UnitType::COUNT; // 基础类型
+    int cost = -1;               // -1=不覆盖
+    int hp = -1;
+    int speed = -1;
+    int sight = -1;
+    std::string weaponProj;      // 覆盖武器贴图
+    int weaponDmg = -1;
+    int weaponRange = -1;
+    int weaponCooldown = -1;
+    float vsInf = -1, vsVeh = -1, vsBld = -1;
+    std::string displayName;     // 可选显示名
+    std::string art;             // 可选贴图 stem（unit_<art>_*.png）；空=用 base
+    int buildable = 0;           // 0=no 1=yes 2=replace
+};
+extern std::vector<UnitVariant> g_variants;
+const UnitVariant* findVariant(const std::string& name);
+
+// 自定义建筑变体（[Bld.XXX] Base=ConYard ...；或 buildings.csv）
+struct BldVariant {
+    std::string name;
+    BldType base = BldType::COUNT;
+    int cost = -1;
+    int hp = -1;
+    bool overridePower = false;
+    int power = 0;
+    std::string displayName;
+    std::string art;
+    int buildable = 0; // 0=no 1=yes 2=replace
+};
+extern std::vector<BldVariant> g_bldVariants;
+const BldVariant* findBldVariant(const std::string& name);
+
+// 解析生成名：枚举名或变体名 → 基础类型（变体可选返回）
+bool resolveUnitSpawn(const char* name, UnitType& out, const UnitVariant** varOut = nullptr);
+bool resolveBldSpawn(const char* name, BldType& out, const BldVariant** varOut = nullptr);
 
 // 规则导出（--export-assets）：把内置数值全量写成 rules.ini 模板
 void exportRules(const char* path);
@@ -396,24 +445,6 @@ struct AIBuildConfig {
 };
 extern AIBuildConfig g_aiBuild[4]; // 索引 = (int)Faction
 
-// 自定义单位变体（rules.ini [Unit.XXX] 带 Base= 键）
-// 变体复用基础类型的全部游戏逻辑，仅覆盖数值；可通过 Lua ra2.spawnUnit("变体名") 调用
-struct UnitVariant {
-    std::string name;            // 变体名（如 "HeavyGrizzly"）
-    UnitType base = UnitType::COUNT; // 基础类型
-    int cost = -1;               // -1=不覆盖
-    int hp = -1;
-    int speed = -1;
-    int sight = -1;
-    std::string weaponProj;      // 覆盖武器贴图
-    int weaponDmg = -1;
-    int weaponRange = -1;
-    int weaponCooldown = -1;
-    float vsInf = -1, vsVeh = -1, vsBld = -1;
-};
-extern std::vector<UnitVariant> g_variants;
-const UnitVariant* findVariant(const std::string& name);
-
 // 枚举名 ↔ 枚举值（INI/地图/战役文件共用一套规范名，如 "Grizzly"、"PrismTower"）
 bool unitTypeByName(const char* s, UnitType& out);
 bool bldTypeByName(const char* s, BldType& out);
@@ -478,6 +509,7 @@ inline bool isDefenseBld(BldType t) {
         case BldType::GapGenerator: case BldType::SpySat: case BldType::PsychicSensor:
         case BldType::NukeSilo: case BldType::WeatherDevice: case BldType::IronCurtain:
         case BldType::ChronoSphere: case BldType::GeneticMutator: case BldType::PsychicDominator:
+        case BldType::PsychicBeacon: case BldType::PsychicAmplifier:
             return true;
         default: return false;
     }
@@ -489,9 +521,15 @@ inline bool isUniqueBld(BldType t) {
         case BldType::OrePurifier: case BldType::CloningVat:
         case BldType::NukeSilo: case BldType::WeatherDevice: case BldType::IronCurtain:
         case BldType::ChronoSphere: case BldType::GeneticMutator: case BldType::PsychicDominator:
+        case BldType::PsychicBeacon: case BldType::PsychicAmplifier: case BldType::TimeMachine:
             return true;
         default: return false;
     }
+}
+
+// 战役心灵装置：信标/放大器对附近敌军单位施加范围心控
+inline bool isPsychicAreaBld(BldType t) {
+    return t == BldType::PsychicBeacon || t == BldType::PsychicAmplifier;
 }
 
 // 心灵控制免疫（RA2 原作）：军犬/心灵单位/机器人（恐怖机器人/遥控坦克）/采矿车/英雄（谭雅）/战斗要塞

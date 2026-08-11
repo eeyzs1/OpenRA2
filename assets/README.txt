@@ -1,39 +1,58 @@
-OpenRA2 素材与规则说明（Modding Guide）
-=========================================
+OpenRA2 素材与规则说明（Modding Guide）——最终形态
+=================================================
 
-本目录下所有内容均为游戏启动时加载的外部素材。任何数值、文本、关卡、
-音乐都不是写死在程序里的——按本说明修改/添加文件即可定制游戏。
-所有文件缺失或键缺失时，游戏自动回退内置默认值，不会崩溃。
+目标：用户/开发者可在不改 C++ 的前提下定制战役、数值、地图、脚本与素材。
 
-重新生成全部模板：ra2.exe --export-assets
-重新生成图像/音频：ra2.exe --gen-assets
+【日常用户入口】userdata/content/
+  启动自动加载。请先读：userdata/content/README.txt
+  仓库根目录也有速查：自定义内容.txt
+  自检：ra2.exe --content-check   或   tools/test_user_content.cmd
+
+内容根（启动时 contentInit）
+----------------------------
+1. 发行包：assets/... 、maps/...
+2. 自动扫描 mods/<Name>/（Enabled=yes 才启用；见 mods/README.txt）
+3. 用户目录：userdata/content/（始终启用，覆盖以上）
+4. 命令行可重复：
+     ra2.exe --mod mods/MyMod [--mod mods/Other]
+   --mod 强制启用该包（即使 mod.ini Enabled=no）
+   --assets <dir> 切换工作目录（资源根）
+
+叠加载规则：同一虚拟路径按 LoadOrder 从低到高，后者优先。
+INI / CSV 多层 patch；单文件素材取最高优先级存在的那份。
+
+用户/Mod 目录可去掉 "assets/" 前缀（推荐）：
+  userdata/content/rules/units.csv
+  mods/MyMod/rules/rules.ini
+  .../campaigns/...  .../maps/foo.txt  .../scripts/*.lua
+  .../strings|sprites|sfx|music|gui|voxels/...
+
+重新生成元数据模板：ra2.exe --export-assets
+图像/音频请用 tools/ra2pack（--gen-assets 已禁用）
+
+本目录（assets/）下所有内容均为游戏启动时加载的外部素材。
+文件/键缺失时回退内置默认值（关键 GUI/SFX/BGM 缺失会拒绝启动）。
 
 通用约定
 --------
 - 所有 INI/TXT 均为 UTF-8（无 BOM）纯文本；';' 或 '#' 起为注释。
 - INI 节名与键名区分大小写；同名节会合并，重复键以【首个】为准
   （想改某个值，请直接编辑原有那一行，不要在文件末尾再加一节）。
+  **例外：mods 叠加载时，后加载文件中的同名键覆盖先加载文件。**
 - 布尔值写法：yes/no、true/false、1/0。
 
 目录结构
 --------
 assets/
   rules/rules.ini        单位/建筑/超武全部数值（本文件第 1 节）
-  rules/projectiles.ini  YR Projectile= 子集（Arcing/ROT/Inviso/Speed；由 projSprite 桥接）
+  rules/projectiles.ini  YR Projectile= 子集
   campaigns/             战役：campaign.ini 列表 + 每关一个 INI（第 2 节）
   strings/zh.ini|en.ini  界面与播报文本（第 3 节）
-  music/                 BGM wav + music.ini 播放列表（第 4 节）
-  maps/  (游戏根目录)    手工地图 txt，被战役 MapFile= 引用（第 5 节）
-  sprites/               全部 PNG 图像（--gen-assets / tools/ra2pack 生成；步兵/建筑仍用）
-  voxels/                运行时 VXL/HVA（载具真体素，从 MIX 提取；见 tools/ra2pack）
-  palettes/unittem.pal   单位调色板；voxels/voxels.vpl 体素光照表
-  sfx/                   全部 WAV 音效（优先从原版 audio.bag 提取；见 tools/ra2pack/gen_audio.py）
-
-载具优先用运行时 VXL 渲染（ra2.exe 启动读 assets/voxels/*.vxl）；缺文件时回退 PNG / 程序化。
-诊断样张：ra2.exe --dump-vxl → tools/ra2pack/out/rt_*.png
-
-数值对齐原版：可用 tools/ra2pack/sync_rules_from_mix.py 从安装目录 MIX 的 rules.ini
-同步 Cost/HP 到本仓库 assets/rules/rules.ini（需配置 tools/ra2pack/game）。
+  music/                 BGM + music.ini 播放列表（第 4 节）
+  sprites/ sfx/ gui/ voxels/ palettes/ scripts/
+maps/                    手工地图 txt（第 5 节；MapFile=maps/...）
+mods/                    可选内容包（见 mods/README.txt）
+userdata/content/        【用户入口】放文件即玩（CSV/INI/地图/素材）
 
 1. rules/rules.ini —— 数值规则
 ------------------------------
@@ -117,31 +136,49 @@ assets/
   超武：Nuke Lightning IronCurtain ChronoShift GeneticMutator PsychicDominator
   阵营：Allies Soviet China Yuri
 
-注意：本表只改【数值与名称】。单位/建筑种类本身由程序定义，
-不能通过 INI 新增全新种类；但可以通过改 Factions/Prereq/Country/
-武器参数做出完全不同的平衡性与科技树。
+注意：本表可改【数值与名称】，并可用变体扩展：
+  [Unit.MyTank] Base=Grizzly HP=600 Buildable=replace ...
+  [Bld.MyYard]  Base=ConYard HP=5000 Buildable=replace ...
+  Buildable=replace → 写回基础类型，遭遇战侧栏生效；空/yes → 仅地图/战役/Lua 刷出
+更简便：改 userdata/content/rules/units.csv（见该目录 README）。
+全新「种类」（新逻辑/新枚举）仍需改 C++。
 
 2. campaigns/ —— 战役与关卡
 ---------------------------
-campaign.ini：
+campaign.ini（发行包与各 mod 均可提供，叠加载）：
+  [Mod] ReplaceMissions=yes   可选：清空已加载任务后再加本文件列表
   [Missions]
-  Mission=mission01.ini     每行一个，顺序即战役顺序
-  Mission=mission02.ini     前 8 关=中国页签，9-16=盟军，17-24=苏军，25-32=尤里
-  ...                       增删关卡只需增删行与对应文件
+  Mission=mission01.ini       每行一个；相对本列表目录或 assets/campaigns/
+  ...                         增删关卡只需增删行与对应文件
+                              （Fusion 32 + Official 38 为发行包默认）
 
-每关文件（例 mission01.ini）：
+每关文件（例 mission01.ini / official/oa01.ini）：
   [General]
   Name=中文名      NameEn=英文名
   Brief=中文简报   BriefEn=英文简报
+  BriefArt=assets/sprites/xxx.png  可选简报静图（缺图回退纯文字，不崩）
   Faction=China             玩家阵营：Allies/Soviet/China/Yuri
-  AI=Soviet,Soviet          敌方阵营列表（逗号分隔，个数=AI数）
+  AI=Soviet,Yuri            敌方阵营列表（逗号分隔，个数=AI数）
   MapSize=96                32..256；有 MapFile 时以地图文件为准
   MapType=0                 0 大陆 1 岛屿 2 湖泊（程序生成图）
   Money=9000                初始资金
-  Objective=0               0 歼灭敌军 1 坚守至 ObjectiveTick 2 触发器定胜负
+  Objective=0               0 歼灭敌军 1 坚守至 ObjectiveTick
+                            2 剧本关：主目标门闩 / 显式 Win（勿用杀光敌军冒充多数官方关）
   ObjectiveTick=0
+  WinOnAllPrimary=yes       Objective=2 时默认 yes：全部 GateWin 主目标完成后胜利
+  Phase=0                   开局阶段（配合 RequiresPhase / SetPhase）
+  TimerVisible=yes          TimerStart 默认在 HUD 显示倒计时
   MapFile=maps/xxx.txt      可选：手工地图（第 5 节），省略则程序生成
   NoStartForce=yes          可选：不刷初始基地车部队（全靠地图摆放）
+  LineId=oa  LineIndex=0    进度线（oa/os/ya/ys / fc/fa/fs/fy）
+  Country=America           可选国家
+  AllowedBuildings=...      科技门（空=不限制）
+  AllowedUnits=...
+
+  [Objective.1]             多目标清单（可多个）
+  Text= / TextEn=
+  Primary=yes
+  GateWin=yes               Primary 且 GateWin：全部完成才胜；英雄存活等用 GateWin=no
 
   [Wave.1]                  敌方增援波次（可多个，编号任意）
   At=2700                   触发帧（30 帧/秒，2700=90 秒）
@@ -149,25 +186,27 @@ campaign.ini：
 
   [Trig.1]                  触发器（RA2 式地图脚本，可多个）
   Cond=Always               条件：
-                            Always        开局即触发
-                            Time          C0=帧：时间到
-                            PlayerBldLost C0=玩家 C1=建筑枚举值：该建筑全灭
-                            PlayerAllDead C0=玩家：被歼灭
-                            UnitInRect    C0=玩家 C1..C4=矩形：单位进入
-                            MoneyBelow    C0=玩家 C1=金额：资金低于
-  C0=0 .. C4=0              条件参数
+                            Always / Time / PlayerBldLost / PlayerAllDead /
+                            UnitInRect / MoneyBelow / UnitLost /
+                            BldCaptured   C0=玩家 BType=建筑 C2=数量：现拥有即成立（占领）
+                            ObjAllPrimary 全部 GateWin 主目标已完成
+                            UnitCountBelow / PhaseAt / Script
+  C0=0 .. C4=0              条件参数；CType=/BType=/UType= 可写类型名
+  RequiresPhase=2           可选：仅当阶段>=该值才求值
+  Enabled=no                可选：需 EnableTag 后才启用
+  Tag=lab                   Script / EnableTag 标识
   Act=Eva                   动作：
-                            SpawnAt   A0=玩家 A1,A2=刷出点 A3,A4=攻击移动目标
-                                      （A3<0 不移动）；Units= 给出单位列表
-                            Eva       Msg= 播报文本
-                            GiveMoney A0=玩家 A1=金额
-                            RevealMap A0=玩家 A1,A2=圆心 A3=半径
-                            Win / Lose            立即胜利/失败
-                            Objective Msg= 更新 HUD 目标文本
+                            SpawnAt / Eva / GiveMoney / RevealMap / Win / Lose /
+                            Objective / CompleteObj / Script /
+                            SetPhase / EnableTag / Reinforce /
+                            TimerStart / TimerAbort
   A0=0 .. A4=-1
-  Units=Yuri,Yuri           SpawnAt 用
+  Units=Yuri,Yuri           SpawnAt / Reinforce 用
   Msg=中文文本  MsgEn=英文   Eva/Objective 用
   Once=yes                  no=可重复触发
+
+  官方打样关：oa01（河口分阶段）、oa05（渗透+揭示核弹井）、oa08（限时信标）。
+  批量加厚：tools/thicken_campaigns.py
 
 3. strings/ —— 界面文本
 -----------------------

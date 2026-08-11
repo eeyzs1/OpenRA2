@@ -82,6 +82,7 @@ void World::update() {
     updateTimedBombs();  // 疯狂伊文炸弹倒计时
     regrowOre();         // 矿脉缓慢再生
     updateParadrop();    // 伞兵充能（美国空指部/科技机场）
+    updatePsychicAreaDevices(); // 战役心灵信标/放大器
     // 生产进度
     // 性能优化：预计算每个玩家的各类工厂数量缓存（避免每类生产都遍历所有实体）
     // 用数组大小 64（BldType 枚举值约 30+，留余量）

@@ -1,0 +1,54 @@
+# oa01 NY estuary
+size 96 96
+fill clear
+rect water 32 0 24 96
+rect rough 6 48 24 32
+rect rough 64 8 24 32
+blob ore 12 76 4
+blob ore 74 16 4
+blob gems 48 80 3
+blob ore 36 24 3
+rect water 30 55 36 41
+deco tree1 4 4 28 40 12
+unit 0 Tanya 12 84
+unit 0 GI 14 84
+unit 0 GI 16 84
+unit 0 GI 18 84
+unit 0 Engineer 12 86
+unit 0 GuardianGI 14 86
+bld 0 Pillbox 20 44
+bld 0 Pillbox 26 48
+bld -1 CivHouse 22 42
+bld -1 OilDerrick 24 52
+bld 1 NavalYard 76 68
+unit 1 Dreadnought 82 72 guard
+unit 1 Dreadnought 76 74 guard
+unit 1 Dreadnought 84 66 guard
+unit 1 SeaScorpion 80 70 guard
+bld 1 ConYard 78 10
+bld 1 TeslaReactor 72 10
+bld 1 Barracks 78 18
+bld 1 WarFactory 84 16
+bld 1 OreRefinery 70 18
+bld 1 Radar 80 24
+bld 1 TeslaCoil 74 26
+bld 1 FlakCannon 86 26
+unit 1 Conscript 76 20 guard
+unit 1 Conscript 79 20 guard
+unit 1 TeslaTrooper 82 20 guard
+unit 1 Rhino 85 20 guard
+unit 1 FlakTrack 76 23 guard
+# ENRICHED layout pass
+deco tree2 6 6 24 24 8
+deco tree3 48 6 19 19 6
+deco rock2 72 32 14 12 5
+blob ore 24 68 3
+blob gems 66 24 2
+bld -1 OilDerrick 32 66
+bld -1 Hospital 44 64
+bld -1 CivHouse 48 56
+bld -1 CivHouse 54 58
+unit 1 Conscript 66 28 guard
+unit 1 Conscript 70 32 guard
+unit 1 AttackDog 68 36 guard
+unit 0 Engineer 12 84

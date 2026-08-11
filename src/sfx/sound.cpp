@@ -2,6 +2,7 @@
 #include "gfx/assets.h"
 #include "core/util.h"
 #include "core/ini.h"
+#include "core/content.h"
 #include <cmath>
 #include <vector>
 #include <cstring>
@@ -848,26 +849,27 @@ void SoundBank::playBgmTrack(int idx) {
 
 void SoundBank::initBgm() {
     if (!IsAudioDeviceReady()) return;
-    // 扫描 assets/music/ 外部音乐（ogg/mp3/wav/flac）
-    if (DirectoryExists("assets/music")) {
-        FilePathList list = LoadDirectoryFilesEx("assets/music", nullptr, false);
-        for (unsigned i = 0; i < list.count; i++) {
-            const char* p = list.paths[i];
-            if (IsFileExtension(p, ".ogg;.mp3;.wav;.flac")) bgmFiles.emplace_back(p);
-        }
-        UnloadDirectoryFiles(list);
-    }
-    // 播放列表元数据（assets/music/music.ini [Playlist] Track=文件名，顺序即轮换顺序；
-    // 列出的文件置顶，未列出的追加在后；文件缺失则保持扫描顺序）
+    // 扫描内容根下 music（含 mods 覆盖/追加）
     {
-        Ini mini;
-        if (mini.load("assets/music/music.ini")) {
+        auto names = contentListFiles("assets/music", nullptr);
+        for (const std::string& name : names) {
+            if (!IsFileExtension(name.c_str(), ".ogg;.mp3;.wav;.flac")) continue;
+            std::string virt = std::string("assets/music/") + name;
+            std::string path = contentResolve(virt.c_str());
+            if (!path.empty()) bgmFiles.push_back(path);
+        }
+    }
+    // 播放列表元数据：叠加载 music.ini（后写覆盖顺序意图：合并 Track 列表，后文件优先重排）
+    {
+        auto stacks = contentResolveStack("assets/music/music.ini");
+        for (const auto& iniPath : stacks) {
+            Ini mini;
+            if (!mini.load(iniPath.c_str())) continue;
             if (const Ini::Section* pl = mini.find("Playlist")) {
                 std::vector<std::string> ordered;
                 for (const auto& p : pl->kv) {
                     if (p.first != "Track") continue;
                     for (auto it = bgmFiles.begin(); it != bgmFiles.end(); ++it) {
-                        // 按文件名部分匹配（扫描路径含目录前缀）
                         const std::string& full = *it;
                         if (full.size() >= p.second.size()
                             && full.compare(full.size() - p.second.size(), p.second.size(), p.second) == 0) {
@@ -932,12 +934,13 @@ void SoundBank::init() {
     missingAssets = 0;
     int external = 0;
     for (int i = 0; i < (int)Sfx::COUNT; i++) {
-        char path[192];
         Sound base{};
         const char* nm = sfxAssetName((Sfx)i);
         for (const char* ext : {".wav", ".ogg", ".mp3"}) {
-            snprintf(path, sizeof(path), "assets/sfx/%s%s", nm, ext);
-            if (FileExists(path)) { base = LoadSound(path); break; }
+            char virt[192];
+            snprintf(virt, sizeof(virt), "assets/sfx/%s%s", nm, ext);
+            std::string resolved = contentResolve(virt);
+            if (!resolved.empty()) { base = LoadSound(resolved.c_str()); break; }
         }
         if (base.stream.buffer) {
             external++;

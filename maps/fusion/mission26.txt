@@ -1,0 +1,49 @@
+# mission26 Beacon Deploy
+size 96 96
+fill clear
+rect rough 14 14 68 68
+bld -1 CivHouse 28 28
+bld -1 CivHouse 34 30
+bld -1 CivHouse 40 28
+bld -1 CivHouse 32 36
+bld -1 CivHouse 38 38
+bld -1 CivHouse 44 34
+bld -1 CivHouse 30 42
+bld -1 CivHouse 42 44
+bld -1 CivHouse 48 40
+blob ore 12 76 4
+blob ore 74 16 4
+blob gems 48 80 3
+blob ore 36 24 3
+unit 0 MCV 12 80
+unit 0 Initiate 10 82
+unit 0 Initiate 14 82
+unit 0 Engineer 12 83
+unit 0 SlaveMiner 16 80
+bld 1 ConYard 74 12
+bld 1 PowerPlant 68 12
+bld 1 Barracks 74 20
+bld 1 WarFactory 80 18
+bld 1 OreRefinery 66 20
+bld 1 Radar 76 26
+bld 1 PrismTower 70 28
+bld 1 PatriotMissile 82 28
+unit 1 GI 72 22 guard
+unit 1 GI 75 22 guard
+unit 1 GuardianGI 78 22 guard
+unit 1 Grizzly 81 22 guard
+unit 1 IFV 72 25 guard
+# ENRICHED layout pass
+deco tree2 6 6 24 24 8
+deco tree3 48 6 19 19 6
+deco rock2 72 32 14 12 5
+blob ore 24 68 3
+blob gems 66 24 2
+bld -1 OilDerrick 32 66
+bld -1 Hospital 44 64
+bld -1 CivHouse 48 56
+bld -1 CivHouse 54 58
+unit 1 Conscript 66 28 guard
+unit 1 Conscript 70 32 guard
+unit 1 AttackDog 68 36 guard
+unit 0 Engineer 12 84
