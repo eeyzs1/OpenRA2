@@ -45,3 +45,5 @@ playtest_out.txt
 /menu_setup.png
 assets/preview/
 tools/visual_audit/menu_ref/
+# Local save / progress state (not content)
+userdata/campaign_progress.ini
