@@ -48,6 +48,7 @@ void Game::netBeginGame() {
     world.aiAlliance = false;
     ais.clear();
     localPlayer = netPlayer;
+    resetNotifications();
     netGame = true;
     netDesync = netPeerLeft = false;
     netSimTick = 0;
@@ -56,7 +57,7 @@ void Game::netBeginGame() {
     pendingCmds.clear();
     sel.clear();
     selBuilding = INVALID_EID;
-    placing = false;
+    clearPlacement();
     targetingSW = SWType::COUNT;
     chronoSourceSel.clear();
     targetingParadrop = false;
@@ -434,13 +435,15 @@ int Game::netSelfTestDriver(int role, int frames) {
         if (netPeerLeft) { peerDone = true; netPeerLeft = false; } // 对方已完成（Bye）：不中断，己方仍可推进到 frames
         // 在 tick 30 部署基地车，tick 120 全体移动
         if (netSimTick + NET_DELAY == 30 || (netSimTick < NET_DELAY && f == 0)) {
-            for (auto& e : world.ents)
+            for (size_t id=0;id<world.ents.size();++id) {
+                const auto& e=world.ents[id];
                 if (e.alive && !e.isBuilding && e.player == localPlayer && e.utype == UnitType::MCV) {
                     World::Cmd c;
                     c.type = World::Cmd::Deploy;
-                    c.ids.push_back((EID)(&e - world.ents.data()));
+                    c.ids.push_back((EID)id);
                     issueCmd(c);
                 }
+            }
         }
         if (netSimTick + NET_DELAY == 120) {
             World::Cmd c;

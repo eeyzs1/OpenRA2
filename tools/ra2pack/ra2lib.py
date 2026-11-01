@@ -569,7 +569,7 @@ class Hva:
         if len(data) < 24:
             return
         self.nframes, self.nsec = struct.unpack_from("<II", data, 16)
-        if not (0 < self.nframes < 1024 and 0 < self.nsec < 64):
+        if not (0 < self.nframes <= 1024 and 0 < self.nsec <= 64):
             return
         self.sec_names = []
         pos = 24
@@ -616,6 +616,10 @@ _FACE_MUL = (0.88, 0.72, 0.92, 0.78, 1.05, 0.65)
 def _phi_for_screen_alpha(alpha_deg: float) -> float:
     a = math.radians(alpha_deg)
     return math.degrees(math.atan2(2 * math.sin(a) - math.cos(a), 2 * math.sin(a) + math.cos(a)))
+
+def facing_world_phi(direction: int) -> float:
+    """Match dirFromVec's world-compass facings, not uniform screen-space angles."""
+    return 45.0*((direction&7)-1)
 
 def _proj(x, y, z):
     return x - y, (x + y) * 0.5 - z
@@ -732,11 +736,11 @@ def _fill_quad(zbuf, W, H, corners, depth, col):
 
 def _rgb_of(c, shade, pal, tech_neutral=False):
     if 16 <= (c & 255) <= 31:
-        t = (c - 16) / 15.0
+        brightness=max(pal[c & 255])/255.0*max(0.55,min(1.0,shade))
         if tech_neutral:
-            g = int(150 + 70 * max(0.0, min(1.0, t)) * max(0.55, min(1.0, shade)))
+            g = int(220*brightness)
             return (min(255, g + 10), g, max(0, g - 8), 255)
-        r = int(140 + 100 * max(0.0, min(1.0, t)) * max(0.55, min(1.0, shade)))
+        r = int(255*brightness)
         return (min(255, r), 0, 0, 255)
     r, g, b = pal[c & 255]
     if r + g + b > 700:

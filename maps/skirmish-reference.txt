@@ -1,0 +1,11 @@
+# Fixed land reference: open bases, rough transitions, shared central resources.
+size 64 64
+fill clear
+spawn 0 12 12
+spawn 1 51 51
+rect rough 23 20 18 24
+blob ore 19 14 4
+blob ore 45 49 4
+blob gems 32 32 3
+deco tree1 2 22 14 24 16
+deco tree2 48 14 12 26 16

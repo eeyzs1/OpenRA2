@@ -54,7 +54,7 @@ inline int weaponSpeedCenti(const WeaponDef& w, const ProjectileDef& pd) {
 inline ProjKind kindFromProjectile(const ProjectileDef& pd, const char* projSprite) {
     if (pd.arcing) return ProjKind::Shell;
     if (pd.rot > 0) {
-        if (pd.aa && !pd.ag) return ProjKind::Flak;
+        if (projSprite && !strcmp(projSprite,"flak")) return ProjKind::Flak;
         return ProjKind::Missile;
     }
     const char* ps = projSprite ? projSprite : "shell";
@@ -98,5 +98,25 @@ inline bool approachBuildingCell(const World& w, int sx, int sy, const World::En
             if (d < best) { best = d; ox = x; oy = y; found = true; }
         }
     }
+    return found;
+}
+
+inline bool attackPath(const World& world,const World::Ent& unit,const World::Ent& target,std::vector<Vec2i>& path) {
+    const auto& def=unitDef(unit.utype);
+    path.clear();
+    if(def.isAir() || unit.utype==UnitType::Chrono || unit.utype==UnitType::ChronoCommando || unit.utype==UnitType::ChronoIvan) return true;
+    float tx=target.x,ty=target.y;
+    if(target.isBuilding) { tx+=bldDef(target.btype).w/2.0f;ty+=bldDef(target.btype).h/2.0f; }
+    // Engineer capture/repair and spy infiltration also share the Chasing state.
+    if((unit.utype==UnitType::Spy || unit.utype==UnitType::Engineer) && target.isBuilding) {
+        if(distf(unit.x,unit.y,tx,ty)<std::max(bldDef(target.btype).w,bldDef(target.btype).h)/2.0f+2.5f) return true;
+        int x=(int)tx,y=(int)ty;
+        return approachBuildingCell(world,(int)unit.x,(int)unit.y,target,def.pathDomain(),x,y)
+            && world.map.findPath((int)unit.x,(int)unit.y,x,y,path,20000,def.pathDomain());
+    }
+    float range=def.hasC4() && target.isBuilding?2.5f:(float)world.effWeapon(unit,&target).range;
+    bool found=world.map.findPathToRange((int)unit.x,(int)unit.y,tx,ty,range,path,20000,def.pathDomain());
+    // While between tile centers, the current cell's center may itself be the firing point.
+    if(found && path.empty() && distf(unit.x,unit.y,tx,ty)>range) path.push_back({(int)unit.x,(int)unit.y});
     return found;
 }

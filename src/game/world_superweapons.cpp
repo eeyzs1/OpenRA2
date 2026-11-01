@@ -2,20 +2,41 @@
 #include "game/world_priv.h"
 #include "game/lang.h"
 #include "game/script.h"
-#include "gfx/sprites.h"
-#include "sfx/sound.h"
+#include "game/presentation_events.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
 
 bool World::swAvailable(int player, SWType t) const {
-    if (!superweaponsEnabled || player < 0 || player >= numPlayers || players[player].defeated) return false;
+    if ((unsigned)t>=(unsigned)SWType::COUNT || !superweaponsEnabled || player < 0 || player >= numPlayers || players[player].defeated) return false;
     return hasBld(player, swDef(t).fromBld);
 }
 
+SuperweaponRejectReason World::superweaponRejection(int player,int type,float x,float y) const {
+    if(type<0 || type>=(int)SWType::COUNT) return SuperweaponRejectReason::InvalidType;
+    if(!std::isfinite(x) || !std::isfinite(y) || x<0 || y<0 || x>=map.w || y>=map.h) return SuperweaponRejectReason::InvalidTarget;
+    if(!swAvailable(player,(SWType)type)) return SuperweaponRejectReason::Unavailable;
+    if(!players[player].swReady[type]) return SuperweaponRejectReason::NotReady;
+    return SuperweaponRejectReason::None;
+}
+bool World::chronoSourceEligible(int player,EID id) const {
+    if(!valid(id)) return false;
+    const auto& e=ents[id];if(e.isBuilding || e.player!=player || e.immobilized() || e.parasiting || e.radDeployed) return false;
+    const auto& u=unitDef(e.utype);return !u.isAir() && !u.isInfantry();
+}
+
 bool World::launchSW(int player, SWType t, float tx, float ty) {
+    if(superweaponRejection(player,(int)t,tx,ty)!=SuperweaponRejectReason::None) return false;
+    if(t==SWType::ChronoShift) {
+        std::vector<EID> group;
+        for(const auto& sphere:ents) if(sphere.alive && sphere.isBuilding && sphere.player==player && sphere.btype==BldType::ChronoSphere) {
+            for(EID id=0;id<(EID)ents.size();++id) if(chronoSourceEligible(player,id)
+                && distf(ents[id].x,ents[id].y,sphere.x+1.5f,sphere.y+1.0f)<=8.0f) group.push_back(id);
+            break;
+        }
+        return launchChronoShift(player,group,tx,ty);
+    }
     Player& p = players[player];
-    if (!swAvailable(player, t) || !p.swReady[(int)t]) return false;
     p.swReady[(int)t] = false;
     p.swCharge[(int)t] = 0;
     switch (t) {
@@ -26,7 +47,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
             n.timer = 75; // 2.5 秒落地
             nukes.push_back(n);
             evaAll(TR(S::EvaNukeLaunched));
-            g_sfx.play(Sfx::NukeLaunch, 0.9f);
+            emitSound(Sfx::NukeLaunch, 0.9f);
             break;
         }
         case SWType::Lightning: {
@@ -34,7 +55,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
             p.stormX = tx; p.stormY = ty;
             p.stormBoltCd = 0;
             evaAll(TR(S::EvaStormComing));
-            g_sfx.playAt(Sfx::Storm, tx, ty);
+            emitSoundAt(Sfx::Storm, tx, ty);
             break;
         }
         case SWType::IronCurtain: {
@@ -48,34 +69,11 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
                 if (!e.isBuilding && unitDef(e.utype).isInfantry()) { kill((int)i); continue; }
                 if (e.player == player) e.invuln = 1500;
             }
-            g_sfx.playAt(Sfx::IronCurtain, tx, ty);
+            emitSoundAt(Sfx::IronCurtain, tx, ty);
             // 铁幕扩散特效
             Effect ef;
             ef.kind = 8; ef.x = tx; ef.y = ty; ef.maxAge = 40;
             effects.push_back(ef);
-            break;
-        }
-        case SWType::ChronoShift: {
-            // 将超时空传送仪周边 8 格内的己方车辆传送至目标点（AI 用；人类玩家由 HUD 以选中单位调用 chronoShiftUnits）
-            EID sphere = INVALID_EID;
-            for (size_t i = 0; i < ents.size(); i++) {
-                const Ent& e = ents[i];
-                if (e.alive && e.isBuilding && e.player == player && e.btype == BldType::ChronoSphere) { sphere = (int)i; break; }
-            }
-            if (sphere != INVALID_EID) {
-                const Ent& s = ents[sphere];
-                float sx = s.x + 1.5f, sy = s.y + 1.0f;
-                std::vector<EID> grp;
-                for (size_t i = 0; i < ents.size(); i++) {
-                    Ent& e = ents[i];
-                    if (!e.alive || e.isBuilding || e.player != player) continue;
-                    const UnitDef& ud = unitDef(e.utype);
-                    if (ud.isInfantry() || ud.isAir()) continue;
-                    if (distf(e.x, e.y, sx, sy) <= 8.0f) grp.push_back((int)i);
-                }
-                chronoShiftUnits(grp, tx, ty);
-            }
-            eva(player, TR(S::EvaChronoStart));
             break;
         }
         case SWType::GeneticMutator: {
@@ -96,8 +94,8 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
             }
             for (auto& pos : positions)
                 spawnUnit(player, UnitType::Brute, pos.first, pos.second);
-            evaAll(TextFormat(TR(S::EvaMindGain)));
-            g_sfx.playAt(Sfx::Tesla, tx, ty);
+            evaAll(formatText(TR(S::EvaMindGain)));
+            emitSoundAt(Sfx::Tesla, tx, ty);
             Effect ef; ef.kind = 8; ef.x = tx; ef.y = ty; ef.maxAge = 40;
             effects.push_back(ef);
             break;
@@ -122,12 +120,12 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
                     e.mindBy = INVALID_EID;
                     e.origPlayer = -1;
                     e.permaControlled = true;
-                    e.state = UState::Idle; e.target = INVALID_EID; e.path.clear();
+                    e.state = UState::Idle; e.target = INVALID_EID; e.clearPath();
                 }
                 if (e.isBuilding) damage((int)i, 200, player);
             }
-            evaAll(TextFormat(TR(S::EvaMindGain)));
-            g_sfx.playAt(Sfx::Tesla, tx, ty);
+            evaAll(formatText(TR(S::EvaMindGain)));
+            emitSoundAt(Sfx::Tesla, tx, ty);
             Effect ef; ef.kind = 8; ef.x = tx; ef.y = ty; ef.maxAge = 50;
             effects.push_back(ef);
             break;
@@ -144,7 +142,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
                 e.invuln = 1000; // 覆盖已有铁幕保护
             }
             players[player].powerSabotage = 2000;
-            g_sfx.playAt(Sfx::IronCurtain, tx, ty);
+            emitSoundAt(Sfx::IronCurtain, tx, ty);
             Effect ef; ef.kind = 8; ef.x = tx; ef.y = ty; ef.maxAge = 45;
             effects.push_back(ef);
             break;
@@ -155,26 +153,18 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
     return true;
 }
 
-bool World::launchChronoShift(int player, const std::vector<EID>& sel, float tx, float ty) {
-    if (!superweaponsEnabled || !swAvailable(player, SWType::ChronoShift)
-        || !players[player].swReady[(int)SWType::ChronoShift]) return false;
+bool World::launchChronoShift(int player,const std::vector<EID>& selected,float tx,float ty,int* transferred) {
+    if(transferred) *transferred=0;
+    if(superweaponRejection(player,(int)SWType::ChronoShift,tx,ty)!=SuperweaponRejectReason::None) return false;
     std::vector<EID> eligible;
-    eligible.reserve(sel.size());
-    for (EID id : sel) {
-        if (!valid(id)) continue;
-        const Ent& e = ents[id];
-        if (e.isBuilding || e.player != player) continue;
-        const UnitDef& u = unitDef(e.utype);
-        if (u.isAir() || u.isInfantry()) continue;
-        eligible.push_back(id);
-    }
-    if (eligible.empty()) return false; // 无有效来源单位时不浪费充能
-    Player& p = players[player];
-    p.swReady[(int)SWType::ChronoShift] = false;
-    p.swCharge[(int)SWType::ChronoShift] = 0;
-    chronoShiftUnits(eligible, tx, ty);
-    eva(player, TR(S::EvaChronoStart));
-    g_script.onSuperWeapon(player, SWType::ChronoShift, tx, ty);
+    for(EID id:selected) if(chronoSourceEligible(player,id)) eligible.push_back(id);
+    std::sort(eligible.begin(),eligible.end());eligible.erase(std::unique(eligible.begin(),eligible.end()),eligible.end());
+    if(eligible.empty()) return false;
+    const int moved=chronoShiftUnits(eligible,tx,ty);
+    if(!moved) return false;
+    if(transferred) *transferred=moved;
+    Player& p=players[player];p.swReady[(int)SWType::ChronoShift]=false;p.swCharge[(int)SWType::ChronoShift]=0;
+    eva(player,TR(S::EvaChronoStart));g_script.onSuperWeapon(player,SWType::ChronoShift,tx,ty);
     return true;
 }
 
@@ -190,8 +180,8 @@ void World::updateSW() {
             if (p.lowPower()) continue; // 低电暂停充能
             if (++p.swCharge[i] >= swDef((SWType)i).chargeTime) {
                 p.swReady[i] = true;
-                eva(pi, TextFormat(TR(S::EvaSWReadyFmt), swName((SWType)i)));
-                if (pi == 0) g_sfx.play(Sfx::SWReady, 0.85f);
+                eva(pi, formatText(TR(S::EvaSWReadyFmt), swName((SWType)i)));
+                if (pi == 0) emitSound(Sfx::SWReady, 0.85f);
             }
         }
     }
@@ -230,7 +220,7 @@ void World::updateSW() {
             ex2.maxAge = 18;
             effects.push_back(ex2);
         }
-        g_sfx.playAt(Sfx::NukeBlast, n.tx, n.ty);
+        emitSoundAt(Sfx::NukeBlast, n.tx, n.ty);
     }
     nukes.erase(std::remove_if(nukes.begin(), nukes.end(), [](const Nuke& n) { return !n.active; }), nukes.end());
 
@@ -249,7 +239,7 @@ void World::updateSW() {
         for (size_t i = 0; i < ents.size(); i++) {
             Ent& e = ents[i];
             if (!e.alive) continue;
-            if (!e.isBuilding && unitDef(e.utype).isAir() && e.state != UState::Landed) continue; // 打不到空中
+            if (e.airborne()) continue; // 打不到空中
             float ex = e.x, ey = e.y;
             if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
             if (distf(ex, ey, bx, by) > 1.6f) continue;
@@ -261,14 +251,15 @@ void World::updateSW() {
         ef.kind = 7; ef.x = bx; ef.y = by; ef.maxAge = 9;
         effects.push_back(ef);
         explodeAt(bx, by, 0);
-        g_sfx.playAt(Sfx::Lightning, bx, by);
+        emitSoundAt(Sfx::Lightning, bx, by);
     }
 }
 
 // ===================== 更新 =====================
 
-void World::chronoShiftUnits(const std::vector<EID>& sel, float tx, float ty) {
-    bool anyInf = false;
+int World::chronoShiftUnits(const std::vector<EID>& sel, float tx, float ty) {
+    if(!std::isfinite(tx) || !std::isfinite(ty) || tx<0 || ty<0 || tx>=map.w || ty>=map.h) return 0;
+    bool anyInf = false;int moved=0;
     for (EID id : sel) {
         if (!valid(id)) continue;
         Ent& e = ents[id];
@@ -276,13 +267,15 @@ void World::chronoShiftUnits(const std::vector<EID>& sel, float tx, float ty) {
         const UnitDef& ud = unitDef(e.utype);
         if (ud.isAir()) continue;
         if (ud.isInfantry()) { anyInf = true; kill(id); continue; } // 原作设定：传送步兵即死
-        chronoJump(e, tx, ty);
+        if(chronoJump(id, tx, ty)) ++moved;
     }
     if (anyInf) eva(0, TR(S::EvaInfNoChrono));
-    g_sfx.playAt(Sfx::IronCurtain, tx, ty);
+    if(!moved && !anyInf) return 0;
+    emitSoundAt(Sfx::IronCurtain, tx, ty);
     Effect ef;
     ef.kind = 8; ef.x = tx; ef.y = ty; ef.maxAge = 40;
     effects.push_back(ef);
+    return moved;
 }
 
 // ===================== P8 联机：命令执行与校验和 =====================

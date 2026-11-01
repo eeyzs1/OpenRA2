@@ -107,6 +107,14 @@ void Map::generate(int w_, int h_, uint64_t seed, int numPlayers, std::vector<Ve
             c.variant = (uint8_t)rng.range(0, 7);
         }
 
+    // Coast starts belong to its mainland, rather than isolated artificial ocean pads.
+    if(mapType==4) {
+        const int left=w/2,right=w-m-1,top=m,bottom=h-m-1;
+        const int upper=top+(bottom-top)/3,lower=top+2*(bottom-top)/3;
+        const Vec2i coast[]={{left,top},{right,bottom},{right,top},{left,bottom},{left,upper},{right,lower},{right,upper},{left,lower}};
+        for(size_t i=0;i<outSpawns.size();++i)outSpawns[i]=coast[i];
+    }
+
     // 2. 出生点周围整平
     for (Vec2i sp : outSpawns) {
         for (int dy = -5; dy <= 5; dy++)
@@ -205,6 +213,7 @@ void Map::generate(int w_, int h_, uint64_t seed, int numPlayers, std::vector<Ve
         if (c.terrain == Terrain::Water || c.terrain == Terrain::Bridge) c.height = 0;
         else c.height = 0;
     }
+    finalizeSkirmishStarts(outSpawns,mapType);
 }
 
 int Map::harvestAt(int x, int y, int want) {
@@ -233,18 +242,30 @@ bool Map::findNearestOre(int sx, int sy, int maxR, Vec2i& out) const {
 
 struct AStarNode { int x, y; float g, f; int parent; };
 
-bool Map::findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, int maxNodes, int domain) const {
+bool Map::findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, int maxNodes, int domain, const std::vector<uint8_t>* congestion) const {
+    return findPathImpl(sx,sy,tx,ty,tx+0.5f,ty+0.5f,0,outPath,maxNodes,domain,congestion);
+}
+
+bool Map::findPathToRange(int sx,int sy,float tx,float ty,float range,std::vector<Vec2i>& outPath,int maxNodes,int domain,const std::vector<uint8_t>* congestion) const {
+    outPath.clear();
+    if(!std::isfinite(tx) || !std::isfinite(ty) || !std::isfinite(range) || range<=0 || tx<0 || ty<0 || tx>=w || ty>=h) return false;
+    return findPathImpl(sx,sy,(int)tx,(int)ty,tx,ty,range,outPath,maxNodes,domain,congestion);
+}
+
+bool Map::findPathImpl(int sx,int sy,int tx,int ty,float goalX,float goalY,float range,std::vector<Vec2i>& outPath,int maxNodes,int domain,const std::vector<uint8_t>* congestion) const {
     outPath.clear();
     if (!inBounds(sx, sy) || !inBounds(tx, ty)) return false;
     // domain: 0 陆地 1 水面 2 两栖；建筑占用一律视为不可通行
     auto walkable = [&](int x, int y) {
         if (!inBounds(x, y) || cellBlocked(x, y)) return false;
+        // 255 denotes an immovable occupant; lower values are soft congestion.
+        if(congestion && congestion->size()==cells.size() && (*congestion)[(size_t)y*w+x]==255 && (x!=sx || y!=sy)) return false;
         const Cell& c = at(x, y);
         if (domain == 1) return c.terrain == Terrain::Water;
         if (domain == 2) return c.passable() || c.terrain == Terrain::Water;
         return c.passable();
     };
-    if (!walkable(tx, ty)) {
+    if (range<=0 && !walkable(tx, ty)) {
         // 目标不可通行：找最近可通行格
         bool found = false;
         for (int r = 1; r <= 3 && !found; r++)
@@ -255,7 +276,12 @@ bool Map::findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, 
                 }
         if (!found) return false;
     }
-    if (sx == tx && sy == ty) return true;
+    auto reached=[&](int x,int y) {
+        if(range<=0) return x==tx && y==ty;
+        float dx=x+0.5f-goalX,dy=y+0.5f-goalY;
+        return dx*dx+dy*dy<=range*range;
+    };
+    if (reached(sx,sy)) return true;
 
     const int N = w * h;
     if ((int)astarG.size() != N) {
@@ -288,6 +314,7 @@ bool Map::findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, 
     };
 
     auto hFn = [&](int x, int y) {
+        if(range>0) return std::max(0.0f,distf(x+0.5f,y+0.5f,goalX,goalY)-range)*0.99999f;
         float dx = (float)abs(x - tx), dy = (float)abs(y - ty);
         return std::max(dx, dy) + 0.4142f * std::min(dx, dy);
     };
@@ -308,7 +335,7 @@ bool Map::findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, 
         int ci = cur.y * w + cur.x;
         if (closed(ci)) continue;
         markClosed(ci);
-        if (cur.x == tx && cur.y == ty) {
+        if (reached(cur.x,cur.y)) {
             std::vector<Vec2i> rev;
             int i = ci;
             while (i >= 0 && i != startIdx) {
@@ -330,6 +357,7 @@ bool Map::findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, 
             int ni = ny * w + nx;
             if (closed(ni)) continue;
             float ng = cur.g + COST[d];
+            if (congestion && congestion->size() == (size_t)N) ng += (*congestion)[ni];
             if (ng < gAt(ni)) {
                 setG(ni, ng, ci);
                 open.push({nx, ny, ng, ng + hFn(nx, ny), (int)ci});

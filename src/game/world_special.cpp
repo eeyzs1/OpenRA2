@@ -2,8 +2,7 @@
 #include "game/world_priv.h"
 #include "game/lang.h"
 #include "game/script.h"
-#include "gfx/sprites.h"
-#include "sfx/sound.h"
+#include "game/presentation_events.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
@@ -31,8 +30,8 @@ void World::updateParadrop() {
             p.paradropReady = true;
             const char* nm = hasParadropSource(pi) ? TR(S::Paradrop)
                            : (hasSpyPlaneSource(pi) ? TR(S::SpyPlane) : TR(S::PsychicReveal));
-            eva(pi, TextFormat(TR(S::EvaSWReadyFmt), nm));
-            if (pi == 0) g_sfx.play(Sfx::Ready, 0.7f);
+            eva(pi, formatText(TR(S::EvaSWReadyFmt), nm));
+            if (pi == 0) emitSound(Sfx::Ready, 0.7f);
         }
     }
 }
@@ -95,7 +94,7 @@ void World::orderParadrop(int player, float x, float y) {
     p.paradropReady = false;
     p.paradropCharge = 0;
     eva(player, TR(S::EvaParadropDrop));
-    g_sfx.playAt(Sfx::Place, x, y);
+    emitSoundAt(Sfx::Place, x, y);
     // 空投区域短暂显形（双方都能看到伞兵落地）
     map.reveal(player, (int)x, (int)y, 6);
 }
@@ -114,7 +113,7 @@ void World::orderSpyPlane(int player, float x, float y) {
     }
     p.paradropReady = false;
     p.paradropCharge = 0;
-    g_sfx.playAt(Sfx::Missile, x, y);
+    emitSoundAt(Sfx::Missile, x, y);
     Effect ef; ef.kind = 8; ef.x = x; ef.y = y; ef.maxAge = 30;
     effects.push_back(ef);
 }
@@ -129,7 +128,7 @@ void World::orderPsychicReveal(int player, float x, float y) {
     map.reveal(player, tx, ty, 10);
     p.paradropReady = false;
     p.paradropCharge = 0;
-    g_sfx.playAt(Sfx::Tesla, x, y);
+    emitSoundAt(Sfx::Tesla, x, y);
     Effect ef; ef.kind = 8; ef.x = x; ef.y = y; ef.maxAge = 35;
     effects.push_back(ef);
 }
@@ -139,8 +138,8 @@ void World::applyCaptureEffect(Ent& b, int newOwner) {
     if (newOwner < 0 || newOwner >= numPlayers) return;
     Player& p = players[newOwner];
     if (b.btype == BldType::OilDerrick) {
-        p.money = std::min(g_gameRules.maxMoney, p.money + 1000); // YR/手册：占领油田瞬间奖金
-        if (newOwner == 0) g_sfx.play(Sfx::Cash, 0.5f);
+        creditIncome(newOwner,1000); // YR/手册：占领油田瞬间奖金
+        if (newOwner == 0) emitSound(Sfx::Cash, 0.5f);
     } else if (b.btype == BldType::TechAirport) {
         eva(newOwner, TR(S::EvaAirportCaptured)); // 伞兵充能由 updateParadrop 自动推进
     } else if (b.btype == BldType::SecretLab && p.secretLabUnlock == 0) {
@@ -151,7 +150,7 @@ void World::applyCaptureEffect(Ent& b, int newOwner) {
         if (!pool.empty()) {
             Country c = pool[rng.range(0, (int)pool.size() - 1)];
             p.secretLabUnlock = (int)c;
-            eva(newOwner, TextFormat(TR(S::EvaSecretLabFmt), countryName(c)));
+            eva(newOwner, formatText(TR(S::EvaSecretLabFmt), countryName(c)));
         }
     }
 }
@@ -164,7 +163,7 @@ void World::mindControlRelease(Ent& yuri) {
             t.player = t.origPlayer;      // 恢复原属（RA2 原作：控制者死亡则解放）
             t.mindBy = INVALID_EID;
             t.origPlayer = -1;
-            t.state = UState::Idle; t.target = INVALID_EID; t.path.clear();
+            if(!t.deploying())t.state = UState::Idle; t.target = INVALID_EID; t.clearPath();
         }
     }
     yuri.mindTarget = INVALID_EID;
@@ -181,11 +180,11 @@ void World::mindControlTake(Ent& yuri, EID yid, EID tid) {
     tt.player = yuri.player;
     tt.mindBy = yid;
     yuri.mindTarget = tid;
-    tt.state = UState::Idle; tt.target = INVALID_EID; tt.path.clear();
+    if(!tt.deploying())tt.state = UState::Idle; tt.target = INVALID_EID; tt.clearPath();
     // 心灵波特效（控制者→目标）
     Effect fx; fx.kind = 2; fx.x = yuri.x; fx.y = yuri.y; fx.x2 = tt.x; fx.y2 = tt.y; fx.maxAge = 12;
     effects.push_back(fx);
-    g_sfx.playAt(Sfx::Tesla, tt.x, tt.y);
+    emitSoundAt(Sfx::Tesla, tt.x, tt.y);
     if (yuri.player == 0) eva(0, TR(S::EvaMindGain));
     if (tt.origPlayer == 0) eva(0, TR(S::EvaMindLost));
 }
@@ -198,7 +197,7 @@ void World::psychicAreaReleaseAll(Ent& beacon, EID bid) {
             t.player = t.origPlayer;
             t.mindBy = INVALID_EID;
             t.origPlayer = -1;
-            t.state = UState::Idle; t.target = INVALID_EID; t.path.clear();
+            if(!t.deploying())t.state = UState::Idle; t.target = INVALID_EID; t.clearPath();
         }
     }
     beacon.mindTargets.clear();
@@ -217,7 +216,7 @@ void World::psychicAreaTake(Ent& beacon, EID bid, EID tid) {
     tt.player = beacon.player;
     tt.mindBy = bid;
     beacon.mindTargets.push_back(tid);
-    tt.state = UState::Idle; tt.target = INVALID_EID; tt.path.clear();
+    if(!tt.deploying())tt.state = UState::Idle; tt.target = INVALID_EID; tt.clearPath();
     Effect fx; fx.kind = 2; fx.x = beacon.x; fx.y = beacon.y; fx.x2 = tt.x; fx.y2 = tt.y; fx.maxAge = 12;
     effects.push_back(fx);
     if (tt.origPlayer == 0) eva(0, TR(S::EvaMindLost));
@@ -260,10 +259,9 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
     const BldDef& bd = bldDef(bld.btype);
     switch (bld.btype) {
         case BldType::OreRefinery: {
-            int steal = players[victim].money * 2 / 5; // 窃取对方 40% 资金
-            players[victim].money -= steal;
-            sp.money += steal;
-            eva(spy.player, TextFormat(TR(S::SpyStealMoneyFmt), steal));
+            Credits steal = players[victim].money * 2 / 5; // 窃取对方 40% 资金
+            steal=transferMoney(victim,spy.player,steal);
+            eva(spy.player, formatText(TR(S::SpyStealMoneyFmt), (long long)steal));
             if (victim >= 0) eva(victim, TR(S::SpyMoneyVictim));
             break;
         }
@@ -314,10 +312,9 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
         case BldType::ConYard: {
             // 建造厂：窃取部分资金
             if (victim >= 0) {
-                int steal = std::min(2000, players[victim].money * 3 / 10);
-                players[victim].money -= steal;
-                sp.money += steal;
-                eva(spy.player, TextFormat(TR(S::SpyStealMoneyFmt), steal));
+                Credits steal = std::min<Credits>(2000, players[victim].money * 3 / 10);
+                steal=transferMoney(victim,spy.player,steal);
+                eva(spy.player, formatText(TR(S::SpyStealMoneyFmt), (long long)steal));
                 eva(victim, TR(S::SpyMoneyVictim));
             }
             break;
@@ -325,9 +322,8 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
         case BldType::BattleLab: {
             // 渗透高科：窃取 $1500 + 偷科技 —— 盟高科→超时空突击队；苏/中高科→心灵突击队+超时空伊文
             if (victim >= 0) {
-                int steal = std::min(1500, players[victim].money);
-                players[victim].money -= steal;
-                sp.money += steal;
+                Credits steal = std::min<Credits>(1500, players[victim].money);
+                steal=transferMoney(victim,spy.player,steal);
                 if (players[victim].faction == Faction::Allies) {
                     if (!(sp.stolenTech & 1)) {
                         sp.stolenTech |= 1;
@@ -365,17 +361,18 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
         }
         default:
             sp.revealTimer = 30 * 15; // 其他建筑：短暂全图侦查
-            eva(spy.player, TextFormat(TR(S::SpyGenericFmt), bldName(bld.btype)));
+            eva(spy.player, formatText(TR(S::SpyGenericFmt), bldName(bld.btype)));
             break;
     }
-    g_sfx.playAt(Sfx::Eva, spy.x, spy.y);
-    spy.alive = false; // 间谍消耗（RA2 原作设定）
-    freeList.push_back(spyId);
+    emitSoundAt(Sfx::Eva, spy.x, spy.y);
+    consumeEntity(spyId);
 }
 
 // ===================== 疯狂伊文定时炸弹 =====================
 void World::updateTimedBombs() {
-    for (auto& b : timedBombs) {
+    const size_t pending=timedBombs.size();
+    for(size_t index=0;index<pending;++index) {
+        auto b=timedBombs[index]; // explosions may append bombs and reallocate the vector
         if (b.timer < 0) continue;
         // 附着目标：跟随其位置（被摧毁则留在原地）
         if (valid(b.attachedTo)) {
@@ -383,14 +380,16 @@ void World::updateTimedBombs() {
             b.x = t.x; b.y = t.y;
             if (t.isBuilding) { b.x += bldDef(t.btype).w / 2.0f; b.y += bldDef(t.btype).h / 2.0f; }
         }
-        if (--b.timer > 0) continue;
+        --b.timer;timedBombs[index]=b;
+        if(b.timer>0) continue;
+        timedBombs[index].timer=-1; // retire before recursive damage/callbacks
         // 爆炸：按炸弹规格（伊文 400/2.5 格；谭雅 C4 6000/0.6 格单点爆破）
         const float R = b.radius;
         for (size_t i = 0; i < ents.size(); i++) {
             Ent& e = ents[i];
             if (!e.alive || e.invuln > 0) continue;
             // 定时炸弹为地面爆炸：空中单位免疫（避免基洛夫空艇被自己的炸弹误伤）
-            if (!e.isBuilding && unitDef(e.utype).isAir() && e.state != UState::Landed) continue;
+            if (e.airborne()) continue;
             float ex = e.x, ey = e.y;
             if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
             float d = distf(ex, ey, b.x, b.y);
@@ -398,14 +397,13 @@ void World::updateTimedBombs() {
             int dmg = (int)(b.dmg * (1.0f - d / (R + 1.0f)));
             damage((int)i, dmg, b.player);
             // 基洛夫等：地面载具被炸掀起（左右交替）
-            if (b.rockVehicles && !e.isBuilding) {
-                const UnitDef& ud = unitDef(e.utype);
+            if (b.rockVehicles && valid((EID)i) && !ents[i].isBuilding) {
+                const UnitDef& ud = unitDef(ents[i].utype);
                 if (!ud.isInfantry() && !ud.isAir() && !ud.isNaval())
-                    e.rockTilt = std::max(e.rockTilt, 36);
+                    ents[i].rockTilt = std::max(ents[i].rockTilt, 36);
             }
         }
         explodeAt(b.x, b.y, 1);
-        b.timer = -1;
     }
     timedBombs.erase(std::remove_if(timedBombs.begin(), timedBombs.end(), [](const TimedBomb& b) { return b.timer < 0; }), timedBombs.end());
 }
@@ -419,7 +417,7 @@ void World::spawnCrateTick() {
         int x = rng.range(2, map.w - 3), y = rng.range(2, map.h - 3);
         if (!map.passable(x, y) || bldBlocked(x, y)) continue;
         Crate c;
-        c.x = x; c.y = y; c.kind = rng.range(0, 10); // 见 Crate.kind 注释
+        c.x = x; c.y = y; c.kind = rng.range(0, Crate::KIND_COUNT-1); // 见 Crate.kind 注释
         crates.push_back(c);
         break;
     }
@@ -431,11 +429,10 @@ void World::pickupCrates(Ent& e) {
         if (!c.alive) continue;
         if ((int)e.x != c.x || (int)e.y != c.y) continue;
         c.alive = false;
-        g_sfx.playAt(Sfx::Cash, e.x, e.y);
+        emitSoundAt(Sfx::Cash, e.x, e.y);
         if (c.kind == 0) {
-            int gain = 1000;
-            players[e.player].money += gain;
-            if (e.player == 0) eva(0, TextFormat(TR(S::CrateMoney), gain));
+            int gain = (int)creditIncome(e.player,1000);
+            if (e.player == 0) eva(0, formatText(TR(S::CrateMoney), gain));
         } else if (c.kind == 1) {
             for (Ent& o : ents)
                 if (o.alive && !o.isBuilding && o.player == e.player) o.hp = unitDef(o.utype).hp;
@@ -444,9 +441,8 @@ void World::pickupCrates(Ent& e) {
             e.vetRank = std::min(2, e.vetRank + 1);
             if (e.player == 0) eva(0, TR(S::CrateVet));
         } else if (c.kind == 3) {
-            int gain = 5000; // MIX CrateRules.SoloCrateMoney
-            players[e.player].money += gain;
-            if (e.player == 0) eva(0, TextFormat(TR(S::CrateMoney), gain));
+            int gain = (int)creditIncome(e.player,5000); // MIX CrateRules.SoloCrateMoney
+            if (e.player == 0) eva(0, formatText(TR(S::CrateMoney), gain));
         } else if (c.kind == 4) {
             e.camouflaged = true;
             e.camoTick = 30 * 20;

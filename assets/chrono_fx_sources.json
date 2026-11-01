@@ -1,0 +1,35 @@
+{
+  "palette": {
+    "mix": "ra2.mix/cache.mix",
+    "sha256": "341e85171041e7c8be53d5533d96a9bf86b402d9d67335713369354aaa5707af"
+  },
+  "sequences": [
+    {
+      "section": "Arrival",
+      "shp": "warpin.shp",
+      "mix": "ra2.mix/conquer.mix",
+      "sha256": "e8f10d52d9b8a51a88a3eb737612312d9db8ac1cdd81977eb362411bdf3dea75",
+      "frames": 10,
+      "width": 54,
+      "height": 26
+    },
+    {
+      "section": "Departure",
+      "shp": "warpout.shp",
+      "mix": "ra2.mix/conquer.mix",
+      "sha256": "730dcd513d65d6913a17785ecee0e66ead1c6701e86742e0d7e3fc9a39a73217",
+      "frames": 21,
+      "width": 68,
+      "height": 52
+    },
+    {
+      "section": "Erase",
+      "shp": "warpaway.shp",
+      "mix": "ra2.mix/conquer.mix",
+      "sha256": "82c384a968a7de735ebf72b73da264a8643becc8e967e6a63be8200d9e27d789",
+      "frames": 23,
+      "width": 124,
+      "height": 90
+    }
+  ]
+}

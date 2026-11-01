@@ -87,16 +87,17 @@ void Game::init(bool windowed, bool hidden) {
     scriptSetLoseCb([this] { gameOver = true; victory = false; });
 }
 
+void Game::selectReferenceMap() {
+    cfgReferenceMap = true;
+    cfgMapSize = 64;
+    cfgAI = 1;
+    cfgGameMode = (int)SkirmishMode::Battle;
+    previewDirty = true;
+}
+
 void Game::newGame(uint64_t seed) {
-    // 国家（RA2 原作：国家即定阵营与特色单位；随机槽位在全部 10 国中抽取，跳过 None）
-    campaignMission = -1;
-    nextWave = 0;
-    missionTriggers.clear();
-    objectiveText.clear();
-    campaignObjDone.clear();
-    world.campaignTechGate = false;
-    world.campaignAllowedBlds.clear();
-    world.campaignAllowedUnits.clear();
+    if (cfgReferenceMap) selectReferenceMap();
+    World reference;
     Rng frng(seed);
     auto pickCountry = [&](int c) {
         return c >= (int)Country::COUNT ? (Country)frng.range(1, (int)Country::COUNT - 1) : (Country)c;
@@ -109,7 +110,28 @@ void Game::newGame(uint64_t seed) {
     SkirmishMode mode = cfgGameMode >= 0 && cfgGameMode < (int)SkirmishMode::COUNT
                       ? (SkirmishMode)cfgGameMode : SkirmishMode::Battle;
     int effectiveMapType = mode == SkirmishMode::NavalWar ? 1 : cfgMapType;
-    world.init(cfgMapSize, cfgMapSize, seed, 1, cfgAI, factions, effectiveMapType);
+    if (cfgReferenceMap) {
+        // Validate in a staging world so a missing map cannot replace the current match.
+        if (!reference.init(64, 64, seed, 1, 1, factions, 0, REFERENCE_MAP, false, true) ||
+                reference.map.w != 64 || reference.map.h != 64) {
+            referenceMapReady = false; previewDirty = true; phase = Phase::Setup; return;
+        }
+        world = std::move(reference);
+        world.map.bldOccRef = &world.bldOcc;
+        referenceMapReady = true;
+    } else world.init(cfgMapSize, cfgMapSize, seed, 1, cfgAI, factions, effectiveMapType);
+    resetNotifications();
+    moveFeedbackTimer = 0;
+    combatCues.clear();
+    // 国家（RA2 原作：国家即定阵营与特色单位；随机槽位在全部 10 国中抽取，跳过 None）
+    campaignMission = -1;
+    nextWave = 0;
+    missionTriggers.clear();
+    objectiveText.clear();
+    campaignObjDone.clear();
+    world.campaignTechGate = false;
+    world.campaignAllowedBlds.clear();
+    world.campaignAllowedUnits.clear();
     world.skirmishMode = mode;
     world.shortGame = cfgShortGame;
     world.mcvRepacks = cfgMcvRepacks;
@@ -177,7 +199,7 @@ void Game::newGame(uint64_t seed) {
     selBuilding = INVALID_EID;
     dragging = false;
     dragPressSelected = false;
-    placing = false;
+    clearPlacement();
     gameOver = victory = false;
     camZoom = 1.0f;
     // 摄像机对准本地基地车（优先 MCV；与 HEAD/unitScreenPos 北尖公式一致）
@@ -337,7 +359,7 @@ void Game::render() {
             else drawSetup();
             EndTextureMode();
         }
-        if (!shotFile.empty()) {
+        if (!shotFile.empty() && !shotAtDisplaySize) {
             Image img = LoadImageFromTexture(canvas.texture);
             ImageFlipVertical(&img);
             ExportImage(img, shotFile.c_str());
@@ -356,10 +378,18 @@ void Game::render() {
             dbgOnce = true;
         }
         DrawTexturePro(canvas.texture, src, dst, {0, 0}, 0, WHITE);
+        if(shotAtDisplaySize && !shotFile.empty()) {
+            rlDrawRenderBatchActive();
+            // raylib's screen-image helper multiplies by monitor DPI even when
+            // HIGHDPI is disabled. Read the actual framebuffer dimensions once.
+            Image frame{rlReadScreenPixels(GetRenderWidth(),GetRenderHeight()),GetRenderWidth(),GetRenderHeight(),1,PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+            ExportImage(frame,shotFile.c_str());UnloadImage(frame);shotFile.clear();
+        }
         ShowCursor();
         EndDrawing();
         return;
     }
+    syncFogKnowledge();
     updateMinimap(); // 嵌套 RenderTexture 会破坏画布渲染状态，提前更新
     // ESC/结算壳同样先离屏到 UI RT，再在 canvas 上 blit
     if (showMenu || gameOver) {
@@ -378,9 +408,30 @@ void Game::render() {
         rlScalef(camZoom, camZoom, 1.0f);
         drawWorld();
         drawEntities();
+        drawCombatFeedback();
         drawEffectsLayer();
         drawFogLayer();
         drawPlacement();
+        drawRallyOverlay();
+        if (moveFeedbackTimer > 0) {
+            float sx = (moveFeedbackTarget.x - moveFeedbackTarget.y) * (TILE_W / 2.0f) - camX;
+            float sy = (moveFeedbackTarget.x + moveFeedbackTarget.y) * (TILE_H / 2.0f) - camY-feedbackLift;
+            const int tx=(int)moveFeedbackTarget.x,ty=(int)moveFeedbackTarget.y;
+            if(feedbackTerrainHeight>=0)sy-=heightScreenY((uint8_t)std::clamp(feedbackTerrainHeight,0,255));
+            else if(world.map.inBounds(tx,ty)) sy-=heightScreenY(world.map.at(tx,ty).height);
+            Color color = moveFeedbackRejected ? Color{255, 85, 75, 240}
+                : moveFeedbackPartial ? Color{255, 200, 65, 240} : attackFeedback?Color{255,95,65,240}:Color{70, 255, 120, 240};
+            float r = 10 + moveFeedbackTimer * 8;
+            DrawEllipseLines((int)sx, (int)sy, r, r * 0.5f, color);
+            if(attackFeedback && !moveFeedbackRejected) for(int side:{-1,1}) {
+                DrawLineEx({sx+side*10,sy-8},{sx+side*10,sy+8},2,color);
+                DrawLineEx({sx-8,sy+side*10},{sx+8,sy+side*10},2,color);
+            }
+            if (moveFeedbackRejected) {
+                DrawLineEx({sx-6,sy-6}, {sx+6,sy+6}, 2, color);
+                DrawLineEx({sx-6,sy+6}, {sx+6,sy-6}, 2, color);
+            }
+        }
         rlPopMatrix();
         flushWorldOverlayRects();
         EndScissorMode();
@@ -402,7 +453,7 @@ void Game::render() {
     }
     EndTextureMode();
     // 截图优先直接从画布导出（逻辑分辨率，不依赖帧缓冲状态）
-    if (!shotFile.empty()) {
+    if (!shotFile.empty() && !shotAtDisplaySize) {
         Image img = LoadImageFromTexture(canvas.texture);
         ImageFlipVertical(&img); // RenderTexture Y 轴翻转
         ExportImage(img, shotFile.c_str());
@@ -415,6 +466,13 @@ void Game::render() {
     Rectangle src{0, 0, (float)SCREEN_W, -(float)SCREEN_H};
     Rectangle dst = letterboxDst();
     DrawTexturePro(canvas.texture, src, dst, {0, 0}, 0, WHITE);
+    if(shotAtDisplaySize && !shotFile.empty()) {
+        rlDrawRenderBatchActive();
+        // raylib's screen-image helper multiplies by monitor DPI even when
+        // HIGHDPI is disabled. Read the actual framebuffer dimensions once.
+        Image frame{rlReadScreenPixels(GetRenderWidth(),GetRenderHeight()),GetRenderWidth(),GetRenderHeight(),1,PIXELFORMAT_UNCOMPRESSED_R8G8B8A8};
+        ExportImage(frame,shotFile.c_str());UnloadImage(frame);shotFile.clear();
+    }
     HideCursor(); // 局内始终隐藏系统光标（自定义光标已画在 canvas）
     EndDrawing();
 }

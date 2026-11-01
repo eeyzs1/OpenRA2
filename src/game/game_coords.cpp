@@ -23,16 +23,44 @@ Vector2 Game::unitScreenPos(const World::Ent& e) const {
     return {wx - camX, wy - camY};
 }
 
+float Game::unitRenderLift(const World::Ent& e) const {
+    return e.airborne()?AIR_ALT*e.flightFraction():e.magneticHeight*3.0f;
+}
+
+float Game::eventRenderLift(const PresentationEvent& event) const {
+    return event.visualTarget==VisualTarget::Aircraft?AIR_ALT*std::clamp(event.flightFraction,0.f,1.f)
+        :3.f*std::clamp(event.magneticHeight,0,12);
+}
+
+int Game::unitBodyFrame(const World::Ent& e) const {
+    if(unitDef(e.utype).canHarvet())return e.oreLoad>=World::harvesterCapacity(e.utype)?1:0;
+    if(e.airborne())return (int)((world.tick/2)%std::max(1,g_sprites.unitBodyFrames(e.utype)));
+    return 0;
+}
+
+int Game::unitTurretFrame(const World::Ent& e) const {
+    return e.fireAnim>0?(int)((world.tick/2)%std::max(1,g_sprites.unitTurretFrames(e.utype))):0;
+}
+
+int Game::chopperTransformFrame(const World::Ent& e) const {
+    if(e.isBuilding || e.utype!=UnitType::SiegeChopper || e.dir!=g_sprites.chopperTransformFacing()
+        || (e.state!=UState::DeployUnfolding && e.state!=UState::DeployFolding))return -1;
+    const int count=g_sprites.chopperTransformFrames(),duration=std::max(1,g_gameRules.chopperDeployTicks);
+    const int phase=std::clamp((duration-e.deployAnim)*count/duration,0,count-1);
+    return e.state==UState::DeployFolding?count-1-phase:phase;
+}
+
 Rectangle Game::unitScreenRect(const World::Ent& e) const {
     Vector2 p = unitScreenPos(e);
     const UnitDef& ud = unitDef(e.utype);
-    if (ud.isAir() && e.state != UState::Landed) p.y -= AIR_ALT;
+    p.y -= unitRenderLift(e);
     int cid = (e.player >= 0 && e.player < world.numPlayers)
             ? world.players[e.player].colorId : 0;
-    int frame = 0;
-    if (ud.canHarvet())
-        frame = (e.oreLoad >= World::harvesterCapacity(e.utype)) ? 1 : 0;
-    const Sprite& body = g_sprites.unitBody(e.utype, e.dir & 7, frame, cid);
+    int frame = unitBodyFrame(e);
+    const int transform=chopperTransformFrame(e);
+    const Sprite& body = transform>=0?g_sprites.chopperTransform(transform,cid):e.utype==UnitType::SiegeChopper && e.deployed
+        ? g_sprites.unitDeployed(e.utype,e.dir,e.turretDir,cid)
+        : g_sprites.unitBody(e.utype,e.dir&7,frame,cid);
     // 优先用不透明包围盒：与选中角标/点选一致，避免透明画布把命中区甩到左上
     if (body.visR > body.visL && body.visB > body.visT) {
         Rectangle r{

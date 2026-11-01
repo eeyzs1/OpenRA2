@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from PIL import Image
+from cameo import build_cameo, publish_cameo
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -35,6 +36,7 @@ def load_manifest(path: Path) -> dict:
         data = _parse_simple_yaml(text)
     if not isinstance(data, dict) or "id" not in data:
         raise SystemExit("manifest must be a mapping with id=")
+    data["_manifest_dir"] = str(Path(path).resolve().parent)
     return data
 
 
@@ -97,8 +99,8 @@ def find_frames(srcdir: Path, anim: str, facings: int, frames: int) -> list:
     return out
 
 
-def paste_on_canvas(im: Image.Image, cw: int, ch: int) -> Image.Image:
-    """Center-bottom paste (infantry feet on bottom)."""
+def paste_on_canvas(im: Image.Image, cw: int, ch: int, anchor_y: float = 1.0) -> Image.Image:
+    """Preserve the declared source/target anchor (infantry default: bottom)."""
     canvas = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
     im = im.convert("RGBA")
     # Scale down if larger
@@ -106,10 +108,10 @@ def paste_on_canvas(im: Image.Image, cw: int, ch: int) -> Image.Image:
         s = min(cw / im.width, ch / im.height)
         im = im.resize((max(1, int(im.width * s)), max(1, int(im.height * s))), Image.NEAREST)
     x = (cw - im.width) // 2
-    y = ch - im.height
+    y = round(ch * anchor_y) - round(im.height * anchor_y)
     if y < 0:
         y = 0
-    canvas.paste(im, (x, y), im)
+    canvas.alpha_composite(im, (x, y))
     return canvas
 
 
@@ -131,6 +133,10 @@ def publish_infantry(m: dict, pal) -> None:
 
     for anim, cfg in sequences.items():
         nframes = int(cfg.get("frames", 1))
+        if anim == "walk":
+            anim_meta["walkrate"] = max(1, int(cfg.get("rate", 4)))
+        elif anim in ("fire", "fireup"):
+            anim_meta["firerate"] = max(1, int(cfg.get("rate", 4)))
         # die / prone-style: often facing-independent (fixtures under facing 0 only)
         anim_facings = int(cfg.get("facings", 1 if anim.startswith("die") else facings))
         imgs = find_frames(src, anim, anim_facings, nframes)
@@ -174,14 +180,7 @@ def publish_infantry(m: dict, pal) -> None:
         if not p.is_file():
             raise FileNotFoundError(f"publish incomplete: {p}")
 
-    # Icon from d2 stand
-    icon_src = SPR / f"unit_{uid}_d2_f0.png"
-    icon = Image.open(icon_src).convert("RGBA")
-    ic = Image.new("RGBA", (108, 84), (96, 132, 168, 255))
-    s = min(90 / icon.width, 70 / icon.height)
-    icon = icon.resize((max(1, int(icon.width * s)), max(1, int(icon.height * s))), Image.NEAREST)
-    ic.paste(icon, ((108 - icon.width) // 2, (84 - icon.height) // 2), icon)
-    ic.save(SPR / f"icon_unit_{uid}.png")
+    publish_cameo(m, SPR)
 
     # Pack SHP master (stand frames only if present)
     out_dir = Path(m.get("out_dir", ROOT / "tools" / "asset_pipeline" / "out" / uid))
@@ -237,7 +236,7 @@ def publish_vehicle(m: dict, pal) -> None:
         sections.append(vox_to_section(barl, name="barl", pal_unittem=pal))
     VOXELS.mkdir(parents=True, exist_ok=True)
     (VOXELS / f"{stem}.vxl").write_bytes(write_vxl(sections, pal))
-    (VOXELS / f"{stem}.hva").write_bytes(write_hva_static(len(sections), 1))
+    (VOXELS / f"{stem}.hva").write_bytes(write_hva_static(len(sections),1,[section["name"] for section in sections]))
     out_dir = Path(m.get("out_dir", ROOT / "tools" / "asset_pipeline" / "out" / uid))
     if not out_dir.is_absolute():
         out_dir = (ROOT / out_dir).resolve()
@@ -249,6 +248,7 @@ def publish_vehicle(m: dict, pal) -> None:
 def publish_vehicle_png(m: dict, pal) -> None:
     """8-facing body (+ optional turret) PNGs — for tanks without MagicaVoxel yet (e.g. Type99)."""
     uid = m["id"]
+    anchor_y = float(m.get("anchor_y", 1.0))
     cw, ch = m.get("canvas", [96, 96])
     facings = int(m.get("facings", 8))
     src = Path(m["source_dir"])
@@ -261,10 +261,10 @@ def publish_vehicle_png(m: dict, pal) -> None:
         idx = 0
         for d in range(facings):
             for f in range(nframes):
-                rgba = paste_on_canvas(imgs[idx], cw, ch)
+                rgba = paste_on_canvas(imgs[idx], cw, ch, anchor_y)
                 indexed = rgba_to_indexed(rgba, pal)
                 if anim in ("stand", "ready", "body"):
-                    save_indexed_png(indexed, SPR / f"unit_{uid}_d{d}_f{f}.png")
+                    save_indexed_png(indexed, SPR / f"unit_{uid}_d{d}_f{f}.png", remap_mask=True)
                 else:
                     save_indexed_png(indexed, SPR / f"unit_{uid}_{anim}_d{d}_f{f}.png")
                 idx += 1
@@ -276,18 +276,12 @@ def publish_vehicle_png(m: dict, pal) -> None:
             path = next((p for p in cands if p.is_file()), None)
             if not path:
                 raise FileNotFoundError(f"missing turret facing {d} under {tur_dir}")
-            rgba = paste_on_canvas(Image.open(path).convert("RGBA"), cw, ch)
-            save_indexed_png(rgba_to_indexed(rgba, pal), SPR / f"turret_{uid}_d{d}.png")
+            rgba = paste_on_canvas(Image.open(path).convert("RGBA"), cw, ch, anchor_y)
+            save_indexed_png(rgba_to_indexed(rgba, pal), SPR / f"turret_{uid}_d{d}.png", remap_mask=True)
     for d in range(facings):
         if not (SPR / f"unit_{uid}_d{d}_f0.png").is_file():
             raise FileNotFoundError(f"publish incomplete: unit_{uid}_d{d}_f0.png")
-    icon_src = SPR / f"unit_{uid}_d2_f0.png"
-    icon = Image.open(icon_src).convert("RGBA")
-    ic = Image.new("RGBA", (108, 84), (96, 132, 168, 255))
-    s = min(90 / icon.width, 70 / icon.height)
-    icon = icon.resize((max(1, int(icon.width * s)), max(1, int(icon.height * s))), Image.NEAREST)
-    ic.paste(icon, ((108 - icon.width) // 2, (84 - icon.height) // 2), icon)
-    ic.save(SPR / f"icon_unit_{uid}.png")
+    publish_cameo(m, SPR)
     out_dir = Path(m.get("out_dir", ROOT / "tools" / "asset_pipeline" / "out" / uid))
     if not out_dir.is_absolute():
         out_dir = (ROOT / out_dir).resolve()
@@ -303,16 +297,24 @@ def publish_vehicle_png(m: dict, pal) -> None:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--manifest", required=True)
+    ap.add_argument("--icon-only", action="store_true", help="Publish only the declared cameo, without modifying simulation sprites")
     args = ap.parse_args()
     man_path = Path(args.manifest).resolve()
     m = load_manifest(man_path)
     m["_manifest_dir"] = str(man_path.parent)
+    if args.icon_only:
+        print("published cameo:", publish_cameo(m, SPR))
+        return
+    if "icon_source" in m:
+        build_cameo(m, SPR) # Fail missing/invalid masters before writing any frames.
     pal = load_unittem_pal()
     kind = m.get("kind", "infantry")
     if kind == "infantry":
         publish_infantry(m, pal)
     elif kind == "vehicle":
         publish_vehicle(m, pal)
+        if "icon_source" in m:
+            publish_cameo(m, SPR)
     elif kind == "vehicle_png":
         publish_vehicle_png(m, pal)
     else:

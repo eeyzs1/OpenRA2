@@ -46,6 +46,59 @@ public:
     void debugShot(int warmTicks, const char* file); // 遭遇战截图：预热出基地/电厂/单位后拍全屏（验证用）
     void debugGuiReview(const char* outDir); // 各 GUI 审核截图（含主菜单动画样帧）
     int netSelfTestDriver(int role, int frames); // P8 双进程自测：role 0=--net-host 1=--net-client（main 驱动）
+    int presentationReplay(bool sound);
+    int economyRegression();
+    int movementRegression();
+    int combatPressureRegression(int scenarioFilter=-1, const char* outputDir="review_out/combat-pressure");
+    int trafficRegression(int scenarioFilter=-1);
+    int junctionRegression(int scenarioFilter=-1);
+    int blockerRegression();
+    int idleYieldRegression();
+    int chopperGroundRegression();
+    int immobilizedRegression();
+    int magneticLandingRegression(const char* outputDir);
+    int deploymentFeedbackRegression();
+    int feedbackVisualRegression(const char* outputDir);
+    int rallyRegression();
+    int refineryRecoveryRegression();
+    int rallyVisualRegression(const char* outputDir);
+    int skirmishRegression(int ticks, int factionFilter=-1, uint64_t seedFilter=0, bool requireOutcomes=false, int generatedMapType=-1);
+    int visualRegression(const char* outputDir);
+    int animationRegression(const char* outputDir);
+    int siegePoseRegression(const char* outputDir);
+    int voxelAnimationRegression(const char* outputDir);
+    int chopperTransitionRegression(const char* outputDir);
+    int elevationFeedbackRegression(const char* outputDir);
+    int attackRegression();
+    int apocalypseRegression();
+    int burstRegression();
+    int splashRegression();
+    int aiAttackRegression();
+    int aiAirDefenseRegression();
+    int aiEconomyRegression();
+    int aiFactoryExitRegression();
+    int aiTransportRegression();
+    int movingYieldRegression();
+    int magnetronRegression(const char* outputDir="review_out/magnetron");
+    int engineerRegression();
+    int lifecycleRegression();
+    int entryRegression();
+    int referenceMapRegression(const char* outputDir);
+    int placementRegression(const char* outputDir);
+    int productionFeedbackRegression(const char* outputDir);
+    int refundRegression(const char* outputDir);
+    int terrainVisualRegression(const char* outputDir);
+    int generatedMapRegression(bool health,const char* outputDir);
+    int factoryStateRegression(const char* outputDir);
+    int chronoVisualRegression(const char* outputDir);
+    int superweaponRegression(const char* outputDir);
+    int fogFeedbackRegression(const char* outputDir);
+    int fogKnowledgeRegression(const char* outputDir);
+    int releaseRegression();
+    int instantCombatRegression();
+    int serviceRegression();
+    int hudRegression(const char* outputDir);
+    int appPersistenceTest();
     int statePersistenceTest(); // 存档 schema/边界/复杂状态 round-trip 与 checksum 覆盖
 
     // 快速存档固定槽位（F5 保存 / F9 读取，游戏内菜单共用）
@@ -65,6 +118,10 @@ private:
     int cfgMoney = 10000;   // 初始资金
     int cfgMapSize = 96;    // 地图边长
     int cfgMapType = 0;     // 地图类型：0 大陆 1 岛屿 2 湖泊
+    bool cfgReferenceMap = false; // Local skirmish profile; never encoded as a network map type.
+    bool referenceMapReady = true;
+    static constexpr const char* REFERENCE_MAP = "maps/skirmish-reference.txt";
+    void selectReferenceMap();
     // 每个 AI 槽位的颜色与国家（RA2 式槽位配置；国家 COUNT=随机，国家即定阵营）
     int aiColor[7] = {1, 2, 3, 4, 5, 6, 7};
     int aiCountry[7] = {(int)Country::COUNT, (int)Country::COUNT, (int)Country::COUNT, (int)Country::COUNT,
@@ -188,10 +245,18 @@ private:
     double lastGroupTap = 0;
 
     // EVA 播报字幕队列（逐条显示）
-    std::deque<std::string> evaLines;
+    struct Subtitle { std::string text;bool powerWarning=false; };
+    std::deque<Subtitle> evaLines;
 
     // 建筑放置
     bool placing = false;
+    BldType placementType = BldType::COUNT;
+    int placementPending=0,placementRequestSerial=0;
+    void clearPlacement() { placing=false;placementType=BldType::COUNT;placementPending=0; }
+    static S productionRejectText(ProductionRejectReason reason);
+    std::string superweaponFeedbackText(const SuperweaponOrderResult& result) const;
+    std::string productionFacilityFeedback(bool unit,int type) const;
+    std::string productionFeedbackText(const ProductionOrderResult& result) const;
     bool visualAuditMarkers = false; // --visual-audit：叠青框/锚点核对选中笼
 
 
@@ -207,6 +272,21 @@ private:
     // UI
     Font font{};
     bool fontOk = false;
+    struct HudItemAudit {
+        bool unit=false;int type=-1,quote=0;Rectangle bounds{};float progress=0;
+        std::string name,label;int labelSize=14;
+    };
+    struct HudTipAudit {
+        Rectangle bounds{};std::vector<std::string> lines;std::vector<int> lineSizes;
+        std::string name,sub,reason;int nameSize=17,bodySize=15;
+    };
+    bool auditHud=false;
+    std::vector<HudItemAudit> hudItems;
+    HudTipAudit hudTip;
+    struct HudMoneyAudit { Credits value=0;Rectangle bounds{};std::string text; };
+    HudMoneyAudit hudMoney;
+    struct HudMessageAudit { Rectangle bounds{};std::vector<std::string> lines;int size=15; };
+    HudMessageAudit hudMessage;
     int sidebarW = 184; // RA2 原作侧边栏占屏宽 ~12.5%（1366x768 原作实测 171px → 1440 等比 180+）
     static constexpr int BOTTOM_BAR_H = 42; // 底栏加高，指令钮更易点（原作等比约 35）
     int uiTab = 0; // 0 建筑 1 防御(含超武) 2 步兵 3 车辆/海军（RA2 原作 4 页签）
@@ -217,9 +297,18 @@ private:
     int gameSpeed = 1; // 1x 2x
     std::string msg;
     float msgTimer = 0;
+    float moveFeedbackTimer = 0;
+    Vector2 moveFeedbackTarget{};
+    bool moveFeedbackRejected = false, moveFeedbackPartial = false;
+    bool attackFeedback=false;
+    float feedbackLift=0;
+    int feedbackTerrainHeight=-1;
+    struct CombatCue { PresentationEvent event; float age=0; float duration=0.16f; };
+    std::deque<CombatCue> combatCues; // bounded, presentation only; no live entity references
     bool gameOver = false;
     bool victory = false;
     bool wasLowPower = false;
+    bool shotAtDisplaySize=false; // audit actual presented framebuffer rather than logical canvas
     std::string shotFile; // 非空时本帧渲染后截图
 
     // 迷雾贴图
@@ -240,6 +329,28 @@ private:
 
     // 逻辑分辨率离屏画布（DPI 点对点放大）
     RenderTexture2D canvas{};
+
+    // Last observed information belongs to this viewer, never to deterministic World state.
+    struct KnownBuilding {
+        int x=0,y=0,player=-1,color=-1,height=0,constructAnim=0;
+        BldType type=BldType::ConYard;
+        Country country=Country::None;
+        bool selling=false,damaged=false;
+    };
+    struct FogKnowledge {
+        uint64_t epoch=0;
+        int player=-1,w=0,h=0;
+        std::vector<Cell> cells;
+        std::vector<uint8_t> known;
+        std::map<int,KnownBuilding> buildings; // tile anchors, never live entity IDs
+    } fogKnowledge;
+    void syncFogKnowledge();
+    const Cell& observedCell(int x,int y) const;
+    bool buildingVisible(int x,int y,BldType type) const;
+    bool buildingExplored(const KnownBuilding& b) const;
+    bool writeFogKnowledge(FILE* file) const;
+    static bool readFogKnowledge(FILE* file,FogKnowledge& memory);
+    static bool validateFogKnowledge(const FogKnowledge& memory,const World& state,int player);
 
     // 小地图
     RenderTexture2D minimap{};
@@ -268,7 +379,10 @@ private:
     void drawSelectionOverlay();
     void flushWorldOverlayRects(); // 叠层已在 zoom 矩阵内 DrawTexturePro；保留空实现兼容调用
     void drawEffectsLayer();
+    void drawWarpEffect(const Effect& effect);
+    void drawCombatFeedback();
     void drawFogLayer();
+    void drawRallyOverlay();
     void drawHUD();
     void updateMinimap(); // 定时重绘小地图纹理（须在画布渲染通道外调用）
     void drawMinimap(int x, int y, int w, int h);
@@ -308,6 +422,11 @@ private:
     void worldToScreen(float wx, float wy, int& sx, int& sy) const;
     void screenToWorld(int sx, int sy, float& wx, float& wy) const;
     Vector2 unitScreenPos(const World::Ent& e) const;
+    float unitRenderLift(const World::Ent& e) const;
+    float eventRenderLift(const PresentationEvent& event) const;
+    int unitBodyFrame(const World::Ent& e) const;
+    int unitTurretFrame(const World::Ent& e) const;
+    int chopperTransformFrame(const World::Ent& e) const;
     Vector2 bldScreenPos(const World::Ent& e) const;
     // 单位屏幕贴图矩形（含锚点/飞行高度）；点选与选中框共用，避免脚底锚点导致难选
     Rectangle unitScreenRect(const World::Ent& e) const;
@@ -320,6 +439,9 @@ private:
     void issueSmartOrder(int mx, int my);
     void cmdDeploySel(); // 部署选中单位（MCV 展开/步兵部署，底栏按钮与 D 热键共用）
     void message(const std::string& m);
+    void resetNotifications();
+    void consumePresentationEvents();
+    void advancePresentation(float seconds);
 
     // 输入包装：统一逻辑坐标（高 DPI 修正）+ 脚本注入（playTest 自动化）
     Vector2 mousePos() const;

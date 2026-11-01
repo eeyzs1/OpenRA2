@@ -77,6 +77,8 @@ userdata/content/        【用户入口】放文件即玩（CSV/INI/地图/素�
   Country     国家限制：None=阵营通用；America/Korea/France/Germany/UK/
               Russia/Cuba/Libya/Iraq/China = 仅该国可造
   Weapon.*    主武器（见下）；Elite.* 精英军衔武器（有任何 Elite. 键即启用）
+  AirWeapon.* 可选独立对空武器；按目标实际悬空状态选择，精英主武器不覆盖它
+  HasAirWeapon 是否启用独立对空武器（省略时由 AirWeapon.* 键启用）
 
 建筑键：
   Name Cost BuildTime HP W H Power Sight Factions Prereq
@@ -88,11 +90,21 @@ userdata/content/        【用户入口】放文件即玩（CSV/INI/地图/素�
 
 超武键：Name ChargeTime（充能帧数，30 帧/秒）FromBld（提供建筑）
 
-武器键（前缀 Weapon./Elite.；DeployWeapon 节无前缀）：
+武器键（前缀 Weapon./Elite./AirWeapon.；DeployWeapon 节无前缀）：
   Damage Range Cooldown AntiAir AntiGround Proj
+    Range 支持小数格；Projectile/SpeedLeptons 指定模拟弹道/速度，Report 为开火音效名
+    Burst                 每轮发射数量（1..16，默认 1）；目前用于常规地面无限弹药武器
+    BurstDelayMin/Max     轮内两发间隔的模拟 tick 下限/上限（1..600，默认 3/5），由模拟 RNG 抽样
+                         冷却从首发计算；间隔不由素材帧数决定
   VsInf VsVeh VsBld     对步兵/车辆/建筑伤害系数
   NavalOnly             仅攻击水上目标
   Splash                溅射半径（格，0=单体）
+
+弹头范围键（[Warhead.<弹头名>]，与 Verses 独立覆盖）：
+    CellSpread            范围半径（0..11 格）；-1 使用既有 Weapon.Splash 路径
+    PercentAtMax          最远有效距离的伤害比例（0..1，也支持 50% 等写法）
+    参数在发射时保存进弹体；当前按二维坐标、1/256 格量化及武器空地射界结算
+    建筑各受影响地基格分别扣血，保留中途驻军撤离；完整原版三维/查表行为仍待校准
   Warhead               Legacy（默认沿用 VsInf/VsVeh/VsBld）或上列弹头名
   Proj 贴图名：shell bullet tesla prism missile flak rad chrono psi
               naval torpedo

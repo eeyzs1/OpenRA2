@@ -61,8 +61,8 @@ int Game::smokeTest(int frames) {
         int blds = 0, units = 0;
         for (auto& e : world.ents)
             if (e.alive && e.player == p) { if (e.isBuilding) blds++; else units++; }
-        TraceLog(LOG_INFO, "player %d: money=%d blds=%d units=%d power=%d/%d defeated=%d",
-                 p, world.players[p].money, blds, units, world.players[p].powerMade, world.players[p].powerUsed,
+        TraceLog(LOG_INFO, "player %d: money=%lld blds=%d units=%d power=%d/%d defeated=%d",
+                 p, (long long)world.players[p].money, blds, units, world.players[p].powerMade, world.players[p].powerUsed,
                  (int)world.players[p].defeated);
         // 诊断：单位明细与采矿车状态
         int cnt[(int)UnitType::COUNT] = {0};
@@ -285,11 +285,11 @@ int Game::smokeTest(int frames) {
                             if (world.valid(sub) && world.ents[sub].target == landTank) navalOnlyOk = false;
                         }
                         navalOnlyOk = navalOnlyOk && unitDef(UnitType::Typhoon).weapon.navalOnly;
-                        if (world.valid(landTank)) world.ents[landTank].alive = false; // 清理
+                        if (world.valid(landTank)) world.kill(landTank,false); // 清理占位和实体引用
                     }
                     // 清理海域交战残留，避免驱逐舰等干扰岸上装载
-                    if (world.valid(sub)) world.ents[sub].alive = false;
-                    if (world.valid(foeShip)) world.ents[foeShip].alive = false;
+                    if (world.valid(sub)) world.kill(sub,false);
+                    if (world.valid(foeShip)) world.kill(foeShip,false);
                     world.projs.clear();
                     // 运输装卸：两栖运输船在陆地格装载 2 名步兵后卸载
                     std::vector<Vec2i> frees;
@@ -393,10 +393,22 @@ int Game::smokeTest(int frames) {
             if (world.valid(boris)) world.ents[boris].alive = false;
             if (world.valid(bld)) world.ents[bld].alive = false;
             // 2) 攻城直升机：部署后转为固定炮台，射程内敌军掉血
-            EID sc = world.spawnUnit(1, UnitType::SiegeChopper, bx + 8.5f, by + 0.5f);
+            // The artillery fixture needs a legal landing cell. Earlier it
+            // spawned over a building, relying on missing deployment checks.
+            int scX=bx+8,scY=by;bool landingFound=false;
+            for(int radius=0;radius<=8 && !landingFound;++radius)
+                for(int dy=-radius;dy<=radius && !landingFound;++dy) for(int dx=-radius;dx<=radius;++dx) {
+                    if(std::max(abs(dx),abs(dy))!=radius) continue;
+                    const int x=bx+8+dx,y=by+dy;
+                    if(!world.passableFor(x,y,0) || world.bldBlocked(x,y) || world.groundUnitBlocksCell(x,y)) continue;
+                    scX=x;scY=y;landingFound=true;break;
+                }
+            check(landingFound,"siege chopper artillery fixture has legal landing terrain");
+            EID sc = world.spawnUnit(1, UnitType::SiegeChopper, scX + 0.5f, scY + 0.5f);
             world.orderRadDeploy({sc});
+            for(int tick=0;tick<g_gameRules.chopperLandingTicks+g_gameRules.chopperDeployTicks;++tick)world.update();
             bool scDeploy = world.valid(sc) && world.ents[sc].deployed;
-            EID scTgt = world.spawnUnit(0, UnitType::Conscript, bx + 14.5f, by + 0.5f); // 6 格外，在部署射程 12 内
+            EID scTgt = world.spawnUnit(0, UnitType::Conscript, scX + 6.5f, scY + 0.5f); // 6 格外，在部署射程 12 内
             int scTgtHp0 = world.ents[scTgt].hp;
             for (int i = 0; i < 240 && world.valid(scTgt); i++) world.update();
             bool scFire = !world.valid(scTgt) || world.ents[scTgt].hp < scTgtHp0;
@@ -433,25 +445,22 @@ int Game::smokeTest(int frames) {
             }
             bool captureOk = false, incomeOk = false;
             if (oil != INVALID_EID) {
-                const World::Ent& ob = world.ents[oil];
-                // 在油井旁找一格空地刷工程师（步行一两步即达）
-                int ex = -1, ey = -1;
-                for (int r = 3; r < 8 && ex < 0; r++)
-                    for (int dy = -r; dy <= r && ex < 0; dy++)
-                        for (int dx = -r; dx <= r && ex < 0; dx++) {
-                            int nx = (int)ob.x + dx, ny = (int)ob.y + dy;
-                            if (world.map.passable(nx, ny) && !world.bldBlocked(nx, ny)
-                                && world.unitAtCell(nx, ny) == INVALID_EID) { ex = nx; ey = ny; }
-                        }
-                if (ex >= 0) {
-                    EID eng = world.spawnUnit(0, UnitType::Engineer, ex + 0.5f, ey + 0.5f);
-                    world.orderCapture({eng}, oil);
-                    int money0 = world.players[0].money;
-                    for (int i = 0; i < 1200 && world.valid(eng) && world.ents[oil].player != 0; i++) world.update();
-                    captureOk = world.valid(oil) && world.ents[oil].player == 0;
-                    for (int i = 0; i < 220; i++) world.update(); // 跑过两个油井结算周期
-                    incomeOk = world.players[0].money > money0;
-                }
+                // Generated neutrals are checked above. Exercise capture and
+                // recurring income separately from prior superweapon battles.
+                World capture;
+                capture.init(48,48,0xC4A70001u,2,0,{Faction::Allies,Faction::Soviet},0,"",true);
+                for(size_t id=0;id<capture.ents.size();++id)if(capture.ents[id].alive)capture.kill((EID)id,false);
+                for(auto& cell:capture.map.cells)cell=Cell{};
+                capture.cratesEnabled=false;
+                for(auto& player:capture.players){player.money=0;player.defeated=false;}
+                const EID target=capture.spawnBuilding(-1,BldType::OilDerrick,20,20,true);
+                const EID engineer=capture.spawnUnit(0,UnitType::Engineer,16.5f,17.5f);
+                const auto result=capture.orderCapture({engineer},target);
+                for(int tick=0;tick<1200 && capture.valid(engineer) && capture.ents[target].player!=0;++tick)capture.update();
+                captureOk=result.accepted==1 && capture.valid(target) && capture.ents[target].player==0 && !capture.valid(engineer);
+                const Credits afterCapture=capture.players[0].money;
+                for(int tick=0;tick<220;++tick)capture.update();
+                incomeOk=captureOk && capture.players[0].money>afterCapture;
             }
             TraceLog(LOG_INFO, "neutral verify: count=%d capture=%d oilIncome=%d (expect >0/1/1)",
                      neutralCnt, (int)captureOk, (int)incomeOk);
@@ -493,7 +502,7 @@ int Game::smokeTest(int frames) {
             float oldLow = g_gameRules.lowPowerSpeedFactor;
             g_gameRules.lowPowerSpeedFactor = 0.25f;
             core.players[0].money = 20000;
-            int money0 = core.players[0].money;
+            Credits money0 = core.players[0].money;
             core.players[0].powerSabotage = 100000;
             bool started = core.startUnitProd(0, UnitType::Grizzly);
             for (int i = 0; i < unitDef(UnitType::Grizzly).buildTime * 2 + 5; i++) core.update();
@@ -530,13 +539,13 @@ int Game::smokeTest(int frames) {
 
             // 宝石卸载与矿石精炼器收益：70 × 1.25 = 87（整数规则）。
             Vec2i eco = findOpen(8, 6);
-            core.spawnBuilding(0, BldType::OreRefinery, eco.x, eco.y, true);
+            EID ecoRefinery=core.spawnBuilding(0,BldType::OreRefinery,eco.x,eco.y,true);
             core.spawnBuilding(0, BldType::OrePurifier, eco.x + 4, eco.y, true);
             EID miner = core.spawnUnit(0, UnitType::ChronoMiner, eco.x + 1.5f, eco.y + 4.5f);
-            core.ents[miner].state = UState::HarvestUnload;
             core.ents[miner].oreLoad = 1;
             core.ents[miner].gemLoad = 1;
             core.ents[miner].digTimer = 29;
+            core.orderReturnToRefinery({miner},ecoRefinery);
             core.players[0].money = 0;
             core.update();
             bool gemPurifier = core.players[0].money == 87;
@@ -764,7 +773,7 @@ int Game::smokeTest(int frames) {
             // 回收炉：己方非英雄进入后按规则返还价值。
             EID grinder = mech.spawnBuilding(1, BldType::Grinder, support.x + 4, support.y, true);
             EID recycle = mech.spawnUnit(1, UnitType::LasherTank, support.x + 4.5f, support.y + 3.5f);
-            int moneyBefore = mech.players[1].money;
+            Credits moneyBefore = mech.players[1].money;
             mech.orderGarrison({recycle}, grinder);
             for (int i = 0; i < 120 && mech.valid(recycle); ++i) mech.update();
             bool grinderRefund = !mech.valid(recycle)
@@ -960,22 +969,26 @@ int Game::smokeTest(int frames) {
             for (int i = 0; i < 20 && mech.ents[prismChain].hp == chainHp; ++i) mech.update();
             bool prismRefraction = mech.valid(prismChain) && mech.ents[prismChain].hp < chainHp;
 
-            // 炮塔坦克攻击移动：射程内边走边打（车体沿路径，炮塔可独立朝向）
-            Vec2i drive = open(16, 6);
+            // Keep this movement/fire assertion independent of the earlier
+            // mind control, grinding, magnetic and chrono entities in mech.
             bool turretMoveFire = false;
-            if (drive.x >= 0) {
-                EID shooter = mech.spawnUnit(0, UnitType::Grizzly, drive.x + .5f, drive.y + 2.5f);
-                EID victim = mech.spawnUnit(1, UnitType::Conscript, drive.x + 5.5f, drive.y + 2.5f);
-                int vicHp = mech.ents[victim].hp;
-                float startX = mech.ents[shooter].x;
-                mech.ents[shooter].atkCd = 0;
-                mech.orderMove({shooter}, drive.x + 14.5f, drive.y + 2.5f, true);
-                for (int i = 0; i < 240 && mech.valid(shooter) && mech.valid(victim); ++i) {
-                    mech.update();
-                    const World::Ent& s = mech.ents[shooter];
-                    if (s.x > startX + 0.4f && mech.ents[victim].hp < vicHp) {
-                        turretMoveFire = true;
-                        break;
+            {
+                World firing;
+                firing.init(48,48,0xF1AE0001u,2,0,{Faction::Allies,Faction::Soviet},0,"",true);
+                for(size_t id=0;id<firing.ents.size();++id)if(firing.ents[id].alive)firing.kill((EID)id,false);
+                for(auto& cell:firing.map.cells)cell=Cell{};
+                firing.cratesEnabled=false;
+                for(auto& player:firing.players){player.money=0;player.defeated=false;}
+                const EID shooter=firing.spawnUnit(0,UnitType::Grizzly,10.5f,12.5f);
+                // A stationary vehicle verifies cannon hits. A moving infantry
+                // target can dodge the shell and be crushed instead.
+                const EID victim=firing.spawnUnit(1,UnitType::MCV,15.5f,12.5f);
+                const int initialHP=firing.ents[victim].hp;
+                const auto result=firing.orderMove({shooter},24.5f,12.5f,true);
+                for(int tick=0;tick<240 && firing.valid(shooter) && firing.valid(victim);++tick) {
+                    firing.update();const auto& unit=firing.ents[shooter];
+                    if(result.accepted==1 && unit.x>10.9f && firing.ents[victim].hp<initialHP) {
+                        turretMoveFire=true;break;
                     }
                 }
             }
@@ -1073,7 +1086,7 @@ int Game::smokeTest(int frames) {
                 // 油田占领瞬间 +1000
                 EID oil = mech.spawnBuilding(-1, BldType::OilDerrick, m2.x, m2.y + 10, true);
                 EID eng = mech.spawnUnit(0, UnitType::Engineer, m2.x + 2.5f, m2.y + 10.5f);
-                int oilMoney0 = mech.players[0].money;
+                Credits oilMoney0 = mech.players[0].money;
                 mech.orderCapture({eng}, oil);
                 for (int i = 0; i < 800 && mech.valid(oil) && mech.ents[oil].player != 0; ++i) mech.update();
                 oilBonusOk = mech.valid(oil) && mech.ents[oil].player == 0
@@ -1498,8 +1511,8 @@ int Game::smokeTest(int frames) {
             }
             economies = economies && a.players[1].money >= 0 && blds >= 3
                       && (a.hasBld(1, BldType::OreRefinery) || a.players[1].defeated);
-            TraceLog(LOG_INFO, "AI fixed-seed faction=%d checksum=%u blds=%d money=%d refinery=%d defeated=%d",
-                     fi, a.checksum(), blds, a.players[1].money,
+            TraceLog(LOG_INFO, "AI fixed-seed faction=%d checksum=%u blds=%d money=%lld refinery=%d defeated=%d",
+                     fi, a.checksum(), blds, (long long)a.players[1].money,
                      (int)a.hasBld(1, BldType::OreRefinery), (int)a.players[1].defeated);
             if (a.players[1].bldProd.active)
                 legal = legal && a.modeAllowsBuilding(1, (BldType)a.players[1].bldProd.typeIdx);
@@ -1563,7 +1576,7 @@ int Game::campaignSmokeTest(int mission, int frames) {
         int blds = 0, units = 0;
         for (auto& e : world.ents)
             if (e.alive && e.player == p) { if (e.isBuilding) blds++; else units++; }
-        TraceLog(LOG_INFO, "  start player %d: blds=%d units=%d money=%d", p, blds, units, world.players[p].money);
+        TraceLog(LOG_INFO, "  start player %d: blds=%d units=%d money=%lld", p, blds, units, (long long)world.players[p].money);
     }
     {
         int neutral = 0;
@@ -1592,8 +1605,8 @@ int Game::campaignSmokeTest(int mission, int frames) {
         int blds = 0, units = 0;
         for (auto& e : world.ents)
             if (e.alive && e.player == p) { if (e.isBuilding) blds++; else units++; }
-        TraceLog(LOG_INFO, "  end player %d: blds=%d units=%d money=%d defeated=%d",
-                 p, blds, units, world.players[p].money, (int)world.players[p].defeated);
+        TraceLog(LOG_INFO, "  end player %d: blds=%d units=%d money=%lld defeated=%d",
+                 p, blds, units, (long long)world.players[p].money, (int)world.players[p].defeated);
     }
     check(world.tick > 0 || frames == 0, "mission simulation advances");
     // 打样关：主目标门闩语义（oa01/oa05/oa08）
@@ -1883,7 +1896,7 @@ int Game::playTest() {
 
     // ---- 1b 设置页：语言热切换 / 显示模式 / 按键重绑 / 持久化 ----
     // 主菜单右栏：s=1.6875 ox=180；by0=176 bh=34 gap=10 → Settings 行心 (1118, 549)
-    clickL(1118, 549);
+    clickUi(556, 325);
     check(phase == Phase::Settings, "点击[设置]进设置页");
     frame(2);
     shot("pt_01b_settings.png");
@@ -1919,7 +1932,7 @@ int Game::playTest() {
     check(phase == Phase::MainMenu, "设置页返回主菜单");
 
     // ---- 2 遭遇战设置 ----
-    clickL(1118, 376); // 主菜单「遭遇战」右栏 sdbtn 中心
+    clickUi(556, 193); // 主菜单「遭遇战」右栏 sdbtn 中心
     check(phase == Phase::Setup, "点击[遭遇战]进设置");
     frame(2); // 让地图预览生成
     shot("pt_02_setup.png");
@@ -1931,8 +1944,10 @@ int Game::playTest() {
 
     // ---- 3 开始游戏 ----
     // Start 按钮中心 (556, 266)
-    clickUi(556, 266);
+    { const Rectangle monitor = menuShellMonitor();
+      clickUi(monitor.x + monitor.width / 2, monitor.y + monitor.height + 51); }
     check(phase == Phase::InGame && campaignMission < 0, "点击[开始游戏]进遭遇战");
+    if (phase != Phase::InGame) { sim.active = false; return fails; }
     frame(5);
     {
         // 开局提示不得缺字（方框/问号占位）
@@ -2000,7 +2015,7 @@ int Game::playTest() {
     // ---- 7 放置建筑 ----
     clickL(1315, 265); // 就绪后再点图标进入放置模式
     check(placing, "再次点击进入放置模式");
-    BldType pt = world.players[0].placingBld;
+    BldType pt = placementType;
     const BldDef& pd = bldDef(pt);
     int abx = 10, aby = 10;
     for (auto& e : world.ents)
@@ -2113,7 +2128,7 @@ int Game::playTest() {
             check(world.ents[pbld].hp == bldDef(pt).hp && !world.ents[pbld].repairing,
                   "维修模式恢复建筑生命");
             sideMode = 0; // 显式清零：下面单独测出售模式保持
-            int money0 = world.players[0].money;
+            Credits money0 = world.players[0].money;
             clickL(1380, 186); // “出售”按钮：orig 穹带右半中心 {1267,170,150x33}（1:1 布局 Y_MODE≈170）
             check(sideMode == 2, "点击[出售]进入出售模式");
             clickL(bp.x - ps.ox + ps.tex.width / 2.0f, bp.y - ps.oy + ps.tex.height / 2.0f); // 电厂贴图中心
@@ -2135,7 +2150,7 @@ int Game::playTest() {
     key(KEY_ESCAPE); // 第二次：打开菜单
     check(showMenu, "ESC打开游戏菜单");
     shot("pt_06_escmenu.png");
-    menuBtn(1); // “保存进度” row1
+    menuBtn(0); // Save is first in the non-terminal menu
     check(FileExists(QUICKSAVE_PATH) && !showMenu, "菜单点击[保存进度]");
     uint64_t tickAfterSave = world.tick;
     key(KEY_F9); // frame 内先 logic 再读档；读档后 tick 应 ≤ 点击后的当前 tick
@@ -2146,15 +2161,15 @@ int Game::playTest() {
     key(KEY_ESCAPE);
     check(showMenu, "再次ESC打开菜单");
     // 局内菜单 → 设置页 → 返回（settingsFromGame 恢复菜单）
-    menuBtn(3); // “设置” row3
+    menuBtn(2); // Settings follows save/load
     check(phase == Phase::Settings && settingsFromGame, "菜单点击[设置]进设置页");
     clickUi(556, 451); // 设置页右侧栏“返回”
     check(phase == Phase::InGame && showMenu, "设置页返回恢复局内菜单");
-    menuBtn(5); // “返回主菜单” row5
+    menuBtn(4); // Back follows restart
     check(phase == Phase::MainMenu && !showMenu, "点击[返回主菜单]");
 
     // ---- 11 战役模式 ----
-    clickL(1118, 449); // 主菜单「战役」右栏 sdbtn 中心
+    clickUi(556, 237); // 主菜单「战役」右栏 sdbtn 中心
     check(phase == Phase::MissionSelect, "点击[战役模式]");
     shot("pt_07_missions.png");
     clickUi(126, 133); // 第一张任务卡（2 列 cardW=210 y0=78）
@@ -2167,7 +2182,7 @@ int Game::playTest() {
     // ---- 12 战役内 ESC → 返回主菜单 ----
     key(KEY_ESCAPE);
     check(showMenu, "战役ESC打开菜单");
-    menuBtn(5); // “返回主菜单”
+    menuBtn(4); // Back follows restart
     check(phase == Phase::MainMenu, "战役返回主菜单");
 
     frame(2);

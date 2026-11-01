@@ -68,7 +68,7 @@ def nearest_index(rgb: Tuple[int, int, int], pal: Sequence[Tuple[int, int, int]]
 
 
 def is_remap_red(r: int, g: int, b: int, a: int) -> bool:
-    return a > 40 and r >= 200 and g < 90 and b < 90
+    return a > 40 and ((r > 0 and g == 0 and b == 0) or (r >= 200 and g < 90 and b < 90))
 
 
 def is_shadowish(r: int, g: int, b: int, a: int) -> bool:
@@ -99,6 +99,8 @@ def rgba_to_indexed(img, pal: Sequence[Tuple[int, int, int]], *,
     forbid = {TRANSPARENT_IDX}
     if shadow_as_index1:
         forbid.add(SHADOW_IDX)
+    if force_remap_red:
+        forbid.update(range(REMAP_LO, REMAP_HI + 1))
     # Prefer remap band when forcing house red
     data = bytearray(w * h)
     for y in range(h):
@@ -107,12 +109,11 @@ def rgba_to_indexed(img, pal: Sequence[Tuple[int, int, int]], *,
             if a < 16:
                 data[y * w + x] = TRANSPARENT_IDX
                 continue
+            if force_remap_red and is_remap_red(r, g, b, a):
+                data[y * w + x] = min(range(REMAP_LO,REMAP_HI+1),key=lambda index:abs(max(pal[index])-r))
+                continue
             if shadow_as_index1 and is_shadowish(r, g, b, a):
                 data[y * w + x] = SHADOW_IDX
-                continue
-            if force_remap_red and is_remap_red(r, g, b, a):
-                # Mid remap (bright house)
-                data[y * w + x] = 16 + 8
                 continue
             data[y * w + x] = nearest_index((r, g, b), pal, forbid=forbid)
     out.putdata(list(data))
@@ -392,16 +393,20 @@ def write_vxl(sections: Sequence[dict], palette: Optional[Sequence[Tuple[int, in
     return bytes(out)
 
 
-def write_hva_static(n_sections: int = 1, n_frames: int = 1) -> bytes:
+def write_hva_static(n_sections: int = 1, n_frames: int = 1, names: Optional[Sequence[str]] = None) -> bytes:
     """Minimal HVA: identity matrices per section per frame."""
     # HVA header: "Hybrid Voxel Animation\0..." see ra2lib Hva
-    # Simplified: many tools use 16-byte id + frames + sections
     ident = b"Hybrid Voxel Animation"
-    # Keep compatible enough for loaders that only need section count; OpenRA2 often ignores HVA for static.
+    # Native layout: 24-byte header, section names, then frame/section matrices.
     buf = bytearray(ident[:16].ljust(16, b"\x00"))
     buf += struct.pack("<II", n_frames, n_sections)
-    # unknown padding used by some writers
-    buf += struct.pack("<II", 0, 0)
+    names=list(names) if names is not None else [f"section{i}" for i in range(n_sections)]
+    if len(names)!=n_sections or not 1<=n_sections<=64 or not 1<=n_frames<=1024:
+        raise ValueError("invalid HVA section/frame declaration")
+    for name in names:
+        encoded=name.encode("latin-1")
+        if not encoded or len(encoded)>16:raise ValueError("invalid HVA section name")
+        buf+=encoded.ljust(16,b"\x00")
     ident_mat = [
         1, 0, 0, 0,
         0, 1, 0, 0,
@@ -413,7 +418,7 @@ def write_hva_static(n_sections: int = 1, n_frames: int = 1) -> bytes:
     return bytes(buf)
 
 
-def save_indexed_png(indexed, path: Path) -> None:
+def save_indexed_png(indexed, path: Path, *, remap_mask: bool = False) -> None:
     """Save mode-P image as RGBA PNG using its palette (for engine PNG path)."""
     from PIL import Image
     path = Path(path)
@@ -430,3 +435,14 @@ def save_indexed_png(indexed, path: Path) -> None:
             elif px[x, y] == 1:
                 out[x, y] = (0, 0, 0, 120)
     rgba.save(path)
+    if remap_mask:
+        mask = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+        mp = mask.load()
+        palette=indexed.getpalette()
+        for y in range(h):
+            for x in range(w):
+                index = px[x, y]
+                if REMAP_LO <= index <= REMAP_HI:
+                    brightness=max(palette[index*3:index*3+3])
+                    mp[x, y] = (brightness, brightness, brightness, 255)
+        mask.save(path.with_name(path.stem + "_remap.png"))

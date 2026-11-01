@@ -20,7 +20,7 @@ void Game::updateHoverCursor(int mx, int my) {
     if (sideMode == 2) { cursorKind = CursorKind::Sell; return; }
     // 放置模式：可放→Arrow（保持默认不误导），不可放→NoMove
     if (placing) {
-        BldType t = world.players[localPlayer].placingBld;
+        BldType t = placementType;
         if (t != BldType::COUNT) {
             float wx, wy;
             screenToWorld(mx, my, wx, wy);
@@ -52,7 +52,7 @@ void Game::updateHoverCursor(int mx, int my) {
                    && world.ents[selBuilding].btype == BldType::ConYard && world.mcvRepacks) {
             if (eb == selBuilding)
                 cursorKind = CursorKind::Deploy;
-            else if (world.map.inBounds(tx, ty) && world.map.passable(tx, ty)
+            else if (world.map.inBounds(tx, ty) && observedCell(tx, ty).passable()
                      && (eu == INVALID_EID || world.ents[eu].player != localPlayer)
                      && (eb == INVALID_EID || world.ents[eb].player != localPlayer))
                 cursorKind = CursorKind::Move;
@@ -62,7 +62,7 @@ void Game::updateHoverCursor(int mx, int my) {
         return;
     }
 
-    bool hasHarvester = false, hasEngineer = false, hasInf = false, hasMcv = false, hasDeployable = false, hasSpy = false;
+    bool hasHarvester = false, hasEngineer = false, hasMcv = false, hasDeployable = false, hasSpy = false;
     for (EID id : sel) {
         if (!world.valid(id) || world.ents[id].isBuilding) continue;
         UnitType ut = world.ents[id].utype;
@@ -70,7 +70,6 @@ void Game::updateHoverCursor(int mx, int my) {
         if (ud.canHarvet()) hasHarvester = true;
         if (ut == UnitType::Engineer) hasEngineer = true;
         if (ut == UnitType::Spy) hasSpy = true;
-        if (ud.isInfantry()) hasInf = true;
         if (ut == UnitType::MCV) hasMcv = true;
         if (ut == UnitType::GI || ut == UnitType::GuardianGI || ut == UnitType::Desolator
             || ut == UnitType::SiegeChopper || ut == UnitType::SlaveMiner
@@ -81,6 +80,9 @@ void Game::updateHoverCursor(int mx, int my) {
     // 工程师占领：敌方或中立可占领建筑（优先于进驻/攻击光标）
     if (hasEngineer && eb != INVALID_EID) {
         const World::Ent& b = world.ents[eb];
+        if(b.player==localPlayer && b.hp<bldDef(b.btype).hp) {
+            cursorKind=CursorKind::Repair;return;
+        }
         if (bldDef(b.btype).capturable && b.player != localPlayer
             && (b.player < 0 || world.isEnemy(localPlayer, b.player))) {
             cursorKind = CursorKind::Enter;
@@ -108,67 +110,35 @@ void Game::updateHoverCursor(int mx, int my) {
     if (eu != INVALID_EID && world.isEnemy(localPlayer, world.ents[eu].player)) enemy = eu;
     if (enemy == INVALID_EID && eb != INVALID_EID && world.isEnemy(localPlayer, world.ents[eb].player))
         enemy = eb;
-    // 可进驻建筑（优先于攻击光标，避免中立民房显示攻击）
-    if (eb != INVALID_EID && hasInf) {
-        const World::Ent& b = world.ents[eb];
-        const BldDef& bd = bldDef(b.btype);
-        if (bd.garrisonCap > 0 && garrisonDomain(b.btype) == 1
-            && (b.player == localPlayer || b.player < 0)) {
-            bool anyFit = false;
-            for (EID id : sel) {
-                if (!world.valid(id) || world.ents[id].isBuilding) continue;
-                if (!unitDef(world.ents[id].utype).isInfantry()) continue;
-                if (b.btype == BldType::CivHouse && !canGarrisonCivHouse(world.ents[id].utype)) continue;
-                anyFit = true; break;
-            }
-            if (anyFit) { cursorKind = CursorKind::Enter; return; }
-        }
+    // Share entry capability/capacity checks with command execution; no A* on hover.
+    if(eb!=INVALID_EID && bldDef(world.ents[eb].btype).garrisonCap>0
+        && (world.ents[eb].player==localPlayer || world.ents[eb].player<0)) {
+        bool eligible=false;
+        for(EID id:sel) eligible |= world.entryRejection(id,eb,EntryKind::Garrison)==EntryRejectReason::None;
+        cursorKind=eligible?CursorKind::Enter:CursorKind::NoMove;return;
     }
-    // 己方维修厂/机械商店/科技前哨：受损车辆 → 修理光标
-    if (eb != INVALID_EID && world.ents[eb].player == localPlayer) {
-        BldType bt = world.ents[eb].btype;
-        if (bt == BldType::ServiceDepot || bt == BldType::MachineShop || bt == BldType::TechOutpost) {
-            for (EID id : sel) {
-                if (!world.valid(id) || world.ents[id].isBuilding) continue;
-                const World::Ent& u = world.ents[id];
-                const UnitDef& ud = unitDef(u.utype);
-                if (ud.isInfantry() || ud.isAir() || ud.pathDomain() != 0 || ud.canHarvet()) continue;
-                if (u.hp < ud.hp || u.parasite != INVALID_EID) {
-                    cursorKind = CursorKind::Repair;
-                    return;
-                }
-            }
-        }
+    if(eb!=INVALID_EID && world.ents[eb].player==localPlayer && World::serviceFacility(world.ents[eb].btype)) {
+        bool eligible=false;
+        for(EID id:sel) eligible |= world.serviceRejection(id,eb)==ServiceRejectReason::None;
+        cursorKind=eligible?CursorKind::Repair:CursorKind::NoMove;return;
     }
     if (enemy != INVALID_EID) {
-        // 空军目标：仅当选中单位有防空武器时显示攻击光标
-        bool airT = !world.ents[enemy].isBuilding
-            && unitDef(world.ents[enemy].utype).isAir()
-            && world.ents[enemy].state != UState::Landed;
-        if (airT) {
-            bool canAA = false;
-            for (EID id : sel) {
-                if (!world.valid(id) || world.ents[id].isBuilding) continue;
-                if (world.effWeapon(world.ents[id]).antiAir) { canAA = true; break; }
-            }
-            // 建筑武器：选中防御塔时
-            if (!canAA && world.valid(selBuilding) && world.ents[selBuilding].player == localPlayer) {
-                const BldDef& bd = bldDef(world.ents[selBuilding].btype);
-                if (bd.weapon.antiAir) canAA = true;
-            }
-            if (!canAA) { cursorKind = CursorKind::NoMove; return; }
-        }
         if (hasEngineer && world.ents[enemy].isBuilding && bldDef(world.ents[enemy].btype).capturable)
             cursorKind = CursorKind::Enter;
-        else
-            cursorKind = CursorKind::Attack;
+        else {
+            bool eligible=false;
+            for(EID id:sel) eligible |= world.attackRejection(id,enemy)==AttackRejectReason::None;
+            cursorKind=eligible?CursorKind::Attack:CursorKind::NoMove;
+        }
         return;
     }
 
     // 运输载具
     if (eu != INVALID_EID && world.ents[eu].player == localPlayer
-        && unitDef(world.ents[eu].utype).cargoCap > 0 && hasInf) {
-        cursorKind = CursorKind::Enter;
+        && unitDef(world.ents[eu].utype).cargoCap > 0) {
+        bool eligible=false;
+        for(EID id:sel) eligible |= world.entryRejection(id,eu,EntryKind::Board)==EntryRejectReason::None;
+        cursorKind=eligible?CursorKind::Enter:CursorKind::NoMove;
         return;
     }
     // 矿车回己方精炼厂卸货 → Enter（进驻/停靠）
@@ -178,7 +148,7 @@ void Game::updateHoverCursor(int mx, int my) {
         return;
     }
     // 矿脉 → AttackMove（Harvest）
-    if (hasHarvester && world.map.inBounds(tx, ty) && world.map.at(tx, ty).ore > 0) {
+    if (hasHarvester && world.map.inBounds(tx, ty) && world.map.fogAt(localPlayer,tx,ty)!=FOG_UNSEEN && observedCell(tx,ty).ore>0) {
         cursorKind = CursorKind::Harvest;
         return;
     }
@@ -201,7 +171,7 @@ void Game::updateHoverCursor(int mx, int my) {
         }
     }
     // 默认可走地 → 移动；按住 A = 攻击移动光标（AttackMove@404，与矿上 Harvest 同源）
-    if (world.map.inBounds(tx, ty) && world.map.passable(tx, ty)) {
+    if (world.map.inBounds(tx, ty) && observedCell(tx, ty).passable()) {
         if (!sel.empty() && kDown(KEY_A))
             cursorKind = CursorKind::Harvest; // AttackMove
         else

@@ -48,8 +48,8 @@ static int l_money(lua_State* L) {
 }
 static int l_giveMoney(lua_State* L) {
     int p = (int)luaL_checkinteger(L, 1);
-    int amt = (int)luaL_checkinteger(L, 2);
-    if (p >= 0 && p < W(L)->numPlayers) W(L)->players[p].money += amt;
+    Credits amt = (Credits)luaL_checkinteger(L, 2);
+    if (p >= 0 && p < W(L)->numPlayers) W(L)->changeMoney(p,amt);
     return 0;
 }
 static int l_spawnUnit(lua_State* L) {
@@ -454,7 +454,7 @@ static int l_setRally(lua_State* L) {
     float x = (float)luaL_checknumber(L, 2), y = (float)luaL_checknumber(L, 3);
     World* w = W(L);
     if (w->valid(bld) && w->ents[bld].isBuilding) {
-        w->ents[bld].rallyX = (int)x; w->ents[bld].rallyY = (int)y;
+        w->orderRally(bld,x,y,x==-1 && y==-1);
     }
     return 0;
 }

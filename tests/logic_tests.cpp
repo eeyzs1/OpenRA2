@@ -1,6 +1,7 @@
 #include "core/util.h"
 #include "game/data.h"
 #include "game/map.h"
+#include "game/production_work.h"
 #include <algorithm>
 #include <cstdio>
 #include <vector>
@@ -11,6 +12,43 @@ int failures = 0;
 void expect(bool condition, const char* name) {
     std::printf("%s: %s\n", condition ? "PASS" : "FAIL", name);
     if (!condition) ++failures;
+}
+
+void testProductionWork() {
+    struct Item { int progress=0, workRemainder=0, totalCost=997, paid=0; } p;
+    int money=2000;
+    for (int i=0;i<10;++i) advanceProduction(p,money,100,1024);
+    expect(p.progress==10, "production accumulates normal work");
+    for (int i=0;i<10;++i) advanceProduction(p,money,100,512);
+    expect(p.progress==15, "power loss changes only future work");
+    for (int i=0;i<10;++i) advanceProduction(p,money,100,2560);
+    expect(p.progress==40, "additional factories preserve completed work");
+    int before=p.progress, paid=p.paid, poor=0;
+    expect(!advanceProduction(p,poor,100,1024) && p.progress==before && p.paid==paid,
+           "unfunded work does not advance or debit");
+    bool done=false;
+    for (int i=0;i<120 && !done;++i) done=advanceProduction(p,money,100,512);
+    expect(done && p.paid==997 && money==1003, "fractional production settles exact quote");
+    advanceProduction(p,money,100,2560);
+    expect(p.progress==100 && money==1003, "blocked completed order cannot charge twice");
+    Item fraction; money=2000;
+    advanceProduction(fraction,money,100,513);
+    expect(fraction.progress==0 && fraction.workRemainder==513, "subtick work is retained");
+    money += fraction.paid;
+    expect(money==2000, "cancellation refunds precisely paid amount");
+}
+
+void testWorldFacings() {
+    const Vec2i directions[]={{1,-1},{1,0},{1,1},{0,1},{-1,1},{-1,0},{-1,-1},{0,-1}};
+    bool correct=dirFromVec(0,0)==2;
+    for(int direction=0;direction<8;++direction)for(int offset:{-25,-20,0,20,25}) {
+        const float angle=offset*3.14159265358979323846f/180;
+        const float x=directions[direction].x*std::cos(angle)-directions[direction].y*std::sin(angle);
+        const float y=directions[direction].x*std::sin(angle)+directions[direction].y*std::cos(angle);
+        const int expected=(direction+(offset==25?1:offset==-25?-1:0)+8)&7;
+        correct &= dirFromVec(x,y)==expected;
+    }
+    expect(correct,"eight world-compass facings have uniform angular buckets before projection");
 }
 
 void testRng() {
@@ -166,10 +204,39 @@ void testMapLogic() {
 } // namespace
 
 int main() {
+    testWorldFacings();
+    testProductionWork();
     testRng();
     testCoordinates();
     testRuleHelpers();
     testMapLogic();
+    Map congestionMap = makeMap(7, 5, Terrain::Clear);
+    std::vector<uint8_t> congestion(35, 0);
+    congestion[2*7+3] = 100;
+    std::vector<Vec2i> detour;
+    bool routed = congestionMap.findPath(0, 2, 6, 2, detour, 20000, 0, &congestion);
+    expect(routed && std::find(detour.begin(), detour.end(), Vec2i{3,2}) == detour.end(),
+           "dynamic congestion routes around an occupied choke when an alternative exists");
+    Map shore=makeMap(16,12,Terrain::Clear);
+    for(int x=6;x<=8;++x) for(int y=0;y<12;++y) shore.at(x,y).terrain=Terrain::Water;
+    std::vector<Vec2i> firing;
+    expect(!shore.findPath(1,5,10,5,firing) && shore.findPathToRange(1,5,10.5f,5.5f,5,firing)
+        && !firing.empty() && firing.back()==Vec2i{5,5},"range A* reaches a firing position without reaching target region");
+    expect(!shore.findPathToRange(1,5,10.5f,5.5f,3,firing),"range A* rejects a target beyond all reachable firing positions");
+    Map fractional=makeMap(9,9,Terrain::Clear);
+    bool exact=fractional.findPathToRange(0,0,6.1f,5.2f,1.3f,firing);
+    expect(exact && !firing.empty() && distf(firing.back().x+0.5f,firing.back().y+0.5f,6.1f,5.2f)<=1.3f,
+        "range A* preserves fractional target centers");
+    std::fill(congestion.begin(),congestion.end(),0);
+    for(int y=0;y<5;++y) congestion[y*7+3]=255;
+    expect(!congestionMap.findPathToRange(0,2,6.5f,2.5f,0.2f,detour,20000,0,&congestion),
+        "range A* rejects an immovable occupancy barrier");
+    for(int y=0;y<5;++y) congestion[y*7+3]=100;
+    expect(congestionMap.findPathToRange(0,2,6.5f,2.5f,0.2f,detour,20000,0,&congestion),
+        "soft occupancy cost still permits a temporarily congested route");
+    std::fill(congestion.begin(),congestion.end(),0);congestion[2*7]=255;
+    expect(congestionMap.findPathToRange(0,2,6.5f,2.5f,0.2f,detour,20000,0,&congestion),
+        "occupant may leave its own starting cell in a hard occupancy mask");
     std::printf("LOGIC TEST SUMMARY: %s failures=%d\n", failures == 0 ? "PASS" : "FAIL", failures);
     return failures == 0 ? 0 : 1;
 }

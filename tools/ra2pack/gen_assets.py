@@ -2,8 +2,9 @@
 # 用法: python gen_assets.py [--only unit_grizzly,bld_conyard,...] [--sheet]
 import sys, os, re, math, time
 sys.path.insert(0, os.path.dirname(__file__))
-from ra2lib import MixTree, Vxl, Hva, Shp, load_pal, vxl_project, render_pts, shp_frame_to_rgba, _phi_for_screen_alpha
+from ra2lib import MixTree, Vxl, Hva, Shp, load_pal, vxl_project, render_pts, shp_frame_to_rgba, facing_world_phi
 from PIL import Image
+from infantry_sequence import parse_sequence, sequence_frame, sequence_fits
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SPR = os.path.join(ROOT, "assets", "sprites")
@@ -43,6 +44,7 @@ def parse_ini(txt):
             secs[cur][k.strip()] = v.strip().split(";")[0].strip()
     return secs
 R = parse_ini(RT); A = parse_ini(AT)
+ART_BY_NAME = {name.lower(): values for name, values in A.items()}
 
 _, _p = T.find("unittem.pal"); PAL_U = load_pal(_p)
 _, _p = T.find("cameo.pal"); PAL_C = load_pal(_p)
@@ -287,7 +289,7 @@ def render_voxel_unit(img, canvas, eng=""):
     floating = eng in AIR or eng in NAVAL or eng in HOVER
     per = []
     for e in range(8):
-        pts, zmin = vxl_project(v, h, _phi_for_screen_alpha(45 * e), hva_frame=0)
+        pts, zmin = vxl_project(v, h, facing_world_phi(e), hva_frame=0)
         if not pts:
             return None, None
         xs = [p[0] for p in pts]; ys = [p[1] for p in pts]
@@ -385,7 +387,7 @@ def _project_stem_dirs(stem: str):
         h = None
     per = []
     for e in range(8):
-        pts, zmin = vxl_project(v, h, _phi_for_screen_alpha(45 * e), hva_frame=0)
+        pts, zmin = vxl_project(v, h, facing_world_phi(e), hva_frame=0)
         if not pts:
             return None
         xs = [p[0] for p in pts]
@@ -550,7 +552,7 @@ def scale_bld_canvas(img):
 
 # ------------------------------------------------------------- 步兵/SHP 单位
 # art.ini 序列驱动（权威帧映射）：Ready=站立 Walk=行走 FireUp=开火 Die1=死亡
-# 布局规律：方向块打包 —— 方向 s 的相位 p 帧号 = start + s*frames + p（die 无方向：start+p）
+# 方向 s 的相位 p = start + s*facingStride + p；第三个数不是播放速率。
 # 方向映射：SHP f0=南 逆时针(S,SW,W,NW,N,NE,E,SE)；引擎 dir e=东起顺时针 => s=(e+6)%8
 SEQ_MAP = {
     "gi": "GISequence", "guardiangi": "GISequence",
@@ -582,26 +584,14 @@ if ONLY and os.path.exists(_anims_path):
             d[_sec[4:] if _sec.startswith("bld_") else _sec][k.strip()] = v.strip()
 
 def seq_part(seq, key):
-    """解析序列段某键 -> (start, frames, rate)；缺失/无效返回 None"""
-    v = A.get(seq, {}).get(key)
-    if not v:
-        return None
-    ps = v.split(",")
-    if len(ps) < 3:
-        return None
-    try:
-        st, fr, ra = int(ps[0]), int(ps[1]), int(ps[2])
-    except ValueError:
-        return None
-    if fr <= 0 or st < 0:
-        return None
-    return (st, fr, ra)
+    """解析序列段某键 -> (start, frames, facingStride)。"""
+    return parse_sequence(ART_BY_NAME.get(seq.lower(), {}).get(key))
 
 def render_seq_unit(img, eng, canvas):
     """art.ini 序列全套提取：stand(legacy d{e}f0)/walk/fire/die/dep。
     返回 True/False；帧 PNG 直接落盘，元数据记入 ANIM_META。"""
-    seq = SEQ_MAP.get(eng)
-    if not seq or seq not in A:
+    seq = ART_BY_NAME.get(img.lower(), {}).get("Sequence", SEQ_MAP.get(eng))
+    if not seq or seq.lower() not in ART_BY_NAME:
         return False
     sd = get(img + ".shp")
     if not sd:
@@ -613,7 +603,8 @@ def render_seq_unit(img, eng, canvas):
     fire = seq_part(seq, "FireUp")
     die = seq_part(seq, "Die1")
     dep = seq_part(seq, "Deployed") or seq_part(seq, "Prone")
-    if not ready:
+    depfire = seq_part(seq, "DeployedFire")
+    if not sequence_fits(ready, n):
         return False
     def grab(idxs):
         c = composite_frames(shp, idxs, PAL_U)
@@ -622,36 +613,34 @@ def render_seq_unit(img, eng, canvas):
     # 站立（legacy 命名 unit_eng_d{e}_f0.png）
     for e in range(8):
         s = (e + 6) % 8
-        im = grab([ready[0] + s * ready[1]])
+        im = grab([sequence_frame(ready, s)])
         if not im:
             return False
         save(im, f"unit_{eng}_d{e}_f0.png")
     # 行走（多相位）
-    if walk and walk[0] + 8 * walk[1] <= n:
+    if sequence_fits(walk, n):
         meta["walk"] = walk[1]
-        meta["walkrate"] = max(1, walk[2])
+        meta["walkrate"] = 2  # project presentation cadence; independent of facing stride
         for e in range(8):
             s = (e + 6) % 8
             for p in range(walk[1]):
-                im = grab([walk[0] + s * walk[1] + p])
+                im = grab([sequence_frame(walk, s, p)])
                 if not im:
                     return False
                 save(im, f"unit_{eng}_walk_d{e}_f{p}.png")
-        # EngineerSequence 等个别 SHP：奇数向 walk 相对 Ready 错位 2 格。
-        # 提取后若 walk 与 stand 朝向不一致，运行 tools/_scratch 或手工按 stand 重排 walk/fire/dep。
     # 开火（多相位）
-    if fire and fire[0] + 8 * fire[1] <= n:
+    if sequence_fits(fire, n):
         meta["fire"] = fire[1]
-        meta["firerate"] = max(1, fire[2])
+        meta["firerate"] = 2
         for e in range(8):
             s = (e + 6) % 8
             for p in range(fire[1]):
-                im = grab([fire[0] + s * fire[1] + p])
+                im = grab([sequence_frame(fire, s, p)])
                 if not im:
                     return False
                 save(im, f"unit_{eng}_fire_d{e}_f{p}.png")
     # 死亡（无方向，顺序帧）
-    if die and die[0] + die[1] <= n:
+    if sequence_fits(die, n, 1):
         meta["die"] = die[1]
         for p in range(die[1]):
             im = grab([die[0] + p])
@@ -659,14 +648,23 @@ def render_seq_unit(img, eng, canvas):
                 return False
             save(im, f"unit_{eng}_die_f{p}.png")
     # 部署站姿（deso Deployed / 其他 Prone 匍匐）
-    if dep and dep[0] + 8 * dep[1] <= n:
+    if sequence_fits(dep, n):
         meta["dep"] = 1
         for e in range(8):
             s = (e + 6) % 8
-            im = grab([dep[0] + s * dep[1]])
+            im = grab([sequence_frame(dep, s)])
             if not im:
                 return False
             save(im, f"unit_{eng}_dep_d{e}.png")
+    if sequence_fits(depfire, n):
+        meta["depfire"] = depfire[1]
+        for e in range(8):
+            s = (e + 6) % 8
+            for p in range(depfire[1]):
+                im = grab([sequence_frame(depfire, s, p)])
+                if not im:
+                    return False
+                save(im, f"unit_{eng}_depfire_d{e}_f{p}.png")
     ANIM_META["units"][eng] = meta
     return True
 
@@ -1053,7 +1051,7 @@ def render_building(img, canvas=None, frame0=0, single=True, bib=None, active_an
             scale = float(fit.get("scale", 1.0))
             seat_frac = fit.get("seat_frac", None)
             expand = bool(fit.get("expand", False))
-            phi = _phi_for_screen_alpha(45 * (turret_yaw % 8))
+            phi = facing_world_phi(turret_yaw)
             vtur = Vxl(get(turret_vxl + ".vxl"))
             # 静态烘培：不用 HVA（与单位车体一致，避免节变换把炮管拧飞）
             pts_tur, _z = vxl_project(vtur, None, phi)
@@ -1550,6 +1548,15 @@ def main():
     print("blds_skip:", len(report["blds_skip"]), report["blds_skip"])
     print("icons_ok:", len(report["icons_ok"]))
     print("icons_skip:", len(report["icons_skip"]), report["icons_skip"])
+
+    if ONLY is None:
+        from pathlib import Path
+        from gen_chrono_fx import export_chrono
+        export_chrono(T, Path(ROOT) / "assets")
+    if ONLY is None or "unit_siegechopper" in ONLY:
+        from pathlib import Path
+        from gen_chopper_deploy import export_chopper
+        export_chopper(T,Path(ROOT)/"assets")
 
     # ---- 动画元数据（引擎 sprites.cpp 启动读取：walk/fire/die 帧数与速率、建筑 mk 帧数） ----
     with open(os.path.join(SPR, "anims.ini"), "w", encoding="utf-8") as f:

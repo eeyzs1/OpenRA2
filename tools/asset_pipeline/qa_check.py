@@ -12,6 +12,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from formats import REMAP_HI, REMAP_LO, load_unittem_pal, nearest_index, rgba_to_indexed  # noqa: E402
+from cameo import check_cameo
 from publish_unit import load_manifest  # noqa: E402
 
 SPR = ROOT / "assets" / "sprites"
@@ -151,6 +152,8 @@ def main():
         errs = check_vehicle_png(m)
     else:
         errs = [f"unknown kind {kind}"]
+    if kind in ("infantry","vehicle_png") or "icon_source" in m:
+        errs.extend(check_cameo(m,SPR))
     if errs:
         print("QA FAIL:")
         for e in errs:

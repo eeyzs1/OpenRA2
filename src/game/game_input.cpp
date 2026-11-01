@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <vector>
 #include <unordered_set>
+#include <climits>
 
 EID Game::pickUnit(int mx, int my) const {
     // 屏幕坐标 → 未缩放视口坐标（与 unitScreenRect / rlScalef 一致）
@@ -19,7 +20,7 @@ EID Game::pickUnit(int mx, int my) const {
     for (size_t i = 0; i < world.ents.size(); i++) {
         const World::Ent& e = world.ents[i];
         if (!e.alive || e.isBuilding) continue;
-        if (e.player != localPlayer && world.map.fogAt(localPlayer, (int)e.x, (int)e.y) != FOG_VISIBLE) continue;
+        if (e.player != localPlayer && !buildingVisible((int)e.x,(int)e.y,e.btype)) continue;
         Rectangle r = unitScreenRect(e);
         // 轻度放宽命中；过大 padding 会让步兵抢掉基地车等大贴图中心点击
         Rectangle rs{r.x * camZoom, r.y * camZoom, r.width * camZoom, r.height * camZoom};
@@ -28,7 +29,7 @@ EID Game::pickUnit(int mx, int my) const {
         rb.x -= 8.0f; rb.y -= 8.0f; rb.width += 16.0f; rb.height += 16.0f;
         Vector2 p = unitScreenPos(e);
         const UnitDef& ud = unitDef(e.utype);
-        if (ud.isAir() && e.state != UState::Landed) p.y -= AIR_ALT;
+        p.y -= unitRenderLift(e);
         bool inBox = (vx >= rb.x && vx < rb.x + rb.width && vy >= rb.y && vy < rb.y + rb.height)
                   || ((float)mx >= rs.x && (float)mx < rs.x + rs.width
                       && (float)my >= rs.y && (float)my < rs.y + rs.height);
@@ -172,49 +173,14 @@ void Game::cmdDeploySel() {
         && world.ents[selBuilding].player == localPlayer) {
         World::Cmd c; c.type = World::Cmd::Ungarrison; c.ids.push_back(selBuilding);
         issueCmd(c);
-        message(TR(S::MsgUngarrison));
         return;
     }
-    // MCV Repacks：选中建造厂 → 打包回基地车
-        if (sel.empty() && world.valid(selBuilding) && world.ents[selBuilding].isBuilding
-        && world.ents[selBuilding].player == localPlayer
-        && world.ents[selBuilding].btype == BldType::ConYard && world.mcvRepacks) {
-        float sx = world.ents[selBuilding].x + 1.5f, sy = world.ents[selBuilding].y + 1.5f;
-        World::Cmd c; c.type = World::Cmd::Deploy; c.ids.push_back(selBuilding);
-        issueCmd(c);
-        selBuilding = INVALID_EID;
-        sel.clear();
-        for (size_t i = 0; i < world.ents.size(); i++) {
-            const World::Ent& e = world.ents[i];
-            if (!e.alive || e.isBuilding || e.player != localPlayer || e.utype != UnitType::MCV) continue;
-            if (distf(e.x, e.y, sx, sy) < 2.5f) sel.push_back((int)i);
-        }
-        message(TR(S::MsgDeployed));
-        return;
-    }
-    for (EID id : sel) {
-        if (!world.valid(id) || world.ents[id].utype != UnitType::MCV) continue;
-        if (!world.canDeployMcv(id)) {
-            message(TR(S::MsgCannotBuild)); // 脚印有单位/障碍，不可展开
-            continue;
-        }
-        World::Cmd c; c.type = World::Cmd::Deploy; c.ids.push_back(id);
-        issueCmd(c);
-        sel.erase(std::remove(sel.begin(), sel.end(), id), sel.end());
-        message(TR(S::MsgDeployed));
-    }
-    // 辐射工兵/重装大兵/美国大兵/攻城直升机：部署/收起（RA2 原作同键）
-    bool anyDeploy = false;
-    for (EID id : sel)
-        if (world.valid(id) && !world.ents[id].isBuilding
-            && (world.ents[id].utype == UnitType::Desolator || world.ents[id].utype == UnitType::GuardianGI
-                || world.ents[id].utype == UnitType::GI || world.ents[id].utype == UnitType::SiegeChopper))
-            anyDeploy = true;
-    if (anyDeploy) {
-        World::Cmd c; c.type = World::Cmd::RadDeploy; c.ids = sel;
-        issueCmd(c);
-        message(TR(S::MsgDeployToggled));
-    }
+    World::Cmd command;command.type=World::Cmd::Deploy;
+    command.ids=sel; // Snapshot: never erase selected IDs while iterating them.
+    if(command.ids.empty() && world.valid(selBuilding) && world.ents[selBuilding].player==localPlayer)
+        command.ids.push_back(selBuilding);
+    if(!command.ids.empty()) issueCmd(command);
+
 }
 
 void Game::issueSmartOrder(int mx, int my) {
@@ -242,39 +208,23 @@ void Game::issueSmartOrder(int mx, int my) {
         if (unitDef(world.ents[id].utype).canHarvet()) hasHarvester = true;
     }
 
-    // 右键可进驻建筑（己方/中立民房/战斗碉堡/坦克碉堡）→ 按进驻类型过滤（优先于攻击判定：中立建筑不算敌人）
+    // Engineer interactions take priority over garrisoning, matching the cursor.
+    // Other units follow the building's garrison rules before ordinary attacks.
     if (eb != INVALID_EID) {
         const World::Ent& b = world.ents[eb];
         const BldDef& bd = bldDef(b.btype);
-        int gdom = garrisonDomain(b.btype);
-        if (bd.garrisonCap > 0 && (b.player == localPlayer || b.player < 0)) {
-            std::vector<EID> fit;
-            for (EID id : sel) {
-                if (!world.valid(id) || world.ents[id].isBuilding) continue;
-                const UnitDef& ud = unitDef(world.ents[id].utype);
-                bool ok = (gdom == 1 && ud.isInfantry())
-                       || (gdom == 2 && !ud.isInfantry() && !ud.isAir() && ud.pathDomain() == 0 && !ud.canHarvet())
-                       || (gdom == 3 && !ud.isAir() && !isHero(world.ents[id].utype));
-                if (ok && b.btype == BldType::CivHouse && !canGarrisonCivHouse(world.ents[id].utype))
-                    ok = false;
-                if (ok) fit.push_back(id);
-            }
-            if (!fit.empty()) {
-                World::Cmd c; c.type = World::Cmd::Garrison; c.ids = fit; c.a = eb;
-                issueCmd(c);
-                message(TR(S::MsgGarrison));
-                return;
+        if(hasEngineer) {
+            std::vector<EID> engineers;
+            for(EID id:sel) if(world.valid(id) && !world.ents[id].isBuilding && world.ents[id].player==localPlayer
+                && world.ents[id].utype==UnitType::Engineer) engineers.push_back(id);
+            const auto intent=b.player==localPlayer?EngineerIntent::Repair:EngineerIntent::Capture;
+            if(!engineers.empty() && world.engineerRejection(engineers.front(),eb,intent)==EngineerRejectReason::None) {
+                World::Cmd cmd;cmd.type=intent==EngineerIntent::Repair?World::Cmd::Repair:World::Cmd::Capture;
+                cmd.ids=std::move(engineers);cmd.a=eb;issueCmd(cmd);return;
             }
         }
-        // 工程师占领：敌方或中立可占领建筑（油井/机场等 player=-1 原先被 isEnemy 挡掉）
-        if (hasEngineer && bd.capturable && b.player != localPlayer
-            && (b.player < 0 || world.isEnemy(localPlayer, b.player))) {
-            std::vector<EID> engs;
-            for (EID id : sel) if (world.valid(id) && world.ents[id].utype == UnitType::Engineer) engs.push_back(id);
-            World::Cmd c; c.type = World::Cmd::Capture; c.ids = engs; c.a = eb;
-            issueCmd(c);
-            message(TR(S::MsgEngCapture));
-            return;
+        if(bd.garrisonCap>0 && (b.player==localPlayer || b.player<0)) {
+            World::Cmd cmd;cmd.type=World::Cmd::Garrison;cmd.ids=sel;cmd.a=eb;issueCmd(cmd);return;
         }
         // 间谍渗透敌方建筑
         if (hasSpy && b.player >= 0 && world.isEnemy(localPlayer, b.player)) {
@@ -286,25 +236,9 @@ void Game::issueSmartOrder(int mx, int my) {
                 return;
             }
         }
-        // 己方维修厂 / 已占领机械商店 / 科技前哨：受损/被寄生车辆右键 → 开往维修
-        if (b.player == localPlayer
-            && (b.btype == BldType::ServiceDepot || b.btype == BldType::MachineShop
-                || b.btype == BldType::TechOutpost)) {
-            std::vector<EID> veh;
-            for (EID id : sel) {
-                if (!world.valid(id) || world.ents[id].isBuilding) continue;
-                const UnitDef& ud = unitDef(world.ents[id].utype);
-                if (!ud.isInfantry() && !ud.isAir() && ud.pathDomain() == 0 && !ud.canHarvet()) {
-                    const World::Ent& u = world.ents[id];
-                    if (u.hp < ud.hp || u.parasite != INVALID_EID) veh.push_back(id);
-                }
-            }
-            if (!veh.empty()) {
-                World::Cmd c; c.type = World::Cmd::Service; c.ids = veh; c.a = eb;
-                issueCmd(c);
-                message(TR(S::MsgService));
-                return;
-            }
+        // Only facilities that implement vehicle service offer this command.
+        if (b.player==localPlayer && World::serviceFacility(b.btype) && !sel.empty()) {
+            World::Cmd c;c.type=World::Cmd::Service;c.ids=sel;c.a=eb;issueCmd(c);return;
         }
     }
 
@@ -314,28 +248,18 @@ void Game::issueSmartOrder(int mx, int my) {
             for (EID id : sel) if (world.valid(id) && world.ents[id].utype == UnitType::Engineer) engs.push_back(id);
             World::Cmd c; c.type = World::Cmd::Capture; c.ids = engs; c.a = enemy;
             issueCmd(c);
-            message(TR(S::MsgEngCapture));
         } else {
             World::Cmd c; c.type = World::Cmd::Attack; c.ids = sel; c.a = enemy;
             issueCmd(c);
         }
         return;
     }
-    // 右键己方运输载具 → 步兵登船
+    // Friendly passenger carrier: simulation reports compatibility and capacity.
     if (eu != INVALID_EID && world.ents[eu].player == localPlayer && !world.ents[eu].isBuilding
-        && unitDef(world.ents[eu].utype).cargoCap > 0) {
-        std::vector<EID> inf;
-        for (EID id : sel)
-            if (world.valid(id) && !world.ents[id].isBuilding && unitDef(world.ents[id].utype).isInfantry())
-                inf.push_back(id);
-        if (!inf.empty()) {
-            World::Cmd c; c.type = World::Cmd::Board; c.ids = inf; c.a = eu;
-            issueCmd(c);
-            message(TR(S::MsgBoarding));
-            return;
-        }
+        && unitDef(world.ents[eu].utype).cargoCap > 0 && !sel.empty()) {
+        World::Cmd c;c.type=World::Cmd::Board;c.ids=sel;c.a=eu;issueCmd(c);return;
     }
-    // 友军建筑：矿车右键精炼厂 → 回厂卸货；工程师右键受损建筑 → 进入修复
+    // 友军建筑：矿车右键精炼厂 → 回厂卸货；工程师交互已在进驻之前处理。
     if (eb != INVALID_EID && world.ents[eb].player == localPlayer) {
         const World::Ent& fb = world.ents[eb];
         if (hasHarvester && fb.btype == BldType::OreRefinery) {
@@ -350,17 +274,10 @@ void Game::issueSmartOrder(int mx, int my) {
                 return;
             }
         }
-        if (hasEngineer && fb.hp < bldDef(fb.btype).hp) {
-            std::vector<EID> engs;
-            for (EID id : sel) if (world.valid(id) && world.ents[id].utype == UnitType::Engineer) engs.push_back(id);
-            World::Cmd c; c.type = World::Cmd::Repair; c.ids = engs; c.a = eb;
-            issueCmd(c);
-            message(TR(S::MsgEngRepair));
-        }
         return;
     }
-    const Cell& c = world.map.at(tx, ty);
-    if (hasHarvester && c.ore > 0) {
+    const Cell& c = observedCell(tx, ty);
+    if (hasHarvester && world.map.fogAt(localPlayer,tx,ty)!=FOG_UNSEEN && c.ore>0) {
         std::vector<EID> harv;
         std::vector<EID> rest;
         for (EID id : sel) {
@@ -407,41 +324,20 @@ void Game::handleInput() {
             return;
         }
         if (mPressed(MOUSE_LEFT_BUTTON) && !overUI) {
-            float wx, wy;
-            screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
-            int tx, ty;
-            screenToTile(wx, wy, tx, ty);
-            if (world.map.inBounds(tx, ty)) {
-                SWType t = targetingSW;
-                // 本地预检（就绪与可用），联机下命令延迟执行，消息按预检结果提示
-                if (world.swAvailable(localPlayer, t) && world.players[localPlayer].swReady[(int)t]) {
-                    if (t == SWType::ChronoShift && chronoSourceSel.empty()) {
-                        // 第一阶段：来源区域。实体 ID 按稳定索引排序写入最终 Cmd，
-                        // 目标阶段才扣充能，取消或无有效车辆均不会浪费超武。
-                        for (EID id = 0; id < (EID)world.ents.size(); id++) {
-                            const auto& e = world.ents[id];
-                            if (!e.alive || e.isBuilding || e.player != localPlayer) continue;
-                            const UnitDef& u = unitDef(e.utype);
-                            if (u.isAir() || u.isInfantry()) continue;
-                            if (distf(e.x, e.y, tx + 0.5f, ty + 0.5f) <= 3.0f)
-                                chronoSourceSel.push_back(id);
-                        }
-                        if (chronoSourceSel.empty()) {
-                            message(g_lang ? "No eligible vehicles in source area" : "来源区域内没有可传送车辆");
-                        } else {
-                            message(g_lang ? "Select Chrono Shift destination" : "请选择超时空传送目标区域");
-                        }
-                        return;
-                    }
-                    World::Cmd c; c.type = World::Cmd::LaunchSW; c.a = (int)t;
-                    c.x = tx + 0.5f; c.y = ty + 0.5f;
-                    if (t == SWType::ChronoShift) c.ids = chronoSourceSel;
-                    issueCmd(c);
-                    message(TextFormat(TR(S::MsgSWLaunchedFmt), swName(t)));
-                }
-                targetingSW = SWType::COUNT;
-                chronoSourceSel.clear();
+            float wx,wy;screenToWorld((int)mouse.x,(int)mouse.y,wx,wy);int tx,ty;screenToTile(wx,wy,tx,ty);
+            const SWType type=targetingSW;
+            if(type==SWType::ChronoShift && chronoSourceSel.empty()
+                && world.superweaponRejection(localPlayer,(int)type,tx+0.5f,ty+0.5f)==SuperweaponRejectReason::None) {
+                for(EID id=0;id<(EID)world.ents.size();++id)
+                    if(world.chronoSourceEligible(localPlayer,id) && distf(world.ents[id].x,world.ents[id].y,tx+0.5f,ty+0.5f)<=3.0f)
+                        chronoSourceSel.push_back(id);
+                message(TR(chronoSourceSel.empty()?S::MsgSWNoSource:S::MsgSWChooseDestination));
+                return;
             }
+            World::Cmd command;command.type=World::Cmd::LaunchSW;command.a=(int)type;command.x=tx+0.5f;command.y=ty+0.5f;
+            if(type==SWType::ChronoShift) command.ids=chronoSourceSel;
+            issueCmd(command); // Execution reports success/failure; submission is not a launch confirmation.
+            targetingSW=SWType::COUNT;chronoSourceSel.clear();
         }
         return;
     }
@@ -507,29 +403,32 @@ void Game::handleInput() {
     // 放置建筑模式
     if (placing) {
         if (mPressed(MOUSE_RIGHT_BUTTON) || kPressed(KEY_ESCAPE)) {
-            placing = false;
-            world.players[localPlayer].placingBld = BldType::COUNT;
+            clearPlacement();
             return;
         }
+        if(placementType==BldType::COUNT || !world.bldQueueFor(localPlayer,placementType).active ||
+            !world.bldQueueFor(localPlayer,placementType).ready ||
+            world.bldQueueFor(localPlayer,placementType).typeIdx!=(int)placementType) {
+            clearPlacement();message(TR(S::MsgPlacementNotReady));return;
+        }
+        if(placementPending) return;
         if (mPressed(MOUSE_LEFT_BUTTON) && !overUI) {
             float wx, wy;
             screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
             int tx, ty;
             screenToTile(wx, wy, tx, ty);
-            BldType t = world.players[localPlayer].placingBld;
+            BldType t = placementType;
             const BldDef& d = bldDef(t);
             // 光标对准占地东南角格（与幽灵锚点一致，避免中心格导致大幅偏移）
             int bx = tx - (d.w - 1), by = ty - (d.h - 1);
-            if (world.canPlace(t, bx, by, localPlayer)) { // 本地预检；真正放置在命令执行时（联机延迟）
-                World::Cmd c; c.type = World::Cmd::PlaceBuilding; c.a = (int)t;
-                c.x = (float)bx; c.y = (float)by;
-                issueCmd(c);
-                placing = false;
-                if (!kDown(KEY_LEFT_SHIFT)) world.players[localPlayer].placingBld = BldType::COUNT;
-                else { world.players[localPlayer].placingBld = t; placing = true; }
-            } else {
-                message(TR(S::MsgCannotPlace));
+            if(bx<0 || by<0 || bx>=world.map.w || by>=world.map.h) {
+                message(TR(S::MsgCannotPlace));return;
             }
+            World::Cmd c; c.type = World::Cmd::PlaceBuilding; c.a = (int)t;
+            c.x = (float)bx; c.y = (float)by;
+            if(placementRequestSerial==INT_MAX) placementRequestSerial=0;
+            placementPending=c.b=++placementRequestSerial;
+            issueCmd(c); // Receipt, rather than local prediction, ends the preview.
         }
         return;
     }
@@ -562,7 +461,6 @@ void Game::handleInput() {
                 && !world.ents[eb].garrison.empty()) {
                 World::Cmd c; c.type = World::Cmd::Ungarrison; c.ids.push_back(eb);
                 issueCmd(c);
-                message(TR(S::MsgUngarrison));
                 dragging = false;
                 dragPressSelected = false;
                 return;
@@ -608,7 +506,6 @@ void Game::handleInput() {
                         && !world.ents[eb].garrison.empty()) {
                         World::Cmd c; c.type = World::Cmd::Ungarrison; c.ids.push_back(eb);
                         issueCmd(c);
-                        message(TR(S::MsgUngarrison));
                     }
                 } else {
                     doSelect(ix, iy, add); // 点空地：清选（绝不 LMB 下令移动）
@@ -674,8 +571,9 @@ void Game::handleInput() {
                 if (world.map.inBounds(tx, ty)) {
                     World::Cmd c; c.type = World::Cmd::SetRally; c.ids.push_back(selBuilding);
                     c.x = (float)tx; c.y = (float)ty;
+                    c.a=world.bldAt(tx,ty)==selBuilding?1:0;
                     issueCmd(c);
-                    message(TR(S::MsgRallySet));
+
                 }
             } else { selBuilding = INVALID_EID; waypointLatch = false; }
         }
@@ -690,10 +588,9 @@ void Game::handleInput() {
         }
         // 选中建筑有驻军：撤出全部驻军（RA2 原作同键）
         if (world.valid(selBuilding) && world.ents[selBuilding].isBuilding
-            && !world.ents[selBuilding].garrison.empty()) {
+            && world.ents[selBuilding].player==localPlayer && bldDef(world.ents[selBuilding].btype).garrisonCap>0) {
             World::Cmd c; c.type = World::Cmd::Ungarrison; c.ids.push_back(selBuilding);
             issueCmd(c);
-            message(TR(S::MsgUngarrison));
         }
     }
     if (ka(KA_Deploy)) cmdDeploySel();
@@ -813,15 +710,17 @@ void Game::handleInput() {
         else showMenu = true;
     }
     // 设置集结点
-    if (ka(KA_Rally) && world.valid(selBuilding)) {
+    if (ka(KA_Rally) && world.valid(selBuilding)
+        && (!overUI || kDown(KEY_LEFT_SHIFT) || kDown(KEY_RIGHT_SHIFT))) {
         float wx, wy;
         screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
         int tx, ty;
         screenToTile(wx, wy, tx, ty);
         World::Cmd c; c.type = World::Cmd::SetRally; c.ids.push_back(selBuilding);
         c.x = (float)tx; c.y = (float)ty;
+        c.a=(kDown(KEY_LEFT_SHIFT) || kDown(KEY_RIGHT_SHIFT))?1:0;
         issueCmd(c);
-        message(TR(S::MsgRallySet));
+
     }
 
     // 清理失效选择

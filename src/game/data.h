@@ -213,7 +213,7 @@ void loadProjectiles(const char* path);
 
 struct WeaponDef {
     int damage = 10;
-    int range = 5;           // 格
+    float range = 5;           // 格
     int cooldown = 30;       // 逻辑帧
     bool antiAir = false;
     bool antiGround = true;
@@ -223,12 +223,16 @@ struct WeaponDef {
     float vsBuilding = 1.0f;
     bool navalOnly = false;
     float splash = 0;
-    enum class Warhead : uint8_t { Legacy, SmallArms, AP, HE, HollowPoint, Psychic, Radiation, COUNT };
+    enum class Warhead : uint8_t { Legacy, SmallArms, AP, HE, HollowPoint, Psychic, Radiation, SAFlame, ApocAP, ApocAPE, MammothHE, COUNT };
     Warhead warhead = Warhead::Legacy;
     const char* report = "";
     // 原作弹道（可选；默认由 Proj 桥接到 projectiles.ini）
     const char* projectile = ""; // Projectile.* 名
+    int burst = 1;
+    int burstDelayMin = 3, burstDelayMax = 5; // simulation ticks, independent of art
     int speedLeptons = -1;       // <0 用弹道默认；武器 Speed（leptons/帧）
+    float cellSpread = -1; // resolved at launch; <0 retains legacy Splash behavior
+    float percentAtMax = 1;
 };
 
 // ===================== 单位定义 =====================
@@ -254,9 +258,23 @@ struct UnitDef {
     uint8_t factionMask;   // bit: 1<<Faction
     BldType prereq;        // 前置建筑（COUNT = 仅需生产建筑）
     int ammo = 0;          // 弹药数（0=无限；战机返航装填）
-    int cargoCap = 0;      // 运载容量（0=非运输单位）
+    int cargoCap = 0;      // 运载尺寸总量（0=非运输单位）
     const WeaponDef* elite = nullptr; // 精英武器（RA2 原作：精英军衔武器质变；nullptr=无）
     Country countryReq = Country::None; // 国家限制（None=该阵营通用；否则仅对应国家可生产）
+    int passengerSize = 0; // 0 uses infantry=1, vehicle=3
+    int cargoSizeLimit = 2; // largest passenger; amphibious transport=6
+    bool hasAirWeapon = false;
+    WeaponDef airWeapon; // target is airborne; otherwise use weapon/elite
+    bool hasAntiAir() const { return (weapon.antiAir && weapon.damage>0)
+        || (hasAirWeapon && airWeapon.antiAir && airWeapon.damage>0); }
+    int transportSize() const {
+        if(passengerSize>0)return passengerSize;
+        switch(type) {
+        case UnitType::MCV:case UnitType::Apocalypse:case UnitType::Magnetron:case UnitType::MasterMind:return 6;
+        case UnitType::Brute:case UnitType::TerrorDrone:return 2;
+        default:return isInfantry()?1:3;
+        }
+    }
     bool isInfantry() const { return move == MoveType::Infantry; }
     bool isAir() const { return move == MoveType::Air; }
     bool isNaval() const { return move == MoveType::Naval; }
@@ -287,6 +305,7 @@ struct UnitDef {
 
 // 特殊武器（运行时切换）：重装大兵部署后的反装甲炮
 const WeaponDef& ggiDeployedWeapon();
+const WeaponDef& magnetronBuildingWeapon();
 // 美国大兵部署（沙袋工事）：射程与伤害提升
 const WeaponDef& giDeployedWeapon();
 // 攻城直升机部署后：远程重炮（对建筑/车辆强力，溅射）
@@ -373,6 +392,12 @@ void exportRules(const char* path);
 struct GameRules {
     int maxMoney = 999999;       // 资金上限
     int startingMoneyCap = 50000; // 遭遇战初始资金上限
+    int buildingAnimationTicks = 40; // simulation duration independent of art frames
+    int fireAnimationTicks = 12;
+    int deathAnimationTicks = 20;
+    int chopperLandingTicks = 30; // mirrored for takeoff; independent of art frames
+    int chopperDeployTicks = 30;  // unfold/fold duration
+    int chopperDeployFacing = 2; // original AudioVisual.DeployDir: N=0, NE=1, E=2
     float lowPowerSpeedFactor = 0.5f; // 低电时生产速度系数
     float veteranismDmgBonus[3] = {1.0f, 1.1f, 1.3f}; // 新兵/老兵/精英伤害加成
     float veteranArmorBonus[3] = {1.0f, 0.8f, 0.6f};  // 承伤倍率
@@ -383,9 +408,14 @@ struct GameRules {
     int bioReactorPowerPerOccupant = 100;
     float grinderRefund = 1.0f;
     float warheadVerses[(int)WeaponDef::Warhead::COUNT][(int)Armor::COUNT] = {};
+    struct WarheadArea { float cellSpread=-1,percentAtMax=1; };
+    WarheadArea warheadArea[(int)WeaponDef::Warhead::COUNT];
     int crateInterval = 1800;    // 补给箱生成间隔（帧）
     int oreRegrowRate = 1;       // 矿脉再生速率
     GameRules() {
+        warheadArea[(int)WeaponDef::Warhead::ApocAP]={.3f,.5f};
+        warheadArea[(int)WeaponDef::Warhead::ApocAPE]={.3f,.5f};
+        warheadArea[(int)WeaponDef::Warhead::MammothHE]={.5f,.5f};
         for (auto& row : warheadVerses) for (float& v : row) v = 1.0f;
         const float small[] = {1,1,1,.5f,.25f,.25f,.75f,.25f,.1f,1,1};
         const float ap[] = {.25f,.25f,.25f,1,1,1,.75f,.75f,.5f,1,1};
@@ -393,7 +423,15 @@ struct GameRules {
         const float hp[] = {1,1,1,.05f,.05f,.05f,.05f,.05f,.05f,1,1};
         const float psi[] = {1,1,1,1,1,1,0,0,0,0,0};
         const float rad[] = {1,1,1,.2f,.1f,.1f,.05f,.05f,.05f,0,0};
-        const float* rows[] = {nullptr, small, ap, he, hp, psi, rad};
+        const float flame[] = {1,.8f,.8f,.5f,.25f,.25f,.75f,.5f,.25f,1,1};
+        static_assert(std::size(small)==(int)Armor::COUNT && std::size(ap)==(int)Armor::COUNT
+            && std::size(he)==(int)Armor::COUNT && std::size(hp)==(int)Armor::COUNT
+            && std::size(psi)==(int)Armor::COUNT && std::size(rad)==(int)Armor::COUNT && std::size(flame)==(int)Armor::COUNT);
+        const float apoc[] = {.25f,.25f,.25f,.75f,1,1,1,1,.7f,.6f,1};
+        const float apocElite[] = {1,1,1,.75f,1,1,1,1,.7f,.6f,1};
+        const float mammoth[] = {1,1,1,.7f,.7f,.35f,.75f,.4f,.2f,.8f,1};
+        const float* rows[] = {nullptr, small, ap, he, hp, psi, rad, flame, apoc, apocElite, mammoth};
+        static_assert(std::size(rows)==(int)WeaponDef::Warhead::COUNT);
         for (int w = 1; w < (int)WeaponDef::Warhead::COUNT; ++w)
             for (int a = 0; a < (int)Armor::COUNT; ++a) warheadVerses[w][a] = rows[w][a];
     }
@@ -459,10 +497,10 @@ const char* swTypeKey(SWType t);
 
 // 生产建筑判断
 bool isFactoryFor(BldType b, const UnitDef& u); // 兵营产步兵，重工产车辆
-// 可设集结点的生产建筑（兵营/重工/船厂/空指/精炼厂/复制中心）
+// 可设集结点的生产建筑（兵营/重工/船厂/空指/复制中心）
 inline bool isRallyBuilding(BldType t) {
     return t == BldType::Barracks || t == BldType::WarFactory || t == BldType::NavalYard
-        || t == BldType::AirForceCmd || t == BldType::OreRefinery || t == BldType::CloningVat;
+        || t == BldType::AirForceCmd || t == BldType::CloningVat;
 }
 // 某阵营可建造的列表
 std::vector<BldType> buildableBlds(Faction f);

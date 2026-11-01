@@ -3,6 +3,8 @@
 #include "game/script.h"
 #include "gfx/sprites.h"
 #include "gfx/assets.h"
+#include "gfx/terrain_material.h"
+#include "gfx/fog_line.h"
 #include "sfx/sound.h"
 #include "core/content.h"
 #include "rlgl.h"
@@ -105,9 +107,7 @@ static void footCorners(Vector2 bs, const BldCageParams& cage, Vector2& bn, Vect
 
 // 连续值噪声：晶格哈希 + 双线性插值（世界像素坐标 → 跨瓦片连续，无逐格重置）
 static inline uint32_t tHash(int x, int y, uint64_t seed) {
-    uint32_t h = ((uint32_t)x * 73856093u) ^ ((uint32_t)y * 19349663u) ^ ((uint32_t)seed * 83492791u);
-    h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
-    return h;
+    return terrainVisualHash(x,y,seed);
 }
 static float tNoise(float x, float y, int stride, uint64_t seed) {
     int gx = (int)floorf(x / stride), gy = (int)floorf(y / stride);
@@ -175,13 +175,13 @@ void Game::bakeTerrain() {
             float fx = jx / (TILE_W / 2.0f), fy = jy / (TILE_H / 2.0f);
             int tx = (int)floorf((fx + fy) / 2.0f), ty = (int)floorf((fy - fx) / 2.0f);
             if (!world.map.inBounds(tx, ty)) continue; // 地图外透明（显示黑底）
-            Terrain t = world.map.at(tx, ty).terrain;
+            Terrain t = terrainSubstrate(world.map.at(tx, ty).terrain);
             Color c;
-            // 优先采样真实 RA2 瓦片：变体按 5x5 格块哈希选取（块内恒定 → 成片纹理；
-            // 88% 概率用主变体 0，降低格间硬跳变的棋盘感）；
+            // Distribute the existing authored variants per cell. Large blocks
+            // dominated by variant 0 make every tuft repeat in a visible grid.
             int ti = (int)t;
-            uint32_t vh = tHash(tx / 5, ty / 5, seed + 13);
-            int tv = (vh % 100 < 94) ? 0 : 1 + (int)(vh % 7);
+            uint32_t vh=tHash(tx,ty,seed+13);
+            int tv=(int)(vh&7);
             bool fromTile = false;
             int ppx = 0, ppy = 0;
             auto sampleTileAt = [&](int txi, int tyi, const PixBuf& src, float sxw, float syw) -> bool {
@@ -222,7 +222,7 @@ void Game::bakeTerrain() {
                     for (auto& o : nob) {
                         int nx = tx + o[0], ny = ty + o[1];
                         if (!world.map.inBounds(nx, ny)) continue;
-                        if (world.map.at(nx, ny).terrain != t) continue;
+                        if (terrainSubstrate(world.map.at(nx, ny).terrain) != t) continue;
                         if (sampleTileAt(nx, ny, tilePx[ti][tv], sx, sy)) { fromTile = true; break; }
                     }
                 }
@@ -278,6 +278,26 @@ void Game::bakeTerrain() {
             c.g = (uint8_t)clampi(c.g + (int)grain, 0, 255);
             c.b = (uint8_t)clampi(c.b + (int)grain, 0, 255);
             } // !fromTile 回退配色（真实瓦片像素自带纹理，不再加颗粒噪）
+            // Narrow dithered grass/rough transitions keep native texture
+            // pixels sharp. Only the presentation changes, never terrain rules.
+            if(fromTile && (t==Terrain::Clear || t==Terrain::Rough)) {
+                const float u=(fx+fy)*0.5f-tx,v=(fy-fx)*0.5f-ty;
+                const float distances[4]={u,v,1-u,1-v};
+                const int DX[4]={-1,0,1,0},DY[4]={0,-1,0,1};
+                float closest=0.24f;int other=-1;
+                for(int edge=0;edge<4;++edge) {
+                    int nx=tx+DX[edge],ny=ty+DY[edge];
+                    if(!world.map.inBounds(nx,ny)) continue;
+                    Terrain adjacent=terrainSubstrate(world.map.at(nx,ny).terrain);
+                    if(adjacent!=t && (adjacent==Terrain::Clear || adjacent==Terrain::Rough)
+                        && distances[edge]<closest) { closest=distances[edge];other=(int)adjacent; }
+                }
+                if(other>=0 && tileOk[other][tv]
+                    && (tHash(bx,by,seed+97)&255)<(unsigned)((0.24f-closest)/0.48f*256)) {
+                    Color original=c;
+                    if(!sampleTileAt(tx,ty,tilePx[other][tv],sx,sy)) c=original;
+                }
+            }
             // 直写像素数组：循环边界已保证不越界；且避免 set()/get() 内联函数的
             // 分支模式在同循环读写同一缓冲区时触发 MSVC /O2 自动向量化错误（曾致一半写入丢失）
             pb.px[(size_t)by * bw + bx] = c;
@@ -297,13 +317,15 @@ void Game::bakeFogMask() {
     if (terrainW <= 0 || terrainH <= 0) return;
     const int FS = 8; // 遮罩缩小倍数（与 drawFogLayer 一致）
     int fw = terrainW / FS + 2, fh = terrainH / FS + 2;
-    PixBuf pb(fw, fh); // 默认全 0 = 可见
+    // Uncovered projected pixels must remain unknown. Raised tiles can leave
+    // gaps between diamonds; a transparent default would expose terrain there.
+    PixBuf pb(fw, fh);pb.clear(Color{0,0,0,255});
+    std::vector<uint8_t> covered((size_t)fw*fh,0);
     int w = world.map.w, h = world.map.h;
     for (int ty = 0; ty < h; ty++)
         for (int tx = 0; tx < w; tx++) {
             FogState fs = world.map.fogAt(localPlayer, tx, ty);
-            if (fs == FOG_VISIBLE) continue;
-            uint8_t a = fs == FOG_UNSEEN ? 255 : 170; // 已探索更暗，贴近原作 shroud 不透明度
+            uint8_t a = fs == FOG_UNSEEN ? 255 : fs == FOG_SEEN ? 170 : 0;
             int px, py;
             tileToScreen(tx, ty, px, py);
             py -= heightScreenY(world.map.at(tx, ty).height);
@@ -313,12 +335,15 @@ void Game::bakeFogMask() {
                 for (int dx = -5; dx <= 5; dx++) {
                     if (fabsf(dx) / 5.0f + fabsf(dy - 2) / 3.0f > 1.0f) continue;
                     int mx2 = (int)mx + dx, my2 = (int)my + dy;
-                    if (a >= pb.get(mx2, my2).a) pb.set(mx2, my2, Color{0, 0, 0, a});
+                    if(mx2<0 || my2<0 || mx2>=fw || my2>=fh) continue;
+                    const size_t index=(size_t)my2*fw+mx2;
+                    if(!covered[index] || a>=pb.px[index].a) pb.px[index]=Color{0,0,0,a};
+                    covered[index]=1;
                 }
         }
     if (fogMaskTex.id) UnloadTexture(fogMaskTex);
     fogMaskTex = pb.toTexture();
-    SetTextureFilter(fogMaskTex, TEXTURE_FILTER_POINT); // 点采样：更接近 RA2 瓦片迷雾边缘
+    SetTextureFilter(fogMaskTex, TEXTURE_FILTER_BILINEAR); // Smooth only the mask; entity visibility still uses exact fog cells
 }
 
 void Game::drawWorld() {
@@ -353,14 +378,14 @@ void Game::drawWorld() {
 
     for (int ty = minTY; ty <= maxTY; ty++)
         for (int tx = minTX; tx <= maxTX; tx++) {
-            const Cell& c = world.map.at(tx, ty);
+            const Cell& c = observedCell(tx, ty);
             if (c.terrain != Terrain::Ore && c.terrain != Terrain::Gems) continue;
             int px, py;
             tileToScreen(tx, ty, px, py);
             py -= heightScreenY(c.height);
             int sx = px - camX, sy = py - camY;
             if (sx < -TILE_W || sx > visW + TILE_W || sy < -TILE_H || sy > visH + TILE_H) continue;
-            const Sprite& s = g_sprites.tile(c.terrain, c.variant & 7);
+            const Sprite& s = g_sprites.resourceTile(c.terrain,resourceVisualVariant(tx,ty,c.variant),c.ore,c.oreMax);
             DrawTexture(s.tex, sx - TILE_W / 2, sy, WHITE);
         }
 }
@@ -382,8 +407,14 @@ void Game::drawEntities() {
             items.push_back({e.x + (d.w - 1) + e.y + (d.h - 1) + 0.05f, 1, (int)i});
         } else {
             // 飞行单位始终最后绘制（浮于空中，压过地面一切）
-            bool flying = unitDef(e.utype).isAir() && e.state != UState::Landed;
+            bool flying = e.airborne() || e.magneticHeight>0;
             items.push_back({e.x + e.y + (flying ? 1000.0f : 0.0f), 0, (int)i});
+        }
+    }
+    for(const auto& [key,b]:fogKnowledge.buildings) {
+        if(!buildingVisible(b.x,b.y,b.type) && buildingExplored(b)) {
+            const auto& d=bldDef(b.type);
+            items.push_back({(float)(b.x+d.w-1+b.y+d.h-1)+0.05f,4,key});
         }
     }
     // 树木：仅扫描可见瓦片范围（与 drawWorld 同边界，避免全图扫描）
@@ -399,7 +430,7 @@ void Game::drawEntities() {
         int maxTY = std::min(world.map.h - 1, std::max({y0, y1, y2, y3}) + 1);
         for (int ty = minTY; ty <= maxTY; ty++)
             for (int tx = minTX; tx <= maxTX; tx++) {
-                const Cell& c = world.map.at(tx, ty);
+                const Cell& c = observedCell(tx, ty);
                 if (c.overlay >= Overlay::Tree1 && c.overlay <= Overlay::Tree3) {
                     int px, py;
                     tileToScreen(tx, ty, px, py);
@@ -409,6 +440,13 @@ void Game::drawEntities() {
                     items.push_back({(float)(tx + ty) + 0.9f, 2, ty * world.map.w + tx});
                 }
             }
+    }
+    // Original chrono animations are ground layers, sorted below an actor at the same point.
+    for(size_t index=0;index<world.effects.size();++index) {
+        const auto& effect=world.effects[index];
+        if(effect.alive && effect.kind==9 && effect.maxAge>0 && effect.age>=0 && effect.age<effect.maxAge
+            && world.map.fogAt(localPlayer,(int)std::floor(effect.x),(int)std::floor(effect.y))==FOG_VISIBLE)
+            items.push_back({effect.x+effect.y-0.1f,5,(int)index});
     }
     // 补给箱（地面道具，参与深度排序）
     for (size_t i = 0; i < world.crates.size(); i++) {
@@ -422,6 +460,21 @@ void Game::drawEntities() {
     std::unordered_set<EID> selSet(sel.begin(), sel.end());
 
     for (const Item& it : items) {
+        if(it.kind==5) { drawWarpEffect(world.effects[it.id]);continue; }
+        if(it.kind==4) {
+            const auto& b=fogKnowledge.buildings.at(it.id);const auto& d=bldDef(b.type);
+            int px,py;tileToScreen(b.x+d.w-1,b.y+d.h-1,px,py);
+            py+=TILE_H-heightScreenY(b.height);
+            const Sprite* sp;const int mkf=g_sprites.bldMkFrames(b.type);
+            if(b.constructAnim>0 && mkf>1) {
+                const int total=std::max(1,g_gameRules.buildingAnimationTicks);
+                const int frame=b.selling?(b.constructAnim-1)*mkf/total:(total-b.constructAnim)*mkf/total;
+                sp=&g_sprites.buildingMk(b.type,std::clamp(frame,0,mkf-1),b.color,b.country);
+            } else sp=&g_sprites.building(b.type,b.color,false,b.country);
+            const Color tint=b.type==BldType::CivHouse && b.damaged?Color{70,55,48,255}:Color{110,110,110,255};
+            DrawTexture(sp->tex,px-(int)camX-sp->ox,py-(int)camY-sp->oy,tint);
+            continue;
+        }
         if (it.kind == 3) {
             // RA2 补给箱：theater SHP（crate.tem）提取的 overlay_crate.png
             const World::Crate& c = world.crates[it.id];
@@ -437,7 +490,7 @@ void Game::drawEntities() {
         }
         if (it.kind == 2) {
             int tx = it.id % world.map.w, ty = it.id / world.map.w;
-            const Cell& c = world.map.at(tx, ty);
+            const Cell& c = observedCell(tx, ty);
             FogState fs = world.map.fogAt(localPlayer, tx, ty);
             if (fs == FOG_UNSEEN) continue;
             int px, py;
@@ -453,7 +506,7 @@ void Game::drawEntities() {
             const UnitDef& ud = unitDef(e.utype);
             // 恐怖机器人钻入车底后隐藏（逻辑仍附着）
             if (e.parasiting) continue;
-            bool flying = ud.isAir() && e.state != UState::Landed;
+            bool flying = e.airborne() || e.magneticHeight>0;
             FogState fs = world.map.fogAt(localPlayer, (int)e.x, (int)e.y);
             if (e.player != localPlayer && fs != FOG_VISIBLE) continue;
             Vector2 p = unitScreenPos(e);
@@ -464,7 +517,7 @@ void Game::drawEntities() {
                 DrawEllipse((int)p.x, (int)p.y + 4, 10, 4, Color{0, 0, 0, 20});
                 DrawEllipse((int)p.x, (int)p.y + 4, 6, 2, Color{0, 0, 0, 40});
             }
-            if (flying) p.y -= AIR_ALT;
+            p.y -= unitRenderLift(e);
             // 幻影坦克伪装：敌方视角画成树（己方仍见车体）
             if (e.camouflaged && e.player != localPlayer) {
                 Overlay tree = (Overlay)(1 + (it.id % 3)); // Tree1..Tree3
@@ -494,39 +547,48 @@ void Game::drawEntities() {
             const Sprite* bodyP;
             // 超时空军团兵：攻击时持续开火帧；相位不适时闪烁
             bool chronoHoldFire = (drawType == UnitType::Chrono && e.state == UState::Attacking && ai.fire > 0);
-            if ((e.fireAnim > 0 || chronoHoldFire) && ai.fire > 0) {
+            const bool deployedPose=e.deployed || e.radDeployed;
+            const bool deployedFire=deployedPose && ai.depFire>0;
+            const int fireFrames=deployedFire?ai.depFire:ai.fire;
+            const bool heldFire=chronoHoldFire || (e.radDeployed && deployedFire);
+            const bool deployedChopper=drawType==UnitType::SiegeChopper && e.deployed;
+            const int transform=chopperTransformFrame(e);
+            if(transform>=0) {
+                bodyP=&g_sprites.chopperTransform(transform,drawCid);
+            } else if(deployedChopper) {
+                bodyP=&g_sprites.unitDeployed(drawType,e.dir,e.turretDir,drawCid);
+            } else if ((e.fireAnim > 0 || heldFire) && fireFrames > 0) {
                 int rate = std::max(1, ai.fireRate);
                 int phase;
-                if (chronoHoldFire)
-                    phase = ((int)world.tick / rate) % ai.fire;
+                if (heldFire)
+                    phase = (int)((world.tick / rate) % fireFrames);
                 else
-                    phase = (ai.fire * rate - e.fireAnim) / rate; // 0..fire-1
+                    phase = (g_gameRules.fireAnimationTicks - e.fireAnim) * fireFrames / std::max(1, g_gameRules.fireAnimationTicks);
                 if (phase < 0) phase = 0;
-                if (phase >= ai.fire) phase = ai.fire - 1;
-                bodyP = &g_sprites.unitAnim(drawType, UAnim::Fire, e.dir, phase, drawCid);
+                if (phase >= fireFrames) phase = fireFrames - 1;
+                bodyP = &g_sprites.unitAnim(drawType, deployedFire?UAnim::DepFire:UAnim::Fire, e.dir, phase, drawCid);
             } else if ((unitDef(drawType).isInfantry() || drawType == UnitType::TerrorDrone) && ai.walk > 0
                        && !e.path.empty() && e.pathIdx < (int)e.path.size()
                        && e.state != UState::Idle && e.state != UState::Attacking && e.state != UState::Landed
+                       && (std::abs(e.x-e.px)>1e-5f || std::abs(e.y-e.py)>1e-5f)
                        && drawType != UnitType::Chrono) { // 超时空军团兵传送移动，不用行走帧
-                bodyP = &g_sprites.unitAnim(drawType, UAnim::Walk, e.dir, e.walkFrame, drawCid);
-            } else if (e.deployed && ai.dep) {
+                bodyP = &g_sprites.unitAnim(drawType, UAnim::Walk, e.dir, (e.walkAnim / std::max(1, ai.walkRate)) % ai.walk, drawCid);
+            } else if (deployedPose && ai.dep) {
                 bodyP = &g_sprites.unitAnim(drawType, UAnim::Dep, e.dir, 0, drawCid);
             } else if (ud.canHarvet() && e.state == UState::HarvestUnload) {
                 bodyP = &g_sprites.unitUnload(drawType, e.dir, drawCid);
             } else {
-                // 站立：步兵/载具站立帧恒 f0；矿车 f0/f1=空/满（勿用 walkFrame，否则缺 f1 会掉回程序占位图）
-                int stf = ud.canHarvet()
-                    ? ((e.oreLoad >= World::harvesterCapacity(e.utype)) ? 1 : 0)
-                    : 0;
+                // Flight HVA phase is presentation-only; landed aircraft stop their rotors.
+                int stf = unitBodyFrame(e);
                 bodyP = &g_sprites.unitBody(drawType, e.dir, stf, drawCid);
             }
             const Sprite& body = *bodyP;
             Color tint = (e.player != localPlayer && fs == FOG_SEEN) ? Color{120, 120, 120, 255} : WHITE;
-            // 超时空相位不适：半透明蓝闪
-            if (e.tpSick > 0 && (drawType == UnitType::Chrono || drawType == UnitType::ChronoCommando
-                                 || drawType == UnitType::ChronoIvan)) {
-                bool flash = ((world.tick / 4) % 2) != 0;
-                tint = flash ? Color{140, 200, 255, 200} : Color{180, 220, 255, 160};
+            // Phase hold applies to transferred vehicles/miners/ships as well as chrono infantry.
+            if(e.tpSick>0 || e.chrono>0) {
+                const bool pulse=((world.tick/4)%2)!=0;
+                tint=e.chrono>0?(pulse?Color{100,170,255,190}:Color{150,210,255,180})
+                    :(pulse?Color{140,200,255,220}:Color{180,220,255,190});
             }
             int drawX = (int)p.x - body.ox;
             int drawY = (int)p.y - body.oy;
@@ -538,8 +600,8 @@ void Game::drawEntities() {
             } else {
                 DrawTexture(body.tex, drawX, drawY, tint);
             }
-            if (g_sprites.hasTurret(drawType)) {
-                const Sprite& tur = g_sprites.unitTurret(drawType, e.turretDir, drawCid);
+            if (!deployedChopper && g_sprites.hasTurret(drawType)) {
+                const Sprite& tur = g_sprites.unitTurret(drawType, e.turretDir, drawCid,unitTurretFrame(e));
                 if (rockDeg != 0.f) {
                     Rectangle src{0, 0, (float)tur.tex.width, (float)tur.tex.height};
                     Rectangle dst{(float)p.x, (float)p.y, (float)tur.tex.width, (float)tur.tex.height};
@@ -606,7 +668,7 @@ void Game::drawEntities() {
             }
         } else {
             FogState fs = world.map.fogAt(localPlayer, (int)e.x, (int)e.y);
-            if (e.player != localPlayer && fs == FOG_UNSEEN) continue;
+            if (e.player != localPlayer && !buildingVisible((int)e.x,(int)e.y,e.btype)) continue;
             Vector2 p = bldScreenPos(e);
             // 占领后阵营染色；中立科技保留原色（cid=-2）
             int cid;
@@ -623,11 +685,11 @@ void Game::drawEntities() {
             const Sprite* sp;
             int mkf = g_sprites.bldMkFrames(e.btype);
             if (e.constructAnim > 0 && mkf > 1) {
-                int total = mkf * 5;
+                int total = std::max(1, g_gameRules.buildingAnimationTicks);
                 // 建造：f0 地基 → f(mkf-1) 成型；出售：反向同序列
                 int frame = e.selling
-                    ? (e.constructAnim - 1) / 5
-                    : (total - e.constructAnim) / 5;
+                    ? (e.constructAnim - 1) * mkf / total
+                    : (total - e.constructAnim) * mkf / total;
                 if (frame < 0) frame = 0;
                 if (frame >= mkf) frame = mkf - 1;
                 sp = &g_sprites.buildingMk(e.btype, frame, cid, bldCountry);
@@ -644,6 +706,7 @@ void Game::drawEntities() {
                 if (e.player != localPlayer && fs == FOG_SEEN)
                     tint = Color{70, 55, 48, 255};
             }
+            if(e.chrono>0) tint=((world.tick/4)%2)?Color{100,170,255,210}:Color{150,210,255,190};
             DrawTexture(s.tex, (int)p.x - s.ox, (int)p.y - s.oy, tint);
             // ActiveAnim：油井/医院泵机与灯火循环（CAOILD_A / CAHOSP_A）
             if (e.constructAnim <= 0 && !e.selling && (e.btype == BldType::OilDerrick || e.btype == BldType::Hospital)) {
@@ -679,7 +742,8 @@ void Game::drawEntities() {
                 if (e.btype == BldType::OilDerrick && oilAN > 0) { anim = oilA; animN = oilAN; rate = 2; }
                 if (e.btype == BldType::Hospital && hospAN > 0) { anim = hospA; animN = hospAN; rate = 4; }
                 if (anim && animN > 0) {
-                    int fi = ((int)world.tick / rate + (int)it.id * 3) % animN;
+                    const int animationTick=e.player>=0?e.bldAnim:(int)world.tick;
+                    int fi = (animationTick / rate + (int)it.id * 3) % animN;
                     if (anim[fi].id) {
                         // 主体经 finishBldSprite 加了 (6,4) 阴影边；ActiveAnim PNG 是内容画布，需对齐内容原点
                         int ax = (int)p.x - s.ox + 6;
@@ -777,17 +841,6 @@ void Game::drawEntities() {
                     }
                 }
             }
-            // 集结点：生产建筑选中时画连线 + 旗杆/旗面（比三角更接近原作旗标）
-            if ((int)it.id == selBuilding && isRallyBuilding(e.btype) && e.rallyX >= 0) {
-                int rx, ry;
-                tileToScreen(e.rallyX, e.rallyY, rx, ry);
-                int rsx = rx - (int)camX, rsy = ry - (int)camY + TILE_H / 2;
-                DrawLine((int)p.x, (int)p.y, rsx, rsy, Color{40, 220, 80, 160});
-                DrawRectangle(rsx - 1, rsy - 16, 2, 16, Color{180, 190, 170, 255}); // 旗杆
-                DrawTriangle({(float)rsx + 1, (float)(rsy - 16)}, {(float)(rsx + 12), (float)(rsy - 11)},
-                             {(float)rsx + 1, (float)(rsy - 6)}, Color{40, 220, 80, 230});
-                DrawCircle(rsx, rsy, 3, Color{0, 255, 0, 160});
-            }
             // 驻军槽：选中可进驻建筑时显示空位框 + 占位兵种剪影（贴近原作 pip 条）
             if ((int)it.id == selBuilding && e.player == localPlayer) {
                 const BldDef& gd = bldDef(e.btype);
@@ -823,16 +876,17 @@ void Game::drawEntities() {
 
     // 弹道
     for (const Projectile& pr : world.projs) {
+        if(!pr.alive || world.map.fogAt(localPlayer,(int)std::floor(pr.x),(int)std::floor(pr.y))!=FOG_VISIBLE) continue;
         // 瓦片浮点 → 世界像素；对空弹道抬升（对齐飞机 AIR_ALT）
         float fx1 = (pr.x - pr.y) * (TILE_W / 2.0f);
         float fy1 = (pr.x + pr.y) * (TILE_H / 2.0f);
         int airLift = (int)(pr.z * (TILE_H)); // z 以格计，换算到等距高度像素
         if (airLift <= 0 && world.valid(pr.target)) {
             const World::Ent& pt = world.ents[pr.target];
-            if (!pt.isBuilding && unitDef(pt.utype).isAir() && pt.state != UState::Landed) {
+            if (pt.airborne() || pt.magneticHeight>0) {
                 float distToAim = distf(pr.x, pr.y, pr.tx, pr.ty);
                 float nearT = 1.0f / (1.0f + distToAim);
-                airLift = (int)(AIR_ALT * (0.35f + 0.65f * nearT));
+                airLift = (int)(unitRenderLift(pt) * (0.35f + 0.65f * nearT));
             }
         } else if (airLift <= 0 && pr.kind == ProjKind::Missile && pr.hp > 0) {
             airLift = AIR_ALT / 2;
@@ -888,7 +942,7 @@ void Game::drawEntities() {
 
     // 核弹飞行：目标点准星 + 从天而降的弹体
     for (const Nuke& n : world.nukes) {
-        if (!n.active) continue;
+        if (!n.active || (n.player!=localPlayer && world.map.fogAt(localPlayer,(int)std::floor(n.tx),(int)std::floor(n.ty))!=FOG_VISIBLE)) continue;
         float fx1 = (n.tx - n.ty) * (TILE_W / 2.0f);
         float fy1 = (n.tx + n.ty) * (TILE_H / 2.0f);
         int sx = (int)fx1 - (int)camX, sy = (int)fy1 - (int)camY;
@@ -930,8 +984,61 @@ void Game::drawEntities() {
     }
 }
 
+void Game::drawCombatFeedback() {
+    for(const auto& cue:combatCues) {
+        const auto& ev=cue.event;
+        if(ev.player!=localPlayer && world.map.fogAt(localPlayer,(int)ev.x,(int)ev.y)!=FOG_VISIBLE) continue;
+        float sx=(ev.x-ev.y)*(TILE_W/2.0f)-camX;
+        float sy=(ev.x+ev.y)*(TILE_H/2.0f)-camY;
+        sy-=eventRenderLift(ev)+(ev.visualTarget==VisualTarget::Building?28:10);
+        const int tx=(int)std::floor(ev.x),ty=(int)std::floor(ev.y);
+        if(ev.terrainHeight>=0)sy-=heightScreenY((uint8_t)std::clamp(ev.terrainHeight,0,255));
+        else if(world.map.inBounds(tx,ty))sy-=heightScreenY(world.map.at(tx,ty).height);
+        float t=std::clamp(cue.age/cue.duration,0.0f,1.0f);
+        if(ev.kind==PresentationKind::Muzzle) {
+            float dx=(ev.targetX-ev.targetY-ev.x+ev.y)*(TILE_W/2.0f);
+            float dy=(ev.targetX+ev.targetY-ev.x-ev.y)*(TILE_H/2.0f);
+            float length=std::sqrt(dx*dx+dy*dy);
+            float barrel=ev.visualTarget==VisualTarget::Infantry?6:ev.visualTarget==VisualTarget::Building?0:17;
+            if(length>0) { sx+=dx/length*barrel;sy+=dy/length*barrel; }
+            const auto& sprite=g_sprites.muzzle();
+            float scale=ev.visualTarget==VisualTarget::Infantry?0.9f:1.5f;
+            DrawTextureEx(sprite.tex,{sx-sprite.ox*scale,sy-sprite.oy*scale},0,scale,Color{255,255,255,(uint8_t)(255*(1-t))});
+        } else {
+            // A compact spark marks actual HP loss; no damage numbers obscure units.
+            float radius=ev.visualTarget==VisualTarget::Infantry?3:6;
+            radius*=0.5f+t;
+            Color color=ev.visualTarget==VisualTarget::Infantry?Color{245,110,80,255}:Color{255,205,95,255};
+            color.a=(uint8_t)(240*(1-t));
+            for(int i=0;i<5;++i) {
+                float angle=i*1.256637f+(float)(ev.sequence%8)*0.35f;
+                Vector2 inner{sx+std::cos(angle)*radius*0.3f,sy+std::sin(angle)*radius*0.3f};
+                Vector2 outer{sx+std::cos(angle)*radius,sy+std::sin(angle)*radius};
+                DrawLineEx(inner,outer,1.5f,color);
+            }
+            DrawCircleV({sx,sy},1.5f,Color{255,250,215,(uint8_t)(255*(1-t))});
+        }
+    }
+}
+
 void Game::drawEffectsLayer() {
     for (const Effect& ef : world.effects) {
+        if(ef.kind==9) continue; // Chrono ground layers are depth-sorted in drawEntities.
+        if(!ef.alive || ef.maxAge<=0 || ef.age<0 || ef.age>=ef.maxAge) continue;
+        const bool beam=ef.kind==2 || ef.kind==3;
+        if(!beam && world.map.fogAt(localPlayer,(int)std::floor(ef.x),(int)std::floor(ef.y))!=FOG_VISIBLE) continue;
+        const auto intervals=beam?visibleLineIntervals(world.map,localPlayer,ef.x,ef.y,ef.x2,ef.y2)
+            :std::vector<std::pair<float,float>>{};
+        if(beam && intervals.empty()) continue;
+        auto drawBeamSegment=[&](Vector2 a,Vector2 b,float from,float to,float width,Color color) {
+            for(const auto& [visibleFrom,visibleTo]:intervals) {
+                const float begin=std::max(from,visibleFrom),end=std::min(to,visibleTo);
+                if(begin>=end) continue;
+                const float u=(begin-from)/(to-from),v=(end-from)/(to-from);
+                DrawLineEx({a.x+(b.x-a.x)*u,a.y+(b.y-a.y)*u},
+                    {a.x+(b.x-a.x)*v,a.y+(b.y-a.y)*v},width,color);
+            }
+        };
         auto toPx = [&](float tx, float ty, int& sx, int& sy) {
             float pxx = (tx - ty) * (TILE_W / 2.0f);
             float pyy = (tx + ty) * (TILE_H / 2.0f);
@@ -966,8 +1073,8 @@ void Game::drawEffectsLayer() {
                     jy = (float)((int)(ef.age * 53 + i * 71) % 11 - 5);
                 }
                 Vector2 cur{sx + dx * t + jx, sy + dy * t + jy};
-                DrawLineEx(prev, cur, 2.5f, Color{140, 180, 255, 220});
-                DrawLineEx(prev, cur, 1.0f, Color{230, 245, 255, 255});
+                drawBeamSegment(prev,cur,(float)(i-1)/segs,t,2.5f,Color{140,180,255,220});
+                drawBeamSegment(prev,cur,(float)(i-1)/segs,t,1.0f,Color{230,245,255,255});
                 prev = cur;
             }
         } else if (ef.kind == 3) {
@@ -975,11 +1082,13 @@ void Game::drawEffectsLayer() {
             toPx(ef.x, ef.y, sx, sy);
             toPx(ef.x2, ef.y2, tx2, ty2);
             sy -= 16; ty2 -= 10;
+            if(ef.aux==1) ty2-=ef.aux2*3;
             float a = 1.0f - (float)ef.age / ef.maxAge;
             Color c1{255, 255, 255, (uint8_t)(255 * a)};
             Color c2{120, 220, 255, (uint8_t)(160 * a)};
-            DrawLineEx({(float)sx, (float)sy}, {(float)tx2, (float)ty2}, 4.0f, c2);
-            DrawLineEx({(float)sx, (float)sy}, {(float)tx2, (float)ty2}, 1.5f, c1);
+            if(ef.aux==1) { c1={255,180,242,(uint8_t)(255*a)};c2={216,0,184,(uint8_t)(220*a)}; }
+            drawBeamSegment({(float)sx,(float)sy},{(float)tx2,(float)ty2},0,1,4.0f,c2);
+            drawBeamSegment({(float)sx,(float)sy},{(float)tx2,(float)ty2},0,1,1.5f,c1);
         } else if (ef.kind == 1) {
             int sx, sy;
             toPx(ef.x, ef.y, sx, sy);
@@ -1090,6 +1199,23 @@ void Game::drawEffectsLayer() {
     }
 }
 
+void Game::drawRallyOverlay() {
+    if(!world.valid(selBuilding)) return;
+    const auto& factory=world.ents[selBuilding];
+    if(!factory.isBuilding || factory.player!=localPlayer || !isRallyBuilding(factory.btype)
+        || !world.map.inBounds(factory.rallyX,factory.rallyY)) return;
+    // A player's own command intent belongs above fog; the overlay reads no
+    // target entities and never reveals map/fog state or another house's rally.
+    const auto origin=bldScreenPos(factory);int x,y;
+    tileToScreen(factory.rallyX,factory.rallyY,x,y);
+    x-=(int)camX;y=y-(int)camY+TILE_H/2;
+    y-=heightScreenY(world.map.at(factory.rallyX,factory.rallyY).height);
+    DrawLine((int)origin.x,(int)origin.y,x,y,Color{40,220,80,160});
+    DrawRectangle(x-1,y-16,2,16,Color{180,190,170,255});
+    DrawTriangle({(float)x+1,(float)y-16},{(float)x+1,(float)y-6},{(float)x+12,(float)y-11},Color{40,220,80,230});
+    DrawCircle(x,y,3,Color{0,255,0,160});
+}
+
 void Game::drawFogLayer() {
     int viewW = SCREEN_W - sidebarW;
     float visW = (float)viewW / camZoom;
@@ -1161,7 +1287,7 @@ void Game::drawPlacement() {
         return;
     }
     if (!placing) return;
-    BldType t = world.players[localPlayer].placingBld;
+    BldType t = placementType;
     if (t == BldType::COUNT) return;
     const BldDef& d = bldDef(t);
     Vector2 m = mousePos();

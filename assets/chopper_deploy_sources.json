@@ -1,0 +1,25 @@
+{
+  "source": "ra2md.mix/conqmd.mix",
+  "sha256": "aaf691e3ba92bb071003005da69ebf02402ab727fb6b2f1d95b9c0050802250a",
+  "palette_source": "ra2.mix/cache.mix",
+  "palette_sha256": "ed785e62eed291480f3198dd44f6b656ebe3a9b75e9f641944d710abc6bde3e3",
+  "rules_source": "ra2md.mix/localmd.mix",
+  "rules_sha256": "06761dd7f714e7d9400216ec3c06109ec5c1461f6a0727be7401eb9d8b0f6d05",
+  "original_deploy_dir": 2,
+  "engine_facing": 1,
+  "source_canvas": [
+    154,
+    118
+  ],
+  "frames": 11,
+  "shadow_offset": 11,
+  "scale": 1.4142135623730951,
+  "canvas": [
+    218,
+    167
+  ],
+  "origin": [
+    109,
+    83
+  ]
+}

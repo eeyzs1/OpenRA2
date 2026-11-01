@@ -2,8 +2,7 @@
 #include "game/world_priv.h"
 #include "game/lang.h"
 #include "game/script.h"
-#include "gfx/sprites.h"
-#include "sfx/sound.h"
+#include "game/presentation_events.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
@@ -27,20 +26,20 @@ void World::updateBuilding(Ent& e, EID id) {
     if (e.chrono > 0) {
         int threshold = bd.hp / 3 + 20;
         if (e.chrono >= threshold) {
-            Effect ef; ef.kind = 9; ef.x = e.x + bd.w / 2.0f; ef.y = e.y + bd.h / 2.0f; ef.maxAge = 30; effects.push_back(ef);
-            g_sfx.playAt(Sfx::Tesla, ef.x, ef.y);
+            Effect ef; ef.kind = 9; ef.aux=(int)ChronoVisual::Erase; ef.x = e.x + bd.w / 2.0f; ef.y = e.y + bd.h / 2.0f; ef.maxAge = 30; effects.push_back(ef);
+            emitSoundAt(Sfx::Tesla, ef.x, ef.y);
             kill(id); // 抹除（含占地清理）
             return;
         }
         if (tick % 2 == 0) e.chrono--;
-        return; // 冻结：停产停火（生产进度由玩家队列管理，不受影响）
+        return; // Frozen production facilities are also excluded from the player queue work/output pass.
     }
     // 中立科技建筑效果（被占领后 player>=0 生效；bldAnim 兼作计时器）
     if (e.player >= 0) {
         e.bldAnim++;
         if (e.btype == BldType::OilDerrick && e.bldAnim % 100 == 0) {
-            players[e.player].money += 25; // 油井持续资金
-            if (e.player == 0) g_sfx.play(Sfx::Cash, 0.35f);
+            creditIncome(e.player,25); // 油井持续资金
+            if (e.player == 0) emitSound(Sfx::Cash, 0.35f);
         } else if (e.btype == BldType::Hospital && e.bldAnim % 60 == 0) {
             // 医院：全体己方步兵持续回血
             for (Ent& o : ents)
@@ -100,7 +99,7 @@ void World::updateBuilding(Ent& e, EID id) {
                     t.player = t.origPlayer;
                     t.mindBy = INVALID_EID;
                     t.origPlayer = -1;
-                    t.state = UState::Idle; t.target = INVALID_EID; t.path.clear();
+                    t.state = UState::Idle; t.target = INVALID_EID; t.clearPath();
                 }
             }
             e.mindTargets.clear();
@@ -116,7 +115,7 @@ void World::updateBuilding(Ent& e, EID id) {
         auto bldTargetOk = [&](EID tid) {
             if (!valid(tid)) return false;
             const Ent& t = ents[tid];
-            bool airT = !t.isBuilding && unitDef(t.utype).isAir() && t.state != UState::Landed;
+            bool airT = t.airborne();
             if (airT && !bd.weapon.antiAir) return false;
             if (!airT && !bd.weapon.antiGround) return false;
             float tx = t.x, ty = t.y;
@@ -137,11 +136,11 @@ void World::updateBuilding(Ent& e, EID id) {
                     controlled.origPlayer = controlled.player;
                     controlled.player = e.player;
                     controlled.mindBy = id;
-                    controlled.state = UState::Idle; controlled.target = INVALID_EID; controlled.path.clear();
+                    controlled.state = UState::Idle; controlled.target = INVALID_EID; controlled.clearPath();
                     e.mindTargets.push_back(e.target);
                     Effect ef; ef.kind = 2; ef.x = t.x; ef.y = t.y; ef.x2 = cx; ef.y2 = cy; ef.maxAge = 15;
                     effects.push_back(ef);
-                    g_sfx.playAt(Sfx::Tesla, cx, cy);
+                    emitSoundAt(Sfx::Tesla, cx, cy);
                 }
                 e.atkCd = bd.weapon.cooldown;
             } else if (e.btype == BldType::PrismTower) {
@@ -169,10 +168,12 @@ void World::updateBuilding(Ent& e, EID id) {
                     sb.x2 = cx; sb.y2 = cy; sb.maxAge = 10;
                     effects.push_back(sb);
                 }
-                g_sfx.playAt(Sfx::Prism, cx, cy);
+                emitSoundAt(Sfx::Prism, cx, cy);
+                if(!e.alive) return;
                 e.atkCd = bd.weapon.cooldown;
             } else {
                 fireWeapon(e, id, e.target);
+                if(!e.alive) return;
                 e.atkCd = e.btype == BldType::GatlingCannon
                     ? std::max(3, bd.weapon.cooldown * (e.gatlingStage == 0 ? 3 : (e.gatlingStage == 1 ? 2 : 1)) / 3)
                     : bd.weapon.cooldown;
@@ -180,7 +181,7 @@ void World::updateBuilding(Ent& e, EID id) {
         }
     }
     // 驻军轮流出击（RA2 原作：进驻步兵从建筑内对外射击，射程+1）
-    if (!e.garrison.empty() && e.player >= 0) garrisonFire(e, id);
+    if (e.alive && !e.garrison.empty() && e.player >= 0) garrisonFire(e, id);
 }
 
 // 驻军火力：每 8 帧一名驻军射击一次（轮换），享受射程与伤害加成
@@ -204,6 +205,6 @@ void World::garrisonFire(Ent& b, EID id) {
     emitWeaponProjectile(b.player, cx, cy, tgt, id, slot, w);
     Effect mz; mz.kind = 5; mz.x = cx; mz.y = cy; mz.maxAge = 4;
     effects.push_back(mz);
-    g_sfx.playAt(Sfx::Shot, cx, cy);
+    emitSoundAt(Sfx::Shot, cx, cy);
 }
 

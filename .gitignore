@@ -3,6 +3,7 @@ build-asan/
 # Stale root copy — always launch via build\Release\ra2.exe (启动游戏.bat)
 /ra2.exe
 *.png
+!art/cameos/*.png
 .vs/
 .vscode/
 out/
@@ -47,3 +48,8 @@ assets/preview/
 tools/visual_audit/menu_ref/
 # Local save / progress state (not content)
 userdata/campaign_progress.ini
+
+/build-review/
+/baseline-tests.log
+
+/build-verify/

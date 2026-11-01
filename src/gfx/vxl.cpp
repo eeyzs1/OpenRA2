@@ -20,8 +20,9 @@ namespace {
 
 // ---- 常量 ----
 // RA2 原作：体素≈1px（侧面朝向相机时）；引擎瓦片 64px。
-// 略小于 64/60，避免整车（含炮塔）在 1 格内显得过大。
-constexpr float kScale = 0.72f;
+// Match voxel projection to the 64px terrain grid; 0.72 made vehicles
+// disproportionately small beside the unchanged SHP infantry/buildings.
+constexpr float kScale = 1.0f;
 constexpr float kLightX = -0.55f, kLightY = -0.55f, kLightZ = 0.63f;
 
 struct Vec3 { float x, y, z; };
@@ -235,6 +236,7 @@ static bool parseHva(const std::vector<uint8_t>& data, HvaFile& out) {
     for (uint32_t f = 0; f < nframes; f++) {
         for (uint32_t s = 0; s < nsec; s++) {
             memcpy(out.mats[f][s].data(), data.data() + pos, 48);
+            for(float value:out.mats[f][s])if(!std::isfinite(value))return false;
             pos += 48;
         }
     }
@@ -275,12 +277,6 @@ static void applyMatScaledT(const float* m, float hs, float x, float y, float z,
     oz = m[8] * x + m[9] * y + m[10] * z + m[11] * hs;
 }
 
-static float phiForScreenAlpha(float alphaDeg) {
-    float a = alphaDeg * (float)(3.14159265358979323846 / 180.0);
-    return (float)(180.0 / 3.14159265358979323846) *
-           std::atan2(2.f * std::sin(a) - std::cos(a), 2.f * std::sin(a) + std::cos(a));
-}
-
 static void rotZ(float x, float y, float z, float c, float s, float& ox, float& oy, float& oz) {
     ox = x * c - y * s; oy = x * s + y * c; oz = z;
 }
@@ -290,7 +286,20 @@ static void proj(float x, float y, float z, float& sx, float& sy) {
     sy = (x + y) * 0.5f - z;
 }
 
-static uint8_t shadeIndex(uint8_t color, uint8_t normalIdx, int ntype, float cosf, float sinf, float& shadeOut) {
+static void transformNormal(const float* matrix,float& x,float& y,float& z) {
+    if(!matrix)return;
+    // HVA is affine. Normals use the inverse transpose, without translation.
+    const float a=matrix[0],b=matrix[1],c=matrix[2],d=matrix[4],e=matrix[5],f=matrix[6],g=matrix[8],h=matrix[9],i=matrix[10];
+    const float determinant=a*(e*i-f*h)-b*(d*i-f*g)+c*(d*h-e*g);
+    if(std::abs(determinant)<1e-8f)return;
+    const float nx=((e*i-f*h)*x+(f*g-d*i)*y+(d*h-e*g)*z)/determinant;
+    const float ny=((c*h-b*i)*x+(a*i-c*g)*y+(b*g-a*h)*z)/determinant;
+    const float nz=((b*f-c*e)*x+(c*d-a*f)*y+(a*e-b*d)*z)/determinant;
+    const float length=std::sqrt(nx*nx+ny*ny+nz*nz);
+    if(length>1e-8f){x=nx/length;y=ny/length;z=nz/length;}
+}
+
+static uint8_t shadeIndex(uint8_t color, uint8_t normalIdx, int ntype, float cosf, float sinf, float& shadeOut,const float* transform) {
     const float (*norms)[3] = kNormals4;
     int ncount = kNormals4Count;
     if (ntype == 2) { norms = kNormals2; ncount = kNormals2Count; }
@@ -298,6 +307,7 @@ static uint8_t shadeIndex(uint8_t color, uint8_t normalIdx, int ntype, float cos
     if (ncount <= 0) return color;
     int ni = normalIdx % ncount;
     float nx = norms[ni][0], ny = norms[ni][1], nz = norms[ni][2];
+    transformNormal(transform,nx,ny,nz);
     float rx, ry, rz;
     rotZ(nx, ny, nz, cosf, sinf, rx, ry, rz);
     float ln = std::sqrt(kLightX * kLightX + kLightY * kLightY + kLightZ * kLightZ);
@@ -359,7 +369,7 @@ static void projectVxl(const VxlFile& vxl, float facingPhiDeg, std::vector<Pt>& 
     float sinf = std::sin(facingPhiDeg * (float)(3.14159265358979323846 / 180.0));
     int frame = 0;
     if (hva && hva->valid && hva->nframes > 0)
-        frame = std::clamp(hvaFrame, 0, hva->nframes - 1);
+        frame = std::max(0,hvaFrame)%hva->nframes;
 
     for (const Section& sec : vxl.sections) {
         const float* hm = nullptr;
@@ -408,7 +418,7 @@ static void projectVxl(const VxlFile& vxl, float facingPhiDeg, std::vector<Pt>& 
             float cx, cy, cz;
             xform(v.x + 0.5f, v.y + 0.5f, v.z + 0.5f, cx, cy, cz);
             float sh0 = 1.f;
-            uint8_t colLit = shadeIndex(v.color, v.normal, sec.normalsType, cosf, sinf, sh0);
+            uint8_t colLit = shadeIndex(v.color, v.normal, sec.normalsType, cosf, sinf, sh0,hm);
             Pt pt{};
             pt.nfaces = 0;
             for (int fi = 0; fi < 6 && pt.nfaces < 3; fi++) {
@@ -417,7 +427,9 @@ static void projectVxl(const VxlFile& vxl, float facingPhiDeg, std::vector<Pt>& 
                 int nz = v.z + kFaceOff[fi][2];
                 if (occ.count(key(nx, ny, nz))) continue;
                 float rnx, rny, rnz;
-                rotZ(kFaceNrm[fi][0], kFaceNrm[fi][1], kFaceNrm[fi][2], cosf, sinf, rnx, rny, rnz);
+                float fnx=kFaceNrm[fi][0],fny=kFaceNrm[fi][1],fnz=kFaceNrm[fi][2];
+                transformNormal(hm,fnx,fny,fnz);
+                rotZ(fnx,fny,fnz,cosf,sinf,rnx,rny,rnz);
                 if (rnx + rny + rnz <= 0.02f) continue;
                 int fiOut = pt.nfaces++;
                 for (int c = 0; c < 4; c++) {
@@ -449,11 +461,11 @@ static void projectVxl(const VxlFile& vxl, float facingPhiDeg, std::vector<Pt>& 
     }
 }
 
-static Color rgbOf(uint8_t c, float shade) {
+static Color rgbOf(uint8_t c, float shade, const Color* houseColor) {
     if (c >= 16 && c <= 31) {
-        float t = (c - 16) / 15.f;
-        int r = (int)(140 + 100 * t * std::clamp(shade, 0.55f, 1.f));
-        return Color{(uint8_t)std::clamp(r, 0, 255), 0, 0, 255};
+        const float brightness=std::max({gPal[c].r,gPal[c].g,gPal[c].b})/255.f*std::clamp(shade,0.55f,1.f);
+        const Color house=houseColor?*houseColor:Color{255,0,0,255};
+        return Color{(uint8_t)(house.r*brightness),(uint8_t)(house.g*brightness),(uint8_t)(house.b*brightness),255};
     }
     int r = gPal[c].r, g = gPal[c].g, b = gPal[c].b;
     if (r + g + b > 700) { r = g = b = 200; }
@@ -496,7 +508,7 @@ static void fillQuad(std::vector<ZCell>& zbuf, int W, int H, const float scr[4][
 }
 
 static void rasterize(const std::vector<Pt>& pts, float scale, float orgx, float orgy,
-                      int canvasW, int canvasH, PixBuf& out) {
+                      int canvasW, int canvasH, PixBuf& out, const Color* houseColor) {
     const int ss = 4; // 4× 超采样，减轻体素面缝/条纹
     int W = canvasW * ss, H = canvasH * ss;
     std::vector<ZCell> zbuf((size_t)W * H);
@@ -517,7 +529,7 @@ static void rasterize(const std::vector<Pt>& pts, float scale, float orgx, float
                 scr[c][0] = ox + sx * s;
                 scr[c][1] = oy + sy * s;
             }
-            Color col = rgbOf(p->faceColor[fi], p->faceShade[fi]);
+            Color col = rgbOf(p->faceColor[fi], p->faceShade[fi], houseColor);
             fillQuad(zbuf, W, H, scr, p->depth + 0.001f * fi, col);
         }
     }
@@ -546,6 +558,16 @@ struct Layout {
     float orgx = 0, orgy = 0;
     bool floating = false;
 };
+
+static Layout originLayout(float minX,float maxX,float minY,float maxY) {
+    Layout layout;
+    constexpr int margin=4;
+    layout.orgx=std::ceil(margin-std::min(0.f,minX)*kScale);
+    layout.orgy=std::ceil(margin-std::min(0.f,minY)*kScale);
+    layout.w=(int)std::ceil(layout.orgx+std::max(0.f,maxX)*kScale)+margin+2;
+    layout.h=(int)std::ceil(layout.orgy+std::max(0.f,maxY)*kScale)+margin+2;
+    return layout;
+}
 
 static Layout makeLayout(const std::vector<Pt>& pts, float mnx, float mxx, float mny, float mxy, bool floating) {
     Layout L;
@@ -696,12 +718,14 @@ static Stems stemsOf(UnitType t) {
 }
 
 static bool projectStemPts(const char* stem, float phi, std::vector<Pt>& pts,
-                           float& mnx, float& mxx, float& mny, float& mxy) {
+                           float& mnx, float& mxx, float& mny, float& mxy,int frame=0) {
     const VxlFile* v = getVxl(stem);
     if (!v) return false;
     std::vector<Pt> part;
     float a, b, c, d;
-    projectVxl(*v, phi, part, a, b, c, d, getHva(stem), 0);
+    const auto* animation=getHva(stem);
+    if(!animation)return false;
+    projectVxl(*v, phi, part, a, b, c, d, animation, frame);
     if (part.empty()) return false;
     if (pts.empty()) {
         mnx = a; mxx = b; mny = c; mxy = d;
@@ -714,33 +738,47 @@ static bool projectStemPts(const char* stem, float phi, std::vector<Pt>& pts,
 }
 
 static bool renderStem(const char* stem, const char* barl, int dir, bool floating,
-                       const Layout* forced, PixBuf& out, Layout* outLayout) {
+                       const Layout* forced, PixBuf& out, Layout* outLayout, const Color* houseColor,int frame=0) {
     const VxlFile* v = getVxl(stem);
     if (!v) return false;
-    float phi = phiForScreenAlpha(45.f * (dir & 7));
+    float phi = voxelFacingDegrees(dir);
     std::vector<Pt> pts;
     float mnx, mxx, mny, mxy;
     // 炮塔/炮管分开投影、各自 HVA，再合并点集（避免 MDUMMY01/DUMMY01 抢错矩阵）
-    if (!projectStemPts(stem, phi, pts, mnx, mxx, mny, mxy)) return false;
-    if (barl) projectStemPts(barl, phi, pts, mnx, mxx, mny, mxy);
+    if (!projectStemPts(stem, phi, pts, mnx, mxx, mny, mxy,frame)) return false;
+    if (barl && !projectStemPts(barl, phi, pts, mnx, mxx, mny, mxy,frame))return false;
     if (pts.empty()) return false;
     Layout L = forced ? *forced : makeLayout(pts, mnx, mxx, mny, mxy, floating);
-    rasterize(pts, L.scale, L.orgx, L.orgy, L.w, L.h, out);
+    rasterize(pts, L.scale, L.orgx, L.orgy, L.w, L.h, out, houseColor);
     if (outLayout) *outLayout = L;
     return true;
 }
 
 static bool assemblyLayout(const Stems& s, int dir, Layout& outL) {
     if (!s.hull || !getVxl(s.hull)) return false;
-    float phi = phiForScreenAlpha(45.f * (dir & 7));
+    static std::unordered_map<std::string,Layout> cache;
+    const std::string key=std::string(s.hull)+"/"+std::to_string(dir&7);
+    if(auto found=cache.find(key);found!=cache.end()){outL=found->second;return true;}
+    float phi = voxelFacingDegrees(dir);
     std::vector<Pt> pts;
     float mnx = 0, mxx = 0, mny = 0, mxy = 0;
     // 各 stem 用自己的 HVA 投影，再合并包围盒（避免合并后同名节抢错矩阵）
     if (!projectStemPts(s.hull, phi, pts, mnx, mxx, mny, mxy)) return false;
-    if (s.tur) projectStemPts(s.tur, phi, pts, mnx, mxx, mny, mxy);
-    if (s.barl) projectStemPts(s.barl, phi, pts, mnx, mxx, mny, mxy);
+    if (s.tur && !projectStemPts(s.tur, phi, pts, mnx, mxx, mny, mxy))return false;
+    if (s.barl && !projectStemPts(s.barl, phi, pts, mnx, mxx, mny, mxy))return false;
     if (pts.empty()) return false;
-    outL = makeLayout(pts, mnx, mxx, mny, mxy, s.floating);
+    // One canvas and origin for every phase: rotors/barrels must not move the hull.
+    // Retain only phase-zero anchor points; stream later phase bounds.
+    for(const char* stem:{s.hull,s.tur,s.barl})if(stem) {
+        const auto* animation=getHva(stem);if(!animation)return false;
+        for(int frame=1;frame<animation->nframes;++frame) {
+            std::vector<Pt> phase;float a,b,c,d;
+            if(!projectStemPts(stem,phi,phase,a,b,c,d,frame))return false;
+            mnx=std::min(mnx,a);mxx=std::max(mxx,b);mny=std::min(mny,c);mxy=std::max(mxy,d);
+        }
+    }
+    outL = !strcmp(s.hull,"schp")?originLayout(mnx,mxx,mny,mxy):makeLayout(pts,mnx,mxx,mny,mxy,s.floating);
+    cache.emplace(key,outL);
     return true;
 }
 
@@ -760,35 +798,60 @@ bool hasBody(UnitType t) {
     return s.hull && getVxl(s.hull);
 }
 
-bool renderBody(UnitType t, int dir, int frame, PixBuf& out) {
+int bodyFrames(UnitType t) {
+    const char* stem=stemsOf(t).hull;if(!stem || !getVxl(stem))return 1;
+    const auto* animation=getHva(stem);
+    return animation?animation->nframes:0;
+}
+
+int turretFrames(UnitType t) {
+    const char* stem=stemsOf(t).tur;if(!stem || !getVxl(stem))return 1;
+    const auto* animation=getHva(stem);
+    return animation?animation->nframes:0;
+}
+
+bool renderBody(UnitType t, int dir, int frame, PixBuf& out, const Color* houseColor,Vec2i* originAnchor) {
     init();
     if (!gPalOk) return false;
     Stems s = stemsOf(t);
     if (!s.hull) return false;
-    (void)frame;
     Layout L;
     // 有炮塔时用整车盒做画布，保证车体/炮塔同锚点且炮塔不被裁切
-    if (s.tur && assemblyLayout(s, dir, L))
-        return renderStem(s.hull, nullptr, dir, s.floating, &L, out, nullptr);
-    return renderStem(s.hull, nullptr, dir, s.floating, nullptr, out, nullptr);
+    if ((s.tur || bodyFrames(t)>1) && assemblyLayout(s, dir, L)) {
+        if(originAnchor)*originAnchor={(int)L.orgx,(int)L.orgy};
+        return renderStem(s.hull, nullptr, dir, s.floating, &L, out, nullptr, houseColor,frame);
+    }
+    return renderStem(s.hull, nullptr, dir, s.floating, nullptr, out, nullptr, houseColor,frame);
 }
 
-bool renderTurret(UnitType t, int dir, PixBuf& out) {
+bool renderTurret(UnitType t, int dir, PixBuf& out, const Color* houseColor,int frame) {
     init();
     if (!gPalOk) return false;
     Stems s = stemsOf(t);
     if (!s.tur || !s.hull) return false;
     Layout L;
     if (!assemblyLayout(s, dir, L)) return false;
-    return renderStem(s.tur, s.barl, dir, s.floating, &L, out, nullptr);
+    return renderStem(s.tur, s.barl, dir, s.floating, &L, out, nullptr, houseColor,frame);
 }
 
-bool renderUnload(UnitType t, int dir, PixBuf& out) {
+bool renderDeployed(UnitType t,int bodyDir,int turretDir,PixBuf& out,Vec2i& anchor,const Color* houseColor) {
+    init();if(t!=UnitType::SiegeChopper || !gPalOk)return false;
+    std::vector<Pt> points;float minX,maxX,minY,maxY;
+    if(!projectStemPts("schd",voxelFacingDegrees(bodyDir),points,minX,maxX,minY,maxY))return false;
+    if(!projectStemPts("schdtur",voxelFacingDegrees(turretDir),points,minX,maxX,minY,maxY))return false;
+    const Layout layout=originLayout(minX,maxX,minY,maxY);
+    if(layout.w<=0 || layout.h<=0 || layout.w>384 || layout.h>384)return false;
+    anchor={(int)layout.orgx,(int)layout.orgy};
+    rasterize(points,kScale,layout.orgx,layout.orgy,layout.w,layout.h,out,houseColor);
+    return true;
+}
+
+bool renderUnload(UnitType t, int dir, PixBuf& out, const Color* houseColor) {
     init();
     if (!gPalOk) return false;
     Stems s = stemsOf(t);
     if (!s.unload) return false;
-    return renderStem(s.unload, nullptr, dir, s.floating, nullptr, out, nullptr);
+    return renderStem(s.unload, nullptr, dir, s.floating, nullptr, out, nullptr, houseColor);
 }
 
 } // namespace VxlRt

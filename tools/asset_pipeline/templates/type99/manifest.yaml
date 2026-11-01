@@ -3,8 +3,10 @@
 id: type99
 kind: vehicle_png
 canvas: [96, 96]
+anchor_y: 0.72
 facings: 8
 source_dir: fixtures
+icon_source: ../../../../art/cameos/type99-v1.png
 sequences:
   stand:
     frames: 1

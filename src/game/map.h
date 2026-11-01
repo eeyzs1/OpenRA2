@@ -71,7 +71,9 @@ public:
 
     // A* 寻路（8 方向）；domain: 0 陆地 1 水面 2 两栖
     // 返回路径点（含终点，不含起点）；失败返回 false
-    bool findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, int maxNodes = 20000, int domain = 0) const;
+    bool findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, int maxNodes = 20000, int domain = 0, const std::vector<uint8_t>* congestion = nullptr) const;
+    // Optional congestion: 0..254 soft cost, 255 impassable (except starting cell).
+    bool findPathToRange(int sx,int sy,float tx,float ty,float range,std::vector<Vec2i>& outPath,int maxNodes=20000,int domain=0,const std::vector<uint8_t>* congestion=nullptr) const;
 
     // 建筑占用表（由 World 挂载，寻路时视为不可通行）；元素为 eid+1，0/-1 为无建筑
     const std::vector<int>* bldOccRef = nullptr;
@@ -86,6 +88,8 @@ public:
     FogState fogAt(int player, int x, int y) const;
 
 private:
+    void finalizeSkirmishStarts(const std::vector<Vec2i>& starts,int mapType);
+    bool findPathImpl(int sx,int sy,int tx,int ty,float goalX,float goalY,float range,std::vector<Vec2i>& outPath,int maxNodes,int domain,const std::vector<uint8_t>* congestion) const;
     float noise2(int x, int y, uint64_t seed) const;
     float fbm(float x, float y, uint64_t seed) const;
 

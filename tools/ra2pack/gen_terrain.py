@@ -1,9 +1,10 @@
 # RA2 地形/矿/装饰素材批量提取：MIX -> assets/sprites/tile_*.png, overlay_*.png
-# 用法: python gen_terrain.py [--report-only]
+# 用法: python gen_terrain.py [--land-only]
 import sys, os, struct
 sys.path.insert(0, os.path.dirname(__file__))
 from ra2lib import MixTree, load_pal, Shp
 from PIL import Image
+from tmp_format import decode_diamond, decode_tmp_frame
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SPR = os.path.join(ROOT, "assets", "sprites")
@@ -19,29 +20,18 @@ report = []
 
 # ------------------------------------------------------------- TMP 地面瓦片
 def tmp_render(d, off, W=60, H=30):
-    """钻石行宽解包单帧 -> RGBA"""
-    img = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    px = img.load(); p = off
-    for y in range(H):
-        L = 4 * min(y, H - 1 - y) + 2
-        x0 = (W - L) // 2
-        for i in range(L):
-            v = d[p]; p += 1
-            if v:
-                r, g, b = PAL[v]
-                px[x0 + i, y] = (r, g, b, 255)
-    return img
+    return decode_diamond(d, off, PAL, W, H)
+
 
 def tmp_single(name):
-    """单图 TMP（clear01/sandy01 系列）：像素在 36（20 头 + 16 索引）"""
-    _, d = T.find(name)
-    if not d:
+    _, data = T.find(name)
+    if not data:
         return None
-    xb, yb, cx, cy, n = struct.unpack_from("<5i", d, 0)
-    if xb * yb != 1 or cx != 60 or cy != 30:
-        print(f"  !! {name} unexpected hdr {xb}x{yb} {cx}x{cy} n={n}")
-        return None
-    return tmp_render(d, 36)
+    columns, rows, width, height = struct.unpack_from("<4I", data)
+    if (columns, rows, width, height) != (1, 1, 60, 30):
+        raise ValueError(f"unexpected single TMP header: {name}")
+    return decode_tmp_frame(data, 0, PAL)
+
 
 def tmp_block(name, idx, base, stride):
     """多图 TMP（rough01/water01 实证布局）：第 idx 帧"""
@@ -97,16 +87,19 @@ for v, fn in enumerate(clear_files):
     else:
         print("  MISS clear", fn)
 
-# 多图 TMP 实证布局（hexdump 验证）：int32[20] = 第二帧结构体绝对偏移，
-# 首帧像素 base = idx0 - 1800，帧步长 1852（900 像素 + 952 Z/结构填充）
+# 读取索引表中的帧偏移，再跳过 52 字节帧头。
+# 下方 rough 导出仅接受已验证的连续 1852 字节帧布局。
 def tmp_base(name):
-    _, d = T.find(name)
-    if not d:
-        return None, 0, 0
-    idx0 = struct.unpack_from("<i", d, 20)[0]
-    base = idx0 - 1800
-    nfr = (len(d) - base - 900) // 1852 + 1
-    return d, base, nfr
+    _, data = T.find(name)
+    if not data:
+        raise FileNotFoundError(name)
+    columns, rows, width, height = struct.unpack_from("<4I", data)
+    count = columns * rows
+    offsets = struct.unpack_from(f"<{count}I", data, 16)
+    if not offsets or any(offset != offsets[0] + i * 1852 for i, offset in enumerate(offsets)):
+        raise ValueError(f"non-contiguous terrain TMP: {name}")
+    return data, offsets[0] + 52, count
+
 
 def montage(frames, path, cols=8):
     """frames: [(label, img)] -> 带序号蒙太奇（放大2x）"""
@@ -121,9 +114,10 @@ def montage(frames, path, cols=8):
     sheet = sheet.resize((sheet.width * 2, sheet.height * 2), Image.NEAREST)
     sheet.save(path)
 
-# rough: rough01.tem 真·泥草地面；只用前段平坦帧（后段常是坡/坎，成片会像「蛋格小山」）
+# rough01 is a 7x4 material patch, not 28 interchangeable variants.
+# Use interior cells; repeating the outer border creates a grid of raised rims.
 d_r, base_r, nfr_r = tmp_base("rough01.tem")
-ROUGH_PICK = [0, 1, 2, 3, 4, 5, 6, 7]
+ROUGH_PICK = [8, 9, 10, 11, 12, 15, 16, 17]
 rough_frames = []
 for v, fi in enumerate(ROUGH_PICK):
     im = tmp_render(d_r, base_r + fi * 1852)
@@ -134,6 +128,10 @@ montage(rough_frames, os.path.join(OUT, "gen_rough.png"), 8)
 refs = [(str(i), tmp_render(d_r, base_r + i * 1852)) for i in range(nfr_r)]
 montage(refs, os.path.join(OUT, "gen_rough01set.png"), 7)
 print(f"rough variants: {len(ROUGH_PICK)} (from rough01.tem {nfr_r} frames, base={base_r})")
+
+if "--land-only" in sys.argv:
+    print("land tiles refreshed: corrected TMP index/header/row layout")
+    sys.exit(0)
 
 # water: water01 + water02 各 4 帧（base=84 stride=1852，hexdump+目检验证正确）
 wv = 0
@@ -148,19 +146,11 @@ montage(water_frames, os.path.join(OUT, "gen_water.png"), 8)
 print(f"water variants: {wv}")
 
 def tmp_frame(fn, fi):
-    """通用帧提取：单图(36 头) 或 多图(tmp_base 布局) TMP 的第 fi 帧"""
+    """按索引表提取 TMP 地面帧，不解码额外的悬崖图层。"""
     _, d = T.find(fn)
     if not d:
         return None
-    xb, yb, cx, cy, n = struct.unpack_from("<5i", d, 0)
-    if xb * yb == 1 and cx == 60 and cy == 30:
-        return tmp_render(d, 36) if fi == 0 else None
-    idx0 = struct.unpack_from("<i", d, 20)[0]
-    base = idx0 - 1800
-    off = base + fi * 1852
-    if off + 900 > len(d):
-        return None
-    return tmp_render(d, off)
+    return decode_tmp_frame(d, fi, PAL)
 
 # shore: 岸线过渡瓦片，按"邻水方向 mask"组织（probe_shore_scan.py 全量扫描 214 帧自动分类+目检确认）
 # mask bit: 1=+x邻水 2=+y邻水 4=-x邻水 8=-y邻水；每种 mask 2 个变体

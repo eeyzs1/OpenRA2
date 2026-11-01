@@ -62,6 +62,7 @@ void Game::newCampaignGame(int mission, bool prepareRender) {
     // 固定种子：战役地图可复现；手工地图关卡从 maps/xxx.txt 加载地形与预置实体
     world.init(md.mapSize, md.mapSize, 20260723ull + mission * 977, 1, (int)md.aiFactions.size(), factions, md.mapType,
                md.mapFile.empty() ? nullptr : md.mapFile.c_str(), md.noStartForce);
+    resetNotifications();
     // 战役国家：显式 Country 优先，否则阵营默认首国
     for (int i = 0; i < world.numPlayers; i++) {
         if (i == 0 && md.playerCountry != Country::None)
@@ -102,7 +103,7 @@ void Game::newCampaignGame(int mission, bool prepareRender) {
     }
     sel.clear();
     selBuilding = INVALID_EID;
-    placing = false;
+    clearPlacement();
     gameOver = victory = false;
     camZoom = 1.0f;
     for (auto& e : world.ents)

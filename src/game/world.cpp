@@ -2,23 +2,35 @@
 #include "game/lang.h"
 #include "game/script.h"
 #include "core/content.h"
-#include "gfx/sprites.h"
-#include "sfx/sound.h"
+#include "game/presentation_events.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
 #include <string>
+#include <atomic>
+
+uint64_t World::nextPresentationEpoch() {
+    static std::atomic<uint64_t> sequence{0};
+    return ++sequence;
+}
 
 
 // ===================== 初始化 =====================
-void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const std::vector<Faction>& factions, int mapType,
-                 const char* mapFile, bool noStartForce) {
+bool World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const std::vector<Faction>& factions, int mapType,
+                 const char* mapFile, bool noStartForce, bool requireMap) {
+    presentationEpoch=nextPresentationEpoch();
+    presentationEvents.clear(); presentationSequence = 0;
+    repathsThisTick = 0; repathRequests = repathFailures = 0; movementReservations.clear(); resetMovementCorridors();
+    std::fill_n(producedUnits, MAX_PLAYERS, 0); std::fill_n(harvestedIncome, MAX_PLAYERS, 0); std::fill_n(combatDamage, MAX_PLAYERS, 0);
     // 全局状态复位：支持局内"重新开始"不留残局
     ents.clear();
     freeList.clear();
+    updateInProgress=false;areaDamageDepth=0;retiredDuringUpdate.clear();trafficGates.clear();
     projs.clear();
     effects.clear();
     nukes.clear();
+    crates.clear();
+    timedBombs.clear();
     evaQueue.clear();
     tick = 0;
     rng = Rng(seed);
@@ -32,8 +44,9 @@ void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const st
         resolvedMap = contentResolve(mapFile);
         if (resolvedMap.empty()) resolvedMap = mapFile;
         hand = loadHandMap(resolvedMap.c_str(), numPlayers, spawns, pend);
-        if (!hand) TraceLog(LOG_WARNING, "RA2 hand map failed, fallback to generate: %s", resolvedMap.c_str());
+        if (!hand) std::fprintf(stderr, "RA2 hand map failed%s: %s\n", requireMap ? "" : ", fallback to generate", resolvedMap.c_str());
     }
+    if (requireMap && !hand) return false;
     if (!hand) map.generate(w, h, seed, numPlayers, spawns, mapType);
     map.initFog(numPlayers);
     bldOcc.assign((size_t)map.w * map.h, -1);
@@ -100,6 +113,7 @@ void World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const st
     } else {
         placeNeutralTechs();
     }
+    return true;
 }
 
 // ===================== P7：手工地图加载 =====================
@@ -190,7 +204,7 @@ bool World::loadHandMap(const char* path, int numPlayers, std::vector<Vec2i>& sp
     char line[256];
     int lineNo = 0;
     auto bad = [&](const char* what) {
-        TraceLog(LOG_WARNING, "RA2 hand map %s:%d bad %s: %s", path, lineNo, what, line);
+        std::fprintf(stderr, "RA2 hand map %s:%d bad %s: %s", path, lineNo, what, line);
         ok = false;
     };
     auto setTerr = [&](int x, int y, Terrain t) {
@@ -341,9 +355,80 @@ void World::placeNeutralTechs() {
     }
 }
 
+void World::invalidateEntityReferences(EID id) {
+    if(id<0 || id>=(EID)ents.size()) return;
+    // No allocation in ents here: callers may be retiring a slot from an update.
+    const float x=ents[id].x,y=ents[id].y;
+    float tx=x,ty=y;
+    if(ents[id].isBuilding) { tx+=bldDef(ents[id].btype).w/2.0f;ty+=bldDef(ents[id].btype).h/2.0f; }
+    bool powerChanged=false;
+    for(EID i=0;i<(EID)ents.size();++i) {
+        auto& unit=ents[i];
+        std::erase_if(unit.failedPursuits,[&](const auto& failure) { return failure.target==id; });
+        if(!unit.alive) continue;
+        if(unit.burstTarget==id || i==id)unit.cancelBurst();
+        if(unit.target==id) {
+            if(unit.state==UState::Servicing) { endService(unit,i,ServiceRejectReason::InvalidTarget); }
+            if(unit.feedbackEntryTarget==id)
+                emitEntryResult(unit.player,id,unit.feedbackEntryKind,{0,1,i,EntryRejectReason::InvalidTarget});
+            if(unit.engineerIntent!=EngineerIntent::None && unit.feedbackEngineerTarget==id)
+                emitEngineerResult(unit.player,id,unit.engineerIntent,{0,1,i,EngineerRejectReason::InvalidTarget});
+            unit.target=INVALID_EID;
+        }
+        if(unit.feedbackAttackTarget==id) unit.feedbackAttackTarget=INVALID_EID;
+        if(unit.feedbackEngineerTarget==id) unit.feedbackEngineerTarget=INVALID_EID;
+        if(unit.feedbackEntryTarget==id) unit.feedbackEntryTarget=INVALID_EID;
+        if(unit.airbase==id) unit.airbase=INVALID_EID;
+        if(unit.dockRefinery==id) unit.dockRefinery=INVALID_EID;
+        if(unit.parasite==id) unit.parasite=INVALID_EID;
+        if(unit.parasiteHost==id) {
+            unit.parasiteHost=INVALID_EID;unit.parasiting=false;unit.x=x;unit.y=y;
+            unit.state=UState::Idle;unit.target=INVALID_EID;unit.clearPath();unitOccSync(i);airOccSync(i);
+        }
+        if(unit.mindTarget==id) unit.mindTarget=INVALID_EID;
+        std::erase(unit.mindTargets,id);
+        if(unit.mindBy==id) {
+            if(!unit.permaControlled && unit.origPlayer>=0) unit.player=unit.origPlayer;
+            unit.mindBy=INVALID_EID;unit.origPlayer=-1;unit.target=INVALID_EID;
+            unit.state=UState::Idle;unit.clearPath();unit.engineerIntent=EngineerIntent::None;
+        }
+        if(unit.magneticBy==id) unit.magneticBy=INVALID_EID; // retain height for next-tick falling damage
+        if(unit.drainedBy==id) { unit.drainedBy=INVALID_EID;powerChanged=true; }
+    }
+    for(auto& projectile:projs) {
+        if(projectile.target==id) {
+            projectile.target=INVALID_EID;
+            if(projectile.rot>0) { projectile.tx=tx;projectile.ty=ty; }
+        }
+        if(projectile.src==id) { projectile.src=INVALID_EID;projectile.srcGarrisonSlot=-1; }
+    }
+    for(auto& bomb:timedBombs) if(bomb.attachedTo==id) {
+        bomb.attachedTo=INVALID_EID;bomb.x=tx;bomb.y=ty;
+    }
+    if(powerChanged) recomputePower();
+}
+
+void World::consumeEntity(EID id) {
+    if(!valid(id)) return;
+    ents[id].engineerIntent=EngineerIntent::None;ents[id].feedbackEngineerTarget=INVALID_EID;
+    ents[id].alive=false;
+    unitOccSync(id); airOccSync(id);
+    invalidateEntityReferences(id);
+    retireEntitySlot(id);
+}
+
+void World::retireEntitySlot(EID id) {
+    // An outer weapon/update may still hold the dead entity by reference.
+    // Never overwrite that slot until all simulation callbacks have returned.
+    if(updateInProgress || areaDamageDepth>0) retiredDuringUpdate.push_back(id);
+    else freeList.push_back(id);
+}
+
 EID World::allocEnt() {
     if (!freeList.empty()) {
         int id = freeList.back(); freeList.pop_back();
+        // A reused slot is a new target even when its type and position match.
+        invalidateEntityReferences(id); // also handles references in historical snapshots
         ents[id] = Ent{};
         ents[id].alive = true;
         return id;
@@ -390,21 +475,22 @@ EID World::spawnBuilding(int player, BldType t, int bx, int by, bool free_) {
     e.btype = t;
     e.x = (float)bx; e.y = (float)by;
     e.hp = d.hp;
-    e.rallyX = bx + d.w / 2; e.rallyY = by + d.h + 1;
+    e.rallyX = std::clamp(bx+d.w/2,0,map.w-1);e.rallyY=std::clamp(by+d.h+1,0,map.h-1);
+    if(t==BldType::AirForceCmd || t==BldType::OreRefinery) e.rallyX=e.rallyY=-1;
     for (int dy = 0; dy < d.h; dy++)
         for (int dx = 0; dx < d.w; dx++)
             bldOcc[cellIdx(bx + dx, by + dy)] = id + 1;
     if (!free_ && player >= 0) players[player].money -= d.cost;
     // 建造动画（mk 关键帧序列）：仅玩家现建；地图/中立预置直接完整显示
     if (!free_) {
-        int mkf = g_sprites.bldMkFrames(t);
-        if (mkf > 1) e.constructAnim = mkf * 5; // 每帧 5 tick
+        e.constructAnim = g_gameRules.buildingAnimationTicks; // 每帧 5 tick
     }
+    resetMovementCorridors();
     recomputePower();
     // 超武建筑落成：向其他玩家发出侦测警告（RA2 原作设定）
     if (bldProvidesSW(t) != SWType::COUNT && tick > 10) {
         for (int p = 0; p < numPlayers; p++)
-            if (p != player) eva(p, TextFormat(TR(S::EvaDetectEnemySWFmt), bldName(t)));
+            if (p != player) eva(p, formatText(TR(S::EvaDetectEnemySWFmt), bldName(t)));
     }
     g_script.onBuildingComplete(id, player, t);
     return id;
@@ -412,18 +498,19 @@ EID World::spawnBuilding(int player, BldType t, int bx, int by, bool free_) {
 
 void World::kill(EID id, bool explode) {
     if (!valid(id)) return;
-    Ent& e = ents[id];
+    Ent e = ents[id]; // death effects/scripts may spawn and reallocate ents
     // 脚本 hook：死亡事件（在 alive 置 false 前捕获类型/玩家）
     bool wasBld = e.isBuilding;
     int deadPlayer = e.player;
     UnitType deadUtype = e.utype;
     BldType deadBtype = e.btype;
     bool wasSelling = e.selling;
-    e.alive = false;
+    ents[id].engineerIntent=EngineerIntent::None;ents[id].feedbackEngineerTarget=INVALID_EID;
+    ents[id].alive = false;
     unitOccSync(id); // alive=false → 从占位链表摘除
     airOccSync(id);
-    freeList.push_back(id);
     if (e.isBuilding) {
+        resetMovementCorridors();
         const BldDef& d = bldDef(e.btype);
         for (int dy = 0; dy < d.h; dy++)
             for (int dx = 0; dx < d.w; dx++) {
@@ -441,7 +528,7 @@ void World::kill(EID id, bool explode) {
             for (size_t i = 0; i < ents.size(); i++) {
                 Ent& o = ents[i];
                 if (!o.alive || o.invuln > 0) continue;
-                if (!o.isBuilding && unitDef(o.utype).isAir() && o.state != UState::Landed) continue;
+                if (o.airborne()) continue;
                 float ox = o.x, oy = o.y;
                 if (o.isBuilding) { ox += bldDef(o.btype).w / 2.0f; oy += bldDef(o.btype).h / 2.0f; }
                 float dist = distf(ox, oy, cx, cy);
@@ -461,10 +548,9 @@ void World::kill(EID id, bool explode) {
         }
     } else {
         // 步兵有序列死亡动画（art.ini Die1）：播放倒地序列；车辆/无素材单位保持爆炸
-        const UnitAnimInfo& ai = g_sprites.animInfo(e.utype);
-        if (unitDef(e.utype).isInfantry() && ai.die > 0) {
+        if (unitDef(e.utype).isInfantry()) {
             Effect da; da.kind = 10; da.x = e.x; da.y = e.y;
-            da.maxAge = ai.die * 2; // 每相位 2 tick
+            da.maxAge = g_gameRules.deathAnimationTicks; // 每相位 2 tick
             da.aux = (int)e.utype; da.aux2 = e.dir;
             da.aux3 = e.player >= 0 ? players[e.player].colorId : -1;
             effects.push_back(da);
@@ -478,7 +564,7 @@ void World::kill(EID id, bool explode) {
             for (size_t i = 0; i < ents.size(); i++) {
                 Ent& o = ents[i];
                 if (!o.alive || o.invuln > 0) continue;
-                if (!o.isBuilding && unitDef(o.utype).isAir() && o.state != UState::Landed) continue;
+                if (o.airborne()) continue;
                 float ox = o.x, oy = o.y;
                 if (o.isBuilding) { ox += bldDef(o.btype).w / 2.0f; oy += bldDef(o.btype).h / 2.0f; }
                 float d = distf(ox, oy, e.x, e.y);
@@ -493,7 +579,8 @@ void World::kill(EID id, bool explode) {
             dr.parasiteHost = INVALID_EID;
             dr.x = e.x; dr.y = e.y;
             dr.state = UState::Idle;
-            dr.path.clear();
+            dr.clearPath();
+            unitOccSync(e.parasite);airOccSync(e.parasite);
         }
         // 恐怖机器人被消灭（维修厂摘除）：解除宿主寄生标记
         if (e.parasiting && valid(e.parasiteHost)) ents[e.parasiteHost].parasite = INVALID_EID;
@@ -509,16 +596,20 @@ void World::kill(EID id, bool explode) {
                 t.player = t.origPlayer;
                 t.mindBy = INVALID_EID;
                 t.origPlayer = -1;
-                t.state = UState::Idle; t.target = INVALID_EID; t.path.clear();
+                t.state = UState::Idle; t.target = INVALID_EID; t.clearPath();
             }
         }
         e.mindTargets.clear();
         // 飞碟/磁电坦克被毁时，被影响对象在后续更新自动恢复/坠落。
     }
+    ents[id].garrison.clear();ents[id].mindTargets.clear();ents[id].mindTarget=e.mindTarget;
+    invalidateEntityReferences(id);
+    // Publish the slot only after recursive effects and script callbacks finish.
     // 脚本 hook：死亡/被毁事件
     if (wasBld) g_script.onBuildingDestroyed(id, deadPlayer, deadBtype);
     else g_script.onUnitKilled(id, deadPlayer, deadUtype);
     checkDefeat();
+    retireEntitySlot(id);
 }
 
 // ===================== 查询 =====================

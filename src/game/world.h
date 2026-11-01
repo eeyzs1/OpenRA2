@@ -1,6 +1,8 @@
 #pragma once
+#include "game/money.h"
 #include "game/data.h"
 #include "game/map.h"
+#include "game/presentation_events.h"
 #include <vector>
 #include <deque>
 #include <string>
@@ -12,7 +14,8 @@ constexpr EID INVALID_EID = -1;
 
 // 单位状态
 enum class UState : uint8_t { Idle, Moving, AttackMoving, Chasing, Attacking, HarvestGo, HarvestDig, HarvestReturn, HarvestUnload,
-                              Circling, Returning, Landed, Boarding }; // Circling/Returning/Landed 为战机状态；Boarding 步兵登船
+                              Circling, Returning, Landed, Boarding, Servicing,
+                              DeployLanding, DeployUnfolding, DeployFolding, DeployTakeoff };
 
 //  projectile 类型
 enum class ProjKind : uint8_t { Bullet, Shell, Flak, Missile };
@@ -44,7 +47,7 @@ struct Effect {
     float x2 = 0, y2 = 0;       // 光束终点
     int age = 0;
     int maxAge = 0;
-    // kind=10 死亡动画参数：utype/dir/colorId
+    // kind=10 死亡动画参数：utype/dir/colorId；kind=3 aux=1 磁电建筑束
     int aux = 0, aux2 = 0, aux3 = 0;
 };
 
@@ -58,7 +61,14 @@ struct ProdItem {
     int paid = 0;       // 已实际扣款；取消时原额返还，避免速度倍率导致退款误差
     bool ready = false; // 建筑已就绪待放置
     bool held = false;  // RA2：右键暂停生产（HOLD），左键继续，再右键取消
+    int workRemainder = 0; // fractional work, 0..1023; schema v19
 };
+
+struct ProductionFacilityState {
+    int present=0,operational=0,frozen=0,drained=0,constructing=0,selling=0;
+};
+
+enum class MatchOutcome : uint8_t { Running, Victory, Defeat };
 
 // 单位生产队列类别数（步兵/车辆/空军/海军）
 constexpr int PROD_CAT_N = 4;
@@ -82,14 +92,14 @@ struct Player {
     Faction faction = Faction::Allies;
     Country country = Country::None; // 国家（RA2 原作：阵营内细分，决定特色单位/能力）
     int colorId = 0;
-    int money = 10000;
+    Credits money = 10000;
     std::string name;
 
     ProdItem bldProd;                     // 建筑生产队列（RA2：与防御独立）
     ProdItem defProd;                     // 防御/超武生产队列（可与建筑并行）
     ProdItem unitProd[PROD_CAT_N];        // 单位生产：按类别独立队列（RA2 原作设定）
     std::deque<int> unitQueue[PROD_CAT_N]; // 各类别排队待产的类型索引（队首为当前项的后续）
-    BldType placingBld = BldType::COUNT; // 待放置建筑（人类玩家用）
+    BldType placingBld = BldType::COUNT; // Legacy v6-v23 save slot; current UI preview lives in Game.
 
     // 统计缓存（每帧重算）
     int powerMade = 0, powerUsed = 0;
@@ -128,6 +138,42 @@ struct Nuke {
 
 class World {
 public:
+    // Application observation identity, excluded from persistence and simulation checksum.
+    static uint64_t nextPresentationEpoch();
+    uint64_t presentationEpoch = 0;
+    // Derived per-tick movement diagnostics; not persisted or hashed.
+    std::vector<EID> movementReservations; // reconstructed each tick in stable EID order
+    int repathsThisTick = 0;
+    uint64_t repathRequests = 0, repathFailures = 0;
+    struct TrafficDebug {
+        int domain=0,anchor=-1,exit=-1,cells=0,ports=0,groups=0,occupants=0;
+        uint64_t remaining=0;
+        bool draining=false,opposed=false;
+    };
+    std::vector<TrafficDebug> trafficDebug() const;
+    uint64_t producedUnits[MAX_PLAYERS] = {}, harvestedIncome[MAX_PLAYERS] = {}, combatDamage[MAX_PLAYERS] = {};
+    bool repathUnit(EID id, int gx, int gy, std::vector<Vec2i>& path, EID fixedBlocker=INVALID_EID);
+    std::deque<PresentationEvent> presentationEvents;
+    uint64_t presentationSequence = 0;
+    void emitMoveResult(int player, EID entity, float x, float y, const MoveOrderResult& result) {
+        if (!result.accepted && !result.rejected && !result.queued) return;
+        PresentationEvent event;
+        event.tick=tick; event.sequence=presentationSequence++;
+        event.kind=PresentationKind::MoveOrder; event.player=player;
+        event.entity=result.failedEntity!=INVALID_EID ? result.failedEntity : entity;
+        event.x=x; event.y=y; event.move=result;
+        if (presentationEvents.size()>=4096) presentationEvents.pop_front();
+        presentationEvents.push_back(event);
+    }
+    void emitSound(Sfx sound, float volume = 1.0f) {
+        if (presentationEvents.size() >= 4096) presentationEvents.pop_front();
+        presentationEvents.push_back({tick, presentationSequence++, INVALID_EID, sound, 0, 0, volume, false});
+    }
+    void emitSoundAt(Sfx sound, float x, float y, EID entity = INVALID_EID) {
+        if (presentationEvents.size() >= 4096) presentationEvents.pop_front();
+        presentationEvents.push_back({tick, presentationSequence++, entity, sound, x, y, 1, true});
+    }
+
     Map map;
 
     struct Ent {
@@ -137,6 +183,11 @@ public:
             int kills = 0;
             int veterancyValue = 0;
             int vetRank = 0;
+            int oreLoad=0,gemLoad=0,ammo=0,atkCd=0,invuln=0;
+            int crateDmgBoost=0,crateArmorBoost=0,crateSpeedBoost=0;
+            int airstrikeCd=0,confused=0,gatlingHeat=0,gatlingStage=0;
+            bool autoHarvest=true,permaControlled=false;
+            std::vector<GarrisonedUnit> cargo;
         };
         bool alive = false;
         bool isBuilding = false;
@@ -155,17 +206,35 @@ public:
         // 移动
         std::vector<Vec2i> path;
         int pathIdx = 0;
+        void clearPath() { path.clear();pathIdx=0; }
         int moveTick = 0;
         int blockTick = 0;          // 路径被堵计时（超时放弃路径）
-        int walkFrame = 0, walkAnim = 0;
+        int walkFrame = 0, walkAnim = 0; // walkAnim: continuous successful-motion ticks, independent of sprite frames
         // 动画状态机（art.ini 序列驱动）
         int fireAnim = 0;       // 开火动画剩余 tick（>0 播放开火序列，phase 由剩余量推导）
         int constructAnim = 0;  // 建筑建造动画剩余 tick（>0 播放 mk 序列，播完为成品）
-        int deployAnim = 0;     // MCV 展开/部署动画剩余 tick（>0 期间单位定格播展开序列）
+        int deployAnim = 0;     // Remaining simulation ticks in the current deployment phase.
         // 战斗
         UState state = UState::Idle;
         int atkCd = 0;
         EID target = INVALID_EID;
+        int burstRemaining=0,burstDelay=0,burstOwner=-1;
+        EID burstTarget=INVALID_EID;
+        bool burstAir=false;
+        void cancelBurst(){burstRemaining=burstDelay=0;burstOwner=-1;burstTarget=INVALID_EID;burstAir=false;}
+        EngineerIntent engineerIntent=EngineerIntent::None;
+        EID feedbackEngineerTarget=INVALID_EID; // presentation provenance, not saved or hashed
+        EID feedbackServiceTarget=INVALID_EID; // presentation-only command provenance
+        ServiceStatus feedbackServiceStatus=ServiceStatus::Accepted;
+        EID feedbackEntryTarget=INVALID_EID; // presentation provenance, not saved or hashed
+        EntryKind feedbackEntryKind=EntryKind::Board;
+        struct FailedPursuit {
+            EID target = INVALID_EID;
+            int sourceX=0, sourceY=0, targetX=0, targetY=0;
+            uint64_t retryTick=0;
+        };
+        std::vector<FailedPursuit> failedPursuits; // at most 8; simulation state, saved and hashed
+        EID feedbackAttackTarget = INVALID_EID; // presentation-only command provenance; neither saved nor hashed
         float goalX = 0, goalY = 0; // 期望目的地
         std::deque<std::pair<float, float>> wps; // 路径点队列（Z 键追加，到位自动接续）
         // 采矿
@@ -227,10 +296,25 @@ public:
         int gatlingStage = 0;
         // 被炸/寄生时的掀起动画剩余帧（左右交替）
         int rockTilt = 0;
+        bool deploying() const { return !isBuilding && utype==UnitType::SiegeChopper
+            && state>=UState::DeployLanding && state<=UState::DeployTakeoff; }
+        bool airborne() const {
+            return !isBuilding && unitDef(utype).isAir() && state!=UState::Landed
+                && !(utype==UnitType::SiegeChopper && deployed);
+        }
+        bool immobilized() const { return chrono>0 || tpSick>0 || magneticHeight>0 || magneticBy!=INVALID_EID; }
+        float flightFraction() const {
+            if(!airborne())return 0;
+            const float remaining=std::clamp((float)deployAnim/std::max(1,g_gameRules.chopperLandingTicks),0.f,1.f);
+            if(state==UState::DeployLanding)return remaining;
+            if(state==UState::DeployTakeoff)return 1-remaining;
+            return 1;
+        }
     };
 
     // 补给箱（RA2 随机箱子）：地面单位驶入拾取
     struct Crate {
+        static constexpr int KIND_COUNT=11;
         bool alive = true;
         int x = 0, y = 0;
         int kind = 0; // 0钱 1治疗 2升阶 3大钱 4隐匿 5治疗+升阶 6免费单位 7火力 8护甲 9速度 10全图揭示
@@ -247,7 +331,9 @@ public:
         bool rockVehicles = false;    // 基洛夫等：命中地面载具时掀起
     };
 
-    std::vector<Ent> ents;
+    // Appending entities during combat/scripts must preserve live entity references.
+    // Iterators are not stable across append: mutating traversals use entity IDs.
+    std::deque<Ent> ents;
     std::vector<int> freeList;
     std::vector<Projectile> projs;
     std::vector<Effect> effects;
@@ -278,6 +364,14 @@ public:
         if (aiAlliance && players[a].isAI && players[b].isAI) return false;
         return true;
     }
+    MatchOutcome matchOutcome(int player) const {
+        if (player < 0 || player >= numPlayers) return MatchOutcome::Running;
+        if (!players[player].active || players[player].defeated) return MatchOutcome::Defeat;
+        for (int other=0; other<numPlayers; ++other)
+            if (players[other].active && !players[other].defeated && isEnemy(player,other))
+                return MatchOutcome::Running;
+        return MatchOutcome::Victory;
+    }
     bool isAllied(int a, int b) const {
         return a == b || (a >= 0 && b >= 0 && !isEnemy(a, b));
     }
@@ -298,8 +392,9 @@ public:
 
     // mapFile 非空时加载手工地图（maps/xxx.txt：地形+预置实体+出生点），失败回退程序生成；
     // noStartForce=true 时不刷初始基地车部队（全部由地图文件放置，仅手工地图有效）
-    void init(int w, int h, uint64_t seed, int numHumans, int numAI, const std::vector<Faction>& factions, int mapType = 0,
-              const char* mapFile = nullptr, bool noStartForce = false);
+    // requireMap=true rejects unavailable hand maps without generating a replacement.
+    bool init(int w, int h, uint64_t seed, int numHumans, int numAI, const std::vector<Faction>& factions, int mapType = 0,
+              const char* mapFile = nullptr, bool noStartForce = false, bool requireMap = false);
 
     // 手工地图待放置实体（loadHandMap 解析产出，init 内统一放置）
     struct PendingEnt {
@@ -321,26 +416,45 @@ public:
     bool valid(EID id) const { return id >= 0 && id < (int)ents.size() && ents[id].alive; }
 
     // 指令
-    void orderMove(const std::vector<EID>& sel, float x, float y, bool attackMove, bool append = false);
-    void orderAttack(const std::vector<EID>& sel, EID target);
+    MoveOrderResult orderMove(const std::vector<EID>& sel, float x, float y, bool attackMove, bool append = false);
+    AttackOrderResult orderAttack(const std::vector<EID>& sel, EID target, bool feedback=false);
+    AttackRejectReason attackRejection(EID attacker,EID target) const;
+    void emitAttackResult(int player,EID target,const AttackOrderResult& result);
     void orderHarvest(const std::vector<EID>& sel, int x, int y);
     void orderReturnToRefinery(const std::vector<EID>& sel, EID preferredRef = INVALID_EID);
     void orderStop(const std::vector<EID>& sel);
-    void orderDeploy(EID id);                    // 基地车展开 / 建造厂打包
+    EID orderDeploy(EID id);                    // 基地车展开 / 建造厂打包；返回新实体
+    DeployOrderResult orderDeployment(const std::vector<EID>& sel,bool modesOnly=false);
+    void emitDeployResult(int player,const DeployOrderResult& result);
+    void captureVisualTarget(PresentationEvent& event,const Ent& entity) const;
     EID packConYardToMcv(EID id);                // MCV Repacks：建造厂→基地车，返回新 EID
-    void orderCapture(const std::vector<EID>& sel, EID bldId);
-    void orderRepair(const std::vector<EID>& sel, EID bldId);   // 工程师修复己方受损建筑
+    EngineerOrderResult orderCapture(const std::vector<EID>& sel, EID bldId, bool feedback=false);
+    EngineerOrderResult orderRepair(const std::vector<EID>& sel, EID bldId, bool feedback=false);
+    EngineerOrderResult orderEngineer(const std::vector<EID>& sel,EID target,EngineerIntent intent,bool feedback);
+    EngineerRejectReason engineerRejection(EID unit,EID target,EngineerIntent intent) const;
+    void emitEngineerResult(int player,EID target,EngineerIntent intent,const EngineerOrderResult& result);
     void orderScatter(const std::vector<EID>& sel); // X 散布
     void orderGuard(const std::vector<EID>& sel);   // G 警戒（视野索敌）
-    void orderBoard(const std::vector<EID>& sel, EID transportId); // 步兵登上运输载具
-    void orderUnload(const std::vector<EID>& sel);  // 运输载具卸下乘员（U）
-    void orderGarrison(const std::vector<EID>& sel, EID bldId);   // 步兵/车辆进驻建筑（民房/战斗碉堡/坦克碉堡）
-    void orderUngarrison(const std::vector<EID>& sel);            // 建筑撤出驻军（U）
+    EntryOrderResult orderBoard(const std::vector<EID>& sel, EID transportId,bool feedback=false);
+    ReleaseOrderResult orderUnload(const std::vector<EID>& sel,bool feedback=false);
+    EntryOrderResult orderGarrison(const std::vector<EID>& sel, EID bldId,bool feedback=false);
+    static int cargoUnitCount(const std::vector<Ent::GarrisonedUnit>& cargo,UnitType type) {
+        int count=0;for(const auto& p:cargo)count+=(p.type==type)+cargoUnitCount(p.cargo,type);return count;
+    }
+    static int cargoLoad(const std::vector<Ent::GarrisonedUnit>& cargo) {
+        int load=0;for(const auto& passenger:cargo)load+=unitDef(passenger.type).transportSize();return load;
+    }
+    EntryRejectReason entryRejection(EID unit,EID target,EntryKind kind) const;
+    void emitEntryResult(int player,EID target,EntryKind kind,const EntryOrderResult& result);
+    ReleaseOrderResult orderUngarrison(const std::vector<EID>& sel,bool feedback=false);
+    void emitReleaseResult(int player,EID source,ReleaseKind kind,const ReleaseOrderResult& result);
     void orderRadDeploy(const std::vector<EID>& sel); // 辐射工兵：部署/收起辐射区（D）
     void orderParadrop(int player, float x, float y);  // 伞兵空投（美国空指部/科技机场）
     void orderSpyPlane(int player, float x, float y);  // YR 侦察机揭雾
     void orderPsychicReveal(int player, float x, float y); // YR 心灵揭示揭雾
-    void orderService(const std::vector<EID>& sel, EID depotId); // 车辆开往维修厂（维修+摘除寄生）
+    static bool serviceFacility(BldType type) { return type==BldType::ServiceDepot || type==BldType::TechOutpost; }
+    ServiceRejectReason serviceRejection(EID unit,EID depot) const;
+    ServiceOrderResult orderService(const std::vector<EID>& sel, EID depotId,bool feedback=false); // 车辆开往维修厂（维修+摘除寄生）
 
     // ---- P8 联机：玩家命令抽象（lockstep 同步的最小单元） ----
     // 双端确定性前提：同种子初始化 + 相同命令序列（同 tick 序、同内容）驱动 update
@@ -357,9 +471,11 @@ public:
         std::vector<EID> ids; // 选择集（可空）
         float x = 0, y = 0;   // 目标点（地图格坐标）
         int a = 0, b = 0;     // 参数：type 索引 / 目标 EID / (bx,by)；Move 专用：a&1=追加路径点
+        // PlaceBuilding: a=building type; b=UI receipt token, ignored by simulation.
         bool attackMove = false; // Move 用：A 键攻击移动
     };
     void applyCmd(int player, const Cmd& c); // 执行一条玩家命令（联机双端对称调用）
+    void applyPlacementCommand(int player,int type,float x,float y,int request=0);
     uint32_t checksum() const;               // 世界状态校验和（lockstep 反不同步检测）
 
     // EVA 播报事件（Game 层消费：字幕+提示音；player = 接收方）
@@ -370,6 +486,12 @@ public:
 
     // 生产
     bool startUnitProd(int player, UnitType t);   // 队列空→开工；否则排入队尾（每类最多 30）
+    Credits reservedProductionFunds(int player) const;
+    Credits changeMoney(int player,Credits delta); // Protected refunds/transfers or explicit grants; returns actual delta.
+    Credits creditIncome(int player,Credits amount); // New income soft cap; never reduces an existing balance.
+    Credits transferMoney(int from,int to,Credits amount);
+    ProductionRejectReason productionStartRejection(int player,bool unit,int type) const;
+    void applyProductionCommand(int player,const Cmd& command);
     void cancelUnitProd(int player, UnitType t);  // 取消一个该类型（先排队项后进行中项，返还资金）
     void holdUnitProd(int player, UnitType t, bool hold); // RA2 HOLD
     void holdBldProd(int player, BldType t, bool hold);   // 按建筑/防御队列分别 HOLD
@@ -385,22 +507,26 @@ public:
     ProdItem& bldQueueFor(int player, BldType t);
     const ProdItem& bldQueueFor(int player, BldType t) const;
     void setRally(EID factory, int x, int y);
+    RallyOrderResult orderRally(EID factory,float x,float y,bool clear=false);
+    void emitRallyResult(int player,const RallyOrderResult& result,float x,float y);
     void sellBuilding(EID id);
     bool repairBuilding(EID id); // 切换持续维修；不可修返回 false
     int unitProductionCost(int player, UnitType t) const; // 含工业工厂车辆造价减免
 
     // 超武
     bool launchSW(int player, SWType t, float tx, float ty); // 释放（扣充能）
-    bool launchChronoShift(int player, const std::vector<EID>& sel, float tx, float ty); // 人类两阶段来源/目标流程
+    bool launchChronoShift(int player, const std::vector<EID>& sel, float tx, float ty, int* transferred=nullptr); // 人类两阶段来源/目标流程
     void updateSW();                                        // 充能与激活效果
+    SuperweaponRejectReason superweaponRejection(int player,int type,float x,float y) const;
+    bool chronoSourceEligible(int player,EID id) const;
     bool swAvailable(int player, SWType t) const;           // 有对应建筑且未战败
-    void chronoShiftUnits(const std::vector<EID>& sel, float tx, float ty); // 超时空传送选中车辆
+    int chronoShiftUnits(const std::vector<EID>& sel, float tx, float ty); // 超时空传送选中车辆
 
     // 单位可见性（潜艇隐身等）：viewer 能否看见该实体
     bool visibleTo(const Ent& e, int viewer) const;
     bool isDetector(UnitType t) const; // 反潜探测单位（驱逐舰/神盾/海蝎/海豚）
     // 有效武器：部署形态 / IFV 载兵 / 精英军衔 综合（RA2 原作：状态与军衔改变武器）
-    WeaponDef effWeapon(const Ent& e) const;
+    WeaponDef effWeapon(const Ent& e,const Ent* target=nullptr) const;
 
     // 伞兵充能就绪所需帧数（RA2 原作约 4 分钟一波）
     static constexpr int PARADROP_TIME = 30 * 60 * 4;
@@ -413,16 +539,21 @@ public:
     // 查询
     bool hasBld(int player, BldType t) const;
     bool hasFactoryFor(int player, const UnitDef& u) const;
+    std::vector<Vec2i> factoryExitCells(EID factory,const UnitDef& unit) const;
+    static bool productionFacilityOperational(const Ent& building);
+    ProductionFacilityState productionFacilities(int player,bool unit,int type) const;
     bool prereqMet(int player, const BldDef& d) const;
     bool unitPrereqMet(int player, const UnitDef& u) const;
     int countUnits(int player, UnitType t) const;
     int countBlds(int player, BldType t) const;
     EID findNearestEnemy(int player, float x, float y, float maxR, bool includeBlds = true, const WeaponDef* w = nullptr,
-                         UnitType seeker = UnitType::COUNT);
+                         UnitType seeker = UnitType::COUNT, EID seekerId = INVALID_EID, bool firingOnly = false);
+    bool activePursuitFailure(const Ent& seeker, const Ent::FailedPursuit& failure) const;
+    void rememberPursuitFailure(EID seeker, EID target);
     EID bldAt(int bx, int by) const;
     EID unitAtCell(int x, int y) const;
     bool groundUnitBlocksCell(int x, int y, EID ignore = INVALID_EID) const;
-    // 移动占位：目标格对 mover 是否硬阻挡（RA2：车/舰 1 格；步兵同格≤3；车可驶过步兵）
+    // 移动占位：车/舰与其他地面单位互斥，步兵同格≤3；合法碾压在入格前结算。
     bool cellHardBlockedForMove(int x, int y, EID mover) const;
     int countInfantryAtCell(int x, int y, EID ignore = INVALID_EID) const;
     void unitOccSync(EID id);      // 按当前 x/y/状态刷新占位链表（O(同格人数)）
@@ -441,6 +572,7 @@ public:
     void updateFog(int player);
 
     // 伤害（byEnt 为攻击者实体，用于军衔经验；可为 INVALID）
+    void applyCellSpreadDamage(const WeaponDef& weapon,int player,float x,float y,EID source,int sourceSlot=-1,bool chaosGas=false);
     void damage(EID id, int dmg, int byPlayer, EID byEnt = INVALID_EID, int byGarrisonSlot = -1);
 
     int cellIdx(int x, int y) const { return y * map.w + x; }
@@ -459,31 +591,69 @@ public:
     }
 
 private:
+    struct TrafficGate {
+        int domain=0,anchor=0,exit=-1;
+        uint64_t until=0;
+        bool draining=false,touched=false; // touched is derived, all other fields affect simulation
+    };
+    std::vector<TrafficGate> trafficGates;
+    struct MovementCorridor {
+        std::vector<int> cells,ports,portGroups;
+        int exit=-1;bool initialized=false,opposed=false,occupied=false;
+    };
+    std::vector<int> movementCorridorLabels[3];
+    std::vector<MovementCorridor> movementCorridors[3];
+    void resetMovementCorridors();
+    bool narrowMovementCell(int x,int y,int domain) const;
+    int movementCorridor(int cell,int domain);
+    bool admitMovementCorridor(Ent& unit,EID id);
+    enum class IdleYieldResult { NotApplicable, Started, NoPullout, BudgetWait };
+    IdleYieldResult yieldIdleCorridor(EID requester,EID blocker);
+    bool yieldMovingConflict(EID requester,EID blocker,bool admissionBlocked=false);
+    bool updateInProgress = false;
+    int areaDamageDepth = 0; // transient callback quarantine; zero at snapshot boundaries
+    std::vector<EID> retiredDuringUpdate; // empty at every save/replay boundary
+    void retireEntitySlot(EID id);
+    void updateService(Ent& e,EID id);
+    void endService(Ent& e,EID id,ServiceRejectReason reason);
+    void emitServiceResult(int player,EID depot,const ServiceOrderResult& result,ServiceStatus status=ServiceStatus::Accepted);
+    float serviceReach(const Ent& depot) const;
+    bool interactionPath(const Ent& unit,const Ent& target,float reach,std::vector<Vec2i>& path) const;
     void updateUnit(Ent& e, EID id);
+    bool updateMagnetic(Ent& e,EID id);
     void updateAircraft(Ent& e, EID id);    // 战机状态机
+    void updateChopperDeployment(Ent& e,EID id);
     bool flyToward(Ent& e, float tx, float ty); // 直线飞行，到达返回 true
     Vec2f airPadPos(const Ent& af, int slot) const; // 停机位（空指部中心 2x2 分布）
     void updateBuilding(Ent& e, EID id);
     void updateCombat(Ent& e, EID id);
     void updateHarvester(Ent& e, EID id);
-    void beginHarvesterReturn(Ent& e, EID preferredRef = INVALID_EID);
+    void beginHarvesterReturn(Ent& e, EID mover, EID preferredRef = INVALID_EID, bool avoidOccupied = false);
     bool findNearestReachableOre(int sx, int sy, int maxR, Vec2i& out) const;
     void moveAlongPath(Ent& e, EID id);
     void tryUnstackIdle(Ent& e, EID id); // 静止叠格拆开（车互斥 / 步兵超叠）
-    void fireWeapon(Ent& e, EID id, EID targetId);
+    void fireWeapon(Ent& e, EID id, EID targetId, bool continuation=false);
+    void updateWeaponBurst(EID id);
     // 按 Weapon/ProjectileDef 瞬时命中或生成飞行弹（驻军/战斗要塞与 fireWeapon 共用）
     void emitWeaponProjectile(int player, float sx, float sy, EID tgt, EID src, int srcGarrisonSlot, const WeaponDef& w);
     void explodeAt(float x, float y, int big);
     bool spawnFromFactory(int player, const UnitDef& u);
+    void applyFactoryRally(EID unit,EID factory,int x,int y);
     void recomputePower();
     void checkDefeat();
     bool stepTo(Ent& e, EID id, int nx, int ny);
-    bool boardGoal(const Ent& t, int domain, int& gx, int& gy) const; // 登船寻路目标：运输船不可走时取附近最近可走格
+    float entryReach(const Ent& target) const;
+    bool entryPath(const Ent& unit,const Ent& target,std::vector<Vec2i>& path) const;
+    EntryOrderResult orderEntry(const std::vector<EID>& sel,EID target,EntryKind kind,bool feedback);
+    void endEntry(Ent& unit,EID id,EntryRejectReason reason);
     bool buildingApproachGoal(const Ent& b, int domain, int& gx, int& gy) const; // 靠近建筑占地外缘的最近可走格
     bool nearBuildingFootprint(float x, float y, const Ent& b, float pad = 1.75f) const; // 是否贴近建筑占地（占领/停靠）
     bool insideBuildingFootprint(float x, float y, const Ent& b) const; // 是否已走进建筑占地（工程师进入）
-    void evacuateGarrison(EID bldId); // 驻军撤出到周围（重伤民房 / 手动撤军共用）
-    bool chronoJump(Ent& e, float gx, float gy); // 超时空传送：瞬移至目标点附近空格，按距离产生相位不适
+    ReleaseOrderResult evacuateGarrison(EID bldId);
+    std::vector<Vec2i> releaseCells(const Ent& source,UnitType passenger,int radius) const;
+    ReleaseOrderResult releaseContainer(EID source,ReleaseKind kind);
+    ReleaseOrderResult orderRelease(const std::vector<EID>& sel,ReleaseKind kind,bool feedback);
+    bool chronoJump(EID id, float gx, float gy); // 超时空传送：瞬移至目标点附近空格，按距离产生相位不适
     void placeNeutralTechs();                   // 地图生成后放置中立科技建筑（油井/医院/机械店/科技机场/秘密实验室/民房）
     bool loadHandMap(const char* path, int numPlayers, std::vector<Vec2i>& spawns,
                      std::vector<PendingEnt>& out); // P7 手工地图：解析地形/实体/出生点；失败返回 false
@@ -504,4 +674,6 @@ private:
     void psychicAreaReleaseAll(Ent& beacon, EID bid);
     void applyCaptureEffect(Ent& b, int newOwner); // 工程师占领建筑的特殊效果（科技机场/秘密实验室）
     EID allocEnt();
+    void invalidateEntityReferences(EID id);
+    void consumeEntity(EID id); // remove spatial links before making a slot reusable
 };

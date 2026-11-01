@@ -2,14 +2,13 @@
 #include "game/world_priv.h"
 #include "game/lang.h"
 #include "game/script.h"
-#include "gfx/sprites.h"
-#include "sfx/sound.h"
+#include "game/presentation_events.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
 
 namespace {
-// RA2 OreRefinery 4×3：DockUnload=(3,1) 东侧垫；QueueingCell=(4,1) 在地基外可寻路
+// Project dock offsets; the actual footprint comes from loaded rules.
 constexpr int kTiberiumNearScan = 6;
 constexpr int kTiberiumFarScan = 48;
 
@@ -25,6 +24,17 @@ void refineryDockCenter(const World::Ent& b, float& cx, float& cy) {
     cx = b.x + 3.5f;
     cy = b.y + 1.5f;
 }
+bool unloadApproach(const World& world,float x,float y) {
+    for(int dy=-1;dy<=1;++dy) for(int dx=-1;dx<=1;++dx) {
+        const int tx=(int)x+dx,ty=(int)y+dy;
+        if(world.passableFor(tx,ty,0) && !world.bldBlocked(tx,ty) && distf(tx+0.5f,ty+0.5f,x,y)<1.9f) return true;
+    }
+    return false;
+}
+bool harvestReceiver(const World::Ent& unit,int player) {
+    return unit.alive && unit.player==player && ((unit.isBuilding && unit.btype==BldType::OreRefinery)
+        || (!unit.isBuilding && unit.utype==UnitType::SlaveMiner && unit.deployed));
+}
 // RA2 UI 保真：走到矿格上或邻格再挖（Chebyshev≤1）
 bool canDigOre(float ex, float ey, int ox, int oy) {
     return std::max(std::abs((int)ex - ox), std::abs((int)ey - oy)) <= 1;
@@ -33,106 +43,101 @@ bool besideCell(float ex, float ey, int cx, int cy) {
     return std::max(std::abs((int)ex - cx), std::abs((int)ey - cy)) <= 1;
 }
 
-void enterDig(World::Ent& e, int ox, int oy) {
-    e.path.clear();
+void enterDig(World& world, World::Ent& e, int ox, int oy) {
+    e.clearPath();
     e.pathIdx = 0;
     e.state = UState::HarvestDig;
     e.digTimer = 0;
     e.dir = dirFromVec(ox + 0.5f - e.x, oy + 0.5f - e.y);
     e.turretDir = e.dir;
-    g_sfx.playAt(Sfx::Dig, ox + 0.5f, oy + 0.5f);
+    world.emitSoundAt(Sfx::Dig, ox + 0.5f, oy + 0.5f);
 }
 } // namespace
 
 bool World::findNearestReachableOre(int sx, int sy, int maxR, Vec2i& out) const {
-    for (int r = 0; r <= maxR; r++) {
-        for (int dy = -r; dy <= r; dy++)
-            for (int dx = -r; dx <= r; dx++) {
-                if (r > 0 && std::max(std::abs(dx), std::abs(dy)) != r) continue;
-                int x = sx + dx, y = sy + dy;
-                if (!map.inBounds(x, y) || map.at(x, y).ore <= 0) continue;
-                // 已在矿格或邻格：无需寻路
-                if (std::max(std::abs(sx - x), std::abs(sy - y)) <= 1) {
-                    out = {x, y};
-                    return true;
-                }
-                std::vector<Vec2i> path;
-                if (map.findPath(sx, sy, x, y, path)) {
-                    out = {x, y};
-                    return true;
-                }
-            }
+    if(!map.inBounds(sx,sy) || maxR<0) return false;
+    // A single flood search finds a reachable harvesting position. Repeated A*
+    // for every ore cell is pathological when deposits are behind a blocked base.
+    std::vector<uint8_t> visited(map.cells.size(),0);
+    std::vector<Vec2i> frontier{{sx,sy}};
+    visited[(size_t)sy*map.w+sx]=1;
+    static constexpr int DX[8]={1,-1,0,0,1,1,-1,-1};
+    static constexpr int DY[8]={0,0,1,-1,1,-1,1,-1};
+    for(size_t head=0;head<frontier.size();++head) {
+        const auto cell=frontier[head];
+        // Return a reachable ore tile, never an arbitrary fallback position
+        // beside an inaccessible/covered deposit.
+        if(std::max(std::abs(sx-cell.x),std::abs(sy-cell.y))<=maxR
+            && map.at(cell.x,cell.y).ore>0 && map.passable(cell.x,cell.y)
+            && !bldBlocked(cell.x,cell.y)) { out=cell; return true; }
+        for(int d=0;d<8;++d) {
+            int x=cell.x+DX[d],y=cell.y+DY[d];
+            if(!passableStep(cell.x,cell.y,x,y,0) || bldBlocked(x,y)) continue;
+            if(d>=4 && (!passableStep(cell.x,cell.y,cell.x+DX[d],cell.y,0)
+                || !passableStep(cell.x,cell.y,cell.x,cell.y+DY[d],0)
+                || bldBlocked(cell.x+DX[d],cell.y) || bldBlocked(cell.x,cell.y+DY[d]))) continue;
+            size_t index=(size_t)y*map.w+x;
+            if(visited[index]) continue;
+            visited[index]=1; frontier.push_back({x,y});
+        }
     }
     return false;
 }
 
-void World::beginHarvesterReturn(Ent& e, EID preferredRef) {
-    EID ref = INVALID_EID;
-    float bd = 1e9f;
-    auto consider = [&](EID i) {
-        const Ent& b = ents[i];
-        if (!b.alive || b.player != e.player) return;
-        float dx, dy;
-        if (b.isBuilding && b.btype == BldType::OreRefinery) {
-            refineryDockCenter(b, dx, dy);
-        } else if (!b.isBuilding && b.utype == UnitType::SlaveMiner && b.deployed) {
-            dx = b.x; dy = b.y;
-        } else return;
-        float d = distf(e.x, e.y, dx, dy);
-        if (d < bd) { bd = d; ref = i; }
-    };
-    if (preferredRef != INVALID_EID && valid(preferredRef))
-        consider(preferredRef);
-    if (ref == INVALID_EID) {
-        for (size_t i = 0; i < ents.size(); i++)
-            consider((EID)i);
-    }
-    if (ref == INVALID_EID) { e.state = UState::Idle; return; }
-    e.dockRefinery = ref;
-    const Ent& b = ents[ref];
-    int pathTx, pathTy;
-    if (b.isBuilding) {
-        refineryQueueCell(b, pathTx, pathTy);
-        if (!map.passable(pathTx, pathTy) || bldBlocked(pathTx, pathTy))
-            refineryDockUnload(b, pathTx, pathTy);
-    } else {
-        pathTx = (int)b.x; pathTy = (int)b.y;
-    }
-    // 超时空采矿车：满载瞬移到东侧垫附近（RA2：仅满载回厂瞬移）
-    if (e.utype == UnitType::ChronoMiner && b.isBuilding) {
-        Effect ef1; ef1.kind = 9; ef1.x = e.x; ef1.y = e.y; ef1.maxAge = 20; effects.push_back(ef1);
-        int qx, qy; refineryQueueCell(b, qx, qy);
-        bool placed = false;
-        for (int r = 0; r < 5 && !placed; r++) {
-            for (int dy = -r; dy <= r && !placed; dy++)
-                for (int dx = -r; dx <= r && !placed; dx++) {
-                    if (std::max(std::abs(dx), std::abs(dy)) != r && r > 0) continue;
-                    int sx = qx + dx, sy = qy + dy;
-                    if (map.passable(sx, sy) && !bldBlocked(sx, sy) && unitAtCell(sx, sy) == INVALID_EID) {
-                        e.x = sx + 0.5f; e.y = sy + 0.5f; placed = true;
-                    }
-                }
+void World::beginHarvesterReturn(Ent& e, EID mover, EID preferredRef, bool avoidOccupied) {
+    EID ref=INVALID_EID;float best=1e9f;std::vector<Vec2i> route;
+    std::vector<uint8_t> congestion;
+    if(avoidOccupied) {
+        congestion.assign(map.cells.size(),0);
+        for(const auto& unit:ents) {
+            if(unit.occCell<0 || unit.occCell>=(int)congestion.size())continue;
+            const int x=unit.occCell%map.w,y=unit.occCell/map.w;
+            if(cellHardBlockedForMove(x,y,mover))congestion[unit.occCell]=255;
         }
-        Effect ef2; ef2.kind = 9; ef2.x = e.x; ef2.y = e.y; ef2.maxAge = 20; effects.push_back(ef2);
-        g_sfx.playAt(Sfx::Tesla, e.x, e.y);
-        e.path.clear();
-        e.state = UState::HarvestUnload;
-        e.digTimer = 0;
-        return;
     }
-    std::vector<Vec2i> path;
-    if (map.findPath((int)e.x, (int)e.y, pathTx, pathTy, path)) {
-        e.path = std::move(path); e.pathIdx = 0;
-        e.state = UState::HarvestReturn;
-    } else {
-        e.path.clear(); e.pathIdx = 0;
-        e.state = UState::HarvestReturn; // 下帧重寻，勿满载 Idle
+    auto consider=[&](EID id) {
+        const auto& receiver=ents[id];
+        if(!harvestReceiver(receiver,e.player)) return;
+        float x,y;
+        if(receiver.isBuilding && receiver.btype==BldType::OreRefinery) refineryDockCenter(receiver,x,y);
+        else if(!receiver.isBuilding && receiver.utype==UnitType::SlaveMiner && receiver.deployed) { x=receiver.x;y=receiver.y; }
+        else return;
+        const float distance=distf(e.x,e.y,x,y);if(distance>=best) return;
+        if(!unloadApproach(*this,x,y) || repathsThisTick>=8) return;
+        std::vector<Vec2i> path;++repathsThisTick;++repathRequests;
+        if(!map.findPathToRange((int)e.x,(int)e.y,x,y,1.9f,path,20000,0,avoidOccupied?&congestion:nullptr)) { ++repathFailures;return; }
+        ref=id;best=distance;route=std::move(path);
+    };
+    if(valid(preferredRef)) consider(preferredRef);
+    if(ref==INVALID_EID) for(size_t id=0;id<ents.size();++id) consider((EID)id);
+    // A temporary traffic snapshot may have no route. Keep the existing order
+    // so normal yielding can continue and retry after occupants move.
+    if(avoidOccupied && ref==INVALID_EID)return;
+    e.dockRefinery=ref;
+    if(ref==INVALID_EID) { e.clearPath();e.state=UState::Idle;return; }
+    const auto& receiver=ents[ref];
+    if(e.utype==UnitType::ChronoMiner && receiver.isBuilding) {
+        float cx,cy;refineryDockCenter(receiver,cx,cy);int qx,qy;refineryQueueCell(receiver,qx,qy);
+        bool placed=false;float x=e.x,y=e.y;
+        for(int radius=0;radius<3 && !placed;++radius)
+            for(int dy=-radius;dy<=radius && !placed;++dy) for(int dx=-radius;dx<=radius && !placed;++dx) {
+                if(std::max(abs(dx),abs(dy))!=radius) continue;
+                int tx=qx+dx,ty=qy+dy;
+                if(passableFor(tx,ty,0) && !bldBlocked(tx,ty) && unitAtCell(tx,ty)==INVALID_EID
+                    && distf(tx+0.5f,ty+0.5f,cx,cy)<1.9f) { x=tx+0.5f;y=ty+0.5f;placed=true; }
+            }
+        if(placed) {
+            Effect departure;departure.kind=9;departure.aux=(int)ChronoVisual::Departure;departure.x=e.x;departure.y=e.y;departure.maxAge=20;effects.push_back(departure);
+            e.x=x;e.y=y;Effect arrival;arrival.kind=9;arrival.x=x;arrival.y=y;arrival.maxAge=20;effects.push_back(arrival);
+            emitSoundAt(Sfx::Tesla,x,y);e.clearPath();e.state=UState::HarvestUnload;e.digTimer=0;return;
+        }
     }
+    e.path=std::move(route);e.pathIdx=0;e.blockTick=0;e.state=UState::HarvestReturn;
 }
 
 void World::updateHarvester(Ent& e, EID id) {
     const int CAP = harvesterCapacity(e.utype);
-    auto beginReturnToRefinery = [&]() { beginHarvesterReturn(e); };
+    auto beginReturnToRefinery = [&]() { beginHarvesterReturn(e,id); };
 
     switch (e.state) {
         case UState::HarvestGo: {
@@ -157,13 +162,13 @@ void World::updateHarvester(Ent& e, EID id) {
                 }
             }
             if (canDigOre(e.x, e.y, e.oreCell.x, e.oreCell.y)) {
-                enterDig(e, e.oreCell.x, e.oreCell.y);
+                enterDig(*this, e, e.oreCell.x, e.oreCell.y);
             } else if (e.path.empty() || e.pathIdx >= (int)e.path.size()) {
                 std::vector<Vec2i> path;
                 if (map.findPath((int)e.x, (int)e.y, e.oreCell.x, e.oreCell.y, path)) {
                     if (path.empty()) {
                         if (canDigOre(e.x, e.y, e.oreCell.x, e.oreCell.y)) {
-                            enterDig(e, e.oreCell.x, e.oreCell.y);
+                            enterDig(*this, e, e.oreCell.x, e.oreCell.y);
                         } else {
                             bool stepped = false;
                             for (int dy = -1; dy <= 1 && !stepped; dy++)
@@ -181,7 +186,7 @@ void World::updateHarvester(Ent& e, EID id) {
                                 if (findNearestReachableOre((int)e.x, (int)e.y, kTiberiumNearScan, alt)
                                     && (alt.x != e.oreCell.x || alt.y != e.oreCell.y)) {
                                     e.oreCell = alt;
-                                    e.path.clear(); e.pathIdx = 0;
+                                    e.clearPath(); e.pathIdx = 0;
                                 } else if (e.oreLoad > 0) beginReturnToRefinery();
                                 else e.state = UState::Idle;
                             }
@@ -197,7 +202,7 @@ void World::updateHarvester(Ent& e, EID id) {
                         && (alt.x != e.oreCell.x || alt.y != e.oreCell.y)) {
                         e.oreCell = alt;
                         if (canDigOre(e.x, e.y, alt.x, alt.y)) {
-                            enterDig(e, alt.x, alt.y);
+                            enterDig(*this, e, alt.x, alt.y);
                             rerouted = true;
                         } else if (map.findPath((int)e.x, (int)e.y, alt.x, alt.y, path)) {
                             e.path = std::move(path); e.pathIdx = 0;
@@ -236,17 +241,17 @@ void World::updateHarvester(Ent& e, EID id) {
                     if (findNearestReachableOre(e.oreCell.x, e.oreCell.y, kTiberiumNearScan, next)) {
                         e.oreCell = next;
                         if (canDigOre(e.x, e.y, next.x, next.y)) {
-                            enterDig(e, next.x, next.y);
+                            enterDig(*this, e, next.x, next.y);
                         } else {
                             e.state = UState::HarvestGo;
-                            e.path.clear(); e.pathIdx = 0;
+                            e.clearPath(); e.pathIdx = 0;
                         }
                     } else if (e.oreLoad > 0) {
                         beginReturnToRefinery();
                     } else if (findNearestReachableOre((int)e.x, (int)e.y, kTiberiumFarScan, next)) {
                         e.oreCell = next;
                         e.state = UState::HarvestGo;
-                        e.path.clear(); e.pathIdx = 0;
+                        e.clearPath(); e.pathIdx = 0;
                     } else {
                         e.state = UState::Idle;
                     }
@@ -255,10 +260,19 @@ void World::updateHarvester(Ent& e, EID id) {
             break;
         }
         case UState::HarvestReturn: {
-            if (!valid(e.dockRefinery)) {
+            bool usable=valid(e.dockRefinery);
+            if(usable) {
+                const auto& receiver=ents[e.dockRefinery];usable=harvestReceiver(receiver,e.player);
+                if(receiver.isBuilding && receiver.btype==BldType::OreRefinery) {
+                    float x,y;refineryDockCenter(receiver,x,y);usable &= unloadApproach(*this,x,y);
+                } else usable &= !receiver.isBuilding && receiver.utype==UnitType::SlaveMiner && receiver.deployed;
+            }
+            if (!usable) {
                 beginReturnToRefinery();
                 break;
             }
+            if(e.blockTick>=45 && repathsThisTick<8)
+                beginHarvesterReturn(e,id,INVALID_EID,true);
             moveAlongPath(e, id);
             const Ent& b = ents[e.dockRefinery];
             float dx, dy;
@@ -273,26 +287,14 @@ void World::updateHarvester(Ent& e, EID id) {
                 e.state = UState::HarvestUnload;
                 e.digTimer = 0;
             } else if (e.path.empty() || e.pathIdx >= (int)e.path.size()) {
-                int pathTx, pathTy;
-                if (b.isBuilding) {
-                    refineryQueueCell(b, pathTx, pathTy);
-                    if (!map.passable(pathTx, pathTy) || bldBlocked(pathTx, pathTy))
-                        refineryDockUnload(b, pathTx, pathTy);
-                } else {
-                    pathTx = (int)b.x; pathTy = (int)b.y;
-                }
-                std::vector<Vec2i> path;
-                if (map.findPath((int)e.x, (int)e.y, pathTx, pathTy, path) && !path.empty()) {
-                    e.path = std::move(path); e.pathIdx = 0;
-                } else if (++e.blockTick > 90) {
-                    e.blockTick = 0;
-                    e.dockRefinery = INVALID_EID;
-                    beginReturnToRefinery();
-                }
+                beginReturnToRefinery();
             }
             break;
         }
         case UState::HarvestUnload: {
+            if(!valid(e.dockRefinery) || !harvestReceiver(ents[e.dockRefinery],e.player)) {
+                beginReturnToRefinery();break;
+            }
             if (valid(e.dockRefinery) && tick % 6 == (uint64_t)(id % 6)) {
                 const Ent& rb = ents[e.dockRefinery];
                 Effect pour; pour.kind = 11;
@@ -313,12 +315,12 @@ void World::updateHarvester(Ent& e, EID id) {
                     bool gems = e.gemLoad > 0;
                     if (gems) e.gemLoad--;
                     int income = oreIncomeWithPurifier(oreUnitValue(gems), hasBld(e.player, BldType::OrePurifier));
-                    players[e.player].money = std::min(g_gameRules.maxMoney, players[e.player].money + income);
+                    harvestedIncome[e.player] += creditIncome(e.player,income);
                 }
                 e.oreLoad -= take;
             }
             if (e.oreLoad <= 0) {
-                if (e.player == 0) g_sfx.play(Sfx::Cash, 0.55f);
+                if (e.player == 0) emitSound(Sfx::Cash, 0.55f);
                 e.dockRefinery = INVALID_EID;
                 Vec2i ore = e.oreCell;
                 bool haveOre = ore.x >= 0 && map.inBounds(ore.x, ore.y) && map.at(ore.x, ore.y).ore > 0;
@@ -338,7 +340,7 @@ void World::updateHarvester(Ent& e, EID id) {
                     if (map.findPath((int)e.x, (int)e.y, ore.x, ore.y, path)) {
                         e.path = std::move(path); e.pathIdx = 0;
                     } else {
-                        e.path.clear(); e.pathIdx = 0;
+                        e.clearPath(); e.pathIdx = 0;
                     }
                     e.state = UState::HarvestGo;
                 } else {

@@ -2,29 +2,15 @@
 #include "game/world_priv.h"
 #include "game/lang.h"
 #include "game/script.h"
-#include "gfx/sprites.h"
-#include "sfx/sound.h"
+#include "game/presentation_events.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
 
 bool World::startUnitProd(int player, UnitType t) {
+    if(productionStartRejection(player,true,(int)t)!=ProductionRejectReason::None) return false;
     Player& p = players[player];
     const UnitDef& u = unitDef(t);
-    if (!modeAllowsUnit(player, t) || !unitPrereqMet(player, u)) return false;
-    if (!hasFactoryFor(player, u)) return false;
-    if (isHero(t)) {
-        for (const Ent& e : ents) {
-            if (!e.alive || e.player != player) continue;
-            if (!e.isBuilding && e.utype == t) return false;
-            for (const Ent::GarrisonedUnit& cargo : e.cargo) if (cargo.type == t) return false;
-            for (const Ent::GarrisonedUnit& gu : e.garrison) if (gu.type == t) return false;
-        }
-        for (int c = 0; c < PROD_CAT_N; ++c) {
-            if (p.unitProd[c].active && p.unitProd[c].typeIdx == (int)t) return false;
-            for (int queued : p.unitQueue[c]) if (queued == (int)t) return false;
-        }
-    }
     int cat = u.prodCat();
     ProdItem& pr = p.unitProd[cat];
     if (!pr.active) {
@@ -32,7 +18,7 @@ bool World::startUnitProd(int player, UnitType t) {
         pr.active = true;
         pr.isUnit = true;
         pr.typeIdx = (int)t;
-        pr.progress = 0;
+        pr.progress = 0; pr.workRemainder = 0;
         pr.paid = 0;
         pr.held = false;
         pr.totalCost = unitProductionCost(player, t);
@@ -79,11 +65,12 @@ void World::cancelUnitProd(int player, UnitType t) {
     }
     ProdItem& pr = p.unitProd[cat];
     if (pr.active && pr.typeIdx == (int)t) {
-        p.money = std::min(g_gameRules.maxMoney, p.money + pr.paid);
+        const int refund=pr.paid;
         pr = ProdItem{};
+        changeMoney(player,refund);
         if (!q.empty()) {
             int nt = q.front(); q.pop_front();
-            pr.active = true; pr.isUnit = true; pr.typeIdx = nt; pr.progress = 0;
+            pr.active = true; pr.isUnit = true; pr.typeIdx = nt; pr.progress = 0; pr.workRemainder = 0;
             pr.paid = 0; pr.held = false;
             pr.totalCost = unitProductionCost(player, (UnitType)nt); pr.ready = false;
         }
@@ -106,18 +93,14 @@ const ProdItem& World::bldQueueFor(int player, BldType t) const {
 }
 
 bool World::startBldProd(int player, BldType t) {
-    Player& p = players[player];
+    if(productionStartRejection(player,false,(int)t)!=ProductionRejectReason::None) return false;
     const BldDef& d = bldDef(t);
     ProdItem& pr = bldQueueFor(player, t);
-    if (pr.active || !modeAllowsBuilding(player, t)) return false;
-    if (!hasBld(player, BldType::ConYard)) return false;
-    if (!prereqMet(player, d)) return false;
-    if (isUniqueBld(t) && countBlds(player, t) > 0) return false;
     // RA2：建筑/防御双队列可并行；缺钱也可开工，按 tick 扣款
     pr.active = true;
     pr.isUnit = false;
     pr.typeIdx = (int)t;
-    pr.progress = 0;
+    pr.progress = 0; pr.workRemainder = 0;
     pr.paid = 0;
     pr.held = false;
     pr.totalCost = d.cost;
@@ -128,8 +111,9 @@ bool World::startBldProd(int player, BldType t) {
 void World::cancelBldProd(int player, BldType t) {
     ProdItem& pr = bldQueueFor(player, t);
     if (!pr.active || pr.typeIdx != (int)t) return;
-    players[player].money = std::min(g_gameRules.maxMoney, players[player].money + pr.paid);
+    const int refund=pr.paid;
     pr = ProdItem{};
+    changeMoney(player,refund);
 }
 
 void World::cancelProd(int player, bool isUnit) {
@@ -140,8 +124,9 @@ void World::cancelProd(int player, bool isUnit) {
     if (p.bldProd.active) pr = &p.bldProd;
     else if (p.defProd.active) pr = &p.defProd;
     if (!pr) return;
-    p.money = std::min(g_gameRules.maxMoney, p.money + pr->paid);
+    const int refund=pr->paid;
     *pr = ProdItem{};
+    changeMoney(player,refund);
 }
 
 int World::unitProductionCost(int player, UnitType t) const {
@@ -182,6 +167,7 @@ bool World::canPlace(BldType t, int bx, int by, int player) const {
 bool World::canDeployMcv(EID id) const {
     if (!valid(id) || ents[id].isBuilding || ents[id].utype != UnitType::MCV) return false;
     const Ent& e = ents[id];
+    if(e.immobilized()) return false;
     int bx = (int)e.x - 1, by = (int)e.y - 1;
     const BldDef& d = bldDef(BldType::ConYard);
     for (int dy = 0; dy < d.h; dy++)
@@ -204,7 +190,7 @@ bool World::placeBuilding(int player, BldType t, int bx, int by) {
     spawnBuilding(player, t, bx, by, true); // 钱已在生产中扣除
     pr = ProdItem{};
     if (p.placingBld == t) p.placingBld = BldType::COUNT;
-    g_sfx.playAt(Sfx::Place, (float)bx + d.w / 2.0f, (float)by + d.h / 2.0f);
+    emitSoundAt(Sfx::Place, (float)bx + d.w / 2.0f, (float)by + d.h / 2.0f);
     // 精炼厂附赠一辆采矿车（RA2 原作设定）：出生在厂房旁空格，立即自动寻矿
     // 矿车型号按阵营：盟军超时空矿车 / 苏军武装矿车 / 中国普通矿车
     if (t == BldType::OreRefinery) {
@@ -228,6 +214,7 @@ bool World::placeBuilding(int player, BldType t, int bx, int by) {
 void World::setRally(EID factory, int x, int y) {
     if (!valid(factory) || !ents[factory].isBuilding) return;
     if (!isRallyBuilding(ents[factory].btype)) return;
+    if(!((x==-1 && y==-1) || map.inBounds(x,y))) return;
     ents[factory].rallyX = x;
     ents[factory].rallyY = y;
 }
@@ -239,10 +226,9 @@ void World::sellBuilding(EID id) {
     e.repairing = false;
     e.selling = true;
     // 倒放建造动画（与起楼同帧率）；无 mk 序列时用固定时长
-    int mkf = g_sprites.bldMkFrames(e.btype);
-    e.constructAnim = mkf > 1 ? mkf * 5 : 40;
-    players[e.player].money += bldDef(e.btype).cost / 2;
-    g_sfx.playAt(Sfx::Sell, e.x, e.y);
+    e.constructAnim = g_gameRules.buildingAnimationTicks;
+    changeMoney(e.player,bldDef(e.btype).cost/2);
+    emitSoundAt(Sfx::Sell, e.x, e.y);
 }
 
 bool World::repairBuilding(EID id) {
@@ -253,20 +239,41 @@ bool World::repairBuilding(EID id) {
     if (e.hp >= d.hp) { e.repairing = false; return false; }
     // RA2：切换持续维修（每 tick 扣款回血），再次点击可取消
     e.repairing = !e.repairing;
-    if (e.repairing) g_sfx.playAt(Sfx::Click, e.x, e.y);
+    if (e.repairing) emitSoundAt(Sfx::Click, e.x, e.y);
     return e.repairing;
 }
 
 // ===================== 超级武器 =====================
 
+std::vector<Vec2i> World::factoryExitCells(EID factory,const UnitDef& unit) const {
+    std::vector<Vec2i> exits;
+    if(!valid(factory) || !ents[factory].isBuilding)return exits;
+    const auto& source=ents[factory];const auto& def=bldDef(source.btype);
+    const int x=(int)source.x,y=(int)source.y;
+    const bool naval=source.btype==BldType::NavalYard;
+    auto append=[&](int tx,int ty) {
+        if(!passableFor(tx,ty,naval?1:unit.pathDomain()) || bldBlocked(tx,ty))return;
+        const Vec2i point{tx,ty};if(std::find(exits.begin(),exits.end(),point)==exits.end())exits.push_back(point);
+    };
+    append(x+def.w/2,y+def.h);
+    if(naval) {
+        // Every candidate shares an edge with the water-bound hull. Never
+        // search beyond it or skip a blocking vessel to a remote water cell.
+        for(int dx=0;dx<def.w;++dx)append(x+dx,y+def.h);
+        for(int dy=def.h-1;dy>=0;--dy)append(x+def.w,y+dy);
+        for(int dx=def.w-1;dx>=0;--dx)append(x+dx,y-1);
+        for(int dy=0;dy<def.h;++dy)append(x-1,y+dy);
+    } else if(unit.isAir())for(int distance=1;distance<7;++distance)append(x+def.w/2,y+def.h+distance);
+    return exits;
+}
+
 bool World::spawnFromFactory(int player, const UnitDef& u) {
     // 找第一个对应工厂
     for (size_t i = 0; i < ents.size(); i++) {
         Ent& b = ents[i];
-        if (!b.alive || !b.isBuilding || b.player != player || !isFactoryFor(b.btype, u)) continue;
+        if (!productionFacilityOperational(b) || b.player != player || !isFactoryFor(b.btype, u)) continue;
         const BldDef& bd = bldDef(b.btype);
-        // 缓存工厂标量：后续 spawnUnit 可能触发 ents 扩容，持有的 Ent& 会悬空
-        const float fx = b.x, fy = b.y;
+        // Keep rally coordinates stable across entity creation.
         const int rallyX = b.rallyX, rallyY = b.rallyY;
         // 限弹药战机：直接落在空指部停机位（基洛夫/火箭飞行兵无限弹药，走地面出厂流程后升空）
         if (u.isAir() && u.ammo > 0) {
@@ -279,13 +286,15 @@ bool World::spawnFromFactory(int player, const UnitDef& u) {
             ne.state = UState::Landed;
             ne.ammo = u.ammo;
             if (players[player].vetCat[u.prodCat()]) ne.vetRank = 1; // 间谍渗透工厂加成
+            unitOccSync(nu);airOccSync(nu);
+            applyFactoryRally(nu,(EID)i,rallyX,rallyY);
             return true;
         }
-        // 出生点：建筑下方最近空格（海军单位须落在水面）
-        int dom = u.pathDomain();
-        for (int r = 1; r < 8; r++) {
-            int sx = (int)fx + bd.w / 2, sy = (int)fy + bd.h + r - 1;
-            if (passableFor(sx, sy, dom) && !bldBlocked(sx, sy) && unitAtCell(sx, sy) == INVALID_EID) {
+        // Land factories keep their fixed door; shipyards launch from any
+        // adjacent water edge, including shores facing another direction.
+        for(const auto exit:factoryExitCells((EID)i,u)) {
+            const int sx=exit.x,sy=exit.y;
+            if (unitAtCell(sx, sy) == INVALID_EID) {
                 EID nu = spawnUnit(player, u.type, sx + 0.5f, sy + 0.5f);
                 Ent& ne0 = ents[nu];
                 if (players[player].vetCat[u.prodCat()]) ne0.vetRank = 1; // 间谍渗透工厂加成
@@ -293,13 +302,14 @@ bool World::spawnFromFactory(int player, const UnitDef& u) {
                 if (u.isInfantry()) {
                     for (size_t ci = 0; ci < ents.size(); ci++) {
                         Ent& cv = ents[ci];
-                        if (!cv.alive || !cv.isBuilding || cv.player != player || cv.btype != BldType::CloningVat) continue;
+                        if (!productionFacilityOperational(cv) || cv.player != player || cv.btype != BldType::CloningVat) continue;
                         const BldDef& cbd = bldDef(cv.btype);
                         for (int r = 1; r < 6; r++) {
                             int cx2 = (int)cv.x + cbd.w / 2, cy2 = (int)cv.y + cbd.h + r - 1;
                             if (map.passable(cx2, cy2) && !bldBlocked(cx2, cy2) && unitAtCell(cx2, cy2) == INVALID_EID) {
                                 EID dup = spawnUnit(player, u.type, cx2 + 0.5f, cy2 + 0.5f);
                                 if (players[player].vetCat[u.prodCat()]) ents[dup].vetRank = 1;
+                                applyFactoryRally(dup,(EID)ci,cv.rallyX,cv.rallyY);
                                 r = 99; break;
                             }
                         }
@@ -316,20 +326,7 @@ bool World::spawnFromFactory(int player, const UnitDef& u) {
                         orderHarvest({nu}, ore.x, ore.y);
                     return true;
                 }
-                if (rallyX >= 0) {
-                    if (u.isAir()) {
-                        // 空中单位：直线飞往集结点，无需寻路
-                        ne.goalX = (float)rallyX; ne.goalY = (float)rallyY;
-                        ne.state = UState::Moving;
-                    } else {
-                        std::vector<Vec2i> path;
-                        if (map.findPath(sx, sy, rallyX, rallyY, path, 20000, dom)) {
-                            ne.path = std::move(path); ne.pathIdx = 0;
-                            ne.state = UState::Moving;
-                            ne.goalX = (float)rallyX; ne.goalY = (float)rallyY;
-                        }
-                    }
-                }
+                applyFactoryRally(nu,(EID)i,rallyX,rallyY);
                 return true;
             }
         }

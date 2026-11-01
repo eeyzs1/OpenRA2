@@ -2,6 +2,42 @@
 #include "game/script.h"
 #include <vector>
 #include <algorithm>
+#include <limits>
+
+namespace {
+bool combatUnit(const World::Ent& e) {
+    if(!e.alive || e.isBuilding || e.utype==UnitType::MCV || e.utype==UnitType::Engineer || e.utype==UnitType::Spy) return false;
+    const auto& def=unitDef(e.utype);
+    return !def.canHarvet() && (def.weapon.damage>0 || def.isPsychic() || def.hasC4() || e.utype==UnitType::AircraftCarrier);
+}
+
+Vec2i navalScoutGoal(const World& world,const World::Ent& ship) {
+    const int sx=(int)ship.x,sy=(int)ship.y;
+    if(!world.map.inBounds(sx,sy)) return {-1,-1};
+    std::vector<uint8_t> visited(world.map.cells.size(),0);
+    std::vector<Vec2i> frontier{{sx,sy}};
+    visited[world.cellIdx(sx,sy)]=1;
+    constexpr Vec2i directions[]={{1,0},{0,1},{-1,0},{0,-1},{1,1},{-1,1},{-1,-1},{1,-1}};
+    auto open=[&](int x,int y){return world.passableFor(x,y,1) && !world.bldBlocked(x,y);};
+    for(size_t head=0;head<frontier.size();++head) {
+        const auto cell=frontier[head];
+        if(open(cell.x,cell.y) && world.map.fogAt(ship.player,cell.x,cell.y)==FOG_UNSEEN) return cell;
+        for(auto d:directions) {
+            const int x=cell.x+d.x,y=cell.y+d.y;
+            if(!open(x,y) || (d.x && d.y && (!open(cell.x+d.x,cell.y) || !open(cell.x,cell.y+d.y)))) continue;
+            auto& seen=visited[world.cellIdx(x,y)];if(seen)continue;
+            seen=1;frontier.push_back({x,y});
+        }
+    }
+    return {-1,-1};
+}
+
+int plannedUnits(const World& world,int player,UnitType type) {
+    const auto& p=world.players[player];const int category=unitDef(type).prodCat();
+    return world.countUnits(player,type)+(p.unitProd[category].active && p.unitProd[category].typeIdx==(int)type)
+        +(int)std::count(p.unitQueue[category].begin(),p.unitQueue[category].end(),(int)type);
+}
+}
 
 // ===================== 初始化 =====================
 void SkirmishAI::reset(int p) {
@@ -93,7 +129,9 @@ int SkirmishAI::attackThreshold() const {
         default: base = 8; break;
     }
     int t = (int)(base / pcfg.aggression);
-    t += attackWave * 2;
+    // Later waves need reinforcements, but the requirement must not grow
+    // forever after losses (or overflow a restored historical wave counter).
+    t += std::clamp(attackWave,0,6) * 2;
     if (t < 3) t = 3;
     return t;
 }
@@ -127,8 +165,9 @@ void SkirmishAI::update(World& w) {
         if (!w.hasBld(player, BldType::ConYard)) w.orderDeploy((int)i);
     }
 
-    doBuildOrder(w);
-    doProduction(w);
+    const bool recovering=recoverEconomy(w);
+    if(!recovering)doBuildOrder(w);
+    if(!recovering)doProduction(w);
 
     // 建筑/防御生产就绪后直接放置（RA2 双队列）
     auto tryReady = [&](ProdItem& pr) {
@@ -150,7 +189,9 @@ void SkirmishAI::update(World& w) {
     doSuperWeapon(w);
     doSupport(w);
     doTactics(w);
-    doExpansion(w);
+    doTransports(w);
+    if(!recovering)doExpansion(w);
+    clearFactoryExits(w);
 }
 
 // ===================== 地图/船厂探测（沿用原实现） =====================
@@ -450,7 +491,7 @@ void SkirmishAI::doProduction(World& w) {
             if (w.unitPrereqMet(player, unitDef(UnitType::MCV))) w.startUnitProd(player, UnitType::MCV);
             return;
         }
-        int harvesters = w.countUnits(player, harvesterType(p.faction));
+        int harvesters = plannedUnits(w,player,harvesterType(p.faction));
         // 采矿车目标按 econFocus 缩放
         int harvBase = aiCfg.enabled ? aiCfg.harvesterTarget : 3;
         int harvTarget = (int)(harvBase * pcfg.econFocus);
@@ -464,17 +505,30 @@ void SkirmishAI::doProduction(World& w) {
                         : (p.faction == Faction::Allies) ? UnitType::IFV
                         : (p.faction == Faction::Yuri)   ? UnitType::GatlingTank
                         : UnitType::COUNT;
+            // Fusion factions and mods may have a different legal AA roster.
+            if(aaT==UnitType::COUNT || !unitDef(aaT).hasAntiAir()
+                || !w.unitPrereqMet(player,unitDef(aaT))) {
+                aaT=UnitType::COUNT;
+                for(int type=0;type<(int)UnitType::COUNT;++type) {
+                    const auto& candidate=unitDef((UnitType)type);
+                    if(candidate.isAir() || candidate.isNaval() || candidate.isInfantry() || candidate.canHarvet()
+                        || !candidate.hasAntiAir() || !w.unitPrereqMet(player,candidate)) continue;
+                    if(aaT==UnitType::COUNT || candidate.cost<unitDef(aaT).cost) aaT=(UnitType)type;
+                }
+            }
             bool producedAA = false;
             if (aaT != UnitType::COUNT) {
-                int tanks = 0, aa = 0;
+                int tanks = 0, aa = 0, airThreats=0;
                 for (const World::Ent& e : w.ents) {
+                    if(e.alive && !e.isBuilding && w.isEnemy(player,e.player) && e.airborne() && w.map.fogAt(player,(int)e.x,(int)e.y)==FOG_VISIBLE) ++airThreats;
                     if (!e.alive || e.isBuilding || e.player != player) continue;
                     const UnitDef& ud = unitDef(e.utype);
                     if (ud.canHarvet() || ud.isAir() || ud.isNaval() || ud.isInfantry()) continue;
-                    if (e.utype == aaT) aa++;
+                    if (ud.hasAntiAir()) aa++;
                     else tanks++;
                 }
-                if (tanks > 6 && aa == 0 && w.unitPrereqMet(player, unitDef(aaT))) {
+                const int wanted=std::clamp(airThreats,1,4);
+                if ((tanks > 6 || airThreats>0) && aa < wanted && w.unitPrereqMet(player, unitDef(aaT))) {
                     w.startUnitProd(player, aaT);
                     producedAA = true;
                 }
@@ -507,8 +561,11 @@ void SkirmishAI::doProduction(World& w) {
                     } else if (p.faction == Faction::Soviet) {
                         want = attackWave % 2 ? UnitType::Apocalypse : UnitType::TeslaTank;
                     } else if (p.faction == Faction::Yuri) {
-                        // 尤里后期混编：磁电坦克（吊车辆）+ 狂风（输出）；高科后磁电优先
-                        want = attackWave % 2 ? UnitType::Magnetron : UnitType::LasherTank;
+                        // Keep damage dealers even when the attack-wave counter
+                        // stalls: a frozen odd wave must not produce only support.
+                        const int lashers=w.countUnits(player,UnitType::LasherTank);
+                        const int magnets=w.countUnits(player,UnitType::Magnetron);
+                        want = magnets<std::max(1,lashers/3)?UnitType::Magnetron:UnitType::LasherTank;
                     } else {
                         want = UnitType::Type99;
                     }
@@ -545,11 +602,23 @@ void SkirmishAI::doProduction(World& w) {
         else if (p.faction == Faction::Soviet) shipT = UnitType::Typhoon;
         else if (p.faction == Faction::Yuri) shipT = UnitType::Boomer;
         else shipT = UnitType::Aegis;
-        int trans = w.countUnits(player, UnitType::AmphTransport);
-        if (trans < 1 && w.unitPrereqMet(player, unitDef(UnitType::AmphTransport))) {
-            w.startUnitProd(player, UnitType::AmphTransport);
-        } else if (w.countUnits(player, shipT) < 4 && w.unitPrereqMet(player, unitDef(shipT))) {
+        const UnitType strikeT=p.faction==Faction::Allies?UnitType::AircraftCarrier
+            :p.faction==Faction::Soviet?UnitType::Dreadnought:p.faction==Faction::Yuri?UnitType::Boomer:UnitType::COUNT;
+        // One escort first, then legal bombardment hulls. A submarine/AA-only
+        // fleet cannot finish an enemy base, and an empty transport cannot raid it.
+        if(plannedUnits(w,player,shipT)<1 && w.unitPrereqMet(player,unitDef(shipT))) {
             w.startUnitProd(player, shipT);
+        } else if(plannedUnits(w,player,UnitType::AmphTransport)<1 && w.hasBld(player,BldType::Barracks)
+            && w.unitPrereqMet(player,unitDef(UnitType::AmphTransport)) && needsTransport(w)) {
+            w.startUnitProd(player,UnitType::AmphTransport);
+        } else if(strikeT!=UnitType::COUNT && plannedUnits(w,player,strikeT)<2
+            && w.unitPrereqMet(player,unitDef(strikeT))) {
+            w.startUnitProd(player,strikeT);
+        } else if(plannedUnits(w,player,shipT)<4 && w.unitPrereqMet(player,unitDef(shipT))) {
+            w.startUnitProd(player,shipT);
+        } else if(plannedUnits(w,player,UnitType::AmphTransport)<1
+            && w.unitPrereqMet(player,unitDef(UnitType::AmphTransport))) {
+            w.startUnitProd(player,UnitType::AmphTransport);
         }
     }
     // ---- 空军队列（类别2）：有空指部后维持 2 架（韩国黑鹰/盟军入侵者/苏军米格/中国基洛夫/尤里飞碟）----
@@ -560,7 +629,7 @@ void SkirmishAI::doProduction(World& w) {
         else if (p.faction == Faction::Soviet) airT = UnitType::MiG;
         else if (p.faction == Faction::Yuri) airT = UnitType::FloatingDisc;
         else airT = UnitType::Kirov;
-        if (w.countUnits(player, airT) < 2 && w.unitPrereqMet(player, unitDef(airT)))
+        if (plannedUnits(w,player,airT) < 2 && w.unitPrereqMet(player, unitDef(airT)))
             w.startUnitProd(player, airT);
     }
     // ---- 步兵队列（类别0）：前期暴兵 + 适量工程师/特殊步兵 ----
@@ -623,62 +692,106 @@ void SkirmishAI::doProduction(World& w) {
 
 // ===================== 进攻（集结点 + 多路进攻） =====================
 void SkirmishAI::doAttack(World& w) {
-    Player& p = w.players[player];
-    int army = countArmy(w);
     int threshold = attackThreshold();
 
-    // 分离陆军/空军与海军
-    std::vector<EID> armyIds, navyIds;
+    // Visible raids on owned infrastructure need a local response before
+    // the global army is ready to gather or cross an ocean.
+    const auto airDefenders=assignAirDefense(w);
+    // Air raids must not wait for ground units to gather across an ocean.
+    std::vector<EID> armyIds, navyIds, airIds;
     for (size_t i = 0; i < w.ents.size(); i++) {
         const World::Ent& e = w.ents[i];
-        if (!e.alive || e.isBuilding || e.player != player) continue;
-        if (e.utype == UnitType::MCV || e.utype == UnitType::Engineer || e.utype == UnitType::Spy) continue;
+        if (e.player != player || !combatUnit(e) || e.state==UState::Boarding || e.state==UState::Servicing) continue;
+        if(std::find(airDefenders.begin(),airDefenders.end(),(EID)i)!=airDefenders.end())continue;
         const UnitDef& ud = unitDef(e.utype);
         if (ud.canHarvet()) continue;
-        if (ud.isNaval() && !ud.isAmphib()) navyIds.push_back((int)i);
+        if (ud.isAir()) airIds.push_back((int)i);
+        else if (ud.isNaval() && !ud.isAmphib()) navyIds.push_back((int)i);
         else armyIds.push_back((int)i);
     }
 
     Vec2i ac = findArmyCenter(w);
+    if(!armyIds.empty()) {
+        int sx=0,sy=0;
+        for(EID id:armyIds){sx+=(int)w.ents[id].x;sy+=(int)w.ents[id].y;}
+        ac={sx/(int)armyIds.size(),sy/(int)armyIds.size()};
+    }
+    const int army=(int)armyIds.size();
+    auto center=[&](const World::Ent& e) {
+        return Vec2f{e.x+(e.isBuilding?bldDef(e.btype).w/2.0f:0),
+                       e.y+(e.isBuilding?bldDef(e.btype).h/2.0f:0)};
+    };
+    auto visibleEnemy=[&](const World::Ent& e) {
+        if(!e.alive || !w.isEnemy(player,e.player)) return false;
+        const auto point=center(e);
+        return w.map.fogAt(player,(int)point.x,(int)point.y)!=FOG_UNSEEN;
+    };
+    // A strategic target may be immune to part of a mixed army. Keep legal
+    // orders and give rejected units a visible, compatible alternative.
+    auto issueAttack=[&](const std::vector<EID>& group,EID preferred) {
+        int accepted=0;
+        for(EID id:group) {
+            if(w.valid(preferred) && visibleEnemy(w.ents[preferred])
+                && w.orderAttack({id},preferred).accepted) { ++accepted;continue; }
+            EID fallback=INVALID_EID;float best=1e9f;
+            for(size_t index=0;index<w.ents.size();++index) {
+                if((EID)index==preferred || !visibleEnemy(w.ents[index])
+                    || w.attackRejection(id,(EID)index)!=AttackRejectReason::None) continue;
+                const auto point=center(w.ents[index]);
+                const float distance=distf(w.ents[id].x,w.ents[id].y,point.x,point.y);
+                if(distance<best) { best=distance;fallback=(EID)index; }
+            }
+            if(fallback!=INVALID_EID) accepted+=w.orderAttack({id},fallback).accepted;
+        }
+        return accepted;
+    };
 
     // 找敌方（人类优先）建筑或单位
     EID targetB = INVALID_EID;
     float bd = 1e9f;
     for (size_t i = 0; i < w.ents.size(); i++) {
         const World::Ent& e = w.ents[i];
-        if (!e.alive || !w.isEnemy(player, e.player)) continue;
-        float ex = e.x, ey = e.y;
-        if (e.isBuilding) { ex += 1.5f; ey += 1.5f; }
-        int fx = (int)ex, fy = (int)ey;
-        if (w.map.fogAt(player, fx, fy) == FOG_UNSEEN) continue; // no omniscience
-        float d = distf((float)ac.x, (float)ac.y, ex, ey);
+        if (!visibleEnemy(e)) continue;
+        const auto point=center(e);
+        float d = distf((float)ac.x, (float)ac.y, point.x, point.y);
         if (d < bd) { bd = d; targetB = (int)i; }
     }
 
-    // 海军分离攻击：找离舰队最近的水上/沿岸敌方目标（建筑沿岸 6 格内也算）
-    if (!navyIds.empty() && targetB != INVALID_EID) {
-        float nx = 0, ny = 0;
-        for (EID id : navyIds) { nx += w.ents[id].x; ny += w.ents[id].y; }
-        nx /= navyIds.size(); ny /= navyIds.size();
-        EID seaT = INVALID_EID;
-        float sd = 1e9f;
-        for (size_t i = 0; i < w.ents.size(); i++) {
-            const World::Ent& e = w.ents[i];
-            if (!e.alive || !w.isEnemy(player, e.player)) continue;
-            float ex = e.x, ey = e.y;
-            if (e.isBuilding) { ex += 1.5f; ey += 1.5f; }
-            // 水上目标或离岸 6 格内的沿岸目标
-            int tx0 = std::max(0, (int)ex - 6), ty0 = std::max(0, (int)ey - 6);
-            bool nearWater = false;
-            for (int ty = ty0; ty <= (int)ey + 6 && ty < w.map.h && !nearWater; ty++)
-                for (int tx = tx0; tx <= (int)ex + 6 && tx < w.map.w && !nearWater; tx++)
-                    if (w.map.at(tx, ty).terrain == Terrain::Water) nearWater = true;
-            if (!nearWater) continue;
-            float d = distf(nx, ny, ex, ey);
-            if (d < sd) { sd = d; seaT = (int)i; }
+    // Scout from the player's fog, without consulting unseen enemy entities.
+    // Keep return/rearm and existing attack orders intact. No additional RNG or
+    // persistent timers are needed: movement and fog record exploration progress.
+    int airAttacks=0;
+    for(EID id:airIds) {
+        const auto& e=w.ents[id];const auto& def=unitDef(e.utype);
+        const bool readyOnPad=e.state==UState::Landed && def.ammo>0 && e.ammo>=def.ammo;
+        if(e.utype==UnitType::Hornet || e.state==UState::Returning || (e.state==UState::Landed && !readyOnPad) || e.immobilized()
+            || (def.ammo>0 && e.ammo<=0)) continue;
+        if((e.state==UState::Chasing || e.state==UState::Attacking) && w.valid(e.target)) continue;
+        if(targetB!=INVALID_EID && issueAttack({id},targetB)>0) { ++airAttacks;continue; }
+        if(e.state!=UState::Idle && e.state!=UState::Circling && !readyOnPad) continue;
+        Vec2i scout{-1,-1};float nearest=std::numeric_limits<float>::max();
+        for(int y=0;y<w.map.h;++y)for(int x=0;x<w.map.w;++x) {
+            if(w.map.fogAt(player,x,y)!=FOG_UNSEEN) continue;
+            float dx=x+0.5f-e.x,dy=y+0.5f-e.y;float distance=dx*dx+dy*dy;
+            if(distance<nearest) { nearest=distance;scout={x,y}; }
         }
-        if (seaT != INVALID_EID) w.orderAttack(navyIds, seaT);
+        if(scout.x>=0) w.orderMove({id},scout.x+0.5f,scout.y+0.5f,false);
     }
+    if(airAttacks>0 && attackWave<std::numeric_limits<int>::max()) ++attackWave;
+
+    // Ships explore their reachable water component before a target is known.
+    // A weapon-incompatible or unreachable enemy must not pin the fleet in port.
+    int navalAttacks=0;
+    for(EID id:navyIds) {
+        const auto& ship=w.ents[id];
+        if(ship.immobilized())continue;
+        if((ship.state==UState::Chasing || ship.state==UState::Attacking) && w.valid(ship.target))continue;
+        if(targetB!=INVALID_EID && issueAttack({id},targetB)>0){++navalAttacks;continue;}
+        if(ship.state!=UState::Idle)continue;
+        const auto scout=navalScoutGoal(w,ship);
+        if(scout.x>=0)w.orderMove({id},scout.x+0.5f,scout.y+0.5f,false);
+    }
+    if(navalAttacks>0 && attackWave<std::numeric_limits<int>::max())++attackWave;
 
     // 陆军不足阈值：不进攻，向集结点集结（防守）
     if (army < threshold || targetB == INVALID_EID) {
@@ -739,6 +852,7 @@ void SkirmishAI::doAttack(World& w) {
 
     // 困难/残暴：多路进攻（分两组从不同方向夹击）
     bool multiVector = (difficulty == AIDiff::Hard || difficulty == AIDiff::Brutal);
+    int accepted=0;
     if (multiVector && (int)armyIds.size() >= 12) {
         std::vector<EID> g1, g2;
         for (size_t i = 0; i < armyIds.size(); i++) {
@@ -749,23 +863,24 @@ void SkirmishAI::doAttack(World& w) {
         float fd = 1e9f;
         for (size_t i = 0; i < w.ents.size(); i++) {
             const World::Ent& e = w.ents[i];
-            if (!e.alive || !w.isEnemy(player, e.player)) continue;
+            if (!visibleEnemy(e)) continue;
             if ((int)i == targetB) continue;
-            float ex = e.x, ey = e.y;
-            if (e.isBuilding) { ex += 1.5f; ey += 1.5f; }
-            float d = distf((float)ac.x, (float)ac.y, ex, ey);
+            const auto point=center(e);
+            float d = distf((float)ac.x, (float)ac.y, point.x, point.y);
             if (d > 12.0f && d < fd) { fd = d; flankTarget = (int)i; }
         }
         if (flankTarget == INVALID_EID) flankTarget = targetB;
-        w.orderAttack(g1, targetB);
-        w.orderAttack(g2, flankTarget);
+        accepted+=issueAttack(g1,targetB);
+        accepted+=issueAttack(g2,flankTarget);
     } else {
         // 混编部队整体进攻（坦克在前、AA 护航跟随、步兵同组）
-        w.orderAttack(armyIds, targetB);
+        accepted=issueAttack(armyIds,targetB);
     }
 
-    attackWave++;
-    rallyPoint = { -1, -1 };  // 进攻后重置集结点
+    if(accepted>0) {
+        if(attackWave<std::numeric_limits<int>::max()) ++attackWave;
+        rallyPoint = { -1, -1 };  // Only a real accepted attack completes a wave.
+    }
 }
 
 // ===================== 战术微操 =====================
@@ -1127,8 +1242,7 @@ void SkirmishAI::doSupport(World& w) {
 int SkirmishAI::countArmy(World& w) {
     int n = 0;
     for (const World::Ent& e : w.ents)
-        if (e.alive && !e.isBuilding && e.player == player &&
-            !unitDef(e.utype).canHarvet() && e.utype != UnitType::MCV && e.utype != UnitType::Engineer)
+        if (e.player == player && combatUnit(e))
             n++;
     return n;
 }
@@ -1136,8 +1250,7 @@ int SkirmishAI::countArmy(World& w) {
 Vec2i SkirmishAI::findArmyCenter(World& w) {
     int sx = 0, sy = 0, n = 0;
     for (const World::Ent& e : w.ents)
-        if (e.alive && !e.isBuilding && e.player == player &&
-            !unitDef(e.utype).canHarvet() && e.utype != UnitType::MCV) {
+        if (e.player == player && combatUnit(e)) {
             sx += (int)e.x; sy += (int)e.y; n++;
         }
     if (n == 0) return { w.map.w / 2, w.map.h / 2 };

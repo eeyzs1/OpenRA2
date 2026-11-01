@@ -17,6 +17,8 @@
 //     icon_bld_<name>.png            建筑图标 56x44
 //     fx_explosion_<0..11>.png       爆炸帧
 //     fx_smoke_<0..5>.png            烟雾帧
+//     fx_warpin_<n>.png / fx_warpout_<n>.png / fx_warpaway_<n>.png  原版传送序列
+//     （上述三类帧数独立位于 assets/chrono_fx.ini；1..256；不改变模拟计时）
 //     fx_muzzle.png                  枪口焰
 //     fx_proj_<0|1>_d<0..7>.png      炮弹(0)/导弹(1)
 //   assets/sfx/

@@ -1,4 +1,4 @@
-// Game 的 HUD 部分实现（侧边栏/小地图/菜单）—— RA2 原作 1:1 复刻
+// Game HUD（侧边栏/小地图/菜单）：保留经典金属布局，文字适配逻辑画布。
 // 原作侧边栏结构（对照 1366x768 实测截图等比放大到 1440x810）：
 //   顶部银雕（资金黑槽绿 LED + 蓝铬图标带）→ 银框雷达（黑底小地图）→
 //   维修/出售蓝铬药丸（扳手|$）→ 4 蓝铬页签（兵种剪影）→ cameo 双列网格 →
@@ -6,6 +6,8 @@
 //   底部蓝铬穹顶+阵营徽 → 底部状态栏（左功能图标，右超武计时）
 // 阵营化：盟军银框蓝铬 / 苏军(含中国)金框银铬红符 / 尤里紫银框紫铬
 #include "game/game.h"
+#include "game/hud_text.h"
+#include "game/production_work.h"
 #include "game/campaign.h"
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
@@ -571,11 +573,19 @@ static void loadMoneyAndClock() {
     }
 }
 
-static void drawMoneyDigits(int value, int cx, int y) {
-    char buf[16];
-    snprintf(buf, sizeof buf, "%d", std::max(0, value));
+static Rectangle drawMoneyDigits(Font font, Credits value, int cx, int y) {
+    char buf[32];
+    snprintf(buf, sizeof buf, "%lld", (long long)std::max<Credits>(0,value));
     int n = (int)strlen(buf);
     int dw = g_orig.moneyOk && g_orig.moneyDigit[0].id ? g_orig.moneyDigit[0].width + 1 : 8;
+    const int maxWidth=156;
+    if(n*dw>maxWidth) {
+        int size=14;
+        while(size>10 && MeasureTextEx(font,buf,(float)size,0).x>maxWidth) --size;
+        const int width=(int)MeasureTextEx(font,buf,(float)size,0).x;
+        drawTextS(font,buf,cx-width/2,y,size,Color{90,230,255,255});
+        return {(float)(cx-width/2),(float)y,(float)width,(float)size};
+    }
     int x = cx - n * dw / 2;
     Color tint = value > 0 ? WHITE : Color{255, 90, 70, 255};
     for (int i = 0; i < n; i++) {
@@ -589,6 +599,8 @@ static void drawMoneyDigits(int value, int cx, int y) {
             x += 8;
         }
     }
+    return {(float)(cx-n*dw/2),(float)y,(float)(n*dw),
+        (float)(g_orig.moneyOk?g_orig.moneyDigit[0].height:14)};
 }
 
 static void drawGClock(Rectangle r, float frac) {
@@ -896,6 +908,7 @@ std::vector<UnitType> Game::tabUnits() const {
 }
 
 void Game::drawHUD() {
+    if(auditHud) { hudItems.clear();hudTip=HudTipAudit{};hudMessage=HudMessageAudit{}; }
     int sbX = SCREEN_W - sidebarW;
     Player& me = world.players[localPlayer];
     const int style = guiStyleOf(me.faction);
@@ -946,7 +959,8 @@ void Game::drawHUD() {
         DrawTexturePro(g_orig.sidebar[style], {0, 0, 171, 768},
                        {(float)sbX, 0, (float)sidebarW, (float)SCREEN_H}, {0, 0}, 0, WHITE);
         // 资金：青像素数字（非 7 段 LED）
-        drawMoneyDigits(me.money, OM.MX(1272), OM.MY(3));
+        const auto moneyBounds=drawMoneyDigits(font,me.money, OM.MX(1272), OM.MY(3));
+        if(auditHud) hudMoney={me.money,moneyBounds,std::to_string(me.money)};
         // 雷达上琉璃带左图标组：点击打开菜单（原作：选项按钮）
         if (CheckCollisionPointRec(mousePos(), {(float)OM.MX(1206), (float)OM.MY(18),
                                                 (float)OM.MW(62), (float)OM.MH(15)}) &&
@@ -991,7 +1005,8 @@ void Game::drawHUD() {
 
         // ===================== 顶部银雕 + 资金 LED =====================
         DrawTexture(C.header, sbX, 0, WHITE);
-        drawMoneyDigits(me.money, sbX + sidebarW / 2, 6);
+        const auto moneyBounds=drawMoneyDigits(font,me.money, sbX + sidebarW / 2, 6);
+        if(auditHud) hudMoney={me.money,moneyBounds,std::to_string(me.money)};
         // 图标带左组：点击打开菜单（原作：选项按钮）
         if (CheckCollisionPointRec(mousePos(), {(float)sbX + 20, 33, 58, 11}) && mPressed(MOUSE_LEFT_BUTTON)) {
             showMenu = true;
@@ -1141,13 +1156,14 @@ void Game::drawHUD() {
         DrawRectangle((int)r.x + 1, (int)r.y + 1, (int)r.width - 2, vh, Color{0, 0, 0, 150});
     };
     auto nameStrip = [&](Rectangle r, const char* nm, bool bright) { // 名称：底部暗条 + 描边字
-        const int stripH = 15;
+        const int stripH = 18;
         int sy = (int)(r.y + r.height) - stripH;
         DrawRectangle((int)r.x + 1, sy, (int)r.width - 2, stripH, Color{0, 0, 0, 170});
         DrawRectangleGradientV((int)r.x + 1, sy - 4, (int)r.width - 2, 4,
                                Color{0, 0, 0, 0}, Color{0, 0, 0, 140});
-        int nw = (int)MeasureTextEx(font, nm, 11, 0).x;
-        drawTextS(font, nm, (int)(r.x + r.width / 2 - nw / 2), sy + 1, 11,
+        const std::string label=hudFitText(font,nm,14,r.width-6);
+        int nw = (int)MeasureTextEx(font, label.c_str(), 14, 0).x;
+        drawTextS(font, label.c_str(), (int)(r.x + r.width / 2 - nw / 2), sy + 1, 14,
                   bright ? Color{250, 248, 235, 255} : Color{150, 152, 158, 255});
     };
 
@@ -1190,8 +1206,9 @@ void Game::drawHUD() {
                     drawTextS(font, ct, (int)(r.x + r.width / 2 - MeasureTextEx(font, ct, 14, 1).x / 2),
                               (int)(r.y + r.height / 2 - 12), 14, WHITE);
                 } else if ((world.tick / 15) % 2) {
-                    int rw = (int)MeasureTextEx(font, TR(S::Ready), 12, 1).x;
-                    drawTextS(font, TR(S::Ready), (int)(r.x + r.width / 2 - rw / 2), (int)r.y + 3, 12,
+                    const char* stateLabel = TR(S::Ready);
+                int rw = (int)MeasureTextEx(font, stateLabel, 12, 1).x;
+                    drawTextS(font, stateLabel, (int)(r.x + r.width / 2 - rw / 2), (int)r.y + 3, 12,
                               Color{160, 255, 160, 255});
                 }
                 const char* nm = !isPara ? swName((SWType)it.idx)
@@ -1232,7 +1249,7 @@ void Game::drawHUD() {
             const Sprite& icon = isUnit ? g_sprites.iconUnit((UnitType)typeIdx, me.colorId)
                                         : g_sprites.iconBld((BldType)typeIdx, me.colorId);
             const char* name = isUnit ? unitName((UnitType)typeIdx) : bldName((BldType)typeIdx);
-            int cost = isUnit ? unitDef((UnitType)typeIdx).cost : bldDef((BldType)typeIdx).cost;
+            int cost = isUnit ? world.unitProductionCost(localPlayer,(UnitType)typeIdx) : bldDef((BldType)typeIdx).cost;
             ProdItem& prod = isUnit ? me.unitProd[unitDef((UnitType)typeIdx).prodCat()]
                                     : (isDefenseBld((BldType)typeIdx) ? me.defProd : me.bldProd);
             bool canBuild = false, readyThis = false, activeThis = false;
@@ -1274,11 +1291,19 @@ void Game::drawHUD() {
                         if (isFactoryFor((BldType)b, u))
                             reason = TextFormat(TR(S::TipRequireFmt), bldName((BldType)b));
                 }
-                if (canBuild && me.money < u.cost) reason = TR(S::TipNoMoney);
+                if (canBuild && me.money < cost && !(prod.active && prod.isUnit && prod.typeIdx==typeIdx)) reason = TR(S::TipNoMoney);
             }
             activeThis = prod.active && prod.typeIdx == typeIdx && prod.isUnit == isUnit;
+            const auto rejection=world.productionStartRejection(localPlayer,isUnit,typeIdx);
+            canBuild=rejection==ProductionRejectReason::None;
+            if(!canBuild && !(activeThis && rejection==ProductionRejectReason::Busy) &&
+                ((rejection!=ProductionRejectReason::MissingPrerequisite && rejection!=ProductionRejectReason::MissingFactory) || reason.empty()))
+                reason=TR(productionRejectText(rejection));
             readyThis = activeThis && prod.ready;
             bool heldThis = activeThis && prod.held;
+            const std::string facilityReason=productionFacilityFeedback(isUnit,typeIdx);
+            const bool facilityPaused=activeThis && !facilityReason.empty();
+            if(activeThis && !prod.ready && reason.empty() && me.money<prod.totalCost-prod.paid) reason=TR(S::TipNoMoney);
             slotShell(r, readyThis, activeThis, false);
             // 图标静止铺入（原作不旋转 cameo；进度用 gclock2 扫臂）
             auto drawCameo = [&](Rectangle dst) {
@@ -1294,68 +1319,58 @@ void Game::drawHUD() {
                 float dw = icon.tex.width * isc, dh = icon.tex.height * isc;
                 drawCameo({r.x + (r.width - dw) / 2, r.y + 2 + (availH - dh) / 2, dw, dh});
             }
-            // gclock：按「已付金额/总造价」扫臂（RA2：扣多少钱转多少；缺钱/HOLD 时 paid 冻结 → clock 冻结）
-            if (activeThis && !prod.ready) {
-                float p = 0.0f;
-                if (prod.totalCost > 0)
-                    p = (float)prod.paid / (float)prod.totalCost;
-                else if (cost > 0)
-                    p = (float)prod.paid / (float)cost;
-                drawGClock({r.x + 2, r.y + 2, r.width - 4, r.height - 4}, std::min(1.0f, std::max(0.0f, p)));
-            }
-            if (heldThis) {
-                int hw = (int)MeasureTextEx(font, "HOLD", 12, 1).x;
-                drawTextS(font, "HOLD", (int)(r.x + r.width / 2 - hw / 2), (int)r.y + 3, 12,
-                          Color{255, 220, 100, 255});
-            } else if (readyThis && (world.tick / 15) % 2) {
-                int rw = (int)MeasureTextEx(font, TR(S::Ready), 12, 1).x;
-                drawTextS(font, TR(S::Ready), (int)(r.x + r.width / 2 - rw / 2), (int)r.y + 3, 12,
-                          Color{160, 255, 160, 255});
+            // Work is independent of quote rounding, including free production.
+            const int buildTicks=isUnit?unitDef((UnitType)typeIdx).buildTime:bldDef((BldType)typeIdx).buildTime;
+            const float progress=activeThis?std::clamp((float)(int64_t(prod.progress)*PRODUCTION_WORK_SCALE+prod.workRemainder)
+                /(float)(int64_t(std::max(1,buildTicks))*PRODUCTION_WORK_SCALE),0.f,1.f):0.f;
+            if(activeThis && !prod.ready) drawGClock({r.x+2,r.y+2,r.width-4,r.height-4},progress);
+            const char* stateLabel=heldThis?TR(S::TipHeld):facilityPaused?TR(S::TipFacilityHalted):readyThis?TR(isUnit?S::ExitBlocked:S::Ready):nullptr;
+            if(stateLabel) {
+                const char* badge=(heldThis || facilityPaused)?"||":isUnit?"!":stateLabel;
+                const std::string label=hudFitText(font,badge,14,r.width-(isUnit?29:6));
+                const int width=(int)MeasureTextEx(font,label.c_str(),14,0).x;
+                DrawRectangle((int)r.x+2,(int)r.y+2,(int)r.width-4,18,Color{0,0,0,230});
+                drawTextS(font,label.c_str(),isUnit?(int)r.x+5:(int)(r.x+(r.width-width)/2),(int)r.y+3,14,
+                    heldThis?Color{255,220,100,255}:Color{160,255,160,255});
             }
             // 排队数量角标（右上角）
             int totalN = queuedN + (activeThis && isUnit ? 1 : 0);
             if (isUnit && totalN > 0) {
-                DrawRectangle((int)r.x + (int)r.width - 18, (int)r.y + 2, 16, 13, Color{0, 0, 0, 170});
-                drawTextS(font, TextFormat("%d", totalN), (int)r.x + (int)r.width - 13, (int)r.y + 3, 11,
+                DrawRectangle((int)r.x + (int)r.width - 23, (int)r.y + 2, 21, 18, Color{0, 0, 0, 230});
+                drawTextS(font, TextFormat("%d", totalN), (int)r.x + (int)r.width - 21, (int)r.y + 3, 14,
                           Color{255, 220, 100, 255});
             }
             nameStrip(r, name, canBuild || activeThis);
+            if(auditHud) hudItems.push_back({isUnit,typeIdx,cost,r,progress,name,hudFitText(font,name,14,r.width-6),14});
             if (hov) {
                 DrawRectangleLinesEx({r.x + 1, r.y + 1, r.width - 2, r.height - 2}, 1,
                                      Color{220, 200, 140, 140});
                 if (!tipSet) {
                     tipSet = true; tipName = name; tipPos = mousePos();
-                    // RA2：侧栏以造价与已付进度为准（gclock=paid/cost），不显示虚假「剩余秒数」
-                    if (activeThis && !prod.ready && prod.totalCost > 0)
-                        tipSub = TextFormat("$%d  (%d/%d)", cost, prod.paid, prod.totalCost);
-                    else
-                        tipSub = TextFormat(TR(S::TipCostTimeFmt), cost);
-                    if (heldThis) tipSub = std::string(tipSub) + "  [HOLD]";
-                    if (!reason.empty()) tipReason = reason;
+                    tipSub=TextFormat(TR(S::TipPriceFmt),cost);
+                    if(activeThis) tipSub+=std::string("\n")+TextFormat(TR(S::TipPaidFmt),prod.paid,prod.totalCost);
+                    if(heldThis) tipReason=TR(S::TipHeld);
+                    else if(!facilityReason.empty() && (activeThis || canBuild)) tipReason=facilityReason;
+                    else if(readyThis) {
+                        if(isUnit && !world.hasFactoryFor(localPlayer,unitDef((UnitType)typeIdx)))
+                            tipReason=reason.empty()?TR(S::MsgProductionFactory):reason;
+                        else tipReason=TR(isUnit?S::ExitBlocked:S::Ready);
+                    }
+                    else if(!reason.empty()) tipReason=reason;
+                    else if(activeThis && me.lowPower() && g_gameRules.lowPowerSpeedFactor<1) tipReason=TR(S::TipLowPower);
+
                 }
                 if (mPressed(MOUSE_LEFT_BUTTON)) {
-                    if (readyThis) {
-                        me.placingBld = (BldType)typeIdx;
-                        placing = true;
-                        message(TR(S::MsgPlaceBld));
-                    } else if (activeThis && prod.held) {
-                        // HOLD 中左键 → 继续
-                        World::Cmd c;
-                        c.type = isUnit ? World::Cmd::HoldUnitProd : World::Cmd::HoldBldProd;
-                        c.a = typeIdx; c.b = 0;
-                        issueCmd(c);
-                    } else if (!canBuild) { message(TR(S::MsgCannotBuild)); }
-                    else if (isUnit || !activeThis) {
-                        // 单位：可排队；建筑/防御：仅本队列空闲时可开（RA2 双队列并行）
-                        bool ok = isUnit ? (world.unitQueuedCount(localPlayer, unitDef((UnitType)typeIdx).prodCat()) < 30)
-                                         : !prod.active;
-                        if (!ok) { message(TR(S::MsgQueueBusy)); }
-                        else {
-                            World::Cmd c;
-                            c.type = isUnit ? World::Cmd::StartUnitProd : World::Cmd::StartBldProd;
-                            c.a = typeIdx;
-                            issueCmd(c);
+                    if (readyThis && !isUnit) {
+                        if(!placementPending) {
+                            placementType = (BldType)typeIdx; placing = true; message(TR(S::MsgPlaceBld));
                         }
+                    } else if (activeThis && prod.held) {
+                        World::Cmd c; c.type=isUnit?World::Cmd::HoldUnitProd:World::Cmd::HoldBldProd;
+                        c.a=typeIdx;c.b=0;issueCmd(c);
+                    } else {
+                        World::Cmd c;c.type=isUnit?World::Cmd::StartUnitProd:World::Cmd::StartBldProd;
+                        c.a=typeIdx;issueCmd(c);
                     }
                 }
                 if (mPressed(MOUSE_RIGHT_BUTTON)) {
@@ -1368,11 +1383,9 @@ void Game::drawHUD() {
                     } else if (isUnit && (totalN > 0 || (activeThis && prod.held))) {
                         World::Cmd c; c.type = World::Cmd::CancelUnitProd; c.a = typeIdx;
                         issueCmd(c);
-                        message(TR(S::MsgCanceledOne));
                     } else if (!isUnit && activeThis) {
                         World::Cmd c; c.type = World::Cmd::CancelBldProd; c.a = typeIdx;
                         issueCmd(c);
-                        message(TR(S::MsgCanceledProd));
                     }
                 }
             }
@@ -1616,37 +1629,59 @@ void Game::drawHUD() {
         }
     }
 
-    // ---- 悬停提示（金属信息槽 + 金边） ----
-    if (tipSet) {
-        int tx = (int)tipPos.x + 16, ty = (int)tipPos.y + 6;
-        int wname = (int)MeasureTextEx(font, tipName.c_str(), 15, 0).x;
-        if (tx + wname > sbX - 4) tx = (int)tipPos.x - wname - 14;
-        int wsub = tipSub.empty() ? 0 : (int)MeasureTextEx(font, tipSub.c_str(), 12, 0).x;
-        int wreas = tipReason.empty() ? 0 : (int)MeasureTextEx(font, tipReason.c_str(), 12, 0).x;
-        int bw = wname;
-        if (wsub > bw) bw = wsub;
-        if (wreas > bw) bw = wreas;
-        bw += 18;
-        int bh = 26 + (tipSub.empty() ? 0 : 15) + (tipReason.empty() ? 0 : 15);
-        if (tx + bw > SCREEN_W) tx = SCREEN_W - bw - 2;
-        if (tx < 2) tx = 2;
-        Rectangle tipR{(float)(tx - 8), (float)(ty - 6), (float)bw, (float)bh};
-        DrawRectangleRec(tipR, Color{12, 14, 18, 235});
-        guiBevel(tipR, false);
-        DrawRectangleLinesEx(tipR, 1, GUI_GOLD);
-        DrawRectangle((int)tipR.x + 2, (int)tipR.y + 2, (int)tipR.width - 4, (int)tipR.height - 4, Color{255, 210, 90, 12});
-        drawTextS(font, tipName.c_str(), tx, ty, 15, Color{255, 240, 200, 255});
-        int ly = ty + 17;
-        if (!tipSub.empty()) { drawTextS(font, tipSub.c_str(), tx, ly, 12, Color{200, 205, 215, 255}); ly += 14; }
-        if (!tipReason.empty()) drawTextS(font, tipReason.c_str(), tx, ly, 12, Color{255, 120, 95, 255});
+    // Tooltips use readable fixed type and wrap before positioning beside the sidebar.
+    if(tipSet) {
+        struct Line { std::string text;int size;Color color; };
+        std::vector<Line> lines;
+        const float textLimit=std::min(360.f,(float)sbX-32);
+        auto append=[&](const std::string& text,int size,Color color) {
+            for(const auto& line:hudWrapText(font,text,(float)size,textLimit)) lines.push_back({line,size,color});
+        };
+        append(tipName,17,Color{255,240,200,255});
+        append(tipSub,15,Color{225,230,240,255});
+        append(tipReason,15,Color{255,190,110,255});
+        float visibleHeight=16;
+        for(size_t i=0;i<lines.size();++i) {
+            if(visibleHeight+lines[i].size+5>SCREEN_H-BOTTOM_BAR_H-16) {
+                lines.resize(i);
+                if(!lines.empty()) lines.back().text=hudFitText(font,lines.back().text+"...",(float)lines.back().size,textLimit);
+                break;
+            }
+            visibleHeight+=lines[i].size+5;
+        }
+        float width=0,height=16;
+        for(const auto& line:lines) { width=std::max(width,MeasureTextEx(font,line.text.c_str(),(float)line.size,0).x);height+=line.size+5; }
+        width+=20;
+        float x=tipPos.x>=sbX?sbX-width-8:tipPos.x+16;
+        float y=tipPos.y+10;
+        if(y+height>SCREEN_H-BOTTOM_BAR_H-6) y=tipPos.y-height-12;
+        x=std::clamp(x,4.f,(float)SCREEN_W-width-4);
+        y=std::clamp(y,4.f,(float)SCREEN_H-BOTTOM_BAR_H-height-6);
+        Rectangle tipR{x,y,width,height};
+        DrawRectangleRec(tipR,Color{10,12,17,250});guiBevel(tipR,false);DrawRectangleLinesEx(tipR,1,GUI_GOLD);
+        float ly=y+8;
+        for(const auto& line:lines) { drawTextS(font,line.text.c_str(),(int)x+10,(int)ly,line.size,line.color);ly+=line.size+5; }
+        if(auditHud) {
+            hudTip.bounds=tipR;hudTip.name=tipName;hudTip.sub=tipSub;hudTip.reason=tipReason;
+            for(const auto& line:lines) { hudTip.lines.push_back(line.text);hudTip.lineSizes.push_back(line.size); }
+        }
     }
 
     // ===================== 消息与战役目标（左上角，半透底板） =====================
+    int messageBottom=0;
     if (msgTimer > 0) {
-        int mw = (int)MeasureTextEx(font, msg.c_str(), 15, 0).x + 16;
-        DrawRectangle(4, 4, mw, 22, Color{0, 0, 0, 160});
-        guiBevel({4, 4, (float)mw, 22}, true);
-        drawTextS(font, msg.c_str(), 12, 8, 15, Color{245, 240, 220, 255});
+        const int maxWidth=std::max(40,sbX-8);
+        auto lines=hudWrapText(font,msg,15,(float)maxWidth-16);
+        if(lines.empty()) lines.push_back("");
+        if(lines.size()>6) { lines.resize(6);lines.back()=hudFitText(font,lines.back()+"...",15,(float)maxWidth-16); }
+        int mw=16;
+        for(const auto& line:lines) mw=std::max(mw,(int)std::ceil(MeasureTextEx(font,line.c_str(),15,0).x)+16);
+        mw=std::min(maxWidth,mw);const int mh=22+18*((int)lines.size()-1);messageBottom=4+mh;
+        if(auditHud) { hudMessage.bounds={4,4,(float)mw,(float)mh};hudMessage.lines=lines; }
+        DrawRectangle(4,4,mw,mh,Color{0,0,0,160});
+        guiBevel({4,4,(float)mw,(float)mh},true);
+        for(size_t line=0;line<lines.size();++line)
+            drawTextS(font,lines[line].c_str(),12,8+(int)line*18,15,Color{245,240,220,255});
     }
 
     if (campaignMission >= 0 && !gameOver) {
@@ -1672,7 +1707,7 @@ void Game::drawHUD() {
             obj += TR(S::ObjElimAll);
         }
         int ow = (int)MeasureTextEx(font, obj.c_str(), 13, 0).x + 16;
-        int oy = msgTimer > 0 ? 28 : 6;
+        int oy = msgTimer > 0 ? messageBottom+2 : 6;
         DrawRectangle(4, oy, ow, 20, Color{0, 0, 0, 150});
         guiBevel({4, (float)oy, (float)ow, 20}, true);
         Color objCol = (campRuntime.timerVisible && campRuntime.timerRemaining(world.tick) <= 30)
@@ -1798,7 +1833,7 @@ void Game::updateMinimap() {
         for (int x = 0; x < w; x++) {
             FogState fs = world.map.fogAt(localPlayer, x, y);
             if (fs == FOG_UNSEEN) continue;
-            const Cell& c = world.map.at(x, y);
+            const Cell& c = observedCell(x, y);
             Color col;
             switch (c.terrain) {
                 case Terrain::Water: col = Color{30, 60, 140, 255}; break;
@@ -1811,10 +1846,15 @@ void Game::updateMinimap() {
             if (fs == FOG_SEEN) { col.r /= 2; col.g /= 2; col.b /= 2; }
             DrawRectangle((int)(x * sc), (int)(y * sc), (int)sc + 1, (int)sc + 1, col);
         }
+    for(const auto& [key,b]:fogKnowledge.buildings) {
+        if(b.player<0 || buildingVisible(b.x,b.y,b.type) || !buildingExplored(b)) continue;
+        Color col=HOUSE_COLORS[b.color];col.r/=2;col.g/=2;col.b/=2;
+        DrawRectangle((int)(b.x*sc)-1,(int)(b.y*sc)-1,4,4,col);
+    }
     for (const World::Ent& e : world.ents) {
         if (!e.alive || e.player < 0) continue;
         FogState fs = world.map.fogAt(localPlayer, (int)e.x, (int)e.y);
-        if (e.player != localPlayer && fs != FOG_VISIBLE) continue;
+        if (e.player != localPlayer && (e.isBuilding?!buildingVisible((int)e.x,(int)e.y,e.btype):fs!=FOG_VISIBLE)) continue;
         Color col = HOUSE_COLORS[world.players[e.player].colorId];
         if (e.isBuilding) DrawRectangle((int)(e.x * sc) - 1, (int)(e.y * sc) - 1, 4, 4, col);
         else DrawRectangle((int)(e.x * sc), (int)(e.y * sc), 2, 2, col);
@@ -1865,18 +1905,23 @@ void Game::drawMinimap(int mmX, int mmY, int mmW, int mmH) {
                    {0, 0, srcW, -srcH},
                    {(float)mmX, (float)mmY, (float)mmW, (float)mmH}, {0, 0}, 0, WHITE);
     float scX = mmW / (float)w, scY = mmH / (float)h;
-    // 摄像机视野框
-    int viewW = SCREEN_W - sidebarW;
-    int t0x, t0y, t1x, t1y;
-    screenToTile(camX, camY, t0x, t0y);
-    screenToTile(camX + viewW, camY + SCREEN_H, t1x, t1y);
-    int t2x, t2y, t3x, t3y;
-    screenToTile(camX + viewW, camY, t2x, t2y);
-    screenToTile(camX, camY + SCREEN_H, t3x, t3y);
-    int minX = std::min({t0x, t1x, t2x, t3x}), maxX = std::max({t0x, t1x, t2x, t3x});
-    int minY = std::min({t0y, t1y, t2y, t3y}), maxY = std::max({t0y, t1y, t2y, t3y});
-    DrawRectangleLines(mmX + (int)(minX * scX), mmY + (int)(minY * scY),
-                       (int)((maxX - minX) * scX), (int)((maxY - minY) * scY), WHITE);
+    // Use the zoomed playable viewport; clip the indicator to the radar
+    // instead of letting it draw across the chrome and money display.
+    const float viewW=(SCREEN_W-sidebarW)/camZoom;
+    const float viewH=(SCREEN_H-BOTTOM_BAR_H)/camZoom;
+    int t0x,t0y,t1x,t1y,t2x,t2y,t3x,t3y;
+    screenToTile(camX,camY,t0x,t0y);
+    screenToTile(camX+viewW,camY+viewH,t1x,t1y);
+    screenToTile(camX+viewW,camY,t2x,t2y);
+    screenToTile(camX,camY+viewH,t3x,t3y);
+    int minX=std::clamp(std::min({t0x,t1x,t2x,t3x}),0,w);
+    int maxX=std::clamp(std::max({t0x,t1x,t2x,t3x}),0,w);
+    int minY=std::clamp(std::min({t0y,t1y,t2y,t3y}),0,h);
+    int maxY=std::clamp(std::max({t0y,t1y,t2y,t3y}),0,h);
+    int left=mmX+(int)(minX*scX),top=mmY+(int)(minY*scY);
+    int right=std::min(mmX+mmW-1,mmX+(int)(maxX*scX));
+    int bottom=std::min(mmY+mmH-1,mmY+(int)(maxY*scY));
+    if(right>left && bottom>top) DrawRectangleLines(left,top,right-left,bottom-top,WHITE);
     // 小地图点击跳转
     if (CheckCollisionPointRec(mousePos(), {(float)mmX, (float)mmY, (float)mmW, (float)mmH})) {
         if (mDown(MOUSE_LEFT_BUTTON)) {
@@ -1885,7 +1930,7 @@ void Game::drawMinimap(int mmX, int mmY, int mmW, int mmH) {
             int px, py;
             tileToScreen((int)tx, (int)ty, px, py);
             camX = (float)px - viewW / 2.0f;
-            camY = (float)py - SCREEN_H / 2.0f;
+            camY = (float)py - viewH / 2.0f;
             clampCameraToMap();
         }
     }

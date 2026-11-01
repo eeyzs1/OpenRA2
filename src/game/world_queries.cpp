@@ -14,15 +14,24 @@ EID World::bldAt(int bx, int by) const {
     return v > 0 ? v - 1 : INVALID_EID;
 }
 
+void World::captureVisualTarget(PresentationEvent& event,const Ent& entity) const {
+    event.visualTarget=entity.isBuilding?VisualTarget::Building:entity.airborne()?VisualTarget::Aircraft
+        :unitDef(entity.utype).isInfantry()?VisualTarget::Infantry:VisualTarget::Vehicle;
+    event.flightFraction=entity.flightFraction();
+    event.magneticHeight=entity.airborne()?0:entity.magneticHeight;
+    const int x=(int)std::floor(event.x),y=(int)std::floor(event.y);
+    if(map.inBounds(x,y))event.terrainHeight=map.at(x,y).height;
+}
+
 static bool unitShouldOccupy(const World::Ent& e) {
     if (!e.alive || e.isBuilding || e.parasiting) return false;
-    if (unitDef(e.utype).isAir() && e.state != UState::Landed) return false;
+    if ((e.airborne() && e.state!=UState::DeployLanding) || e.magneticHeight>0) return false;
     return true;
 }
 
 static bool unitShouldAirBucket(const World::Ent& e) {
     if (!e.alive || e.isBuilding || e.parasiting) return false;
-    return unitDef(e.utype).isAir() && e.state != UState::Landed;
+    return e.airborne() || e.magneticHeight>0;
 }
 
 void World::rebuildUnitOcc() {
@@ -58,8 +67,11 @@ void World::unitOccSync(EID id) {
     }
 
     if (want >= 0) {
-        e.occNext = unitOccHead[(size_t)want];
-        unitOccHead[(size_t)want] = id;
+        // Canonical order must match rebuild after loading, irrespective of
+        // movement history or slot reuse. Callers use the first blocker.
+        EID* link=&unitOccHead[(size_t)want];
+        while(*link!=INVALID_EID && *link<id) link=&ents[*link].occNext;
+        e.occNext=*link;*link=id;
         e.occCell = want;
     }
 }
@@ -102,8 +114,9 @@ void World::airOccSync(EID id) {
     }
 
     if (want >= 0 && want < (int)airOccHead.size()) {
-        e.airNext = airOccHead[(size_t)want];
-        airOccHead[(size_t)want] = id;
+        EID* link=&airOccHead[(size_t)want];
+        while(*link!=INVALID_EID && *link<id) link=&ents[*link].airNext;
+        e.airNext=*link;*link=id;
         e.airBucket = want;
     }
 }
@@ -154,7 +167,7 @@ bool World::cellHardBlockedForMove(int x, int y, EID mover) const {
         if (hasVehicle) return true;
         return otherInf >= kInfStack;
     }
-    return hasVehicle; // 车/舰：仅被其他车/舰硬挡
+    return hasVehicle || otherInf>0; // Surface vehicles cannot overlap infantry; crushing is resolved before entry.
 }
 
 bool World::hasBld(int player, BldType t) const {
@@ -280,16 +293,53 @@ bool World::unitPrereqMet(int player, const UnitDef& u) const {
     return hasBld(player, u.prereq);
 }
 
+bool World::productionFacilityOperational(const Ent& building) {
+    return building.alive && building.isBuilding && !building.selling && building.constructAnim<=0
+        && building.chrono<=0 && building.drainedBy==INVALID_EID;
+}
+ProductionFacilityState World::productionFacilities(int player,bool unit,int type) const {
+    ProductionFacilityState result;
+    if(player<0 || player>=numPlayers || type<0 || type>=(unit?(int)UnitType::COUNT:(int)BldType::COUNT)) return result;
+    for(const auto& building:ents) {
+        if(!building.alive || !building.isBuilding || building.player!=player) continue;
+        if(unit?!isFactoryFor(building.btype,unitDef((UnitType)type)):building.btype!=BldType::ConYard) continue;
+        ++result.present;
+        if(productionFacilityOperational(building)) ++result.operational;
+        if(building.chrono>0) ++result.frozen;
+        if(building.drainedBy!=INVALID_EID) ++result.drained;
+        if(building.constructAnim>0 && !building.selling) ++result.constructing;
+        if(building.selling) ++result.selling;
+    }
+    return result;
+}
+
 bool World::hasFactoryFor(int player, const UnitDef& u) const {
     for (const Ent& e : ents)
         if (e.alive && e.isBuilding && e.player == player && isFactoryFor(e.btype, u)) return true;
     return false;
 }
 
-EID World::findNearestEnemy(int player, float x, float y, float maxR, bool includeBlds, const WeaponDef* w, UnitType seeker) {
+bool World::activePursuitFailure(const Ent& seeker,const Ent::FailedPursuit& failure) const {
+    return tick<failure.retryTick && valid(failure.target)
+        && (int)seeker.x==failure.sourceX && (int)seeker.y==failure.sourceY
+        && (int)ents[failure.target].x==failure.targetX && (int)ents[failure.target].y==failure.targetY;
+}
+
+void World::rememberPursuitFailure(EID seeker,EID target) {
+    if(!valid(seeker) || !valid(target)) return;
+    auto& unit=ents[seeker];auto& failures=unit.failedPursuits;
+    if(!map.inBounds((int)unit.x,(int)unit.y) || !map.inBounds((int)ents[target].x,(int)ents[target].y)) return;
+    std::erase_if(failures,[&](const auto& failure) { return failure.target==target || !activePursuitFailure(unit,failure); });
+    if(failures.size()<8) failures.push_back({target,(int)unit.x,(int)unit.y,(int)ents[target].x,(int)ents[target].y,tick+180});
+}
+
+EID World::findNearestEnemy(int player, float x, float y, float maxR, bool includeBlds, const WeaponDef* w, UnitType seeker,EID seekerId,bool firingOnly) {
     EID best = INVALID_EID;
     float bd = maxR;
     if (maxR <= 0.0f) return INVALID_EID;
+    const Ent* searching=valid(seekerId)?&ents[seekerId]:nullptr;
+    int failures=0;
+    if(searching) for(const auto& failure:searching->failedPursuits) failures+=activePursuitFailure(*searching,failure);
 
     auto consider = [&](EID id) {
         if (id < 0 || id >= (EID)ents.size()) return;
@@ -297,6 +347,8 @@ EID World::findNearestEnemy(int player, float x, float y, float maxR, bool inclu
         if (!e.alive || e.player < 0 || !isEnemy(player, e.player)) return;
         if (e.parasiting && e.utype == UnitType::TerrorDrone) return; // 寄生中的机器人不可被索敌（乌贼缠绕仍可被攻击摘除）
         if (e.isBuilding && !includeBlds) return;
+        if(seeker==UnitType::AttackDog && (e.isBuilding || !unitDef(e.utype).isInfantry())) return;
+        if(seeker==UnitType::Magnetron && !e.isBuilding && (unitDef(e.utype).isInfantry() || unitDef(e.utype).isAir())) return;
         if (!e.isBuilding) {
             if (e.camouflaged && e.utype != UnitType::Spy) return; // 幻影伪装：无法被自动索敌
             // 间谍（含伪装）：除军犬外无法被自动索敌（RA2 原作：军犬嗅探）
@@ -312,12 +364,18 @@ EID World::findNearestEnemy(int player, float x, float y, float maxR, bool inclu
         }
         // 尤里无法控制建筑（尤里首脑可控；心灵突击队有 C4 可炸建筑，不在此过滤）
         if (e.isBuilding && seeker == UnitType::Yuri) return;
+        WeaponDef candidate;
+        const WeaponDef* filter=w;
+        if(searching && (seeker==UnitType::Magnetron || (!searching->isBuilding && unitDef(searching->utype).hasAirWeapon))) {
+            if(attackRejection(seekerId,id)!=AttackRejectReason::None) return;
+            candidate=effWeapon(*searching,&e);filter=&candidate;
+        }
         // 武器射界过滤：空中目标需 antiAir，地面目标需 antiGround
-        if (w) {
-            bool airT = !e.isBuilding && unitDef(e.utype).isAir() && e.state != UState::Landed;
-            if (airT && !w->antiAir) return;
-            if (!airT && !w->antiGround) return;
-            if (w->navalOnly) {
+        if (filter) {
+            bool airT = e.airborne();
+            if (airT && !filter->antiAir) return;
+            if (!airT && !filter->antiGround) return;
+            if (filter->navalOnly) {
                 // 鱼雷类：仅水上目标（舰船或水上建筑）
                 bool onWater = e.isBuilding
                     ? map.at((int)e.x + bldDef(e.btype).w / 2, (int)e.y + bldDef(e.btype).h / 2).terrain == Terrain::Water
@@ -328,6 +386,16 @@ EID World::findNearestEnemy(int player, float x, float y, float maxR, bool inclu
         float ex = e.x, ey = e.y;
         if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
         float d = distf(x, y, ex, ey);
+        // Never defer a shot already in range. At capacity, defer new pursuits
+        // until an old failure expires instead of evicting and cycling endlessly.
+        float firingRange=filter?(float)filter->range:0;
+        if(e.isBuilding && seeker!=UnitType::COUNT && unitDef(seeker).hasC4()) firingRange=2.5f;
+        if(firingOnly && filter && d>firingRange)return;
+        if(searching && filter && d>firingRange) {
+            if(failures>=8) return;
+            for(const auto& failure:searching->failedPursuits)
+                if(failure.target==id && activePursuitFailure(*searching,failure)) return;
+        }
         // 最近距离；平局取更小 EID（扫描顺序无关、确定性）
         if (d < bd || (d == bd && (best == INVALID_EID || id < best))) {
             bd = d;
@@ -337,8 +405,8 @@ EID World::findNearestEnemy(int player, float x, float y, float maxR, bool inclu
 
     const int cx = (int)x, cy = (int)y;
     const int cellR = (int)std::ceil(maxR) + 1;
-    const bool needGround = !w || w->antiGround;
-    const bool needAir = !w || w->antiAir;
+    const bool needGround = !w || w->antiGround || (searching && !searching->isBuilding && unitDef(searching->utype).hasAirWeapon);
+    const bool needAir = !w || w->antiAir || (searching && !searching->isBuilding && unitDef(searching->utype).hasAirWeapon);
 
     // 地面单位：格占位环扫
     if (needGround && !unitOccHead.empty()) {
@@ -370,7 +438,7 @@ EID World::findNearestEnemy(int player, float x, float y, float maxR, bool inclu
     }
 
     // 飞行单位：4×4 粗桶
-    if (needAir && airBucketW > 0 && !airOccHead.empty()) {
+    if ((needAir || needGround) && airBucketW > 0 && !airOccHead.empty()) {
         const int bh = (map.h + AIR_BUCKET - 1) / AIR_BUCKET;
         const int minBx = std::max(0, (cx - cellR) / AIR_BUCKET);
         const int maxBx = std::min(airBucketW - 1, (cx + cellR) / AIR_BUCKET);
@@ -444,16 +512,21 @@ static const WeaponDef& ifvWeapon(UnitType cargo) {
 }
 
 // 有效武器：部署形态 / IFV 载兵 / 精英军衔 综合
-WeaponDef World::effWeapon(const Ent& e) const {
+WeaponDef World::effWeapon(const Ent& e,const Ent* target) const {
     if (e.isBuilding) return bldDef(e.btype).weapon;
     const UnitDef& ud = unitDef(e.utype);
     WeaponDef w = ud.weapon;
+    if(!target && valid(e.target)) target=&ents[e.target];
+    const bool buildingBeam=e.utype==UnitType::Magnetron && target && target->isBuilding;
+    const bool airWeapon=target && target->airborne() && ud.hasAirWeapon;
+    if(airWeapon)w=ud.airWeapon;
+    if(buildingBeam) w=magnetronBuildingWeapon();
     if (e.deployed && e.utype == UnitType::GuardianGI) w = ggiDeployedWeapon();
     else if (e.deployed && e.utype == UnitType::GI) w = giDeployedWeapon();
     // 攻城直升机部署后：远程重炮（不可移动，对建筑/车辆强力，溅射）
     else if (e.deployed && e.utype == UnitType::SiegeChopper) w = siegeChopperDeployedWeapon();
     else if (e.utype == UnitType::IFV && !e.cargo.empty()) w = ifvWeapon(e.cargo[0].type);
-    else if (e.vetRank >= 2 && ud.elite) w = *ud.elite;
+    else if (!buildingBeam && !airWeapon && e.vetRank >= 2 && ud.elite) w = *ud.elite;
     if (e.vetRank > 0) {
         int rank = std::clamp(e.vetRank, 0, 2);
         w.damage = (int)(w.damage * g_gameRules.veteranismDmgBonus[rank]);

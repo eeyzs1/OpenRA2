@@ -1,7 +1,9 @@
 #include "gfx/sprites.h"
 #include "gfx/assets.h"
 #include "gfx/vxl.h"
+#include "gfx/terrain_material.h"
 #include "core/content.h"
+#include "core/ini.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdarg>
@@ -9,6 +11,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <filesystem>
 
 const Color HOUSE_COLORS[MAX_PLAYERS] = {
     {255, 200, 40, 255},  // 金
@@ -23,22 +26,12 @@ const Color HOUSE_COLORS[MAX_PLAYERS] = {
 
 SpriteBank g_sprites;
 
-int dirFromVec(float dx, float dy) {
-    // 入参为瓦片坐标差分；等距投影到屏幕方向后再取 8 向
-    // sx=(x-y)*TW/2, sy=(x+y)*TH/2（与 tileToScreen 一致）
-    float sx = (dx - dy) * (TILE_W * 0.5f);
-    float sy = (dx + dy) * (TILE_H * 0.5f);
-    if (sx == 0.f && sy == 0.f) return 2;
-    float a = atan2f(sy, sx);            // 屏幕坐标 y 向下
-    int d = (int)roundf(a / (3.14159265f / 4.0f));
-    d = ((d % 8) + 8) % 8;               // 0=东 顺时针
-    return d;
-}
+
 
 // ---------------- 缓存 ----------------
 static uint64_t keyOf(int cat, int a, int b, int c, int player) {
     return ((uint64_t)cat << 56) | ((uint64_t)(a & 0xFFFF) << 40) |
-           ((uint64_t)(b & 0xFF) << 32) | ((uint64_t)(c & 0xFF) << 24) | (uint64_t)(player & 0xFF);
+           ((uint64_t)(b & 0xFF) << 32) | ((uint64_t)(c & 0xFFFF) << 16) | (uint64_t)(player & 0xFF);
 }
 
 // ---------------- 外部素材覆盖（assets/sprites/*.png，命名约定见 gfx/assets.h） ----------------
@@ -72,6 +65,26 @@ static PixBuf missingAssetPix(const char* kind, const char* name) {
 }
 int SpriteBank::missingCount() const { return g_spriteMissingCount; }
 
+static bool applyHouseMask(PixBuf& pixels,const std::string& imagePath,Color house) {
+    std::filesystem::path maskPath(imagePath);
+    maskPath.replace_filename(maskPath.stem().string()+"_remap.png");
+    std::string image=contentResolve(imagePath.c_str()),mask=contentResolve(maskPath.generic_string().c_str());
+    // A mod replacing a PNG without its mask must not inherit an unrelated base mask.
+    if(image.empty() || mask.empty() || std::filesystem::path(image).parent_path()!=std::filesystem::path(mask).parent_path()) return false;
+    PixBuf channel;
+    if(!channel.loadFromFile(mask.c_str())) return false;
+    if(channel.w!=pixels.w || channel.h!=pixels.h) {
+        missingAssetPix("remap-mask-size",mask.c_str());return false;
+    }
+    for(size_t i=0;i<pixels.px.size();++i) if(channel.px[i].a && pixels.px[i].a) {
+        float shade=channel.px[i].r/255.0f;
+        pixels.px[i].r=(uint8_t)(house.r*shade);
+        pixels.px[i].g=(uint8_t)(house.g*shade);
+        pixels.px[i].b=(uint8_t)(house.b*shade);
+    }
+    return true;
+}
+
 Sprite SpriteBank::makeSprite(PixBuf&& pb, int ox, int oy) {
     Sprite s;
     s.tex = pb.toTexture();
@@ -82,6 +95,7 @@ Sprite SpriteBank::makeSprite(PixBuf&& pb, int ox, int oy) {
 // ---------------- RA2 风格地面投影 ----------------
 // 在画布内烘烧软椭圆投影（下偏右，RA2 标志性视觉锚点）
 static void bakeShadow(PixBuf& pb, int cx, int cy, int rx, int ry) {
+    if(rx<=0 || ry<=0)return;
     for (int y = cy - ry; y <= cy + ry; y++)
         for (int x = cx - rx; x <= cx + rx; x++) {
             float ddx = (x - cx) / (float)rx, ddy = (y - cy) / (float)ry;
@@ -100,15 +114,8 @@ bool SpriteBank::hasTurret(UnitType t) const {
 // ---------------- 建筑 ----------------
 
 // ---------------- 对外获取（文件素材 / VXL；禁止程序生成回退） ----------------
-const Sprite& SpriteBank::tile(Terrain t, int variant) {
-    uint64_t k = keyOf(1, (int)t, variant, 0, 0);
-    auto it = cache.find(k);
-    if (it != cache.end()) return it->second;
-    PixBuf pb;
-    if (!loadSpr(pb, "assets/sprites/tile_%s_%d.png", terrainAssetName(t), variant))
-        pb = missingAssetPix("tile", terrainAssetName(t));
-    // 文件矿脉瓦片也做边缘软化（硬菱形叠草地很扎眼）
-    if ((t == Terrain::Ore || t == Terrain::Gems) && pb.w > 0 && pb.h > 0) {
+static void softenResourceEdges(PixBuf& pb) {
+    if (pb.w > 0 && pb.h > 0) {
         float cx = (pb.w - 1) * 0.5f, cy = (pb.h - 1) * 0.5f;
         float hw = pb.w * 0.5f, hh = pb.h * 0.5f;
         for (int y = 0; y < pb.h; y++)
@@ -123,8 +130,74 @@ const Sprite& SpriteBank::tile(Terrain t, int variant) {
                 }
             }
     }
+}
+const Sprite& SpriteBank::tile(Terrain t, int variant) {
+    uint64_t k = keyOf(1, (int)t, variant, 0, 0);
+    auto it = cache.find(k);
+    if (it != cache.end()) return it->second;
+    PixBuf pb;
+    if (!loadSpr(pb, "assets/sprites/tile_%s_%d.png", terrainAssetName(t), variant))
+        pb = missingAssetPix("tile", terrainAssetName(t));
+    if(t==Terrain::Ore || t==Terrain::Gems) softenResourceEdges(pb);
     Sprite s = makeSprite(std::move(pb), TILE_W / 2, 0);
     return cache.emplace(k, s).first->second;
+}
+
+const Sprite& SpriteBank::resourceTile(Terrain t,int variant,int amount,int capacity) {
+    if(t!=Terrain::Ore && t!=Terrain::Gems) return tile(t,variant);
+    variant&=7;const int level=resourceVisualLevel(amount,capacity);
+    if(level==RESOURCE_VISUAL_LEVELS) return tile(t,variant);
+    const auto key=keyOf(1,(int)t,variant,level+1,0);
+    if(auto found=cache.find(key);found!=cache.end()) return found->second;
+    PixBuf original;
+    if(!loadSpr(original,"assets/sprites/tile_%s_%d.png",terrainAssetName(t),variant)) return tile(t,variant);
+    softenResourceEdges(original);
+    // Keep whole authored mineral clusters; removing random pixels would turn
+    // crystals into noise. One deterministic ordering serves all density levels.
+    std::vector<int> labels(original.px.size(),-1),pending;
+    std::vector<uint32_t> ranks;
+    int maxAlpha=0;for(const auto color:original.px) maxAlpha=std::max(maxAlpha,(int)color.a);
+    const int coreAlpha=std::max(1,maxAlpha/2);
+    for(int y=0;y<original.h;++y) for(int x=0;x<original.w;++x) {
+        const int start=y*original.w+x;
+        if(original.px[start].a<coreAlpha || labels[start]>=0) continue;
+        const int group=(int)ranks.size();ranks.push_back(terrainVisualHash(x,y,variant+97*(int)t));
+        pending={start};labels[start]=group;
+        while(!pending.empty()) {
+            const int pixel=pending.back();pending.pop_back();
+            const int px=pixel%original.w,py=pixel/original.w;
+            for(int dy=-1;dy<=1;++dy) for(int dx=-1;dx<=1;++dx) {
+                const int nx=px+dx,ny=py+dy;
+                if(nx<0 || ny<0 || nx>=original.w || ny>=original.h) continue;
+                const int next=ny*original.w+nx;
+                if(original.px[next].a>=coreAlpha && labels[next]<0) { labels[next]=group;pending.push_back(next); }
+            }
+        }
+    }
+    // Antialiased fringes can connect otherwise separate crystals. Attach
+    // them to the nearest visible core instead of merging through alpha=1.
+    for(int y=0;y<original.h;++y) for(int x=0;x<original.w;++x) {
+        const int pixel=y*original.w+x;
+        if(!original.px[pixel].a || labels[pixel]>=0) continue;
+        int best=original.w*original.w+original.h*original.h+1;
+        for(int cy=0;cy<original.h;++cy) for(int cx=0;cx<original.w;++cx) {
+            const int core=cy*original.w+cx;
+            if(original.px[core].a<coreAlpha || labels[core]<0) continue;
+            const int distance=(cx-x)*(cx-x)+(cy-y)*(cy-y);
+            if(distance<best) { best=distance;labels[pixel]=labels[core]; }
+        }
+    }
+    std::vector<int> order(ranks.size()),position(ranks.size());
+    for(size_t i=0;i<order.size();++i) order[i]=(int)i;
+    std::sort(order.begin(),order.end(),[&](int a,int b) { return ranks[a]!=ranks[b]?ranks[a]<ranks[b]:a<b; });
+    for(size_t i=0;i<order.size();++i) position[order[i]]=(int)i;
+    for(int stage=0;stage<RESOURCE_VISUAL_LEVELS;++stage) {
+        PixBuf pixels=original;
+        const int keep=(stage*(int)order.size()+RESOURCE_VISUAL_LEVELS-1)/RESOURCE_VISUAL_LEVELS;
+        for(size_t i=0;i<labels.size();++i) if(labels[i]<0 || position[labels[i]]>=keep) pixels.px[i].a=0;
+        cache.emplace(keyOf(1,(int)t,variant,stage+1,0),makeSprite(std::move(pixels),TILE_W/2,0));
+    }
+    return cache.at(key);
 }
 
 const Sprite& SpriteBank::overlaySpr(Overlay o) {
@@ -153,7 +226,7 @@ const Sprite& SpriteBank::crateSpr() {
     return cache.emplace(k, s).first->second;
 }
 
-const Sprite& SpriteBank::finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, int player) {
+const Sprite& SpriteBank::finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, int player, bool remapToHouse,const Vec2i* groundAnchor,bool grounded) {
     // RA2 风格地面投影：仅地面单位（空军/海军不烘投影）
     const UnitDef& ud = unitDef(t);
     // 恐怖机器人 SHP 画布偏大：缩到约步兵量级
@@ -162,16 +235,24 @@ const Sprite& SpriteBank::finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, 
         int nh = std::max(1, pb.h * 55 / 100);
         pb = pb.scale(nw, nh);
     }
-    if (!ud.isAir() && !ud.isNaval()) {
+    int padX=0,padY=0;
+    if (grounded || (!ud.isAir() && !ud.isNaval())) {
         int ow = pb.w, oh = pb.h;
         bool inf = ud.isInfantry() || t == UnitType::TerrorDrone || t == UnitType::ChaosDrone;
-        PixBuf canvas(ow + 12, oh + 8);
-        bakeShadow(canvas, 6 + ow / 2 + 3, 4 + (inf ? oh - 2 : (int)(oh * 0.72f)),
-                   inf ? 7 : (int)(ow * 0.30f), inf ? 3 : (int)(oh * 0.10f));
-        canvas.blit(pb, 6, 4);
+        const int shadowX=(groundAnchor?groundAnchor->x:ow/2)+3;
+        const int shadowY=groundAnchor?groundAnchor->y:(inf?oh-2:(int)(oh*0.72f));
+        const int radiusX=inf?7:(int)(ow*0.30f),radiusY=inf?3:(int)(oh*0.10f);
+        padX=6;padY=4;int right=6,bottom=4;
+        if(groundAnchor) {
+            padX=std::max(padX,2-shadowX+radiusX);right=std::max(right,shadowX+radiusX+3-ow);
+            padY=std::max(padY,2-shadowY+radiusY);bottom=std::max(bottom,shadowY+radiusY+3-oh);
+        }
+        PixBuf canvas(ow+padX+right,oh+padY+bottom);
+        bakeShadow(canvas,padX+shadowX,padY+shadowY,radiusX,radiusY);
+        canvas.blit(pb,padX,padY);
         pb = std::move(canvas);
     }
-    pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
+    if(remapToHouse) pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
     // vis* 仅供选中/点选收紧；ox/oy 保持与 gen_assets / 既有核对一致（整幅中心+0.72h）
     int visL = pb.w, visT = pb.h, visR = -1, visB = -1;
     for (int y = 0; y < pb.h; y++)
@@ -185,15 +266,19 @@ const Sprite& SpriteBank::finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, 
     if (visR < 0) { visL = 0; visT = 0; visR = pb.w - 1; visB = pb.h - 1; }
     Sprite s = makeSprite(std::move(pb), 0, 0);
     s.visL = visL; s.visT = visT; s.visR = visR; s.visB = visB;
-    s.ox = s.tex.width / 2;
+    s.ox = groundAnchor?groundAnchor->x+padX:s.tex.width/2;
     // 地面载具：锚点与 gen_assets 南触点 0.72h 一致；步兵/空/海仍用中心+4
-    if (!ud.isAir() && !ud.isNaval() && !ud.isInfantry()
+    if(groundAnchor)s.oy=groundAnchor->y+padY;
+    else if (!ud.isAir() && !ud.isNaval() && !ud.isInfantry()
         && t != UnitType::TerrorDrone && t != UnitType::ChaosDrone)
         s.oy = (int)(s.tex.height * 0.72f);
     else
         s.oy = s.tex.height / 2 + 4;
     return cache.emplace(k, s).first->second;
 }
+
+int SpriteBank::unitBodyFrames(UnitType t) const { return VxlRt::bodyFrames(spriteAliasUnit(t)); }
+int SpriteBank::unitTurretFrames(UnitType t) const { return VxlRt::turretFrames(spriteAliasUnit(t)); }
 
 const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
     UnitType orig = t;
@@ -203,13 +288,17 @@ const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
     bool isMiner = (t == UnitType::Harvester || t == UnitType::ChronoMiner
                 || t == UnitType::WarMiner || t == UnitType::SlaveMiner);
     bool walker = unitDef(t).isInfantry() || t == UnitType::TerrorDrone;
-    int fKey = isMiner ? (frame ? 1 : 0) : (walker ? (frame & 1) : 0);
+    const int nativeFrames=unitBodyFrames(t);
+    int fKey = isMiner ? (frame ? 1 : 0) : (walker ? (frame & 1) : std::max(0,frame)%std::max(1,nativeFrames));
     uint64_t k = keyOf(3, (int)t, dir, fKey, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
+    if(nativeFrames<1)return finishUnitSprite(k,missingAssetPix("voxel animation",unitAssetName(orig)),t,player);
     PixBuf pb;
     // 优先运行时 VXL；无 VXL 再 PNG（SHP 步兵/机器人）；缺失则报错拒绝开局
-    bool ext = VxlRt::renderBody(t, dir, fKey, pb);
+    Vec2i originAnchor;
+    const bool fromVoxel=VxlRt::renderBody(t, dir, fKey, pb, &HOUSE_COLORS[player],t==UnitType::SiegeChopper?&originAnchor:nullptr);
+    bool ext=fromVoxel;
     if (!ext) {
         ext = loadSpr(pb, "assets/sprites/unit_%s_d%d_f%d.png", unitAssetName(orig), dir, fKey)
             || (fKey != 0 && loadSpr(pb, "assets/sprites/unit_%s_d%d_f0.png", unitAssetName(orig), dir))
@@ -236,7 +325,20 @@ const Sprite& SpriteBank::unitBody(UnitType t, int dir, int frame, int player) {
                 }
             }
     }
-    return finishUnitSprite(k, std::move(pb), t, player);
+    const bool masked=!fromVoxel && applyHouseMask(pb,TextFormat("assets/sprites/unit_%s_d%d_f%d.png",unitAssetName(orig),dir,fKey),HOUSE_COLORS[player]);
+    return finishUnitSprite(k, std::move(pb), t, player, !fromVoxel && !masked,fromVoxel && t==UnitType::SiegeChopper?&originAnchor:nullptr);
+}
+
+const Sprite& SpriteBank::unitDeployed(UnitType t,int bodyDir,int turretDir,int player) {
+    if(t!=UnitType::SiegeChopper)return unitBody(t,bodyDir,0,player);
+    bodyDir&=7;turretDir&=7;
+    const uint64_t key=keyOf(20,(int)t,(bodyDir<<3)|turretDir,0,player);
+    auto found=cache.find(key);if(found!=cache.end())return found->second;
+    PixBuf pixels;Vec2i anchor;
+    if(!VxlRt::renderDeployed(t,bodyDir,turretDir,pixels,anchor,&HOUSE_COLORS[player])) {
+        pixels=missingAssetPix("deployed unit","schd + schdtur");anchor={pixels.w/2,pixels.h/2};
+    }
+    return finishUnitSprite(key,std::move(pixels),t,player,false,&anchor,true);
 }
 
 const Sprite& SpriteBank::unitUnload(UnitType t, int dir, int player) {
@@ -247,30 +349,61 @@ const Sprite& SpriteBank::unitUnload(UnitType t, int dir, int player) {
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
     PixBuf pb;
-    bool ext = VxlRt::renderUnload(t, dir, pb);
+    const bool fromVoxel=VxlRt::renderUnload(t, dir, pb, &HOUSE_COLORS[player]);
+    bool ext=fromVoxel;
     if (!ext) {
         ext = loadSpr(pb, "assets/sprites/unit_%s_unload_d%d_f0.png", unitAssetName(orig), dir)
             || (orig != t && loadSpr(pb, "assets/sprites/unit_%s_unload_d%d_f0.png", unitAssetName(t), dir));
     }
     if (!ext) return unitBody(orig, dir, 0, player);
-    return finishUnitSprite(k, std::move(pb), t, player);
+    return finishUnitSprite(k, std::move(pb), t, player, !fromVoxel);
 }
 
-const Sprite& SpriteBank::unitTurret(UnitType t, int dir, int player) {
+const Sprite& SpriteBank::chopperTransform(int phase,int player) {
+    phase=std::clamp(phase,0,chopperFrames_-1);
+    const uint64_t key=keyOf(21,(int)UnitType::SiegeChopper,phase,0,player);
+    if(auto found=cache.find(key);found!=cache.end())return found->second;
+    PixBuf pixels;
+    const auto name=std::string(TextFormat("assets/sprites/unit_siegechopper_transform_f%d.png",phase));
+    if(!loadSpr(pixels,"%s",name.c_str()) || pixels.w!=chopperWidth_ || pixels.h!=chopperHeight_
+        || !applyHouseMask(pixels,name,HOUSE_COLORS[player]))pixels=missingAssetPix("chopper-transform",name.c_str());
+    return finishUnitSprite(key,std::move(pixels),UnitType::SiegeChopper,player,false,&chopperOrigin_);
+}
+
+void SpriteBank::loadChopperTransform() {
+    Ini metadata;const auto path=contentResolve("assets/chopper_deploy.ini");
+    if(path.empty() || !metadata.load(path.c_str())){missingAssetPix("chopper-transform-metadata","assets/chopper_deploy.ini");return;}
+    auto integer=[&](const char* key,int minimum,int maximum,int& value) {
+        const char* raw=metadata.get("SiegeChopper",key);char* end=nullptr;const long parsed=raw?strtol(raw,&end,10):0;
+        if(!raw || end==raw || *end || parsed<minimum || parsed>maximum){missingAssetPix("chopper-transform-metadata",key);return false;}
+        value=(int)parsed;return true;
+    };
+    bool valid=integer("Frames",1,256,chopperFrames_);
+    valid=integer("Width",1,512,chopperWidth_) && valid;valid=integer("Height",1,512,chopperHeight_) && valid;
+    valid=integer("OriginX",0,chopperWidth_-1,chopperOrigin_.x) && valid;valid=integer("OriginY",0,chopperHeight_-1,chopperOrigin_.y) && valid;
+    valid=integer("Facing",0,7,chopperFacing_) && valid;
+    if(valid)for(int phase=0;phase<chopperFrames_;++phase)chopperTransform(phase,0);
+}
+
+const Sprite& SpriteBank::unitTurret(UnitType t, int dir, int player, int frame) {
     UnitType orig = t;
     t = spriteAliasUnit(t);
     dir &= 7;
-    uint64_t k = keyOf(4, (int)t, dir, 0, player);
+    const int frames=unitTurretFrames(t),phase=std::max(0,frame)%std::max(1,frames);
+    uint64_t k = keyOf(4, (int)t, dir, phase, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
+    if(frames<1)return cache.emplace(k,makeSprite(missingAssetPix("voxel animation",unitAssetName(orig)),0,0)).first->second;
     PixBuf pb;
-    bool ext = VxlRt::renderTurret(t, dir, pb);
+    const bool fromVoxel=VxlRt::renderTurret(t, dir, pb, &HOUSE_COLORS[player],phase);
+    bool ext=fromVoxel;
     if (!ext) {
         ext = loadSpr(pb, "assets/sprites/turret_%s_d%d.png", unitAssetName(orig), dir)
             || (orig != t && loadSpr(pb, "assets/sprites/turret_%s_d%d.png", unitAssetName(t), dir));
     }
     if (!ext) pb = missingAssetPix("turret", unitAssetName(orig));
-    pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
+    if(!fromVoxel && !applyHouseMask(pb,TextFormat("assets/sprites/turret_%s_d%d.png",unitAssetName(orig),dir),HOUSE_COLORS[player]))
+        pb.remap(Pal::REMAP, HOUSE_COLORS[player]);
     int visL = pb.w, visT = pb.h, visR = -1, visB = -1;
     for (int y = 0; y < pb.h; y++)
         for (int x = 0; x < pb.w; x++)
@@ -509,12 +642,17 @@ void SpriteBank::loadAnimsIni() {
         key = trim(key); val = trim(val);
         int iv = atoi(val);
         if (curUnit >= 0) {
+            const bool frameCount=!strcmp(key,"walk") || !strcmp(key,"fire") || !strcmp(key,"die") || !strcmp(key,"depfire");
+            if(frameCount && (iv<0 || iv>256)) {
+                missingAssetPix("animation-metadata",sec);iv=0;
+            }
             UnitAnimInfo& ai = uanims[curUnit];
             if (!strcmp(key, "walk")) ai.walk = iv;
             else if (!strcmp(key, "walkrate")) ai.walkRate = iv > 0 ? iv : 4;
             else if (!strcmp(key, "fire")) ai.fire = iv;
             else if (!strcmp(key, "firerate")) ai.fireRate = iv > 0 ? iv : 4;
             else if (!strcmp(key, "die")) ai.die = iv;
+            else if (!strcmp(key, "depfire")) ai.depFire = iv;
             else if (!strcmp(key, "dep")) ai.dep = iv != 0;
         } else if (curBld >= 0) {
             if (!strcmp(key, "mk")) banims[curBld] = iv;
@@ -539,6 +677,10 @@ const Sprite& SpriteBank::unitAnim(UnitType t, UAnim a, int dir, int phase, int 
     dir &= 7;
     // 站立或无动画素材的单位：直接回退 unitBody（自身带缓存）
     if (a == UAnim::Stand) return unitBody(t, dir, 0, player);
+    const auto& info=animInfo(t);
+    const int count=a==UAnim::Walk?info.walk:a==UAnim::Fire?info.fire:a==UAnim::DepFire?info.depFire:a==UAnim::Die?info.die:a==UAnim::Dep?(info.dep?1:0):0;
+    if(count==0) return unitBody(t,dir,0,player); // explicitly undeclared sequence
+    if(phase<0 || phase>=count) phase=std::clamp(phase,0,count-1);
     uint64_t k = keyOf(12, (int)t, ((int)a << 4) | dir, phase & 0xFF, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
@@ -550,9 +692,10 @@ const Sprite& SpriteBank::unitAnim(UnitType t, UAnim a, int dir, int phase, int 
         case UAnim::Fire: ok = loadSpr(pb, "assets/sprites/unit_%s_fire_d%d_f%d.png", nm, dir, phase); break;
         case UAnim::Die:  ok = loadSpr(pb, "assets/sprites/unit_%s_die_f%d.png", nm, phase); break;
         case UAnim::Dep:  ok = loadSpr(pb, "assets/sprites/unit_%s_dep_d%d.png", nm, dir); break;
+        case UAnim::DepFire: ok = loadSpr(pb, "assets/sprites/unit_%s_depfire_d%d_f%d.png", nm, dir, phase); break;
         default: break;
     }
-    if (!ok) return unitBody(t, dir, 0, player); // 帧缺失：回退站立（不缓存，保持 key 干净）
+    if (!ok) pb=missingAssetPix("animation",TextFormat("%s anim=%d dir=%d frame=%d",nm,(int)a,dir,phase));
     return finishUnitSprite(k, std::move(pb), t, player);
 }
 
@@ -652,6 +795,27 @@ const Sprite& SpriteBank::smoke(int frame) {
     return cache.emplace(k, s).first->second;
 }
 
+void SpriteBank::loadWarpAnims() {
+    Ini metadata;const auto path=contentResolve("assets/chrono_fx.ini");
+    if(path.empty() || !metadata.load(path.c_str())) { missingAssetPix("chrono-metadata","assets/chrono_fx.ini");return; }
+    const char* sections[]={"Arrival","Departure","Erase"};
+    for(int visual=0;visual<3;++visual) {
+        const char* text=metadata.get(sections[visual],"Frames");char* end=nullptr;
+        const long count=text?strtol(text,&end,10):0;
+        if(!text || end==text || *end || count<1 || count>256) missingAssetPix("chrono-metadata",sections[visual]);
+        else warpFrames_[visual]=(int)count;
+    }
+}
+int SpriteBank::warpFrames(int visual) const { return warpFrames_[std::clamp(visual,0,2)]; }
+const Sprite& SpriteBank::warpEffect(int visual,int frame) {
+    visual=std::clamp(visual,0,2);frame=std::clamp(frame,0,warpFrames(visual)-1);
+    const uint64_t key=keyOf(16,visual,frame,0,0);auto found=cache.find(key);if(found!=cache.end()) return found->second;
+    const char* names[]={"warpin","warpout","warpaway"};PixBuf pixels;
+    if(!loadSpr(pixels,"assets/sprites/fx_%s_%d.png",names[visual],frame)) pixels=missingAssetPix("chrono",names[visual]);
+    Sprite sprite=makeSprite(std::move(pixels),0,0);sprite.ox=sprite.tex.width/2;sprite.oy=sprite.tex.height/2;
+    return cache.emplace(key,sprite).first->second;
+}
+
 // ---------------- 图标 ----------------
 // RA2 原作 cameo = 带天空/地面的小场景照（非深色底）：上部钢青天空渐变+云斑，
 // 地平线 ~63% 处，下部棕灰土地+噪点；建筑按地面锚点立于地面，底部软椭圆投影。
@@ -690,7 +854,20 @@ void SpriteBank::init() {
     inited = true;
     g_spriteMissingCount = 0;
     VxlRt::init(); // 运行时 VXL（调色板 / VPL）
+    loadWarpAnims();
+    loadChopperTransform();
     loadAnimsIni(); // 动画元数据（walk/fire/die/mk 帧数）
+    // Validate declared frames once, before Game decides whether startup is allowed.
+    for(const auto& entry:uanims) {
+        UnitType type=(UnitType)entry.first;const auto& info=entry.second;
+        for(int direction=0;direction<8;++direction) {
+            for(int phase=0;phase<info.walk;++phase) unitAnim(type,UAnim::Walk,direction,phase,0);
+            for(int phase=0;phase<info.fire;++phase) unitAnim(type,UAnim::Fire,direction,phase,0);
+            for(int phase=0;phase<info.depFire;++phase) unitAnim(type,UAnim::DepFire,direction,phase,0);
+            if(info.dep) unitAnim(type,UAnim::Dep,direction,0,0);
+        }
+        for(int phase=0;phase<info.die;++phase) unitAnim(type,UAnim::Die,0,phase,0);
+    }
     // 预载必需地形/装饰/特效（缺失计入 missingCount，启动侧拒绝进游戏）
     for (int t = 0; t <= (int)Terrain::Bridge; t++)
         for (int v = 0; v < 8; v++) tile((Terrain)t, v);
@@ -699,6 +876,7 @@ void SpriteBank::init() {
     for (int f = 0; f < EXPLOSION_FRAMES; f++) explosion(f);
     for (int f = 0; f < SMOKE_FRAMES; f++) smoke(f);
     muzzle();
+    for(int visual=0;visual<3;++visual) for(int frame=0;frame<warpFrames(visual);++frame) warpEffect(visual,frame);
 }
 
 // 开局预载（见头文件注释）；仅本地玩家全量 + 中立建筑，AI 玩家单位仍懒加载
@@ -706,15 +884,19 @@ void SpriteBank::init() {
 void SpriteBank::preloadMatch(int localPlayer) {
     double t0 = GetTime();
     size_t n0 = cache.size();
+    for(Terrain type:{Terrain::Ore,Terrain::Gems}) for(int variant=0;variant<8;++variant) {
+        tile(type,variant);resourceTile(type,variant,1,RESOURCE_VISUAL_LEVELS);
+    }
     for (int i = 0; i < (int)UnitType::COUNT; i++) {
         UnitType t = (UnitType)i;
         bool isMiner = (t == UnitType::Harvester || t == UnitType::ChronoMiner
                 || t == UnitType::WarMiner || t == UnitType::SlaveMiner);
-        int frames = (isMiner || unitDef(t).isInfantry() || t == UnitType::TerrorDrone) ? 2 : 1;
+        int frames = (isMiner || unitDef(t).isInfantry() || t == UnitType::TerrorDrone) ? 2 : std::max(1,unitBodyFrames(t));
         for (int d = 0; d < 8; d++)
             for (int f = 0; f < frames; f++) unitBody(t, d, f, localPlayer);
+        if(t==UnitType::SiegeChopper)for(int d=0;d<8;++d)unitDeployed(t,d,d,localPlayer);
         if (hasTurret(t))
-            for (int d = 0; d < 8; d++) unitTurret(t, d, localPlayer);
+            for (int d = 0; d < 8; d++)for(int f=0;f<std::max(1,unitTurretFrames(t));++f)unitTurret(t,d,localPlayer,f);
     }
     for (int i = 0; i < (int)BldType::COUNT; i++) {
         BldType t = (BldType)i;
@@ -732,7 +914,7 @@ void SpriteBank::preloadMatch(int localPlayer) {
 // ===================== 离线素材生成（--gen-assets） =====================
 // 管线：程序绘制 → PNG 文件（assets/sprites/）；游戏运行时直接加载文件，程序生成仅作缺失兜底
 
-// 单位帧键：与 unitBody() 的 fKey 规则一致（采矿车满载帧 / 步兵行走帧 / 其他仅 0）
+// Unit frame keys distinguish miner load, SHP walk, and native HVA phase.
 
 bool SpriteBank::genAssets(const char* /*outDir*/) {
     TraceLog(LOG_ERROR, "genAssets disabled: use tools/ra2pack/gen_assets.py");

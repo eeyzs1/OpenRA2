@@ -7,7 +7,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-from ra2lib import Vxl, load_pal, vxl_project, render_pts, _phi_for_screen_alpha
+from ra2lib import Vxl, load_pal, vxl_project, render_pts, facing_world_phi
 from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -43,7 +43,7 @@ def main() -> None:
         v = Vxl(open(bp, "rb").read())
         imgs = []
         for e in range(8):
-            pts, _ = vxl_project(v, None, _phi_for_screen_alpha(45 * e))
+            pts, _ = vxl_project(v, None, facing_world_phi(e))
             xs = [p[0] for p in pts]
             ys = [p[1] for p in pts]
             gx = (min(xs) + max(xs)) / 2
@@ -59,7 +59,7 @@ def main() -> None:
             if os.path.isfile(tp):
                 vt = Vxl(open(tp, "rb").read())
                 for e in range(8):
-                    pts, _ = vxl_project(vt, None, _phi_for_screen_alpha(45 * e))
+                    pts, _ = vxl_project(vt, None, facing_world_phi(e))
                     xs = [p[0] for p in pts]
                     ys = [p[1] for p in pts]
                     gx = (min(xs) + max(xs)) / 2

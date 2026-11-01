@@ -5,38 +5,8 @@
 #include <string>
 
 // 音效系统：仅加载 assets/sfx/ 外部音频；缺失则记错并拒绝启动（无程序合成回退）
-enum class Sfx : uint8_t {
-    Shot = 0,   // 步枪
-    Cannon,     // 坦克炮
-    Flak,       // 高炮
-    Missile,    // 导弹发射
-    Explosion,  // 爆炸
-    BigExplosion, // 建筑级大爆炸
-    Tesla,      // 磁暴电弧
-    Prism,      // 光棱光束
-    Click,      // UI 点击
-    Place,      // 建筑放置
-    Ready,      // 生产就绪提示
-    Cash,       // 资金到账
-    Alarm,      // 低电力警报
-    Deploy,     // 基地车展开
-    Sell,       // 出售建筑
-    NukeLaunch, // 核弹发射警报
-    NukeBlast,  // 核爆
-    Lightning,  // 闪电劈落
-    Storm,      // 风暴起
-    IronCurtain,// 铁幕启动
-    SWReady,    // 超武就绪
-    Crush,      // 坦克碾压
-    Eva,        // EVA 播报提示音
-    NavalCannon,// 舰炮
-    Torpedo,    // 鱼雷发射
-    Dig,        // 矿车挖掘研磨
-    MirageFire, // 幻影坦克主炮
-    RhinoFire,  // 犀牛/99式主炮
-    ApocFire,   // 天启双管
-    COUNT
-};
+#include "game/presentation_events.h"
+
 
 class SoundBank {
 public:

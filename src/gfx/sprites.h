@@ -6,17 +6,18 @@
 #include <array>
 
 // 8 个玩家阵营色（RA2 风格）
-static constexpr int MAX_PLAYERS = 8;
+
 extern const Color HOUSE_COLORS[MAX_PLAYERS];
 
 // 单位动画种类（素材由 tools/ra2pack/gen_assets.py 从 art.ini 序列提取）
-enum class UAnim : uint8_t { Stand, Walk, Fire, Die, Dep };
+enum class UAnim : uint8_t { Stand, Walk, Fire, Die, Dep, DepFire };
 
-// anims.ini 元数据：walk/fire/die=帧数 walkrate/firerate=帧间隔(tick) dep=有部署站姿
+// anims.ini: walk/fire/depfire/die=帧数，walkrate/firerate=表现帧间隔，dep=部署站姿。
 struct UnitAnimInfo {
     int walk = 0, walkRate = 4;
     int fire = 0, fireRate = 4;
     int die = 0;
+    int depFire = 0;
     bool dep = false;
 };
 
@@ -29,16 +30,23 @@ public:
 
     // 地形与装饰
     const Sprite& tile(Terrain t, int variant);
+    const Sprite& resourceTile(Terrain t,int variant,int amount,int capacity);
     const Sprite& overlaySpr(Overlay o);
     const Sprite& crateSpr(); // 补给箱（RA2 crate.tem）
 
-    // 单位：dir 0..7（0=东，顺时针），frame 步兵行走帧 0..1
+    // frame: SHP walk 0/1, miner empty/full, or native HVA phase (wrapped).
     const Sprite& unitBody(UnitType t, int dir, int frame, int player);
+    int unitBodyFrames(UnitType t) const;
+    int unitTurretFrames(UnitType t) const;
     const Sprite& unitUnload(UnitType t, int dir, int player);
-    const Sprite& unitTurret(UnitType t, int dir, int player);
+    const Sprite& unitTurret(UnitType t, int dir, int player, int frame=0);
     bool hasTurret(UnitType t) const;
+    const Sprite& unitDeployed(UnitType t,int bodyDir,int turretDir,int player);
+    const Sprite& chopperTransform(int phase,int player);
+    int chopperTransformFrames() const { return chopperFrames_; }
+    int chopperTransformFacing() const { return chopperFacing_; }
 
-    // 单位动画（art.ini 序列）：phase 0..frames-1；无素材时回退站立帧
+    // 单位动画：未声明序列使用站姿；已声明却缺帧计为素材错误，拒绝启动。
     const Sprite& unitAnim(UnitType t, UAnim a, int dir, int phase, int player);
     const UnitAnimInfo& animInfo(UnitType t) const;
 
@@ -57,6 +65,8 @@ public:
     const Sprite& explosion(int frame);   // 0..11
     const Sprite& muzzle();
     const Sprite& projectile(int kind, int dir); // kind: 0 shell,1 missile
+    int warpFrames(int visual) const; // 0 arrival, 1 departure, 2 erasure; presentation only
+    const Sprite& warpEffect(int visual,int frame);
     const Sprite& smoke(int frame);       // 0..5
 
     // UI 图标
@@ -80,8 +90,13 @@ private:
     std::unordered_map<int, UnitAnimInfo> uanims;  // UnitType -> info
     std::unordered_map<int, int> banims;           // BldType -> mk 帧数
     void loadAnimsIni();
+    void loadWarpAnims();
+    void loadChopperTransform();
+    int chopperFrames_=1,chopperWidth_=1,chopperHeight_=1,chopperFacing_=1;
+    Vec2i chopperOrigin_{};
+    std::array<int,3> warpFrames_{{10,21,23}};
 
-    const Sprite& finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, int player);
+    const Sprite& finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, int player, bool remapToHouse=true,const Vec2i* groundAnchor=nullptr,bool grounded=false);
     const Sprite& finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, int player,
                                   bool withShadow = true, int footW = 0, int footH = 0);
 };

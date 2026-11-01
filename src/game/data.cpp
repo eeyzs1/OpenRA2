@@ -7,6 +7,8 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <deque>
+#include <cmath>
 #include <unordered_map>
 
 // 阵营位掩码
@@ -38,7 +40,7 @@ static WeaponDef wSniper() { return withWH(WeaponDef{125, 14, 150, false, true, 
 static WeaponDef wRadiation() { return withWH(WeaponDef{125, 6, 50, false, true, "rad", 2.5f, 0.3f, 0.1f}, WeaponDef::Warhead::Radiation); }
 // 超时空抹除：不造成伤害，命中叠加"抹除进度"（special: chrono）
 static WeaponDef wChrono() { return WeaponDef{1, 5, 120, false, true, "chrono", 1.0f, 1.0f, 0.0f}; }
-static WeaponDef wTankGun(int dmg, int rng, int cd) { return withWH(WeaponDef{dmg, rng, cd, false, true, "shell", 0.6f, 1.0f, 0.8f}, WeaponDef::Warhead::AP); }
+static WeaponDef wTankGun(int dmg, int rng, int cd) { return withWH(WeaponDef{dmg, (float)rng, cd, false, true, "shell", 0.6f, 1.0f, 0.8f}, WeaponDef::Warhead::AP); }
 static WeaponDef wPrism() { return withWH(WeaponDef{120, 8, 45, false, true, "prism", 1.0f, 0.8f, 1.4f}, WeaponDef::Warhead::HE); }
 static WeaponDef wPrismTank() { return withWH(WeaponDef{100, 10, 100, false, true, "prism", 1.0f, 0.8f, 1.4f}, WeaponDef::Warhead::HE); } // Comet
 static WeaponDef wV3() { return withWH(WeaponDef{1, 18, 150, false, true, "missile", 0.5f, 1.0f, 1.5f, false, 1.5f}, WeaponDef::Warhead::HE); }
@@ -73,7 +75,7 @@ static WeaponDef wSMG() { return withWH(WeaponDef{125, 6, 10, false, true, "bull
 static WeaponDef wPsychic() { return withWH(WeaponDef{1, 7, 200, false, true, "psi", 1.0f, 1.0f, 0.0f}, WeaponDef::Warhead::Psychic); }         // MindControl
 
 // ---- 尤复阵营：尤里单位武器 ----
-static WeaponDef wPsychicFire() { return WeaponDef{25, 4, 15, false, true, "psi", 2.0f, 0.3f, 0.2f}; }    // PsychicJab
+static WeaponDef wPsychicFire() { return withWH(WeaponDef{25, 4, 15, false, true, "psi", 2.0f, 0.3f, 0.2f}, WeaponDef::Warhead::SAFlame); } // PsychicJab, not mind control
 static WeaponDef wBruteFist() { return WeaponDef{100, 1, 60, false, true, "bullet", 2.5f, 0.8f, 0.3f}; }   // Punch
 static WeaponDef wVirusRifle() { return WeaponDef{125, 10, 100, false, true, "bullet", 2.0f, 0.1f, 0.05f}; } // Virusgun
 static WeaponDef wLasherGun() { return withWH(WeaponDef{65, 5, 60, false, true, "shell", 0.7f, 1.0f, 0.7f}, WeaponDef::Warhead::AP); }    // ATGUN
@@ -95,7 +97,16 @@ static WeaponDef wYuriPrimeMC() { return withWH(WeaponDef{1, 7, 200, false, true
 static WeaponDef ewGrizzly() { return WeaponDef{65, 5, 50, false, true, "shell", 0.7f, 1.1f, 0.9f}; }
 static WeaponDef ewRhino() { return WeaponDef{90, 6, 65, false, true, "shell", 0.7f, 1.1f, 0.9f}; }
 static WeaponDef ewType99() { return WeaponDef{120, 6, 45, false, true, "shell", 0.7f, 1.1f, 0.9f}; }
-static WeaponDef ewApoc() { return WeaponDef{100, 6, 80, true, true, "missile", 0.9f, 1.4f, 1.1f}; }
+static WeaponDef wApoc(bool elite=false) {
+    auto w=withReport(withWH(WeaponDef{100,5.75f,80,false,true,"shell"},
+        elite?WeaponDef::Warhead::ApocAPE:WeaponDef::Warhead::ApocAP),"ApocalypseAttackGround");
+    w.projectile="Cannon";w.speedLeptons=40;w.burst=elite?4:2;return w;
+}
+static WeaponDef wApocAir() {
+    auto w=withReport(withWH(WeaponDef{50,8,80,true,false,"missile"},WeaponDef::Warhead::MammothHE),"ApocalypseAttackAir");
+    w.projectile="AAHeatSeeker";w.speedLeptons=20;w.burst=2;return w;
+}
+static WeaponDef ewApoc() { return wApoc(true); }
 static WeaponDef ewPrism() { return WeaponDef{150, 10, 100, false, true, "prism", 1.0f, 0.9f, 1.5f, false, 1.5f}; } // SuperComet
 static WeaponDef ewTeslaTank() { return WeaponDef{150, 6, 60, false, true, "tesla", 1.3f, 1.1f, 0.9f}; }
 static WeaponDef ewV3() { return WeaponDef{1, 18, 150, false, true, "missile", 0.5f, 1.0f, 1.6f, false, 2.5f}; }
@@ -114,6 +125,9 @@ template <WeaponDef (*F)()> const WeaponDef* eliteOf() { static const WeaponDef 
 static WeaponDef wGgiDeploy{40, 8, 40, false, true, "missile", 0.3f, 1.6f, 0.4f};
 static WeaponDef wGiDeploy{15, 5, 15, false, true, "bullet", 1.2f, 0.5f, 0.4f}; // RA2 deployed GI
 const WeaponDef& ggiDeployedWeapon() { return wGgiDeploy; }
+// Local YR MagneShake calibration; separate from the locomotor beam.
+static WeaponDef wMagnetronBuilding{80,10,110,false,true,"magnetic",0,0,1};
+const WeaponDef& magnetronBuildingWeapon() { return wMagnetronBuilding; }
 
 // 美国大兵部署（沙袋工事）：射程与伤害提升，不可移动、不可被碾压
 const WeaponDef& giDeployedWeapon() { return wGiDeploy; }
@@ -128,7 +142,7 @@ const WeaponDef& siegeChopperDeployedWeapon() { return wSiegeDeploy; }
 // 表为可写静态：启动时 loadRules() 用 assets/rules/rules.ini 逐项覆盖
 static UnitDef g_units[(int)UnitType::COUNT] = {
     // type, name, cost, btime, hp, speed, sight, armor, move, weapon, factions, prereq, ammo
-    {UnitType::MCV,        "基地车",    3000, 500, 1000, 24, 6, Armor::Heavy, MoveType::Vehicle, wNone(), ALLF, BldType::WarFactory, 0},
+    {UnitType::MCV,        "基地车",    3000, 500, 1000, 24, 6, Armor::Heavy, MoveType::Vehicle, wNone(), ALLF, BldType::WarFactory, 0, 0, nullptr, Country::None, 6},
     {UnitType::Harvester,  "采矿车",    1400, 280, 1000, 20, 4, Armor::Heavy, MoveType::Vehicle, wNone(), FC, BldType::OreRefinery},
     {UnitType::GI,         "美国大兵",   200, 60,  125, 14, 5, Armor::None, MoveType::Infantry, wGiRifle(), FA, BldType::COUNT},
     {UnitType::Conscript,  "动员兵",    100, 45,  125, 14, 5, Armor::None, MoveType::Infantry, wConscriptRifle(), FS, BldType::COUNT},
@@ -148,12 +162,12 @@ static UnitDef g_units[(int)UnitType::COUNT] = {
     {UnitType::Rhino,      "犀牛坦克",   900, 170, 400, 14, 8, Armor::Heavy, MoveType::Vehicle, withReport(wTankGun(90, 6, 65), "RhinoTankAttack"), FS, BldType::COUNT, 0, 0, eliteOf<ewRhino>()},
     {UnitType::Type99,     "99式坦克",  1200,190, 500, 12, 8, Armor::Heavy, MoveType::Vehicle, withReport(wTankGun(100, 6, 60), "RhinoTankAttack"), FC, BldType::COUNT, 0, 0, eliteOf<ewType99>()},
     {UnitType::FlakTrack,  "高射炮车",   500, 110, 180, 10, 8, Armor::Light, MoveType::Vehicle, withWH(WeaponDef{25, 5, 25, true, true, "flak", 1.0f, 0.7f, 0.5f}, WeaponDef::Warhead::HE), FS, BldType::COUNT, 0, 0},
-    {UnitType::IFV,        "多功能步兵车",600, 110, 200, 8,  8, Armor::Light, MoveType::Vehicle, wIFVMissile(), FA, BldType::COUNT, 0, 1},
+    {UnitType::IFV,        "多功能步兵车",600, 110, 200, 8,  8, Armor::Light, MoveType::Vehicle, wIFVMissile(), FA, BldType::COUNT, 0, 1, nullptr, Country::None, 3, 1},
     {UnitType::PrismTank,  "光棱坦克",   1200,240, 150, 16, 8, Armor::Light, MoveType::Vehicle, wPrismTank(), FA, BldType::BattleLab, 0, 0, eliteOf<ewPrism>()},
     {UnitType::TeslaTank,  "磁能坦克",   1200,240, 300, 14, 8, Armor::Heavy, MoveType::Vehicle, withWH(WeaponDef{135, 4, 75, false, true, "tesla", 1.2f, 1.0f, 0.8f}, WeaponDef::Warhead::AP), FS, BldType::BattleLab, 0, 0, eliteOf<ewTeslaTank>(), Country::Russia},
     {UnitType::MirageTank, "幻影坦克",   1000,220, 200, 12, 9, Armor::Light, MoveType::Vehicle, withReport(wTankGun(100, 7, 70), "MirageTankAttack"), FA | FC, BldType::BattleLab},
     {UnitType::V3Launcher, "V3火箭车",  800, 200, 150, 18, 7, Armor::Light, MoveType::Vehicle, wV3(), FS | FC, BldType::Radar, 0, 0, eliteOf<ewV3>()},
-    {UnitType::Apocalypse, "天启坦克",   1750,350, 800, 18, 6, Armor::Heavy, MoveType::Vehicle, withReport(WeaponDef{100,6,80,true,true,"shell",0.8f,1.2f,1.0f}, "ApocalypseAttackGround"), FS | FC, BldType::BattleLab, 0, 0, eliteOf<ewApoc>()},
+    {UnitType::Apocalypse, "天启坦克",   1750,350, 800, 18, 6, Armor::Heavy, MoveType::Vehicle, wApoc(), FS | FC, BldType::BattleLab, 0, 0, eliteOf<ewApoc>(), Country::None, 0, 2, true, wApocAir()},
     {UnitType::TerrorDrone,"恐怖机器人", 500, 100, 100, 6,  4, Armor::Light, MoveType::Vehicle, wDroneBite(), FS | FC, BldType::Radar},
     // 空军：speed 越小越快；ammo 打完返航装填
     {UnitType::Intruder,   "入侵者战机", 1200,240, 150, 3,  8, Armor::Light, MoveType::Air, withWH(WeaponDef{150, 6, 10, false, true, "shell", 0.5f, 1.0f, 1.5f}, WeaponDef::Warhead::HE), FA | FC, BldType::COUNT, 1},
@@ -169,7 +183,7 @@ static UnitDef g_units[(int)UnitType::COUNT] = {
     {UnitType::SeaScorpion,"海蝎",       600, 130, 400, 10, 8, Armor::Light, MoveType::Naval, wFlak(), FS | FC, BldType::COUNT},
     {UnitType::Dreadnought,"无畏级战舰", 2000,400, 800, 18, 7, Armor::Heavy, MoveType::Naval, wDreadMissile(), FS, BldType::BattleLab, 0, 0, eliteOf<ewDread>()},
     {UnitType::AircraftCarrier,"航空母舰",2000,400, 800, 16, 7, Armor::Heavy, MoveType::Naval, wHornet(), FA, BldType::BattleLab, 0, 3}, // 载机量 3（cargo 计舰载机）
-    {UnitType::AmphTransport,"两栖运输船",900, 220, 300, 12, 6, Armor::Light, MoveType::Amphibious, wNone(), ALLF, BldType::COUNT, 0, 5},
+    {UnitType::AmphTransport,"两栖运输船",900, 220, 300, 12, 6, Armor::Light, MoveType::Amphibious, wNone(), ALLF, BldType::COUNT, 0, 12, nullptr, Country::None, 16, 6},
     // ---- RA2 补全：采矿车阵营差异化 ----
     {UnitType::ChronoMiner,"超时空采矿车",1400,280, 1000, 20, 4, Armor::Heavy, MoveType::Vehicle, wNone(), FA, BldType::OreRefinery},
     {UnitType::WarMiner,   "武装采矿车", 1400,280, 1000, 20, 4, Armor::Heavy, MoveType::Vehicle, wWarMinerGun(), FS, BldType::OreRefinery, 0, 0, eliteOf<ewWarMiner>()},
@@ -454,11 +468,13 @@ bool resolveBldSpawn(const char* name, BldType& out, const BldVariant** varOut) 
 
 static std::string g_unitNameStr[(int)UnitType::COUNT];
 static std::string g_unitProjStr[(int)UnitType::COUNT];
+static std::string g_unitAirProjStr[(int)UnitType::COUNT];
 static std::string g_unitEliteProjStr[(int)UnitType::COUNT];
 static std::string g_bldNameStr[(int)BldType::COUNT];
 static std::string g_bldProjStr[(int)BldType::COUNT];
 static std::string g_swNameStr[(int)SWType::COUNT];
 static std::string g_deployProjStr[2];
+static std::string g_magnetronBuildingProjStr;
 // 精英武器可写池：首次 loadRules 时把内置精英武器复制入池并重指 UnitDef.elite
 static WeaponDef g_elitePool[(int)UnitType::COUNT];
 static bool g_elitePooled = false;
@@ -529,7 +545,8 @@ static bool parseArmor(const char* s, Armor& out) {
 }
 static bool parseWarhead(const char* s, WeaponDef::Warhead& out) {
     if (!s) return false;
-    static const char* names[] = {"Legacy", "SmallArms", "AP", "HE", "HollowPoint", "Psychic", "Radiation"};
+    static const char* names[] = {"Legacy", "SmallArms", "AP", "HE", "HollowPoint", "Psychic", "Radiation", "SAFlame", "ApocAP", "ApocAPE", "MammothHE"};
+    static_assert(std::size(names)==(int)WeaponDef::Warhead::COUNT);
     for (int i = 0; i < (int)WeaponDef::Warhead::COUNT; ++i)
         if (!strcmp(s, names[i])) { out = (WeaponDef::Warhead)i; return true; }
     return false;
@@ -563,7 +580,7 @@ static bool parseFactionMask(const char* s, uint8_t& out) {
 }
 
 // 武器键覆盖：prefix 为 "Weapon" / "Elite" / nullptr（直接键，部署武器用）
-static std::vector<std::string> g_ownedWeaponStrs;
+static std::deque<std::string> g_ownedWeaponStrs;
 static void loadWeaponKeys(const Ini::Section& sec, const char* prefix, WeaponDef& w, std::string& projSlot) {
     char key[32];
     auto kb = [&](const char* k) -> const char* {
@@ -573,14 +590,21 @@ static void loadWeaponKeys(const Ini::Section& sec, const char* prefix, WeaponDe
     };
     const char* v;
     if ((v = sec.get(kb("Damage")))) w.damage = Ini::toInt(v, w.damage);
-    if ((v = sec.get(kb("Range")))) w.range = Ini::toInt(v, w.range);
+    if ((v = sec.get(kb("Range")))) w.range = std::max(0.f,Ini::toFloat(v, w.range));
     if ((v = sec.get(kb("Cooldown")))) w.cooldown = Ini::toInt(v, w.cooldown);
+    if ((v=sec.get(kb("Burst")))) w.burst=std::clamp(Ini::toInt(v,w.burst),1,16);
+    if ((v=sec.get(kb("BurstDelayMin")))) w.burstDelayMin=std::clamp(Ini::toInt(v,w.burstDelayMin),1,600);
+    if ((v=sec.get(kb("BurstDelayMax")))) w.burstDelayMax=std::clamp(Ini::toInt(v,w.burstDelayMax),w.burstDelayMin,600);
+    w.burstDelayMax=std::max(w.burstDelayMin,w.burstDelayMax);
     if ((v = sec.get(kb("AntiAir")))) w.antiAir = Ini::toBool(v, w.antiAir);
     if ((v = sec.get(kb("AntiGround")))) w.antiGround = Ini::toBool(v, w.antiGround);
     if ((v = sec.get(kb("Proj")))) { projSlot = v; w.projSprite = projSlot.c_str(); }
     if ((v = sec.get(kb("Projectile")))) {
         g_ownedWeaponStrs.push_back(v);
         w.projectile = g_ownedWeaponStrs.back().c_str();
+    }
+    if ((v = sec.get(kb("Report")))) {
+        g_ownedWeaponStrs.push_back(v);w.report=g_ownedWeaponStrs.back().c_str();
     }
     if ((v = sec.get(kb("SpeedLeptons")))) w.speedLeptons = Ini::toInt(v, w.speedLeptons);
     if ((v = sec.get(kb("VsInf")))) w.vsInfantry = Ini::toFloat(v, w.vsInfantry);
@@ -655,9 +679,14 @@ void loadRules(const char* path) {
             if ((v = sec.get("Factions"))) { if (!parseFactionMask(v, d.factionMask)) warn("Factions"); }
             if ((v = sec.get("Prereq"))) { if (!bldTypeByName(v, d.prereq)) warn("Prereq"); }
             if ((v = sec.get("Ammo"))) d.ammo = Ini::toInt(v, d.ammo);
-            if ((v = sec.get("Cargo"))) d.cargoCap = Ini::toInt(v, d.cargoCap);
+            if ((v = sec.get("Cargo"))) d.cargoCap = std::clamp(Ini::toInt(v, d.cargoCap),0,64);
+            if ((v = sec.get("PassengerSize"))) d.passengerSize = std::clamp(Ini::toInt(v,d.passengerSize),1,64);
+            if ((v = sec.get("CargoSizeLimit"))) d.cargoSizeLimit = std::clamp(Ini::toInt(v,d.cargoSizeLimit),1,64);
             if ((v = sec.get("Country"))) { if (!countryByName(v, d.countryReq)) warn("Country"); }
             loadWeaponKeys(sec, "Weapon", d.weapon, g_unitProjStr[(int)ut]);
+            if ((v=sec.get("HasAirWeapon"))) d.hasAirWeapon=Ini::toBool(v,d.hasAirWeapon);
+            else for(const auto& p:sec.kv)if(p.first.rfind("AirWeapon.",0)==0){d.hasAirWeapon=true;break;}
+            if(d.hasAirWeapon)loadWeaponKeys(sec,"AirWeapon",d.airWeapon,g_unitAirProjStr[(int)ut]);
             // 精英武器：有任何 Elite.* 键即启用（原本无精英武器时以基础武器为底）
             bool hasEliteKey = false;
             for (const auto& p : sec.kv)
@@ -722,6 +751,9 @@ void loadRules(const char* path) {
             if ((v = sec.get("ChargeTime"))) d.chargeTime = Ini::toInt(v, d.chargeTime);
             if ((v = sec.get("FromBld"))) { if (!bldTypeByName(v, d.fromBld)) warn("FromBld"); }
             patched++;
+        } else if (sn == "SecondaryWeapon.Magnetron") {
+            loadWeaponKeys(sec,nullptr,wMagnetronBuilding,g_magnetronBuildingProjStr);
+            patched++;
         } else if (sn.rfind("DeployWeapon.", 0) == 0) {
             const char* who = sn.c_str() + 13;
             if (!strcmp(who, "GuardianGI")) loadWeaponKeys(sec, nullptr, wGgiDeploy, g_deployProjStr[0]);
@@ -732,6 +764,12 @@ void loadRules(const char* path) {
             const char* v;
             if ((v = sec.get("MaxMoney"))) g_gameRules.maxMoney = Ini::toInt(v, g_gameRules.maxMoney);
             if ((v = sec.get("StartingMoneyCap"))) g_gameRules.startingMoneyCap = Ini::toInt(v, g_gameRules.startingMoneyCap);
+            if ((v = sec.get("BuildingAnimationTicks"))) g_gameRules.buildingAnimationTicks = std::clamp(Ini::toInt(v, 40), 1, 3600);
+            if ((v = sec.get("FireAnimationTicks"))) g_gameRules.fireAnimationTicks = std::clamp(Ini::toInt(v, 12), 1, 3600);
+            if ((v = sec.get("ChopperLandingTicks"))) g_gameRules.chopperLandingTicks = std::clamp(Ini::toInt(v, 30), 1, 3600);
+            if ((v = sec.get("ChopperDeployTicks"))) g_gameRules.chopperDeployTicks = std::clamp(Ini::toInt(v, 30), 1, 3600);
+            if ((v = sec.get("ChopperDeployFacing"))) g_gameRules.chopperDeployFacing = std::clamp(Ini::toInt(v, 2), 0, 7);
+            if ((v = sec.get("DeathAnimationTicks"))) g_gameRules.deathAnimationTicks = std::clamp(Ini::toInt(v, 20), 1, 3600);
             if ((v = sec.get("LowPowerSpeedFactor"))) g_gameRules.lowPowerSpeedFactor = Ini::toFloat(v, g_gameRules.lowPowerSpeedFactor);
             if ((v = sec.get("CrateInterval"))) g_gameRules.crateInterval = Ini::toInt(v, g_gameRules.crateInterval);
             if ((v = sec.get("OreRegrowRate"))) g_gameRules.oreRegrowRate = Ini::toInt(v, g_gameRules.oreRegrowRate);
@@ -777,13 +815,25 @@ void loadRules(const char* path) {
                 warn("warhead"); continue;
             }
             const char* v = sec.get("Verses");
-            float vals[(int)Armor::COUNT] = {};
-            int got = v ? sscanf(v, "%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f",
-                &vals[0], &vals[1], &vals[2], &vals[3], &vals[4], &vals[5],
-                &vals[6], &vals[7], &vals[8], &vals[9], &vals[10]) : 0;
-            if (got != (int)Armor::COUNT) { warn("Verses (11 comma-separated multipliers)"); continue; }
-            for (int i = 0; i < (int)Armor::COUNT; ++i)
-                g_gameRules.warheadVerses[(int)wh][i] = std::clamp(vals[i], 0.0f, 10.0f);
+            if(v) {
+                float vals[(int)Armor::COUNT] = {};
+                const int got=sscanf(v,"%f,%f,%f,%f,%f,%f,%f,%f,%f,%f,%f",
+                    &vals[0],&vals[1],&vals[2],&vals[3],&vals[4],&vals[5],&vals[6],&vals[7],&vals[8],&vals[9],&vals[10]);
+                if(got!=(int)Armor::COUNT)warn("Verses (11 comma-separated multipliers)");
+                else for(int i=0;i<(int)Armor::COUNT;++i)if(std::isfinite(vals[i]))
+                    g_gameRules.warheadVerses[(int)wh][i]=std::clamp(vals[i],0.f,10.f);
+            }
+            auto& area=g_gameRules.warheadArea[(int)wh];
+            if((v=sec.get("CellSpread"))) {
+                const float value=Ini::toFloat(v,area.cellSpread);
+                if(std::isfinite(value) && value>=-1 && value<=11)area.cellSpread=value;
+                else warn("CellSpread (finite -1..11)");
+            }
+            if((v=sec.get("PercentAtMax"))) {
+                float value=Ini::toFloat(v,area.percentAtMax);if(strchr(v,'%'))value/=100;
+                if(std::isfinite(value) && value>=0 && value<=1)area.percentAtMax=value;
+                else warn("PercentAtMax (finite 0..1 or percent)");
+            }
             patched++;
         } else if (sn.rfind("AIBuild.", 0) == 0) {
             const char* facStr = sn.c_str() + 8;
@@ -1006,7 +1056,8 @@ static const char* armorKey(Armor a) {
     return "?";
 }
 static const char* warheadKey(WeaponDef::Warhead w) {
-    static const char* names[] = {"Legacy", "SmallArms", "AP", "HE", "HollowPoint", "Psychic", "Radiation"};
+    static const char* names[] = {"Legacy", "SmallArms", "AP", "HE", "HollowPoint", "Psychic", "Radiation", "SAFlame", "ApocAP", "ApocAPE", "MammothHE"};
+    static_assert(std::size(names)==(int)WeaponDef::Warhead::COUNT);
     int i = (int)w;
     return i >= 0 && i < (int)WeaponDef::Warhead::COUNT ? names[i] : "Legacy";
 }
@@ -1039,11 +1090,15 @@ static void writeWeaponKeys(FILE* f, const char* prefix, const WeaponDef& w) {
     };
     std::string b;
     fprintf(f, "%s=%d\n", key("Damage", b), w.damage);
-    fprintf(f, "%s=%d\n", key("Range", b), w.range);
+    fprintf(f, "%s=%g\n", key("Range", b), w.range);
     fprintf(f, "%s=%d\n", key("Cooldown", b), w.cooldown);
+    fprintf(f,"%s=%d\n",key("Burst",b),w.burst);
+    fprintf(f,"%s=%d\n",key("BurstDelayMin",b),w.burstDelayMin);
+    fprintf(f,"%s=%d\n",key("BurstDelayMax",b),w.burstDelayMax);
     fprintf(f, "%s=%s\n", key("AntiAir", b), w.antiAir ? "yes" : "no");
     fprintf(f, "%s=%s\n", key("AntiGround", b), w.antiGround ? "yes" : "no");
     fprintf(f, "%s=%s\n", key("Proj", b), w.projSprite);
+    if(w.report && w.report[0]) fprintf(f,"%s=%s\n",key("Report",b),w.report);
     if (w.projectile && w.projectile[0])
         fprintf(f, "%s=%s\n", key("Projectile", b), w.projectile);
     if (w.speedLeptons >= 0)
@@ -1066,6 +1121,8 @@ void exportRules(const char* path) {
     fprintf(f, "[GameRules]\nVeteranRatio=%g\nVeteranDmgBonus=%g,%g,%g\n",
             g_gameRules.veteranRatio, g_gameRules.veteranismDmgBonus[0] * 100,
             g_gameRules.veteranismDmgBonus[1] * 100, g_gameRules.veteranismDmgBonus[2] * 100);
+    fprintf(f,"ChopperLandingTicks=%d\nChopperDeployTicks=%d\n",g_gameRules.chopperLandingTicks,g_gameRules.chopperDeployTicks);
+    fprintf(f,"ChopperDeployFacing=%d\n",g_gameRules.chopperDeployFacing);
     fprintf(f, "VeteranArmorBonus=%g,%g,%g\nVeteranSpeedBonus=%g,%g,%g\nVeteranRofBonus=%g,%g,%g\n",
             g_gameRules.veteranArmorBonus[0] * 100, g_gameRules.veteranArmorBonus[1] * 100, g_gameRules.veteranArmorBonus[2] * 100,
             g_gameRules.veteranSpeedBonus[0] * 100, g_gameRules.veteranSpeedBonus[1] * 100, g_gameRules.veteranSpeedBonus[2] * 100,
@@ -1077,7 +1134,7 @@ void exportRules(const char* path) {
         fprintf(f, "[Warhead.%s]\nVerses=", warheadKey((WeaponDef::Warhead)wi));
         for (int ai = 0; ai < (int)Armor::COUNT; ++ai)
             fprintf(f, "%s%g", ai ? "," : "", g_gameRules.warheadVerses[wi][ai]);
-        fprintf(f, "\n\n");
+        fprintf(f,"\nCellSpread=%g\nPercentAtMax=%g\n\n",g_gameRules.warheadArea[wi].cellSpread,g_gameRules.warheadArea[wi].percentAtMax);
     }
     for (int i = 0; i < (int)UnitType::COUNT; i++) {
         const UnitDef& d = g_units[i];
@@ -1088,8 +1145,11 @@ void exportRules(const char* path) {
         fprintf(f, "Factions=%s\n", factionMaskStr(d.factionMask).c_str());
         fprintf(f, "Prereq=%s\n", d.prereq == BldType::COUNT ? "None" : bldTypeKey(d.prereq));
         fprintf(f, "Ammo=%d\nCargo=%d\nCountry=%s\n", d.ammo, d.cargoCap, countryKey(d.countryReq));
+        fprintf(f, "PassengerSize=%d\nCargoSizeLimit=%d\n",d.transportSize(),d.cargoSizeLimit);
         writeWeaponKeys(f, "Weapon", d.weapon);
         if (d.elite) writeWeaponKeys(f, "Elite", *d.elite);
+        fprintf(f,"HasAirWeapon=%s\n",d.hasAirWeapon?"yes":"no");
+        if(d.hasAirWeapon)writeWeaponKeys(f,"AirWeapon",d.airWeapon);
         fprintf(f, "\n");
     }
     for (int i = 0; i < (int)BldType::COUNT; i++) {
@@ -1114,6 +1174,8 @@ void exportRules(const char* path) {
     writeWeaponKeys(f, nullptr, wGgiDeploy);
     fprintf(f, "\n[DeployWeapon.GI]\n");
     writeWeaponKeys(f, nullptr, wGiDeploy);
+    fprintf(f,"\n[SecondaryWeapon.Magnetron]\n");
+    writeWeaponKeys(f,nullptr,wMagnetronBuilding);
     // AI 人格配置模板（遭遇战 UI 中选择；此节仅作文档参考，实际参数由代码内置）
     fprintf(f, "\n; ==================== AI 人格配置（文档参考） ====================\n");
     fprintf(f, "; 难度：0=简单(思考30帧/阈值15+/无超武) 1=普通(15帧/8+) 2=困难(10帧/6+/集火/撤退) 3=残酷(7帧/5+/资源加成35%%)\n");

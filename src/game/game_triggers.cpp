@@ -91,8 +91,7 @@ void Game::updateTriggers() {
                     if (e.alive && !e.isBuilding && e.player == p && e.utype == ut) n++;
                 for (const auto& e : world.ents) {
                     if (!e.alive || e.player != p) continue;
-                    for (const auto& g : e.garrison) if (g.type == ut) n++;
-                    for (const auto& g : e.cargo) if (g.type == ut) n++;
+                    n+=World::cargoUnitCount(e.garrison,ut)+World::cargoUnitCount(e.cargo,ut);
                 }
                 if (n > 0) t.armed = true;
                 cond = t.armed && n == 0;
@@ -156,7 +155,7 @@ void Game::updateTriggers() {
                 break;
             case TrigAct::GiveMoney: {
                 int p = t.a[0];
-                if (p >= 0 && p < world.numPlayers) world.players[p].money += t.a[1];
+                if (p >= 0 && p < world.numPlayers) world.changeMoney(p,t.a[1]);
                 if (txt) world.eva(0, txt);
                 break;
             }

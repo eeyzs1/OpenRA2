@@ -4,6 +4,7 @@
 #include "game/campaign.h"
 #include "gfx/sprites.h"
 #include "gfx/pixel.h"
+#include "gfx/terrain_material.h"
 #include "sfx/sound.h"
 #include "core/content.h"
 #include "rlgl.h"
@@ -1271,24 +1272,39 @@ void Game::drawMissionBrief() {
 // ===================== 地图预览（与 bakeTerrain 同源 TMP 采样缩略） =====================
 // 与 game_render_world.cpp::tHash 同算法，保证变体选择与局内一致
 static uint32_t previewTileHash(int x, int y, uint64_t seed) {
-    uint32_t h = ((uint32_t)x * 73856093u) ^ ((uint32_t)y * 19349663u) ^ ((uint32_t)seed * 83492791u);
-    h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
-    return h;
+    return terrainVisualHash(x,y,seed);
 }
 
 void Game::refreshMapPreview() {
     std::vector<Vec2i> spawns;
     // 与 newGame 一致：海战强制岛屿类地形
     int mapType = (cfgGameMode == (int)SkirmishMode::NavalWar) ? 1 : cfgMapType;
-    previewMap.generate(cfgMapSize, cfgMapSize, previewSeed, cfgAI + 1, spawns, mapType);
-    const int w = cfgMapSize, h = cfgMapSize;
+    referenceMapReady = true;
+    if (cfgReferenceMap) {
+        World reference;
+        referenceMapReady = reference.init(64, 64, previewSeed, 1, 1,
+            {Faction::Allies, Faction::Soviet}, 0, REFERENCE_MAP, false, true);
+        referenceMapReady = referenceMapReady && reference.map.w == 64 && reference.map.h == 64;
+        if (!referenceMapReady) {
+            if (previewTex.id) UnloadTexture(previewTex);
+            previewTex = {}; previewMap = {}; previewDirty = false;
+            return;
+        }
+        for(int player=0;player<reference.numPlayers;++player)
+            for(const auto& entity:reference.ents)
+                if(entity.alive && !entity.isBuilding && entity.player==player && entity.utype==UnitType::MCV) {
+                    spawns.push_back({(int)entity.x,(int)entity.y});break;
+                }
+        previewMap = std::move(reference.map);
+        previewMap.bldOccRef = nullptr;
+    } else previewMap.generate(cfgMapSize, cfgMapSize, previewSeed, cfgAI + 1, spawns, mapType);
+    const int w = previewMap.w, h = previewMap.h;
     const uint64_t seed = 20260723; // 与 bakeTerrain 同种子
 
     PixBuf tilePx[6][8];
     bool tileOk[6][8] = {};
     static const char* kTileNames[6] = {"clear", "rough", "water", "ore", "gems", "bridge"};
     for (int ti = 0; ti < 6; ti++) {
-        if (ti == (int)Terrain::Ore || ti == (int)Terrain::Gems) continue;
         for (int v = 0; v < 8; v++) {
             tileOk[ti][v] = tilePx[ti][v].loadFromFile(contentPathFmt("assets/sprites/tile_%s_%d.png", kTileNames[ti], v))
                          && tilePx[ti][v].w == TILE_W && tilePx[ti][v].h == TILE_H;
@@ -1341,11 +1357,12 @@ void Game::refreshMapPreview() {
             float fx = sx / (TILE_W / 2.0f), fy = sy / (TILE_H / 2.0f);
             int tx = (int)floorf((fx + fy) / 2.0f), ty = (int)floorf((fy - fx) / 2.0f);
             if (!previewMap.inBounds(tx, ty)) continue; // 菱形外透明（同 bakeTerrain）
-            Terrain t = previewMap.at(tx, ty).terrain;
+            Terrain surface = previewMap.at(tx, ty).terrain;
+            Terrain t = terrainSubstrate(surface);
             Color c = fallbackCol(t);
             int ti = (int)t;
-            uint32_t vh = previewTileHash(tx / 5, ty / 5, seed + 13);
-            int tv = (vh % 100 < 94) ? 0 : 1 + (int)(vh % 7);
+            uint32_t vh = previewTileHash(tx, ty, seed + 13);
+            int tv = (int)(vh&7);
             bool fromTile = false;
             int ppx = 0, ppy = 0;
             auto sampleTileAt = [&](int txi, int tyi, const PixBuf& src) -> bool {
@@ -1363,17 +1380,27 @@ void Game::refreshMapPreview() {
             }
             if (!fromTile && ti != (int)Terrain::Ore && ti != (int)Terrain::Gems && tileOk[ti][tv])
                 fromTile = sampleTileAt(tx, ty, tilePx[ti][tv]);
-            if (!fromTile && (t == Terrain::Ore || t == Terrain::Gems))
-                c = Color{96, 76, 46, 255};
+            if(surface==Terrain::Ore || surface==Terrain::Gems) {
+                const int variant=resourceVisualVariant(tx,ty,previewMap.at(tx,ty).variant);
+                const Color base=c;
+                if(tileOk[(int)surface][variant] && sampleTileAt(tx,ty,tilePx[(int)surface][variant])) {
+                    const int alpha=c.a;
+                    c={uint8_t((c.r*alpha+base.r*(255-alpha))/255),uint8_t((c.g*alpha+base.g*(255-alpha))/255),
+                        uint8_t((c.b*alpha+base.b*(255-alpha))/255),255};
+                }
+            }
             pb.px[(size_t)by * bw + bx] = c;
         }
     }
+    bool usedSpawnColor[MAX_PLAYERS]{};
     for (size_t i = 0; i < spawns.size(); i++) {
         int sx, sy;
         tileToScreen(spawns[i].x, spawns[i].y, sx, sy);
         int px = (int)((sx + terrainOX) * sc);
         int py = (int)(sy * sc);
-        Color scc = i == 0 ? HOUSE_COLORS[cfgColor] : Color{230, 230, 230, 255};
+        int color=i==0?cfgColor:aiColor[std::min((int)i-1,6)];
+        while(usedSpawnColor[color]) color=(color+1)%MAX_PLAYERS;
+        usedSpawnColor[color]=true;Color scc=HOUSE_COLORS[color];
         for (int dy = -2; dy <= 2; dy++)
             for (int dx = -2; dx <= 2; dx++)
                 pb.set(px + dx, py + dy, (dx == 0 || dy == 0) ? scc : Color{0, 0, 0, 255});
@@ -1466,7 +1493,7 @@ void Game::drawSetup() {
     bool pr = mPressed(MOUSE_LEFT_BUTTON);
     if (previewDirty) refreshMapPreview();
 
-    int maxAI = cfgMapSize <= 64 ? 3 : (cfgMapSize <= 96 ? 5 : (cfgMapSize <= 160 ? 7 : 7));
+    int maxAI = cfgReferenceMap ? 1 : cfgMapSize <= 64 ? 3 : (cfgMapSize <= 96 ? 5 : (cfgMapSize <= 160 ? 7 : 7));
     if (cfgAI > maxAI) cfgAI = maxAI;
 
     // ---------- 右栏：CRT 内等距菱形预览（等比 contain，与局内投影一致） ----------
@@ -1513,7 +1540,9 @@ void Game::drawSetup() {
         S::SizeXS, S::SizeS, S::SizeM, S::SizeL, S::SizeXL, S::SizeHuge, S::SizeEpic,
     };
     static constexpr int kMapSizeN = 7;
-    static constexpr int kMapTypeN = 7;
+    static constexpr int kMapTypeN = 8;
+    auto mapName = [&](int i) { return i == 7 ? TR(S::MapReference) : TR(typeNames[i]); };
+    auto mapTip = [&](int i) { return i == 7 ? TR(S::TipMapReference) : TR(typeTips[i]); };
     const float dropRowH = 20.f;
     auto dropItemCount = [&]() -> int {
         switch (g_sdrop.kind) {
@@ -1548,6 +1577,7 @@ void Game::drawSetup() {
                 if (g_sdrop.slot >= 1 && g_sdrop.slot - 1 < cfgAI) aiDiff[g_sdrop.slot - 1] = dropSel;
                 break;
             case SetupDrop::Mode:
+                cfgReferenceMap = false;
                 cfgGameMode = dropSel;
                 if (cfgGameMode == (int)SkirmishMode::FreeForAll) cfgAlliance = false;
                 if (cfgGameMode == (int)SkirmishMode::LandRush) cfgCrates = true;
@@ -1556,11 +1586,14 @@ void Game::drawSetup() {
                 previewDirty = true;
                 break;
             case SetupDrop::MapSize:
+                cfgReferenceMap = false;
                 cfgMapSize = mapSizes[dropSel];
                 if (cfgAI > maxAI) cfgAI = maxAI;
                 previewDirty = true;
                 break;
             case SetupDrop::MapType:
+                if (dropSel == 7) { selectReferenceMap(); break; }
+                cfgReferenceMap = false;
                 cfgMapType = dropSel;
                 if (cfgGameMode == (int)SkirmishMode::NavalWar) cfgMapType = 1;
                 previewDirty = true;
@@ -1585,6 +1618,7 @@ void Game::drawSetup() {
         byBtn = std::max(statusBar.y + statusBar.height + 4.f, backY - 8.f - bhSide - sideGap - midH);
 
     auto rollRandomMap = [&]() {
+        cfgReferenceMap = false;
         uint64_t ns = seedRollNew(previewSeed);
         previewSeed = ns;
         seedHistPush(ns);
@@ -1593,7 +1627,7 @@ void Game::drawSetup() {
     };
 
     menuDrawWell({bx - 4.f, byBtn - 4.f, bw + 8.f, bhSide + sideGap + midH + 8.f}, false);
-    if (ra2Button(font, m, prUi, {bx, byBtn, bw, bhSide}, TR(S::StartGame), 13, true, false, true))
+    if (ra2Button(font, m, prUi, {bx, byBtn, bw, bhSide}, TR(S::StartGame), 13, !cfgReferenceMap || referenceMapReady, false, true))
         newGame(previewSeed);
     float y2 = byBtn + bhSide + sideGap;
     if (ra2Button(font, m, prUi, {bx, y2, bw, bhSide}, TR(S::RandomNewMap), 12))
@@ -1718,7 +1752,7 @@ void Game::drawSetup() {
                 g_sfx.play(Sfx::Click, 0.45f);
             }
             Rectangle dr{(float)delX, (float)y + 2, (float)delW, (float)(rowH - 6)};
-            if (ra2Button(font, m, prUi, dr, TR(S::Remove), 9, true, true)) {
+            if (ra2Button(font, m, prUi, dr, TR(S::Remove), 9, !cfgReferenceMap, true)) {
                 for (int i = idx - 1; i < cfgAI - 1; i++) {
                     aiColor[i] = aiColor[i + 1]; aiCountry[i] = aiCountry[i + 1];
                     aiDiff[i] = aiDiff[i + 1]; aiPersonality[i] = aiPersonality[i + 1];
@@ -1830,8 +1864,8 @@ void Game::drawSetup() {
     int ti = cfgMapType;
     if (ti < 0 || ti >= kMapTypeN) ti = 0;
     int typeX = formX + labelW + mapSlotW + 18;
-    dropField(typeX, oyMap, labelW, mapSlotW, TR(S::MapType), TR(typeNames[ti]), SetupDrop::MapType,
-              TR(S::MapType), TR(typeTips[ti]));
+    dropField(typeX, oyMap, labelW, mapSlotW, TR(S::MapType), mapName(cfgReferenceMap ? 7 : ti), SetupDrop::MapType,
+              TR(S::MapType), mapTip(cfgReferenceMap ? 7 : ti));
 
     // ---------- 地图定制面板（换地图展开）：种子 + 随机/上一个/下一个/切换类型 ----------
     if (g_setupMapCustom) {
@@ -1859,6 +1893,7 @@ void Game::drawSetup() {
             return ra2Button(font, m, prUi, br, label, 10, enabled);
         };
         if (miniBtn(ax, 78.f, TR(S::RandomNewMap))) {
+            cfgReferenceMap = false;
             uint64_t ns = seedRollNew(previewSeed);
             previewSeed = ns;
             seedHistPush(ns);
@@ -1866,11 +1901,13 @@ void Game::drawSetup() {
         }
         bool canPrev = g_seedHistI > 0;
         if (miniBtn(ax, 78.f, TR(S::PrevSeed), canPrev) && canPrev) {
+            cfgReferenceMap = false;
             g_seedHistI--;
             previewSeed = g_seedHist[g_seedHistI];
             previewDirty = true;
         }
         if (miniBtn(ax, 78.f, TR(S::NextSeed))) {
+            cfgReferenceMap = false;
             if (g_seedHistI >= 0 && g_seedHistI < g_seedHistN - 1) {
                 g_seedHistI++;
                 previewSeed = g_seedHist[g_seedHistI];
@@ -1883,7 +1920,8 @@ void Game::drawSetup() {
         }
         bool canCycleType = cfgGameMode != (int)SkirmishMode::NavalWar;
         if (miniBtn(ax, 78.f, TR(S::CycleMapType), canCycleType) && canCycleType) {
-            cfgMapType = (cfgMapType + 1) % kMapTypeN;
+            cfgReferenceMap = false;
+            cfgMapType = (cfgMapType + 1) % 7;
             previewDirty = true;
         }
         if (CheckCollisionPointRec(m, panel) && cfgUiTips && !tipTitle)
@@ -1949,8 +1987,8 @@ void Game::drawSetup() {
                     if (hover && cfgUiTips) setTip(TR(sizeNames[i]), TR(S::TipMapSize));
                     break;
                 case SetupDrop::MapType:
-                    drawTextS(font, TR(typeNames[i]), (int)row.x + 6, (int)row.y + 2, 11, MENU_YELLOW);
-                    if (hover && cfgUiTips) setTip(TR(typeNames[i]), TR(typeTips[i]));
+                    drawTextS(font, mapName(i), (int)row.x + 6, (int)row.y + 2, 11, MENU_YELLOW);
+                    if (hover && cfgUiTips) setTip(mapName(i), mapTip(i));
                     break;
                 default: break;
             }
@@ -1975,9 +2013,13 @@ void Game::drawSetup() {
         char seedLine[48];
         std::snprintf(seedLine, sizeof(seedLine), "%s %llu", TR(S::MapSeed), (unsigned long long)previewSeed);
         menuDrawWell(statusBar, false);
-        menuScissorUi((int)statusBar.x + 3, (int)statusBar.y + 2, (int)statusBar.width - 6, 16);
-        drawTextS(font, TextFormat("%s · %s", TR(modeNames[cfgGameMode]), seedLine),
-                  (int)statusBar.x + 4, (int)statusBar.y + 4, 10, MENU_MUTE);
+        menuScissorUi((int)statusBar.x + 3, (int)statusBar.y + 1, (int)statusBar.width - 6, 21);
+        if (cfgReferenceMap) {
+            drawTextS(font, referenceMapReady ? mapName(7) : TR(S::MsgMapUnavailable),
+                      (int)statusBar.x + 4, (int)statusBar.y + 1, 10, MENU_MUTE);
+            drawTextS(font, seedLine, (int)statusBar.x + 4, (int)statusBar.y + 12, 9, MENU_MUTE);
+        } else drawTextS(font, TextFormat("%s · %s", TR(modeNames[cfgGameMode]), seedLine),
+                        (int)statusBar.x + 4, (int)statusBar.y + 4, 10, MENU_MUTE);
         EndScissorMode();
     }
 }

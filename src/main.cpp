@@ -128,7 +128,9 @@ int main(int argc, char** argv) {
     // 运行时 VXL 样张：不进主循环，直接渲几辆车到 tools/ra2pack/out/
     if (findFlag("--dump-vxl") >= 0) {
         VxlRt::init();
-        MakeDirectory("tools/ra2pack/out");
+        const int outputFlag=findFlag("--dump-dir");
+        const std::string output=outputFlag>=0?flagStr(outputFlag,1,"tools/ra2pack/out"):"tools/ra2pack/out";
+        MakeDirectory(output.c_str());
         struct { UnitType t; const char* name; bool tur; } samples[] = {
             {UnitType::Grizzly, "grizzly", true},
             {UnitType::Rhino, "rhino", true},
@@ -138,6 +140,33 @@ int main(int argc, char** argv) {
             {UnitType::TeslaTank, "teslatank", true},
         };
         int ok = 0;
+        if(findFlag("--all-facings")>=0) {
+            // Native source layers for the documented fusion asset pipeline.
+            for(int direction=0;direction<8;++direction) {
+                PixBuf body,turret;
+                if(!VxlRt::renderBody(UnitType::Rhino,direction,0,body)
+                    || !VxlRt::renderTurret(UnitType::Rhino,direction,turret)) return 1;
+                if(!body.saveToFile(TextFormat("%s/native_rhino_body_d%d.png",output.c_str(),direction))
+                    || !turret.saveToFile(TextFormat("%s/native_rhino_turret_d%d.png",output.c_str(),direction))) return 1;
+            }
+            FILE* anchors=fopen((output+"/native_siege_anchors.csv").c_str(),"wb");
+            if(!anchors)return 1;
+            std::fprintf(anchors,"direction,pose,frame,x,y\n");
+            for(int direction=0;direction<8;++direction) {
+                for(int frame=0;frame<2;++frame) {
+                    PixBuf flight;Vec2i anchor;
+                    if(!VxlRt::renderBody(UnitType::SiegeChopper,direction,frame,flight,nullptr,&anchor)
+                        || !flight.saveToFile(TextFormat("%s/native_siege_flight_d%d_f%d.png",output.c_str(),direction,frame))){fclose(anchors);return 1;}
+                    std::fprintf(anchors,"%d,flight,%d,%d,%d\n",direction,frame,anchor.x,anchor.y);
+                }
+                PixBuf ground;Vec2i anchor;
+                if(!VxlRt::renderDeployed(UnitType::SiegeChopper,direction,direction,ground,anchor)
+                    || !ground.saveToFile(TextFormat("%s/native_siege_ground_d%d.png",output.c_str(),direction))){fclose(anchors);return 1;}
+                std::fprintf(anchors,"%d,ground,0,%d,%d\n",direction,anchor.x,anchor.y);
+            }
+            if(fclose(anchors)!=0)return 1;
+            printf("dump-vxl: native rhino source layers 8/8\n");
+        }
         for (auto& s : samples) {
             PixBuf body;
             if (!VxlRt::renderBody(s.t, 2, 0, body)) {
@@ -150,7 +179,7 @@ int main(int argc, char** argv) {
                     body.blit(tur, 0, 0);
             }
             char path[256];
-            snprintf(path, sizeof(path), "tools/ra2pack/out/rt_%s_d2.png", s.name);
+            snprintf(path, sizeof(path), "%s/rt_%s_d2.png",output.c_str(),s.name);
             if (body.saveToFile(path)) {
                 printf("dump-vxl: wrote %s (%dx%d)\n", path, body.w, body.h);
                 ok++;
@@ -185,9 +214,13 @@ int main(int argc, char** argv) {
     if (liveVerify) windowed = true;
     // 测试/截图等非交互模式：隐藏窗口；live-verify 必须可见才能打真实鼠标
     static const char* kTestFlags[] = {
-        "--smoke", "--smoke-campaign", "--campaign-matrix", "--live-verify",
+        "--smoke", "--smoke-campaign", "--campaign-matrix", "--live-verify", "--ai-economy-regression", "--ai-transport-regression", "--ai-factory-exit-regression", "--ai-air-defense-regression", "--moving-yield-regression", "--junction-regression", "--combat-pressure-regression", "--apocalypse-regression", "--burst-regression", "--splash-regression",
         "--play-test", "--visual-audit", "--bench-campaign", "--menu-shot",
-        "--gui-review", "--shot", "--state-test", "--net-host", "--net-client",
+        "--generated-match", "--generated-map-structure", "--generated-map-health", "--factory-state-regression", "--chrono-visual-regression", "--superweapon-regression", "--fog-feedback-regression", "--fog-knowledge-regression", "--terrain-visual-regression", "--refund-regression", "--production-feedback-regression", "--placement-regression", "--reference-map-regression", "--gui-review", "--shot", "--state-test", "--app-state-test", "--visual-regression", "--animation-regression", "--attack-regression", "--engineer-regression", "--lifecycle-regression", "--entry-regression", "--release-regression", "--instant-combat-regression", "--service-regression", "--hud-regression", "--skirmish-regression", "--movement-regression", "--traffic-regression", "--blocker-regression", "--idle-yield-regression", "--chopper-ground-regression", "--immobilized-regression", "--deployment-feedback-regression", "--rally-regression", "--rally-visual-regression", "--refinery-recovery-regression", "--feedback-visual-regression", "--magnetic-landing-regression", "--ai-attack-regression", "--magnetron-regression", "--economy-regression", "--presentation-replay", "--net-host", "--net-client",
+        "--siege-pose-regression",
+        "--voxel-animation-regression",
+        "--chopper-transition-regression",
+        "--elevation-feedback-regression",
         "--content-check",
     };
     bool testMode = false;
@@ -386,6 +419,206 @@ int main(int argc, char** argv) {
         game.debugShot(warm, "shot_game.png");
         game.shutdown();
         return 0;
+    }
+    if (int fi=findFlag("--presentation-replay");fi>=0) {
+        int failures=game.presentationReplay(flagInt(fi,1,0)!=0);
+        game.shutdown(); return failures==0?0:1;
+    }
+    if (findFlag("--economy-regression") >= 0) {
+        int failures = game.economyRegression();
+        game.shutdown();
+        return failures == 0 ? 0 : 1;
+    }
+    if (findFlag("--movement-regression") >= 0) {
+        int failures = game.movementRegression();
+        game.shutdown();
+        return failures == 0 ? 0 : 1;
+    }
+    if (int fi = findFlag("--skirmish-regression"); fi >= 0) {
+        int failures = game.skirmishRegression((std::max)(1, flagInt(fi, 1, 36000)), flagInt(fi,2,-1), (uint64_t)flagInt(fi,3,0),findFlag("--require-outcomes")>=0);
+        game.shutdown();
+        return failures == 0 ? 0 : 1;
+    }
+    if (int fi=findFlag("--visual-regression");fi>=0) {
+        int failures=game.visualRegression(flagStr(fi,1,"review_out/visual"));
+        game.shutdown();return failures==0?0:1;
+    }
+    if (int fi=findFlag("--siege-pose-regression");fi>=0) {
+        int failures=game.siegePoseRegression(flagStr(fi,1,"review_out/siege-pose"));
+        game.shutdown();return failures==0?0:1;
+    }
+    if (int fi=findFlag("--voxel-animation-regression");fi>=0) {
+        int failures=game.voxelAnimationRegression(flagStr(fi,1,"review_out/voxel-animation"));
+        game.shutdown();return failures==0?0:1;
+    }
+    if (int fi=findFlag("--chopper-transition-regression");fi>=0) {
+        int failures=game.chopperTransitionRegression(flagStr(fi,1,"review_out/chopper-transition"));
+        game.shutdown();return failures==0?0:1;
+    }
+    if (int fi=findFlag("--elevation-feedback-regression");fi>=0) {
+        int failures=game.elevationFeedbackRegression(flagStr(fi,1,"review_out/elevation-feedback"));
+        game.shutdown();return failures==0?0:1;
+    }
+    if (int fi=findFlag("--animation-regression");fi>=0) {
+        int failures=game.animationRegression(flagStr(fi,1,"review_out/animation"));
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--attack-regression")>=0) {
+        int failures=game.attackRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--engineer-regression")>=0) {
+        int failures=game.engineerRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--lifecycle-regression")>=0) {
+        int failures=game.lifecycleRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(int fi=findFlag("--generated-match");fi>=0) {
+        int failures=game.skirmishRegression((std::max)(1,flagInt(fi,1,72000)),flagInt(fi,2,-1),(uint64_t)flagInt(fi,3,0),true,(std::clamp)(flagInt(fi,4,1),0,6));
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--generated-map-structure")>=0 || findFlag("--generated-map-health")>=0) {
+        int index=findFlag("--generated-map-structure");
+        int failures=game.generatedMapRegression(findFlag("--generated-map-health")>=0,index>=0 && index+1<argc?argv[index+1]:"review_out/generated-map");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--factory-state-regression")>=0) {
+        int i=findFlag("--factory-state-regression");
+        int failures=game.factoryStateRegression(i+1<argc?argv[i+1]:"review_out/factory-state");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--chrono-visual-regression")>=0) {
+        int i=findFlag("--chrono-visual-regression");
+        int failures=game.chronoVisualRegression(i+1<argc?argv[i+1]:"review_out/chrono");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--superweapon-regression")>=0) {
+        int i=findFlag("--superweapon-regression");
+        int failures=game.superweaponRegression(i+1<argc?argv[i+1]:"review_out/superweapon");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--fog-feedback-regression")>=0) {
+        int i=findFlag("--fog-feedback-regression");
+        int failures=game.fogFeedbackRegression(i+1<argc?argv[i+1]:"review_out/fog-feedback");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--fog-knowledge-regression")>=0) {
+        int i=findFlag("--fog-knowledge-regression");
+        int failures=game.fogKnowledgeRegression(i+1<argc?argv[i+1]:"review_out/fog-knowledge");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--terrain-visual-regression")>=0) {
+        int i=findFlag("--terrain-visual-regression");
+        int failures=game.terrainVisualRegression(i+1<argc?argv[i+1]:"review_out/terrain");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--refund-regression")>=0) {
+        int i=findFlag("--refund-regression");
+        int failures=game.refundRegression(i+1<argc?argv[i+1]:"review_out/refund");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--production-feedback-regression")>=0) {
+        int i=findFlag("--production-feedback-regression");
+        int failures=game.productionFeedbackRegression(i+1<argc?argv[i+1]:"review_out/production-feedback");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--placement-regression")>=0) {
+        int i=findFlag("--placement-regression");
+        int failures=game.placementRegression(i+1<argc?argv[i+1]:"review_out/placement");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--reference-map-regression")>=0) {
+        int i=findFlag("--reference-map-regression");
+        int failures=game.referenceMapRegression(i+1<argc?argv[i+1]:"review_out/reference-map");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--entry-regression")>=0) {
+        int failures=game.entryRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(int fi=findFlag("--hud-regression");fi>=0) {
+        int failures=game.hudRegression(fi+1<argc?argv[fi+1]:"review_out/hud");game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--moving-yield-regression")>=0) {
+        int failures=game.movingYieldRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--ai-transport-regression")>=0) {
+        int failures=game.aiTransportRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--ai-factory-exit-regression")>=0) {
+        int failures=game.aiFactoryExitRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--ai-economy-regression")>=0) {
+        int failures=game.aiEconomyRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--ai-air-defense-regression")>=0) {
+        int failures=game.aiAirDefenseRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--ai-attack-regression")>=0) {
+        int failures=game.aiAttackRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--blocker-regression")>=0) {
+        int failures=game.blockerRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--idle-yield-regression")>=0) {
+        int failures=game.idleYieldRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--chopper-ground-regression")>=0) {
+        int failures=game.chopperGroundRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--immobilized-regression")>=0) {
+        int failures=game.immobilizedRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--deployment-feedback-regression")>=0) {
+        int failures=game.deploymentFeedbackRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--rally-regression")>=0) {
+        int failures=game.rallyRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(int fi=findFlag("--rally-visual-regression");fi>=0) {
+        int failures=game.rallyVisualRegression(fi+1<argc?argv[fi+1]:"review_out/rally-visual");game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--refinery-recovery-regression")>=0) {
+        int failures=game.refineryRecoveryRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(int fi=findFlag("--feedback-visual-regression");fi>=0) {
+        int failures=game.feedbackVisualRegression(fi+1<argc?argv[fi+1]:"review_out/feedback-visual");game.shutdown();return failures==0?0:1;
+    }
+    if(int fi=findFlag("--magnetic-landing-regression");fi>=0) {
+        int failures=game.magneticLandingRegression(fi+1<argc?argv[fi+1]:"review_out/magnetic-landing");game.shutdown();return failures==0?0:1;
+    }
+    if(int fi=findFlag("--magnetron-regression");fi>=0) {
+        int failures=game.magnetronRegression(fi+1<argc?argv[fi+1]:"review_out/magnetron");game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--splash-regression")>=0) {
+        int failures=game.splashRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--burst-regression")>=0) {
+        int failures=game.burstRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--apocalypse-regression")>=0) {
+        int failures=game.apocalypseRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(int fi=findFlag("--combat-pressure-regression");fi>=0) {
+        int failures=game.combatPressureRegression(flagInt(fi,1,-1),fi+2<argc?argv[fi+2]:"review_out/combat-pressure");game.shutdown();return failures==0?0:1;
+    }
+    if(int fi=findFlag("--junction-regression");fi>=0) {
+        int failures=game.junctionRegression(flagInt(fi,1,-1));game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--traffic-regression")>=0) {
+        const int cf=findFlag("--traffic-case");
+        int failures=game.trafficRegression(cf>=0 && cf+1<argc?atoi(argv[cf+1]):-1);
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--service-regression")>=0) {
+        int failures=game.serviceRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--instant-combat-regression")>=0) {
+        int failures=game.instantCombatRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--release-regression")>=0) {
+        int failures=game.releaseRegression();game.shutdown();return failures==0?0:1;
+    }
+    if (findFlag("--app-state-test") >= 0) {
+        int failures=game.appPersistenceTest();game.shutdown();return failures==0?0:1;
     }
     if (findFlag("--state-test") >= 0) {
         int failures = game.statePersistenceTest();

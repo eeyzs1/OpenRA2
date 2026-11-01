@@ -1,9 +1,12 @@
 #pragma once
 #include <cstdint>
+#include <cstdio>
+#include <string>
 #include <cmath>
 #include <algorithm>
 
 // 等距瓦片尺寸（像素）
+constexpr int MAX_PLAYERS = 8;
 constexpr int TILE_W = 64;
 constexpr int TILE_H = 32;
 
@@ -57,3 +60,27 @@ inline float distf(float x1, float y1, float x2, float y2) {
 }
 
 inline int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+inline int dirFromVec(float dx, float dy) {
+    // Quantize the movement vector before isometric projection. Equal screen
+    // angle bins would give cardinal and diagonal world facings different widths.
+    if (dx == 0.f && dy == 0.f) return 2;
+    float a = atan2f(dy, dx);
+    int d = (int)roundf(a / (3.14159265f / 4.0f))+1;
+    d = ((d % 8) + 8) % 8;               // 0=东 顺时针
+    return d;
+}
+
+// Eight movement facings are world compass directions, not equal screen angles.
+// d=1 is +world X; projection makes it 26.565 degrees below screen east.
+inline float voxelFacingDegrees(int direction) { return 45.f*((direction&7)-1); }
+
+template<typename... Args>
+inline std::string formatText(const char* format, Args... args) {
+    int size = std::snprintf(nullptr, 0, format, args...);
+    if (size < 0) return {};
+    std::string result(size_t(size) + 1, '\0');
+    std::snprintf(result.data(), result.size(), format, args...);
+    result.resize(size_t(size));
+    return result;
+}

@@ -9,8 +9,10 @@ sequences:
     frames: 2
   walk:
     frames: 6
+    rate: 2
   fire:
     frames: 6
+    rate: 2
   die:
     frames: 15
     facings: 1

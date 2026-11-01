@@ -20,6 +20,7 @@ enum class AIPersonality : uint8_t {
 
 // 人格配置参数
 struct AIPersonalityConfig {
+    bool operator==(const AIPersonalityConfig&) const = default;
     float aggression = 1.0f;       // 进攻欲望倍率（阈值 = base / aggression）
     float defensePriority = 1.0f;  // 防御建筑优先级倍率
     float techRush = 1.0f;         // 科技冲刺速度（高科/超武优先）
@@ -37,6 +38,7 @@ struct AIPersonalityConfig {
 // 遭遇战 AI：建造顺序 + 持续暴兵 + 波次进攻 + 战术微操
 class SkirmishAI {
 public:
+    bool operator==(const SkirmishAI&) const = default;
     int player = -1;
     int thinkTimer = 0;
     int attackWave = 0;
@@ -62,9 +64,14 @@ public:
     void initPersonality();
 
 private:
+    bool recoverEconomy(World& w);
+    bool needsTransport(const World& w) const;
+    void doTransports(World& w);
     void doBuildOrder(World& w);
     void doProduction(World& w);
+    void clearFactoryExits(World& w);
     void doAttack(World& w);
+    std::vector<EID> assignAirDefense(World& w);
     void doSuperWeapon(World& w);
     void doSupport(World& w);
     void doEngineers(World& w);

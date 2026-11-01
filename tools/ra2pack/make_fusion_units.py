@@ -13,7 +13,7 @@ SPR = ROOT / "assets" / "sprites"
 
 # RA2 house remap 占位红（引擎 runtime remap）
 def is_remap(r, g, b, a):
-    return a > 40 and r >= 200 and g < 80 and b < 80
+    return a > 40 and ((r > 0 and g == 0 and b == 0) or (r >= 200 and g < 80 and b < 80))
 
 def is_skin(r, g, b, a):
     return a > 40 and r > 160 and g > 110 and b > 80 and abs(r - g) < 70
