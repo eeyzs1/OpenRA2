@@ -102,6 +102,7 @@ enum class S : int {
     TipFacilityFrozen,TipFacilityDrained,TipFacilityWaiting,TipFacilityHalted,
     MsgDeployStarting,MsgUndeployStarting,MsgDeployBusy,
     MsgRepairStarted,MsgRepairStopped,MsgBuildingInvalid,MsgBuildingOwner,MsgBuildingSelling,MsgBuildingConstructing,
+    CampaignUnavailable,
     COUNT
 };
 

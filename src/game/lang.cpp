@@ -434,6 +434,7 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"只能操作己方建筑", "You can only manage your own buildings"},
     {"建筑正在出售，无法执行指令", "Building is being sold"},
     {"建筑尚未完成，无法维修", "Building is still under construction"},
+    {"尚未安装战役", "No campaigns installed"},
 };
 
 const char* TR(S id) {
@@ -527,6 +528,7 @@ static const char* kSKey[(int)S::COUNT] = {
     "TipFacilityFrozen","TipFacilityDrained","TipFacilityWaiting","TipFacilityHalted",
     "MsgDeployStarting","MsgUndeployStarting","MsgDeployBusy",
     "MsgRepairStarted","MsgRepairStopped","MsgBuildingInvalid","MsgBuildingOwner","MsgBuildingSelling","MsgBuildingConstructing",
+    "CampaignUnavailable",
 };
 
 static int sKeyByName(const char* s) {

@@ -1,7 +1,8 @@
 OpenRA2 Lua 脚本引擎
 ====================
 
-本目录下的 *.lua 文件在游戏开始时自动加载（遭遇战与战役均生效）。
+本目录下的 *.lua 文件在战役脚本引擎初始化时加载；普通遭遇战不初始化 Lua。
+发行内容没有默认启用的演示脚本；示例均使用 .lua.example 后缀。
 *.lua.example 仅为示例，不会自动加载；启用时请复制为同名 .lua。
 所有函数均可选，缺失则跳过。多个 .lua 文件按文件名顺序加载，共享同一个 Lua 状态。
 注意：OnAiThink 若跨世界/重开残留共享状态，会导致 AI 校验和不确定；内置 AI 冒烟测试依赖不加载接管型示例脚本。
@@ -74,6 +75,6 @@ ra2.missionId()                 当前战役关卡（0-based，遭遇战返回 -
 
 四、示例脚本
 -----------
-example_events.lua    —— 事件 hook 演示（开局奖励、单位阵亡通报）
-example_triggers.lua  —— 自定义触发器条件与动作
-example_ai.lua        —— AI 决策 hook（脚本接管 AI）
+example_events.lua.example    —— 事件 hook 演示（开局奖励、单位阵亡通报）
+example_triggers.lua.example  —— 自定义触发器条件与动作
+example_ai.lua.example        —— AI 决策 hook（脚本接管 AI）

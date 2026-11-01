@@ -22,7 +22,7 @@ cmake --build build --config Release
 ## 游戏模式
 
 - **遭遇战**：1~7 个 AI 槽位（颜色/国家/难度/人格），11 个国家分属盟军、苏军、中国、尤里四阵营；Setup 可选 Battle、Free For All、Unholy Alliance、Megawealth、Land Rush、Meat Grinder、Naval War，以及 Short Game、AI 联盟、共享视野、补给箱和超级武器
-- **战役模式**：32 个任务（中国 8 / 盟军 8 / 苏军 8 / 尤里 8），固定种子地图 + 波次增援脚本 + 触发器系统（条件：计时/全灭/进区/资金；动作：刷兵/播报/给钱/开图/胜负），部分关卡为 `maps/*.txt` 手工地图
+- **战役框架**：保留任务目标、阶段、计时、触发器和自定义内容加载。旧的融合与近似官方关卡已撤下，当前不附带战役；未安装自定义关卡时隐藏战役入口。详见 `assets/campaigns/README.md`。
 - **局域网对战**：主菜单「局域网对战」进入大厅，主机/客户端 TCP 直连，确定性锁步同步（3 tick 输入延迟 + 每 90 tick FNV 校验），断线判负、失同步判负；联机模式自动禁用存读档/暂停/调速
 - **设置页**（主菜单 / 局内菜单均可进入，改动即保存 `settings.ini` 即时生效）：中英双语热切换、显示模式、窗口分辨率（1280×720~1920×1080）、主音量、按键重绑定（冲突自动让位）
 
@@ -100,8 +100,6 @@ assets/
 ```powershell
 ctest --test-dir build -C Release --output-on-failure # 自动回归合集（含窗口交互、截图、耐久与网络）
 .\build\Release\ra2.exe --smoke 20000          # 无头跑 N 帧遭遇战 + 全要素强制验证 + 三方视角截图
-.\build\Release\ra2.exe --smoke-campaign 31 5000   # 无头跑第 32 关 5000 帧（任务编号 0~31）
-.\build\Release\ra2.exe --campaign-matrix 60   # 32 关启动/触发器/胜负矩阵
 .\build\Release\ra2.exe --hud-regression review_out/hud # 四阵营双语侧栏与生产提示截图
 .\build\Release\ra2.exe --skirmish-regression 72000 -1 0 --require-outcomes # 12 局自然开局必须结算
 .\build\Release\ra2.exe --magnetron-regression review_out/magnetron # 主副武器、规则覆盖、续档与实绘
@@ -159,7 +157,7 @@ src/
   gfx/     程序生成精灵 + 外部素材覆盖（assets.h 为命名约定索引）
   sfx/     程序合成音效与 BGM + 外部音频加载
   net/     局域网锁步联机（Winsock TCP 帧协议）
-maps/      手工战役地图（文本格式：地形/装饰/出生点/预置实体）
+maps/      固定遭遇战地图；自定义地图支持地形、装饰、出生点和预置实体
 assets/    【可选】外部素材覆盖目录（见上节）
 saves/     存档（快速存档/读档）
 ```

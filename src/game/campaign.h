@@ -97,7 +97,7 @@ struct MissionDef {
 };
 
 // 战役任务表：首次调用时加载 assets/campaigns/（campaign.ini 列表 + 每关一个 INI），
-// 目录缺失/为空时回退内置 32 关。返回常驻静态表引用。
+// 没有安装关卡时返回空表，不生成占位战役。返回常驻静态表引用。
 const std::vector<MissionDef>& missionTable();
 
 // 按 LineId 的解锁进度（已通关到的下一关 lineIndex；0=仅第一关解锁）
@@ -107,6 +107,3 @@ void campaignLoadProgress();
 void campaignSaveProgress();
 bool campaignMissionUnlocked(int missionIndex);
 int campaignFindNextMission(int missionIndex); // 解析后的 nextMission；无则 -1
-
-// 战役导出（--export-assets）：把内置 32 关写成 campaign.ini + mission01..32.ini 模板
-void exportCampaigns(const char* dir);

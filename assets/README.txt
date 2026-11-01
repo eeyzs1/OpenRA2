@@ -162,9 +162,9 @@ campaign.ini（发行包与各 mod 均可提供，叠加载）：
   [Missions]
   Mission=mission01.ini       每行一个；相对本列表目录或 assets/campaigns/
   ...                         增删关卡只需增删行与对应文件
-                              （Fusion 32 + Official 38 为发行包默认）
+                              （当前发行内容不附带关卡；旧生成战役已撤下）
 
-每关文件（例 mission01.ini / official/oa01.ini）：
+自定义关卡文件（例 my_mission.ini）：
   [General]
   Name=中文名      NameEn=英文名
   Brief=中文简报   BriefEn=英文简报
@@ -217,8 +217,8 @@ campaign.ini（发行包与各 mod 均可提供，叠加载）：
   Msg=中文文本  MsgEn=英文   Eva/Objective 用
   Once=yes                  no=可重复触发
 
-  官方打样关：oa01（河口分阶段）、oa05（渗透+揭示核弹井）、oa08（限时信标）。
-  批量加厚：tools/thicken_campaigns.py
+  当前无官方还原打样关。旧近似任务及其批量生成器已撤下，保留在 Git 历史 e8ffcea。
+  --export-assets 只导出规则、文本和音乐清单，不生成关卡，也不覆盖现有战役列表。
 
 3. strings/ —— 界面文本
 -----------------------

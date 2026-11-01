@@ -1,7 +1,8 @@
 -- example_triggers.lua
 -- 自定义触发器演示：通过战役 INI 中 Cond=Script / Act=Script 调用
 -- 在 campaign.ini 中设置触发器：
---   Trigger=N  Cond=Script  C0=ambush    Act=Script  A0=ambush
+--   [Trig.1]  Cond=Script  Act=Script  Tag=ambush
+-- 默认禁用；示例关卡需要主动安装，并将本文件复制为 .lua 才会加载。
 -- 游戏会调用 OnTriggerCond("ambush") 判断条件，OnTrigger("ambush") 执行动作
 
 local ambushFired = false

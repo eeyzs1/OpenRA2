@@ -824,7 +824,8 @@ void Game::drawMainMenu() {
     float by = 176.f;
     const float gap = 10.f;
     const int fontSz = 13;
-    const int nBtn = 6;
+    const bool hasCampaign = !missionTable().empty();
+    const int nBtn = hasCampaign ? 6 : 5;
     // 按钮舱：整列凹入，像仪器槽而非漂浮方块
     Rectangle btnBay{bx - 5.f, by - 6.f, bw + 10.f, nBtn * (bh + gap) - gap + 12.f};
     menuDrawWell(btnBay, false);
@@ -832,9 +833,11 @@ void Game::drawMainMenu() {
     if (ra2TitleButton(font, m, pr, {bx, by, bw, bh}, TR(S::Skirmish), fontSz))
         phase = Phase::Setup;
     by += bh + gap;
-    if (ra2TitleButton(font, m, pr, {bx, by, bw, bh}, TR(S::Campaign), fontSz))
-        phase = Phase::MissionSelect;
-    by += bh + gap;
+    if (hasCampaign) {
+        if (ra2TitleButton(font, m, pr, {bx, by, bw, bh}, TR(S::Campaign), fontSz))
+            phase = Phase::MissionSelect;
+        by += bh + gap;
+    }
     if (ra2TitleButton(font, m, pr, {bx, by, bw, bh}, TR(S::LanGame), fontSz)) {
         lobbyState = 0;
         lobbyEditingIp = false;
@@ -1005,6 +1008,13 @@ void Game::drawMissionSelect() {
     Rectangle content = menuShellContent();
     Rectangle side = menuShellSide();
     Vector2 m = menuUiFromCanvas(mousePos());
+    if(missionTable().empty()) {
+        drawTextS(font, TR(S::CampaignUnavailable), (int)content.x+24, (int)content.y+48, 14, MENU_MUTE);
+        Rectangle back{side.x+12,side.y+side.height-48,side.width-24,32};
+        if(ra2TitleButton(font,m,mPressed(MOUSE_LEFT_BUTTON),back,TR(S::Back),13) || kPressed(KEY_ESCAPE))
+            phase=Phase::MainMenu;
+        return;
+    }
 
     // 阵营徽仅放监视器槽（勿当侧栏）
     Rectangle mon = menuShellMonitor();
@@ -1026,17 +1036,16 @@ void Game::drawMissionSelect() {
     static float campSbGrab = 0.f;
 
     const auto& tbl = missionTable();
-    const int perCamp = 8;
     const Faction campFac[4] = {Faction::China, Faction::Allies, Faction::Soviet, Faction::Yuri};
     int tabW = 80, tabH = 28, tabGap = 4;
     int tabsX = (int)content.x + 12, tabsY = 40;
-    for (int t = 0; t < 5; t++) {
+    for (int t = 0; t < 4; t++) {
         Rectangle r{(float)(tabsX + t * (tabW + tabGap)), (float)tabsY, (float)tabW, (float)tabH};
         bool sel = campTab == t;
         bool hover = CheckCollisionPointRec(m, r);
         drawMenuOptSlot(r, sel || hover, false);
         if (sel) DrawRectangleLinesEx(r, 1, MENU_ACCENT);
-        const char* fn = t < 4 ? factName(campFac[t]) : TR(S::OfficialLabel);
+        const char* fn = factName(campFac[t]);
         drawTextS(font, fn, (int)r.x + tabW / 2 - textW(font, fn, 12) / 2, (int)r.y + 7, 12,
                   sel ? MENU_YELLOW_HI : MENU_MUTE);
         if (hover && mPressed(MOUSE_LEFT_BUTTON)) {
@@ -1065,14 +1074,8 @@ void Game::drawMissionSelect() {
     if (x0 < (int)listLeft) x0 = (int)listLeft;
 
     std::vector<int> indices;
-    if (campTab < 4) {
-        int begin = campTab * perCamp, end = std::min(begin + perCamp, (int)tbl.size());
-        for (int i = begin; i < end; i++)
-            if (tbl[i].track == 0) indices.push_back(i);
-    } else {
-        for (int i = 0; i < (int)tbl.size(); i++)
-            if (tbl[i].track == 1) indices.push_back(i);
-    }
+    for (int i = 0; i < (int)tbl.size(); ++i)
+        if (tbl[i].playerFaction == campFac[campTab]) indices.push_back(i);
 
     const int n = (int)indices.size();
     const int rows = n > 0 ? (n + cols - 1) / cols : 0;

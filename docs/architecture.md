@@ -1,5 +1,7 @@
 # OpenRA2 Architecture
 
+Bundled prototype campaigns have been retired. `missionTable()` loads only installed content and returns an empty table when none is present; there is no built-in fallback or campaign generation in `--export-assets`. The menu hides campaigns when empty and groups custom missions by their actual player faction. Mission runtime, triggers and Lua remain available; shipped Lua demos use `.lua.example` and are inactive.
+
 This document is the module map for contributors and AI agents. Fidelity contracts live in `docs/ra2-fidelity.md` and `docs/ra2-ui-fidelity.md`; they do **not** override these boundaries.
 
 ## Layers (dependency direction)

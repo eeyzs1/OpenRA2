@@ -196,7 +196,6 @@ int main(int argc, char** argv) {
     // 元数据模板导出：rules.ini / 32 关战役 INI（中/盟/苏/尤里 各 8）/ 双语字符串 / 音乐播放列表，不创建窗口
     if (findFlag("--export-assets") >= 0) {
         exportRules("assets/rules/rules.ini");
-        exportCampaigns("assets/campaigns");
         exportStrings("assets/strings");
         // 音乐播放列表（运行时 assets/music/ 全目录扫描，本文件仅定义轮换顺序）
         MakeDirectory("assets/music");
@@ -206,7 +205,7 @@ int main(int argc, char** argv) {
             fprintf(f, "[Playlist]\nTrack=industrial_march.wav\nTrack=grind_heavy.wav\nTrack=overdrive_fast.wav\n");
             fclose(f);
         }
-        printf("export-assets: rules/campaigns/strings/music templates written to assets/\n");
+        printf("export-assets: rules/strings/music templates written to assets/\n");
         return 0;
     }
     bool windowed = findFlag("--windowed") >= 0;
@@ -396,6 +395,11 @@ int main(int argc, char** argv) {
     // 临时诊断：战役真实渲染耗时（逻辑/渲染分离计时）
     if (int fi = findFlag("--bench-campaign"); fi >= 0) {
         int mission = flagInt(fi, 1, 0);
+        if(mission<0 || mission>=(int)missionTable().size()) {
+            TraceLog(LOG_ERROR,"No installed campaign at index %d",mission);
+            game.shutdown();
+            return 1;
+        }
         int warm = flagInt(fi, 2, 1800);
         int frames = flagInt(fi, 3, 300);
         game.benchCampaign(mission, warm, frames);

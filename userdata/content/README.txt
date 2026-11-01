@@ -98,7 +98,7 @@
 
 应看到：
   CONTENT-CHECK PASS: userdata/content enabled
-  CONTENT-CHECK: missions=70   （若你加了关会变多）
+  CONTENT-CHECK: missions=0    （默认不附带战役；安装自定义关卡后增加）
 
 改完灰熊 CSV 后可加：
   build\Release\ra2.exe --content-check expect-grizzly-cost=900
