@@ -157,6 +157,8 @@ bool Game::loadGameFile(const char* path) {
     }
     if(!ok) return false;
     // Commit only after the complete envelope and World have been validated.
+    g_script.shutdown();
+    resetMatchInteraction();
     campaignMission=savedMission;nextWave=(size_t)savedWave;localPlayer=savedPlayer;
     camX=savedX;camY=savedY;gameSpeed=savedSpeed;
     ais=std::move(savedAis);missionTriggers=std::move(savedTriggers);objectiveText=std::move(savedObjective);

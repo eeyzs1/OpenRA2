@@ -362,6 +362,7 @@ private:
 
     // ---- 内部 ----
     void newGame(uint64_t seed);
+    void resetMatchInteraction();
     void newCampaignGame(int mission, bool prepareRender = true);
     void spawnCampaignWave();
     bool saveGameFile(const char* path); // 快速存档（F5/菜单）：Game 头 + World 全量状态

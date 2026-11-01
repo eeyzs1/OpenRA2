@@ -492,7 +492,7 @@ EID World::spawnBuilding(int player, BldType t, int bx, int by, bool free_) {
         for (int p = 0; p < numPlayers; p++)
             if (p != player) eva(p, formatText(TR(S::EvaDetectEnemySWFmt), bldName(t)));
     }
-    g_script.onBuildingComplete(id, player, t);
+    if (g_script.boundTo(this)) g_script.onBuildingComplete(id, player, t);
     return id;
 }
 
@@ -606,8 +606,10 @@ void World::kill(EID id, bool explode) {
     invalidateEntityReferences(id);
     // Publish the slot only after recursive effects and script callbacks finish.
     // 脚本 hook：死亡/被毁事件
-    if (wasBld) g_script.onBuildingDestroyed(id, deadPlayer, deadBtype);
-    else g_script.onUnitKilled(id, deadPlayer, deadUtype);
+    if (g_script.boundTo(this)) {
+        if (wasBld) g_script.onBuildingDestroyed(id, deadPlayer, deadBtype);
+        else g_script.onUnitKilled(id, deadPlayer, deadUtype);
+    }
     checkDefeat();
     retireEntitySlot(id);
 }

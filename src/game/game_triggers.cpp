@@ -122,7 +122,7 @@ void Game::updateTriggers() {
                 cond = campRuntime.phase >= t.c[0];
                 break;
             case TrigCond::Script:
-                cond = g_script.onTriggerCond(t.tag);
+                cond = g_script.boundTo(&world) && g_script.onTriggerCond(t.tag);
                 break;
         }
         if (!cond) continue;
@@ -205,7 +205,7 @@ void Game::updateTriggers() {
                 if (txt) world.eva(0, txt);
                 break;
             case TrigAct::Script:
-                g_script.onTrigger(t.tag);
+                if (g_script.boundTo(&world)) g_script.onTrigger(t.tag);
                 break;
         }
     }

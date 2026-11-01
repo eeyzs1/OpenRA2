@@ -43,6 +43,11 @@ void Game::ensureBriefArt(const MissionDef& md) {
 }
 
 void Game::newCampaignGame(int mission, bool prepareRender) {
+    if (mission < 0 || mission >= (int)missionTable().size()) return;
+    g_script.shutdown();
+    resetMatchInteraction();
+    localPlayer = 0;
+    netGame = false;
     const MissionDef& md = missionTable()[mission];
     campaignMission = mission;
     pendingMission = mission;

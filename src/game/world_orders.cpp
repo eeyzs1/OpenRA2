@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <climits>
 
 MoveOrderResult World::orderMove(const std::vector<EID>& sel, float x, float y, bool attackMove, bool append) {
     MoveOrderResult result;
@@ -21,18 +22,63 @@ MoveOrderResult World::orderMove(const std::vector<EID>& sel, float x, float y, 
     // MCV Repacks：选中建造厂下达移动 → 先打包成基地车再寻路
     std::vector<EID> units;
     units.reserve(sel.size());
+    std::vector<uint8_t> seenSelection(ents.size(), 0);
     for (EID id : sel) {
         if (!valid(id)) continue;
+        if (seenSelection[id]) continue;
+        seenSelection[id] = 1;
         Ent& e = ents[id];
         if(e.immobilized()) { reject(id,MoveRejectReason::Immobilized);continue; }
         if(e.deploying()) { reject(id,MoveRejectReason::Busy);continue; }
         if (e.isBuilding && e.btype == BldType::ConYard && mcvRepacks) {
+            const int player=e.player;const float bx=e.x,by=e.y;
             EID mcv = packConYardToMcv(id);
-            if (valid(mcv)) units.push_back(mcv);
+            if (valid(mcv)) {
+                units.push_back(mcv);
+                DeployOrderResult packed;packed.accepted=packed.packed=1;
+                packed.feedbackEntity=mcv;packed.x=bx;packed.y=by;
+                packed.changes.push_back({id,mcv,false});
+                emitDeployResult(player,packed);
+            } else reject(id,MoveRejectReason::Unreachable);
             continue;
         }
         if (!e.isBuilding) units.push_back(id);
     }
+    // Static connectivity is shared by the entire command, rather than trying
+    // A* separately against many unreachable formation slots across a wall.
+    // This is command-local: a newly placed/sold building cannot leave stale data.
+    std::vector<int> components[3];
+    auto componentAt = [&](int domain, int x, int y) -> int {
+        if (!map.inBounds(x, y)) return -1;
+        auto& labels = components[std::clamp(domain, 0, 2)];
+        if (labels.empty()) {
+            labels.assign(map.cells.size(), -1);
+            std::vector<int> frontier;
+            int component = 0;
+            constexpr Vec2i steps[] = {{1,0},{-1,0},{0,1},{0,-1},{1,1},{1,-1},{-1,1},{-1,-1}};
+            for (int sy=0; sy<map.h; ++sy) for (int sx=0; sx<map.w; ++sx) {
+                const int start=cellIdx(sx,sy);
+                if (labels[start]>=0 || !passableFor(sx,sy,domain) || bldBlocked(sx,sy)) continue;
+                labels[start]=component;
+                frontier.clear();frontier.push_back(start);
+                for (size_t head=0; head<frontier.size(); ++head) {
+                    const int cx=frontier[head]%map.w,cy=frontier[head]/map.w;
+                    for (auto step:steps) {
+                        const int nx=cx+step.x,ny=cy+step.y;
+                        if (!passableStep(cx,cy,nx,ny,domain) || bldBlocked(nx,ny)) continue;
+                        if (step.x && step.y &&
+                            (!passableStep(cx,cy,nx,cy,domain) || !passableStep(cx,cy,cx,ny,domain)
+                             || bldBlocked(nx,cy) || bldBlocked(cx,ny))) continue;
+                        const int next=cellIdx(nx,ny);
+                        if (labels[next]>=0) continue;
+                        labels[next]=component;frontier.push_back(next);
+                    }
+                }
+                ++component;
+            }
+        }
+        return labels[cellIdx(x,y)];
+    };
     // Reserve both current occupants and allied destinations across commands.
     // Replacing a group's orders releases its previous destinations atomically.
     std::vector<uint8_t> selected(ents.size(),0), landing(map.cells.size(),0);
@@ -77,12 +123,15 @@ MoveOrderResult World::orderMove(const std::vector<EID>& sel, float x, float y, 
         e.goalX = lx; e.goalY = ly;
         // 目标点按单位散开（方阵）—— RA2 标准间距 1.5 格
         int cols = (int)ceilf(sqrtf((float)units.size()));
-        float ox = lx + (n % cols - cols / 2) * 1.5f;
-        float oy = ly + (n / cols) * 1.5f;
+        const int rows = ((int)units.size() + cols - 1) / cols;
+        const int rowWidth = std::min(cols, (int)units.size() - (n / cols) * cols);
+        float ox = lx + (n % cols - (rowWidth - 1) * 0.5f) * 1.5f;
+        float oy = ly + (n / cols - (rows - 1) * 0.5f) * 1.5f;
         n++;
         if (ud.isAir()) {
             // 战机：直线飞行，无视地形
-            e.goalX = ox; e.goalY = oy;
+            e.goalX = std::clamp(ox, 0.5f, map.w - 0.5f);
+            e.goalY = std::clamp(oy, 0.5f, map.h - 0.5f);
             e.orbitA = (float)(id % 8) * 0.785f;
             e.state = attackMove ? UState::AttackMoving : UState::Moving;
             unitOccSync(id);airOccSync(id);
@@ -99,22 +148,48 @@ MoveOrderResult World::orderMove(const std::vector<EID>& sel, float x, float y, 
         std::vector<Vec2i> path;
         const int nominalX=(int)ox,nominalY=(int)oy;
         const int preferredX=std::clamp(nominalX,0,map.w-1),preferredY=std::clamp(nominalY,0,map.h-1);
+        const int domain=ud.pathDomain();
+        int originComponent=components[domain].empty()?-2:componentAt(domain,(int)e.x,(int)e.y);
+        auto available=[&](int tx,int ty) {
+            return map.inBounds(tx,ty) && passableFor(tx,ty,domain) && !bldBlocked(tx,ty)
+                && (originComponent==-2 || (originComponent>=0 && componentAt(domain,tx,ty)==originComponent))
+                && landing[(size_t)ty*map.w+tx]<(ud.isInfantry()?3:1);
+        };
         bool found=false;
         for(int radius=0;radius<=8 && !found;++radius)
             for(int dy=-radius;dy<=radius && !found;++dy) for(int dx=-radius;dx<=radius;++dx) {
                 if(std::max(std::abs(dx),std::abs(dy))!=radius) continue;
                 int tx=preferredX+dx,ty=preferredY+dy;
-                if(!passableFor(tx,ty,ud.pathDomain()) || bldBlocked(tx,ty)) continue;
-                if(landing[(size_t)ty*map.w+tx]>=(ud.isInfantry()?3:1)) continue;
+                if(!available(tx,ty)) continue;
                 ox=(float)tx;oy=(float)ty;found=true;break;
             }
-        if (found && map.findPath((int)e.x, (int)e.y, (int)ox, (int)oy, path, 20000, ud.pathDomain())) {
-            if (!path.empty()) {
-                if(path.back().x!=nominalX || path.back().y!=nominalY) ++result.adjusted;
-                reserve(path.back().x,path.back().y,ud.isInfantry());
+        bool pathFound=found && map.findPath((int)e.x,(int)e.y,(int)ox,(int)oy,path,20000,domain);
+        if (!pathFound) {
+            // Ordinary commands keep the cheap A* fast path. Build connectivity
+            // only after a failure, then share it with the rest of this group.
+            originComponent=componentAt(domain,(int)e.x,(int)e.y);
+            // A distant or disconnected target still has one clear outcome:
+            // the closest free tile on this unit's reachable side of the map.
+            int best=-1;int bestDistance=INT_MAX;
+            for(int ty=0;ty<map.h;++ty) for(int tx=0;tx<map.w;++tx) {
+                if(!available(tx,ty))continue;
+                const int dx=tx-preferredX,dy=ty-preferredY;
+                const int distance=dx*dx+dy*dy;
+                if(distance<bestDistance){best=cellIdx(tx,ty);bestDistance=distance;}
             }
+            if(best>=0) {
+                ox=(float)(best%map.w);oy=(float)(best/map.w);
+                pathFound=map.findPath((int)e.x,(int)e.y,(int)ox,(int)oy,path,20000,domain);
+            }
+        }
+        if (pathFound) {
+            const auto endpoint=path.empty()?Vec2i{(int)e.x,(int)e.y}:path.back();
+            if(endpoint.x!=nominalX || endpoint.y!=nominalY) ++result.adjusted;
+            reserve(endpoint.x,endpoint.y,ud.isInfantry());
             e.path = std::move(path);
             e.pathIdx = 0;
+            e.blockTick = 0;
+            e.goalX = ox + 0.5f; e.goalY = oy + 0.5f;
             e.state = e.path.empty() ? UState::Idle : (attackMove ? UState::AttackMoving : UState::Moving);
             ++result.accepted;
         } else {

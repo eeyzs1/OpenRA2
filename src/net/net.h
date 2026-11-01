@@ -10,6 +10,7 @@
 
 class NetLink {
 public:
+    static constexpr uint32_t SIMULATION_VERSION = 3;
     static constexpr size_t MAX_BODY_BYTES = 60000;
     static constexpr size_t MAX_BUFFER_BYTES = 1u << 20;
     static constexpr size_t MAX_INBOX_MESSAGES = 256;

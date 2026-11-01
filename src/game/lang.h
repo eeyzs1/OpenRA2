@@ -101,6 +101,7 @@ enum class S : int {
     MsgSWTransferredFmt,MsgSWExecuted,MsgSWUnavailable,MsgSWNotReady,MsgSWNoSource,MsgSWBlocked,MsgSWTargetInvalid,MsgSWInvalid,MsgSWChooseDestination,
     TipFacilityFrozen,TipFacilityDrained,TipFacilityWaiting,TipFacilityHalted,
     MsgDeployStarting,MsgUndeployStarting,MsgDeployBusy,
+    MsgRepairStarted,MsgRepairStopped,MsgBuildingInvalid,MsgBuildingOwner,MsgBuildingSelling,MsgBuildingConstructing,
     COUNT
 };
 

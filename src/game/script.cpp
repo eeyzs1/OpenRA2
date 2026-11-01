@@ -29,11 +29,30 @@ ScriptEngine::ScriptEngine() = default;
 ScriptEngine::~ScriptEngine() { shutdown(); }
 
 // ---- API 绑定辅助 ----
-static World* W(lua_State* L) {
-    lua_getglobal(L, "__world");
-    World* w = (World*)lua_touserdata(L, -1);
+namespace {
+char worldContextKey;
+struct ScriptWorldContext { World* world; uint64_t epoch; };
+ScriptWorldContext* context(lua_State* L) {
+    lua_rawgetp(L, LUA_REGISTRYINDEX, &worldContextKey);
+    auto* result = static_cast<ScriptWorldContext*>(lua_touserdata(L, -1));
     lua_pop(L, 1);
-    return w;
+    return result;
+}
+}
+static World* W(lua_State* L) {
+    auto* binding = context(L);
+    if (!binding || !binding->world || binding->world->presentationEpoch != binding->epoch) {
+        luaL_error(L, "This script no longer belongs to an active match");
+        return nullptr;
+    }
+    return binding->world;
+}
+
+// Gate every API, including Game callbacks, before entering its implementation.
+// Finalizers run during lua_close and must not mutate either the old or new game.
+static int checkedApi(lua_State* L) {
+    W(L);
+    return lua_tocfunction(L, lua_upvalueindex(1))(L);
 }
 
 static int l_tick(lua_State* L) {
@@ -628,10 +647,14 @@ void ScriptEngine::registerApi() {
     };
     for (auto& f : fns) {
         lua_pushcfunction(Ls, f.fn);
+        lua_pushcclosure(Ls, checkedApi, 1);
         lua_setfield(Ls, -2, f.name);
     }
     lua_pop(Ls, 1);
-    // 存储 world 指针到 registry
+    auto* binding = static_cast<ScriptWorldContext*>(lua_newuserdata(Ls, sizeof(ScriptWorldContext)));
+    *binding = {world, worldEpoch};
+    lua_rawsetp(Ls, LUA_REGISTRYINDEX, &worldContextKey);
+    // Keep the legacy global for scripts that inspect it; host APIs use registry state.
     lua_pushlightuserdata(Ls, (void*)world);
     lua_setglobal(Ls, "__world");
     lua_pushinteger(Ls, gameMode);
@@ -662,27 +685,38 @@ bool ScriptEngine::loadScripts() {
 }
 
 void ScriptEngine::init(World* w, int mode, int mission) {
+    shutdown();
+    if (!w) return;
     world = w;
+    worldEpoch = w->presentationEpoch;
     gameMode = mode;
     missionId = mission;
     L = luaL_newstate();
-    if (!L) return;
+    if (!enabled()) return;
     luaL_openlibs((lua_State*)L);
     registerApi();
     loadScripts();
 }
 
 void ScriptEngine::shutdown() {
-    if (L) { lua_close((lua_State*)L); L = nullptr; }
+    auto* closing = static_cast<lua_State*>(L);
+    L = nullptr;
     world = nullptr;
+    worldEpoch = 0;
+    gameMode = 0;
+    missionId = -1;
+    if (closing) {
+        if (auto* binding = context(closing)) binding->world = nullptr;
+        lua_close(closing);
+    }
 }
 
 bool ScriptEngine::callHook(const char* name, int nargs, int nresults) {
-    if (!L) return false;
+    if (!enabled()) return false;
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, name);
     if (!lua_isfunction(Ls, -1)) { lua_pop(Ls, 1 + nargs); return false; }
-    // 参数已在栈顶（nargs 个）
+    lua_insert(Ls, -1 - nargs); // function must precede its already-pushed arguments
     if (lua_pcall(Ls, nargs, nresults, 0) != LUA_OK) {
         const char* err = lua_tostring(Ls, -1);
         TraceLog(LOG_WARNING, "Lua hook %s error: %s", name, err ? err : "?");
@@ -693,7 +727,7 @@ bool ScriptEngine::callHook(const char* name, int nargs, int nresults) {
 }
 
 void ScriptEngine::onGameStart() {
-    if (!L) return;
+    if (!enabled()) return;
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, "OnGameStart");
     if (lua_isfunction(Ls, -1)) {
@@ -706,7 +740,7 @@ void ScriptEngine::onGameStart() {
 }
 
 void ScriptEngine::onTick(uint64_t t) {
-    if (!L) return;
+    if (!enabled()) return;
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, "OnTick");
     if (lua_isfunction(Ls, -1)) {
@@ -720,7 +754,7 @@ void ScriptEngine::onTick(uint64_t t) {
 }
 
 void ScriptEngine::onUnitKilled(EID eid, int player, UnitType utype) {
-    if (!L) return;
+    if (!enabled()) return;
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, "OnUnitKilled");
     if (lua_isfunction(Ls, -1)) {
@@ -736,7 +770,7 @@ void ScriptEngine::onUnitKilled(EID eid, int player, UnitType utype) {
 }
 
 void ScriptEngine::onBuildingComplete(EID eid, int player, BldType btype) {
-    if (!L) return;
+    if (!enabled()) return;
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, "OnBuildingComplete");
     if (lua_isfunction(Ls, -1)) {
@@ -752,7 +786,7 @@ void ScriptEngine::onBuildingComplete(EID eid, int player, BldType btype) {
 }
 
 void ScriptEngine::onBuildingDestroyed(EID eid, int player, BldType btype) {
-    if (!L) return;
+    if (!enabled()) return;
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, "OnBuildingDestroyed");
     if (lua_isfunction(Ls, -1)) {
@@ -768,7 +802,7 @@ void ScriptEngine::onBuildingDestroyed(EID eid, int player, BldType btype) {
 }
 
 void ScriptEngine::onSuperWeapon(int player, SWType sw, float x, float y) {
-    if (!L) return;
+    if (!enabled()) return;
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, "OnSuperWeapon");
     if (lua_isfunction(Ls, -1)) {
@@ -790,7 +824,7 @@ void ScriptEngine::onSuperWeapon(int player, SWType sw, float x, float y) {
 }
 
 void ScriptEngine::onPlayerDefeated(int player) {
-    if (!L) return;
+    if (!enabled()) return;
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, "OnPlayerDefeated");
     if (lua_isfunction(Ls, -1)) {
@@ -804,7 +838,7 @@ void ScriptEngine::onPlayerDefeated(int player) {
 }
 
 void ScriptEngine::onTrigger(const std::string& tag) {
-    if (!L) return;
+    if (!enabled()) return;
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, "OnTrigger");
     if (lua_isfunction(Ls, -1)) {
@@ -818,7 +852,7 @@ void ScriptEngine::onTrigger(const std::string& tag) {
 }
 
 bool ScriptEngine::onTriggerCond(const std::string& tag) {
-    if (!L) return false;
+    if (!enabled()) return false;
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, "OnTriggerCond");
     if (lua_isfunction(Ls, -1)) {
@@ -838,7 +872,7 @@ bool ScriptEngine::onTriggerCond(const std::string& tag) {
 }
 
 bool ScriptEngine::onAiThink(int player) {
-    if (!L) return false;
+    if (!enabled()) return false;
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, "OnAiThink");
     if (lua_isfunction(Ls, -1)) {

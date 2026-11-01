@@ -863,13 +863,36 @@ void World::applyCmd(int player, const Cmd& c) {
         case Cmd::SetRally:
             if(!own.empty()) emitRallyResult(player,orderRally(own[0],c.x,c.y,(c.a&1)!=0),c.x,c.y);
             break;
-        case Cmd::SellBuilding:
-            if (!c.ids.empty() && valid(c.ids[0]) && ents[c.ids[0]].player == player
-                && ents[c.ids[0]].btype != BldType::ConYard) sellBuilding(c.ids[0]);
+        case Cmd::SellBuilding: case Cmd::RepairBuilding: {
+            PresentationEvent event;event.kind=PresentationKind::BuildingOrder;
+            event.tick=tick;event.sequence=presentationSequence++;event.player=player;
+            event.entity=c.ids.empty()?INVALID_EID:c.ids.front();
+            auto& result=event.building;
+            result.action=c.type==Cmd::SellBuilding?BuildingAction::Sell:BuildingAction::Repair;
+            if(!valid(event.entity) || !ents[event.entity].isBuilding)
+                result.reason=BuildingRejectReason::InvalidTarget;
+            else {
+                auto& building=ents[event.entity];const auto& def=bldDef(building.btype);
+                event.x=building.x+def.w*0.5f;event.y=building.y+def.h*0.5f;event.positional=true;
+                event.terrainHeight=map.at((int)building.x,(int)building.y).height;
+                if(building.player!=player)result.reason=BuildingRejectReason::WrongOwner;
+                else if(building.selling)result.reason=BuildingRejectReason::Selling;
+                else if(result.action==BuildingAction::Sell && building.btype==BldType::ConYard)
+                    result.reason=BuildingRejectReason::ConstructionYard;
+                else if(result.action==BuildingAction::Repair && building.constructAnim>0)
+                    result.reason=BuildingRejectReason::Constructing;
+                else if(result.action==BuildingAction::Repair && building.hp>=def.hp && !building.repairing)
+                    result.reason=BuildingRejectReason::FullHealth;
+                else {
+                    if(result.action==BuildingAction::Sell)sellBuilding(event.entity);
+                    else repairBuilding(event.entity);
+                    result.accepted=true;result.repairing=building.repairing;
+                }
+            }
+            if(presentationEvents.size()>=4096)presentationEvents.pop_front();
+            presentationEvents.push_back(event);
             break;
-        case Cmd::RepairBuilding:
-            if (!c.ids.empty() && valid(c.ids[0]) && ents[c.ids[0]].player == player) repairBuilding(c.ids[0]);
-            break;
+        }
         case Cmd::LaunchSW: {
             SuperweaponOrderResult result;result.type=c.a;result.reason=superweaponRejection(player,c.a,c.x,c.y);
             if(result.reason==SuperweaponRejectReason::None) {

@@ -35,7 +35,14 @@ enum class Sfx : uint8_t {
     COUNT
 };
 
-enum class PresentationKind : uint8_t { Sound, MoveOrder, Muzzle, Impact, AttackOrder, EngineerOrder, EntryOrder, ReleaseOrder, ServiceOrder, DeployOrder, RallyOrder, PlacementOrder, ProductionOrder, SuperweaponOrder };
+enum class PresentationKind : uint8_t { Sound, MoveOrder, Muzzle, Impact, AttackOrder, EngineerOrder, EntryOrder, ReleaseOrder, ServiceOrder, DeployOrder, RallyOrder, PlacementOrder, ProductionOrder, SuperweaponOrder, BuildingOrder };
+enum class BuildingAction : uint8_t { Sell, Repair };
+enum class BuildingRejectReason : uint8_t { None, InvalidTarget, WrongOwner, Selling, ConstructionYard, FullHealth, Constructing };
+struct BuildingOrderResult {
+    BuildingAction action=BuildingAction::Repair;
+    BuildingRejectReason reason=BuildingRejectReason::None;
+    bool accepted=false,repairing=false;
+};
 enum class SuperweaponRejectReason : uint8_t { None, InvalidType, InvalidTarget, Unavailable, NotReady, NoSource, Blocked };
 struct SuperweaponOrderResult {
     int type=-1,transferred=0;
@@ -129,6 +136,7 @@ struct PresentationEvent {
     PlacementOrderResult placement;
     ProductionOrderResult production;
     SuperweaponOrderResult superweapon;
+    BuildingOrderResult building;
     AttackOrderResult attack;
     EngineerOrderResult engineer;
     EngineerIntent engineerIntent=EngineerIntent::None;

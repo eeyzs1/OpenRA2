@@ -113,10 +113,14 @@ public:
     // AI hook：调用 Lua OnAiThink(player)，返回 true 表示脚本接管（跳过内置 AI）
     bool onAiThink(int player);
 
-    bool enabled() const { return L != nullptr; }
+    bool enabled() const { return boundTo(world); }
+    bool boundTo(const World* source) const {
+        return L && source && source == world && source->presentationEpoch == worldEpoch;
+    }
 
 private:
     World* world = nullptr;
+    uint64_t worldEpoch = 0;
     int gameMode = 0;
     int missionId = -1;
     void* L = nullptr;  // lua_State*（void* 避免 header 污染）

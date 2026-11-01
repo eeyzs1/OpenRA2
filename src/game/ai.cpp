@@ -11,20 +11,24 @@ bool combatUnit(const World::Ent& e) {
     return !def.canHarvet() && (def.weapon.damage>0 || def.isPsychic() || def.hasC4() || e.utype==UnitType::AircraftCarrier);
 }
 
-Vec2i navalScoutGoal(const World& world,const World::Ent& ship) {
+Vec2i scoutGoal(const World& world,const World::Ent& ship) {
     const int sx=(int)ship.x,sy=(int)ship.y;
     if(!world.map.inBounds(sx,sy)) return {-1,-1};
     std::vector<uint8_t> visited(world.map.cells.size(),0);
     std::vector<Vec2i> frontier{{sx,sy}};
     visited[world.cellIdx(sx,sy)]=1;
     constexpr Vec2i directions[]={{1,0},{0,1},{-1,0},{0,-1},{1,1},{-1,1},{-1,-1},{1,-1}};
-    auto open=[&](int x,int y){return world.passableFor(x,y,1) && !world.bldBlocked(x,y);};
+    const int domain=unitDef(ship.utype).pathDomain();
+    auto open=[&](int x,int y){return world.passableFor(x,y,domain) && !world.bldBlocked(x,y);};
     for(size_t head=0;head<frontier.size();++head) {
         const auto cell=frontier[head];
         if(open(cell.x,cell.y) && world.map.fogAt(ship.player,cell.x,cell.y)==FOG_UNSEEN) return cell;
         for(auto d:directions) {
             const int x=cell.x+d.x,y=cell.y+d.y;
-            if(!open(x,y) || (d.x && d.y && (!open(cell.x+d.x,cell.y) || !open(cell.x,cell.y+d.y)))) continue;
+            if(!open(x,y) || !world.map.climbOk(cell.x,cell.y,x,y,domain)
+                || (d.x && d.y && (!open(cell.x+d.x,cell.y) || !open(cell.x,cell.y+d.y)
+                    || !world.map.climbOk(cell.x,cell.y,x,cell.y,domain)
+                    || !world.map.climbOk(cell.x,cell.y,cell.x,y,domain)))) continue;
             auto& seen=visited[world.cellIdx(x,y)];if(seen)continue;
             seen=1;frontier.push_back({x,y});
         }
@@ -143,10 +147,11 @@ float SkirmishAI::resourceBonus() const {
 
 // ===================== 主更新 =====================
 void SkirmishAI::update(World& w) {
+    if(player<0 || player>=w.numPlayers)return;
     Player& p = w.players[player];
     if (!p.active || p.defeated) return;
     // Lua AI hook：脚本返回 true 则跳过内置 AI（用户可完全接管 AI 决策）
-    if (g_script.onAiThink(player)) return;
+    if (g_script.boundTo(&w) && g_script.onAiThink(player)) return;
 
     // 逐帧递减的冷却计时（不受思考间隔门控，保证真实时间精度）
     if (expandTimer > 0) expandTimer--;
@@ -724,13 +729,20 @@ void SkirmishAI::doAttack(World& w) {
     auto visibleEnemy=[&](const World::Ent& e) {
         if(!e.alive || !w.isEnemy(player,e.player)) return false;
         const auto point=center(e);
-        return w.map.fogAt(player,(int)point.x,(int)point.y)!=FOG_UNSEEN;
+        return w.map.fogAt(player,(int)point.x,(int)point.y)==FOG_VISIBLE;
     };
     // A strategic target may be immune to part of a mixed army. Keep legal
     // orders and give rejected units a visible, compatible alternative.
     auto issueAttack=[&](const std::vector<EID>& group,EID preferred) {
         int accepted=0;
         for(EID id:group) {
+            if(!w.valid(id) || w.ents[id].immobilized() || w.ents[id].deploying())continue;
+            const auto& unit=w.ents[id];
+            if((unit.state==UState::Chasing || unit.state==UState::Attacking)
+                && w.valid(unit.target) && visibleEnemy(w.ents[unit.target])
+                && w.attackRejection(id,unit.target)==AttackRejectReason::None) {
+                continue;
+            }
             if(w.valid(preferred) && visibleEnemy(w.ents[preferred])
                 && w.orderAttack({id},preferred).accepted) { ++accepted;continue; }
             EID fallback=INVALID_EID;float best=1e9f;
@@ -788,61 +800,51 @@ void SkirmishAI::doAttack(World& w) {
         if((ship.state==UState::Chasing || ship.state==UState::Attacking) && w.valid(ship.target))continue;
         if(targetB!=INVALID_EID && issueAttack({id},targetB)>0){++navalAttacks;continue;}
         if(ship.state!=UState::Idle)continue;
-        const auto scout=navalScoutGoal(w,ship);
+        const auto scout=scoutGoal(w,ship);
         if(scout.x>=0)w.orderMove({id},scout.x+0.5f,scout.y+0.5f,false);
     }
     if(navalAttacks>0 && attackWave<std::numeric_limits<int>::max())++attackWave;
 
-    // 陆军不足阈值：不进攻，向集结点集结（防守）
-    if (army < threshold || targetB == INVALID_EID) {
-        // 设置集结点（=部队中心与敌方建造厂的中点）
-        if (rallyPoint.x < 0 || rallyPoint.y < 0) {
-            Vec2i enemyBase = ac;
-            for (const World::Ent& e : w.ents)
-                if (e.alive && e.isBuilding && e.player >= 0 && w.isEnemy(player, e.player)
-                    && e.btype == BldType::ConYard) {
-                    enemyBase = { (int)e.x, (int)e.y };
-                    break;
-                }
-            rallyPoint = { ((int)ac.x + enemyBase.x) / 2, ((int)ac.y + enemyBase.y) / 2 };
-            rallyCheckTimer = 15;
+    // Without a known target a ground-only AI must explore, rather than
+    // wait forever at a rally point inferred from unseen enemy entities.
+    if (targetB == INVALID_EID) {
+        int scouts=0;
+        for(EID id:armyIds)if(w.ents[id].state==UState::Moving || w.ents[id].state==UState::AttackMoving)++scouts;
+        for(EID id:armyIds) {
+            if(scouts>=2)break;
+            const auto& unit=w.ents[id];
+            if(unit.state!=UState::Idle || unit.guard || unit.deployed || unit.radDeployed
+                || unit.immobilized() || unit.deploying())continue;
+            const auto goal=scoutGoal(w,unit);
+            if(goal.x<0)continue;
+            if(w.orderMove({id},goal.x+0.5f,goal.y+0.5f,true).accepted && ++scouts>=2)break;
         }
-        // 移动空闲陆军单位到集结点
-        std::vector<EID> idleArmy;
-        for (EID id : armyIds)
-            if (w.ents[id].state == UState::Idle) idleArmy.push_back(id);
-        if (!idleArmy.empty())
-            w.orderMove(idleArmy, (float)rallyPoint.x + 0.5f, (float)rallyPoint.y + 0.5f, false);
         return;
     }
+    if(armyIds.empty())return;
 
-    // 陆军足够：在集结点集结后再进攻
-    // 统计已在集结点附近的单位数
-    int gathered = 0;
-    if (rallyPoint.x >= 0 && rallyPoint.y >= 0) {
-        for (EID id : armyIds) {
-            const World::Ent& e = w.ents[id];
-            if (distf(e.x, e.y, (float)rallyPoint.x, (float)rallyPoint.y) < 8.0f) gathered++;
-        }
+    if (rallyPoint.x<0 || rallyPoint.y<0) {
+        // Put the rendezvous on a real approach path from an existing soldier.
+        // A geometric midpoint can be inside a lake, cliff or sealed courtyard.
+        const auto& anchor=w.ents[armyIds.front()];
+        rallyPoint={(int)anchor.x,(int)anchor.y};
+        const auto destination=center(w.ents[targetB]);
+        std::vector<Vec2i> route;
+        if(w.map.findPathToRange((int)anchor.x,(int)anchor.y,destination.x,destination.y,
+            3.0f,route,20000,unitDef(anchor.utype).pathDomain()) && !route.empty())
+            rallyPoint=route[std::min<size_t>(route.size()/3,11)];
+        rallyCheckTimer=900;
     }
-    if (gathered < pcfg.rallySize) {
-        // 集结点未设则设置
-        if (rallyPoint.x < 0 || rallyPoint.y < 0) {
-            Vec2i enemyBase = ac;
-            for (const World::Ent& e : w.ents)
-                if (e.alive && e.isBuilding && e.player >= 0 && w.isEnemy(player, e.player)
-                    && e.btype == BldType::ConYard) {
-                    enemyBase = { (int)e.x, (int)e.y };
-                    break;
-                }
-            rallyPoint = { ((int)ac.x + enemyBase.x) / 2, ((int)ac.y + enemyBase.y) / 2 };
-        }
-        // 移动空闲陆军到集结点
-        std::vector<EID> idleArmy;
-        for (EID id : armyIds)
-            if (w.ents[id].state == UState::Idle) idleArmy.push_back(id);
-        if (!idleArmy.empty())
-            w.orderMove(idleArmy, (float)rallyPoint.x + 0.5f, (float)rallyPoint.y + 0.5f, false);
+    int gathered=0;
+    std::vector<EID> idleArmy;
+    for(EID id:armyIds) {
+        const auto& unit=w.ents[id];
+        if(distf(unit.x,unit.y,rallyPoint.x+0.5f,rallyPoint.y+0.5f)<8.0f)++gathered;
+        else if(unit.state==UState::Idle && !unit.guard && !unit.deployed && !unit.radDeployed
+            && !unit.immobilized() && !unit.deploying())idleArmy.push_back(id);
+    }
+    if((army<threshold || gathered<std::min(army,std::max(1,pcfg.rallySize))) && rallyCheckTimer>0) {
+        if(!idleArmy.empty())w.orderMove(idleArmy,rallyPoint.x+0.5f,rallyPoint.y+0.5f,false);
         return;
     }
 

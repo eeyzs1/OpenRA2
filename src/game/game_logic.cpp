@@ -25,6 +25,26 @@ void Game::consumePresentationEvents() {
             continue;
         }
         if (ev.player != localPlayer) continue;
+        if(ev.kind==PresentationKind::BuildingOrder) {
+            const auto& result=ev.building;
+            if(result.accepted && result.action==BuildingAction::Sell && selBuilding==ev.entity)
+                selBuilding=INVALID_EID;
+            S text=result.action==BuildingAction::Sell?S::MsgSold:
+                result.repairing?S::MsgRepairStarted:S::MsgRepairStopped;
+            if(!result.accepted)switch(result.reason) {
+                case BuildingRejectReason::WrongOwner:text=S::MsgBuildingOwner;break;
+                case BuildingRejectReason::Selling:text=S::MsgBuildingSelling;break;
+                case BuildingRejectReason::ConstructionYard:text=S::MsgConYardNoSell;break;
+                case BuildingRejectReason::FullHealth:text=S::MsgNoRepair;break;
+                case BuildingRejectReason::Constructing:text=S::MsgBuildingConstructing;break;
+                default:text=S::MsgBuildingInvalid;break;
+            }
+            message(TR(text));
+            attackFeedback=false;moveFeedbackPartial=false;moveFeedbackRejected=!result.accepted;
+            feedbackLift=eventRenderLift(ev);feedbackTerrainHeight=ev.terrainHeight;
+            moveFeedbackTarget={ev.x,ev.y};moveFeedbackTimer=ev.positional?0.9f:0;
+            continue;
+        }
         if(ev.kind==PresentationKind::SuperweaponOrder) {
             message(superweaponFeedbackText(ev.superweapon));
             attackFeedback=false;feedbackLift=eventRenderLift(ev);feedbackTerrainHeight=ev.terrainHeight;moveFeedbackPartial=false;moveFeedbackRejected=!ev.superweapon.accepted;
@@ -234,7 +254,7 @@ void Game::logic() {
         for (auto& ai : ais) ai.update(world);
     }
     // 脚本引擎：每逻辑帧触发 OnTick（联机模式下跳过，避免非确定性）
-    if (!netGame) g_script.onTick(world.tick);
+    if (!netGame && g_script.boundTo(&world)) g_script.onTick(world.tick);
     syncFogKnowledge();
 
     // 听者位置 = 视野中心瓦片

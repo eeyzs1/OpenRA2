@@ -95,6 +95,33 @@ void Game::selectReferenceMap() {
     previewDirty = true;
 }
 
+void Game::resetMatchInteraction() {
+    sel.clear();
+    selBuilding = INVALID_EID;
+    for (auto& group : groups) group.clear();
+    lastGroupKey = -1;
+    lastGroupTap = 0;
+    dragging = dragPressSelected = false;
+    clearPlacement();
+    targetingSW = SWType::COUNT;
+    chronoSourceSel.clear();
+    targetingParadrop = false;
+    sideMode = 0;
+    waypointLatch = false;
+    paused = showMenu = false;
+    logicAcc = 0;
+    interpAlpha = 1;
+    camZoom = 1;
+    uiTab = uiScroll = 0;
+    moveFeedbackTimer = 0;
+    moveFeedbackRejected = moveFeedbackPartial = attackFeedback = false;
+    feedbackLift = 0;
+    feedbackTerrainHeight = -1;
+    combatCues.clear();
+    fogKnowledge = FogKnowledge{};
+    minimapTimer = 0;
+}
+
 void Game::newGame(uint64_t seed) {
     if (cfgReferenceMap) selectReferenceMap();
     World reference;
@@ -116,10 +143,17 @@ void Game::newGame(uint64_t seed) {
                 reference.map.w != 64 || reference.map.h != 64) {
             referenceMapReady = false; previewDirty = true; phase = Phase::Setup; return;
         }
+        g_script.shutdown();
         world = std::move(reference);
         world.map.bldOccRef = &world.bldOcc;
         referenceMapReady = true;
-    } else world.init(cfgMapSize, cfgMapSize, seed, 1, cfgAI, factions, effectiveMapType);
+    } else {
+        g_script.shutdown();
+        world.init(cfgMapSize, cfgMapSize, seed, 1, cfgAI, factions, effectiveMapType);
+    }
+    resetMatchInteraction();
+    localPlayer = 0;
+    netGame = false;
     resetNotifications();
     moveFeedbackTimer = 0;
     combatCues.clear();
@@ -230,9 +264,7 @@ void Game::newGame(uint64_t seed) {
     phase = Phase::InGame;
     bakeTerrain(); // 整图地表烘焙（连续噪声，无瓦片网格感）
     g_sprites.preloadMatch(localPlayer); // 开局预载本地玩家素材，消除游戏中懒加载掉帧
-    // 脚本引擎：加载 assets/scripts/*.lua 并触发 OnGameStart
-    // g_script.init(&world, 0, -1);
-    // g_script.onGameStart();
+    // Skirmish uses built-in rules; campaign scripts never carry into this match.
 }
 
 void Game::loadFont() {

@@ -428,6 +428,12 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"%d 个单位正在降落部署", "%d units are landing and deploying"},
     {"%d 个单位正在收拢起飞", "%d units are folding and taking off"},
     {"正在部署或起飞，请等待完成", "Deployment or takeoff in progress; wait for completion"},
+    {"已开启持续维修", "Building repairs enabled"},
+    {"已停止维修", "Building repairs stopped"},
+    {"请选择有效建筑", "Select a valid building"},
+    {"只能操作己方建筑", "You can only manage your own buildings"},
+    {"建筑正在出售，无法执行指令", "Building is being sold"},
+    {"建筑尚未完成，无法维修", "Building is still under construction"},
 };
 
 const char* TR(S id) {
@@ -520,6 +526,7 @@ static const char* kSKey[(int)S::COUNT] = {
     "MsgSWTransferredFmt","MsgSWExecuted","MsgSWUnavailable","MsgSWNotReady","MsgSWNoSource","MsgSWBlocked","MsgSWTargetInvalid","MsgSWInvalid","MsgSWChooseDestination",
     "TipFacilityFrozen","TipFacilityDrained","TipFacilityWaiting","TipFacilityHalted",
     "MsgDeployStarting","MsgUndeployStarting","MsgDeployBusy",
+    "MsgRepairStarted","MsgRepairStopped","MsgBuildingInvalid","MsgBuildingOwner","MsgBuildingSelling","MsgBuildingConstructing",
 };
 
 static int sKeyByName(const char* s) {

@@ -358,7 +358,7 @@ void World::checkDefeat() {
         }
         if (!hasAny) {
             p.defeated = true;
-            g_script.onPlayerDefeated(pi);
+            if (g_script.boundTo(this)) g_script.onPlayerDefeated(pi);
         }
     }
 }

@@ -149,7 +149,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
         }
         default: break;
     }
-    g_script.onSuperWeapon(player, t, tx, ty);
+    if (g_script.boundTo(this)) g_script.onSuperWeapon(player, t, tx, ty);
     return true;
 }
 
@@ -164,7 +164,7 @@ bool World::launchChronoShift(int player,const std::vector<EID>& selected,float 
     if(!moved) return false;
     if(transferred) *transferred=moved;
     Player& p=players[player];p.swReady[(int)SWType::ChronoShift]=false;p.swCharge[(int)SWType::ChronoShift]=0;
-    eva(player,TR(S::EvaChronoStart));g_script.onSuperWeapon(player,SWType::ChronoShift,tx,ty);
+    eva(player,TR(S::EvaChronoStart));if (g_script.boundTo(this)) g_script.onSuperWeapon(player,SWType::ChronoShift,tx,ty);
     return true;
 }
 

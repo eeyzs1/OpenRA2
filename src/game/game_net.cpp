@@ -1,5 +1,6 @@
 // P8 LAN 联机：确定性 lockstep 集成（握手/命令帧同步/大厅 UI/双进程自测）
 #include "game/game.h"
+#include "game/script.h"
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
 #include <algorithm>
@@ -19,11 +20,14 @@ void Game::issueCmd(const World::Cmd& c) {
         return;
     }
     world.applyCmd(localPlayer, c);
+    consumePresentationEvents();
 }
 
 // ===================== 握手与开局 =====================
 // 主机在 Welcome 中权威下发：种子/地图/资金/双方国家颜色 → 双方同配置 newGame，保证确定性起点
 void Game::netBeginGame() {
+    g_script.shutdown();
+    resetMatchInteraction();
     campaignMission = -1;
     nextWave = 0;
     missionTriggers.clear();
@@ -122,7 +126,7 @@ void Game::netHandleMsgs() {
                 uint32_t ver = r.r<uint32_t>();
                 int country = r.r<uint8_t>();
                 int color = r.r<uint8_t>();
-                if (!r.done() || ver != 2 || !validCountry(country) || color < 0 || color >= MAX_PLAYERS) {
+                if (!r.done() || ver != NetLink::SIMULATION_VERSION || !validCountry(country) || color < 0 || color >= MAX_PLAYERS) {
                     reject("invalid hello");
                     return;
                 }
@@ -413,7 +417,7 @@ int Game::netSelfTestDriver(int role, int frames) {
         }
         if (!net.connected()) { TraceLog(LOG_ERROR, "net-test: connect timeout"); return 1; }
         NetLink::Writer w;
-        w.w((uint32_t)2);
+        w.w(NetLink::SIMULATION_VERSION);
         w.w((uint8_t)cfgCountry);
         w.w((uint8_t)cfgColor);
         net.send(NetLink::MsgHello, w.b);

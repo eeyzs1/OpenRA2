@@ -20,7 +20,7 @@ EID Game::pickUnit(int mx, int my) const {
     for (size_t i = 0; i < world.ents.size(); i++) {
         const World::Ent& e = world.ents[i];
         if (!e.alive || e.isBuilding) continue;
-        if (e.player != localPlayer && !buildingVisible((int)e.x,(int)e.y,e.btype)) continue;
+        if (e.player != localPlayer && world.map.fogAt(localPlayer,(int)e.x,(int)e.y)!=FOG_VISIBLE) continue;
         Rectangle r = unitScreenRect(e);
         // 轻度放宽命中；过大 padding 会让步兵抢掉基地车等大贴图中心点击
         Rectangle rs{r.x * camZoom, r.y * camZoom, r.width * camZoom, r.height * camZoom};
@@ -101,7 +101,7 @@ EID Game::pickBuilding(int mx, int my) const {
     for (size_t i = 0; i < world.ents.size(); i++) {
         const World::Ent& e = world.ents[i];
         if (!e.alive || !e.isBuilding) continue;
-        if (e.player != localPlayer && world.map.fogAt(localPlayer, (int)e.x, (int)e.y) != FOG_VISIBLE) continue;
+        if (e.player != localPlayer && !buildingVisible((int)e.x,(int)e.y,e.btype)) continue;
         const BldDef& d = bldDef(e.btype);
         int bx = (int)e.x, by = (int)e.y;
         bool footHit = (tx >= bx && tx < bx + d.w && ty >= by && ty < by + d.h);
@@ -142,7 +142,7 @@ void Game::doSelect(int mx, int my, bool additive) {
     EID u = pickUnit(mx, my);
     if (u != INVALID_EID) {
         if (world.ents[u].player == localPlayer) {
-            sel.push_back(u);
+            if(std::find(sel.begin(),sel.end(),u)==sel.end())sel.push_back(u);
         }
         return;
     }
@@ -161,7 +161,7 @@ void Game::doBoxSelect(Rectangle r, bool additive) {
         const World::Ent& e = world.ents[i];
         if (!e.alive || e.isBuilding || e.player != localPlayer) continue;
         Rectangle ur = unitScreenRect(e);
-        if (CheckCollisionRecs(vr, ur))
+        if (CheckCollisionRecs(vr, ur) && std::find(sel.begin(),sel.end(),(EID)i)==sel.end())
             sel.push_back((int)i);
     }
 }
@@ -370,31 +370,16 @@ void Game::handleInput() {
         if (mPressed(MOUSE_RIGHT_BUTTON) || kPressed(KEY_ESCAPE)) { sideMode = 0; return; }
         if (mPressed(MOUSE_LEFT_BUTTON) && !overUI) {
             EID b = pickBuilding((int)mouse.x, (int)mouse.y);
-            if (b != INVALID_EID && world.ents[b].player == localPlayer && !world.ents[b].selling) {
-                if (sideMode == 2) {
-                    if (world.ents[b].btype != BldType::ConYard) {
-                        World::Cmd c; c.type = World::Cmd::SellBuilding; c.ids.push_back(b);
-                        issueCmd(c);
-                        message(TR(S::MsgSold));
-                    } else if (world.mcvRepacks) {
-                        // 建造厂不可出售；开启 MCV Repacks 时出售光标改为打包回基地车
-                        World::Cmd c; c.type = World::Cmd::Deploy; c.ids.push_back(b);
-                        issueCmd(c);
-                        if (selBuilding == b) selBuilding = INVALID_EID;
-                        message(TR(S::MsgDeployed));
-                    } else {
-                        message(TR(S::MsgConYardNoSell));
-                    }
-                } else {
-                    const BldDef& bd = bldDef(world.ents[b].btype);
-                    // 持续维修开关：只要受损即可切换（费用在 tick 中按 RepairPercent 扣除）
-                    if (world.ents[b].hp < bd.hp) {
-                        World::Cmd c; c.type = World::Cmd::RepairBuilding; c.ids.push_back(b);
-                        issueCmd(c);
-                        message(TR(S::MsgRepaired));
-                    }
-                    else message(TR(S::MsgNoRepair));
-                }
+            if (b == INVALID_EID) message(TR(S::MsgBuildingInvalid));
+            else {
+                World::Cmd command;
+                command.ids.push_back(b);
+                // Packing and repair/sell feedback comes from execution receipts.
+                const bool repack=sideMode==2 && world.ents[b].player==localPlayer
+                    && world.ents[b].btype==BldType::ConYard && world.mcvRepacks;
+                command.type=repack?World::Cmd::Deploy:
+                    sideMode==2?World::Cmd::SellBuilding:World::Cmd::RepairBuilding;
+                issueCmd(command);
             }
         }
         return; // 该模式下屏蔽选择/框选
@@ -548,17 +533,6 @@ void Game::handleInput() {
                     World::Cmd c; c.type = World::Cmd::Move; c.ids.push_back(cy);
                     c.x = (float)tx; c.y = (float)ty;
                     issueCmd(c);
-                    selBuilding = INVALID_EID;
-                    sel.clear();
-                    // 单机命令已应用：选中新基地车
-                    for (size_t i = 0; i < world.ents.size(); i++) {
-                        const World::Ent& e = world.ents[i];
-                        if (!e.alive || e.isBuilding || e.player != localPlayer) continue;
-                        if (e.utype != UnitType::MCV) continue;
-                        if (e.state == UState::Moving || e.state == UState::AttackMoving)
-                            sel.push_back((int)i);
-                    }
-                    message(TR(S::MsgDeployed));
                 }
             } else if (world.valid(selBuilding) && world.ents[selBuilding].isBuilding
                        && world.ents[selBuilding].player == localPlayer
@@ -634,14 +608,14 @@ void Game::handleInput() {
             if (ctrl) {
                 groups[n] = sel;
                 groups[n].erase(std::remove_if(groups[n].begin(), groups[n].end(), [&](EID id) {
-                    return !world.valid(id) || world.ents[id].isBuilding;
+                    return !world.valid(id) || world.ents[id].isBuilding || world.ents[id].player!=localPlayer;
                 }), groups[n].end());
                 message(TextFormat(TR(S::MsgGroupSetFmt), n, (int)groups[n].size()));
                 g_sfx.play(Sfx::Click, 0.6f);
             } else {
                 auto& g = groups[n];
                 g.erase(std::remove_if(g.begin(), g.end(), [&](EID id) {
-                    return !world.valid(id) || world.ents[id].isBuilding;
+                    return !world.valid(id) || world.ents[id].isBuilding || world.ents[id].player!=localPlayer;
                 }), g.end());
                 if (g.empty()) continue;
                 sel = g;
@@ -676,13 +650,9 @@ void Game::handleInput() {
         if (world.ents[selBuilding].btype != BldType::ConYard) {
             World::Cmd c; c.type = World::Cmd::SellBuilding; c.ids.push_back(selBuilding);
             issueCmd(c);
-            selBuilding = INVALID_EID;
-            message(TR(S::MsgSold));
         } else if (world.mcvRepacks) {
             World::Cmd c; c.type = World::Cmd::Deploy; c.ids.push_back(selBuilding);
             issueCmd(c);
-            selBuilding = INVALID_EID;
-            message(TR(S::MsgDeployed));
         }
     }
     if (ka(KA_ViewBase)) {
@@ -724,8 +694,11 @@ void Game::handleInput() {
     }
 
     // 清理失效选择
-    sel.erase(std::remove_if(sel.begin(), sel.end(), [&](EID id) { return !world.valid(id); }), sel.end());
-    if (!world.valid(selBuilding)) selBuilding = INVALID_EID;
+    sel.erase(std::remove_if(sel.begin(), sel.end(), [&](EID id) {
+        return !world.valid(id) || world.ents[id].isBuilding || world.ents[id].player!=localPlayer;
+    }), sel.end());
+    if (!world.valid(selBuilding) || !world.ents[selBuilding].isBuilding
+        || world.ents[selBuilding].player!=localPlayer) selBuilding = INVALID_EID;
     clampCameraToMap(); // 编队跳转等改 cam 后再次钳边
 }
 
