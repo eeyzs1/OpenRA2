@@ -1,8 +1,9 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cstdio>
 #include <limits>
 
-int Game::rallyRegression() {
+int GameRegression::rallyRegression() {
+    cfgClassicOrders=false; // This fixture explicitly covers the modern RMB route as well as R.
     int failures=0;
     for(int scenario=0;scenario<16;++scenario) {
         World w;w.init(64,64,20261031,2,0,{Faction::Allies,Faction::Soviet},0,"",true);
@@ -46,7 +47,10 @@ int Game::rallyRegression() {
                 if(unit==INVALID_EID) unit=(EID)i;else duplicate=(EID)i;
             }
             if(!w.valid(unit)) production=false;
-            else if(scenario==3 || scenario==10 || scenario==15) production &= w.ents[unit].state==UState::Idle && w.ents[unit].path.empty();
+            else if(scenario==3) production &= w.ents[unit].state==UState::Idle && w.ents[unit].path.empty();
+            else if(scenario==10 || scenario==15) production &= w.ents[unit].state==UState::Moving && !w.ents[unit].path.empty()
+                && (scenario==10?w.ents[unit].path.back().x<25:
+                    w.map.at(w.ents[unit].path.back().x,w.ents[unit].path.back().y).terrain==Terrain::Water);
             else if(scenario==11) production &= w.ents[unit].state==UState::Landed && w.ents[unit].occCell>=0;
             else if(scenario==4) production &= w.ents[unit].state==UState::Moving && w.ents[unit].goalX>=35 && w.ents[unit].airBucket>=0 && w.ents[unit].occCell<0;
             else production &= w.ents[unit].state==UState::Moving && !w.ents[unit].path.empty();
@@ -71,7 +75,7 @@ int Game::rallyRegression() {
             world=w;world.map.bldOccRef=&world.bldOcc;localPlayer=0;selBuilding=factory;const auto hash=world.checksum();
             consumePresentationEvents();
             S expected=scenario==2?S::MsgRallyUnsupported:scenario==3?S::MsgRallyCleared:scenario==13?S::MsgRallySelling:
-                scenario==10 || scenario==15?S::MsgRallyUnreachable:scenario==14?S::MsgRallyAdjusted:S::MsgRallyInvalid;
+                scenario==10 || scenario==15 || scenario==14?S::MsgRallyAdjusted:S::MsgRallyInvalid;
             feedback=msg==TR(expected) && world.checksum()==hash;
         }
         FILE* file=tmpfile();World replay;bool saved=file && w.saveGame(file);

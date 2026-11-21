@@ -1,6 +1,7 @@
 #pragma once
 #include "game/data.h"
 #include <string>
+#include <utility>
 #include <vector>
 
 // 战役任务：波次脚本 + 胜利目标
@@ -63,6 +64,8 @@ struct MissionObjective {
     std::string textEn;
     bool primary = true;
     bool gateWin = true;              // Primary 且 gateWin：全部完成 → 胜（GateWin=no 用于「英雄存活」等）
+    std::string nativeCompleteTrigger; // Presentation follows this original trigger's durable firing count.
+    bool nativeCompleteOnVictory = false;
 };
 
 struct MissionDef {
@@ -79,6 +82,9 @@ struct MissionDef {
     int objective;                   // 0 歼灭所有敌军 1 存活至 objectiveTick 2 触发器决定胜负
     int objectiveTick;
     std::string mapFile;             // 手工地图（maps/xxx.txt）；空则程序生成
+    std::string nativeScene;         // Native campaigns use the authored scene/events instead of skirmish initialization.
+    std::string nativeTextFile;
+    std::vector<std::pair<std::string,std::string>> nativeTexts;
     bool noStartForce = false;       // true=不刷初始基地车部队（全部由地图文件放置）
     std::vector<Trigger> triggers;   // 触发器脚本
     int track = 0;                   // 0=融合自制 1=官方轨

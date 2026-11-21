@@ -1,4 +1,4 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "core/content.h"
 #include <algorithm>
 #include <chrono>
@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <limits>
 #include <set>
+#include <cstdlib>
 #include "game/lang.h"
 #include "gfx/sprites.h"
 #include "gfx/assets.h"
@@ -13,7 +14,7 @@
 #include "sfx/sound.h"
 
 // Natural-start endurance is deliberately separate from fixture-based mechanisms.
-int Game::skirmishRegression(int ticks, int factionFilter, uint64_t seedFilter, bool requireOutcomes, int generatedMapType) {
+int GameRegression::skirmishRegression(int ticks, int factionFilter, uint64_t seedFilter, bool requireOutcomes, int generatedMapType) {
     int failures = 0, completedMatches=0, testedMatches=0;
     for (int faction = 0; faction < 4; ++faction) {
         if(factionFilter>=0 && factionFilter!=faction) continue;
@@ -144,6 +145,15 @@ int Game::skirmishRegression(int ticks, int factionFilter, uint64_t seedFilter, 
                         ++army;moving+=e.state==UState::Moving || e.state==UState::AttackMoving;
                         chasing+=e.state==UState::Chasing;attacking+=e.state==UState::Attacking;
                     }
+                    if(factionFilter>=0 && seedFilter)for(size_t target=0;target<w.ents.size();++target) {
+                        const auto& building=w.ents[target];
+                        if(!building.alive || !building.isBuilding || !w.isEnemy(pi,building.player))continue;
+                        const int attackers=(int)std::count_if(w.ents.begin(),w.ents.end(),[&](const auto& actor) {
+                            return actor.alive && !actor.isBuilding && actor.player==pi && actor.target==(EID)target;
+                        });
+                        if(attackers)std::printf("AI_TARGET tick=%llu attacker=%d id=%zu owner=%d type=%d hp=%d repairing=%d attackers=%d\n",
+                            (unsigned long long)w.tick,pi,target,building.player,(int)building.btype,building.hp,building.repairing,attackers);
+                    }
                     std::printf("AI_HEALTH faction=%d seed=%llu player=%d tick=%llu income=%llu produced=%llu damage=%llu money=%lld miners=%d receiver=%d factory=%d low_power=%d blocked=%d dry=%d idle=%d defeated=%d damage_delta=%llu waves=%d waves_delta=%d army=%d moving=%d chasing=%d attacking=%d rally=%d,%d\n",
                         faction,(unsigned long long)seed,pi,(unsigned long long)w.tick,(unsigned long long)income,
                         (unsigned long long)production,(unsigned long long)w.combatDamage[pi],(long long)p.money,miners,receiver,factory,
@@ -192,12 +202,30 @@ int Game::skirmishRegression(int ticks, int factionFilter, uint64_t seedFilter, 
                 && (!requireOutcomes || resolvedTick>0);
             std::printf("NATURAL_RESUME %s faction=%d seed=%llu checkpoints=%d replay_ticks_each=300\n",snapshotsEqual?"PASS":"FAIL",faction,(unsigned long long)seed,snapshots);
             completedMatches+=resolvedTick>0;
+            if(!resolvedTick && requireOutcomes)if(const char* directory=std::getenv("OPENRA2_MATCH_DIAGNOSTICS")) {
+                const auto output=std::filesystem::u8path(directory);std::filesystem::create_directories(output);
+                const auto stem="faction-"+std::to_string(faction)+"-seed-"+std::to_string(seed)+"-map-"+std::to_string(generatedMapType);
+                const auto state=(output/(stem+"-world60.sav")).string();FILE* file=std::fopen(state.c_str(),"wb");
+                bool saved=file && w.saveGame(file);if(file)std::fclose(file);
+                Game captured;captured.world=w;captured.world.map.bldOccRef=&captured.world.bldOcc;captured.ais={bots[0],bots[1]};
+                const auto application=(output/(stem+"-app11.sav")).string();
+                const bool app=captured.saveGameFile(application.c_str());
+                std::printf("NATURAL_DIAGNOSTIC world=%d app=%d directory=%s\n",saved,app,directory);
+            }
+            if(!resolvedTick && factionFilter>=0 && seedFilter)for(int pi=0;pi<2;++pi) {
+                std::printf("AI_STRATEGY player=%d knowledge=%zu rally_size=%d focus=%d timer=%d rally_timer=%d\n",pi,bots[pi].knownBuildings.size(),bots[pi].pcfg.rallySize,bots[pi].pcfg.focusFire,bots[pi].attackTimer,bots[pi].rallyCheckTimer);
+                for(const auto& known:bots[pi].knownBuildings) {
+                    bool visible=false;const auto& shape=bldDef(known.type);
+                    for(int dy=0;dy<shape.h;++dy)for(int dx=0;dx<shape.w;++dx)visible |= w.map.fogAt(pi,known.x+dx,known.y+dy)==FOG_VISIBLE;
+                    std::printf("AI_KNOWN player=%d type=%d owner=%d at=%d,%d seen=%llu visible=%d\n",pi,(int)known.type,known.owner,known.x,known.y,(unsigned long long)known.observedTick,visible);
+                }
+            }
             if(!resolvedTick && factionFilter>=0 && seedFilter) for(size_t index=0;index<w.ents.size();++index) {
                 const auto& e=w.ents[index];if(!e.alive) continue;
                 const auto goal=e.path.empty()?Vec2i{-1,-1}:e.path.back();
-                std::printf("AI_FINAL id=%zu player=%d building=%d type=%d pos=%.2f,%.2f state=%d deployed=%d path=%d/%zu goal=%d,%d blocked=%d target=%d\n",
+                std::printf("AI_FINAL id=%zu player=%d building=%d type=%d pos=%.2f,%.2f state=%d deployed=%d path=%d/%zu goal=%d,%d blocked=%d target=%d hp=%d repairing=%d intent=%d intent_owner=%d intent_goal=%.2f,%.2f guard=%d\n",
                     index,e.player,e.isBuilding,e.isBuilding?(int)e.btype:(int)e.utype,e.x,e.y,(int)e.state,e.deployed || e.radDeployed,
-                    e.pathIdx,e.path.size(),goal.x,goal.y,e.blockTick,e.target);
+                    e.pathIdx,e.path.size(),goal.x,goal.y,e.blockTick,e.target,e.hp,e.repairing,e.attackMove.active,e.attackMove.owner,e.attackMove.x,e.attackMove.y,e.guard);
                 if(!e.isBuilding && e.pathIdx<(int)e.path.size() && !unitDef(e.utype).isAir()) {
                     const auto next=e.path[e.pathIdx];const auto& def=unitDef(e.utype);
                     const EID peer=w.unitAtCell(next.x,next.y);
@@ -226,7 +254,7 @@ int Game::skirmishRegression(int ticks, int factionFilter, uint64_t seedFilter, 
         +(requireOutcomes && completedMatches!=testedMatches);
 }
 
-int Game::movementRegression() {
+int GameRegression::movementRegression() {
     int failures = 0;
     for (int scenario = 0; scenario < 8; ++scenario) {
         int count = scenario == 2 ? 200 : scenario == 3 ? 500 : 50;
@@ -372,14 +400,15 @@ int Game::movementRegression() {
     command.a=0;command.x=40;command.y=40;
     w.applyCmd(0,command);
     auto event=w.presentationEvents.back();
-    bool rejected=event.kind==PresentationKind::MoveOrder && event.player==0 && event.entity==tank
-        && event.tick==w.tick && event.move.rejected==1 && event.move.reason==MoveRejectReason::Unreachable
-        && w.ents[tank].path.empty() && w.ents[tank].wps.empty() && w.ents[tank].state==UState::Idle;
+    bool fallback=event.kind==PresentationKind::MoveOrder && event.player==0 && event.entity==tank
+        && event.tick==w.tick && event.move.accepted==1 && event.move.adjusted==1
+        && !w.ents[tank].path.empty() && w.ents[tank].path.back()==Vec2i{29,40} && w.ents[tank].wps.empty();
     auto hash=w.checksum();consumePresentationEvents();
-    bool feedback=msg==TR(S::MsgMoveUnreachable) && moveFeedbackTimer>0 && moveFeedbackRejected && hash==w.checksum();
+    bool feedback=msg==TR(S::MsgMoveAdjusted) && moveFeedbackTimer>0 && !moveFeedbackRejected && hash==w.checksum();
     uint64_t requests=w.repathRequests;
-    for(int i=0;i<300;++i) w.update();
-    bool bounded=w.repathRequests==requests && w.ents[tank].state==UState::Idle;
+    for(int i=0;i<1000;++i) w.update();
+    bool bounded=w.repathRequests==requests && w.ents[tank].state==UState::Idle
+        && (int)w.ents[tank].x==29 && (int)w.ents[tank].y==40;
     w.presentationEvents.clear();
     // A blocked destination may resolve to a reachable adjacent cell.
     w.map.at(20,20).terrain=Terrain::Water;
@@ -412,21 +441,26 @@ int Game::movementRegression() {
     command.a=0;command.x=24;command.y=16;w.applyCmd(0,command);
     command.a=1;command.x=40;command.y=40;w.applyCmd(0,command);
     command.x=22;command.y=22;w.applyCmd(0,command);w.presentationEvents.clear();
-    int deferredFailures=0;
-    for(int i=0;i<500;++i) {
+    int deferredFailures=0,deferredAdjustments=0;
+    const int routeBudget=4*w.map.w*std::max(1,unitDef(w.ents[tank].utype).speed);
+    for(int i=0;i<routeBudget;++i) {
         w.update();
         for(const auto& ev:w.presentationEvents) if(ev.kind==PresentationKind::MoveOrder && ev.move.rejected==1) ++deferredFailures;
+        for(const auto& ev:w.presentationEvents) if(ev.kind==PresentationKind::MoveOrder && ev.move.adjusted==1) ++deferredAdjustments;
         w.presentationEvents.clear();
+        if(w.ents[tank].state==UState::Idle && w.ents[tank].wps.empty())break;
     }
-    bool deferred=deferredFailures==1 && w.ents[tank].wps.empty() && w.ents[tank].path.empty() && w.ents[tank].state==UState::Idle;
-    bool ok=queued && rejected && feedback && bounded && adjusted && partial && deployed && invalid && filtered && route && deferred;
-    std::printf("MOVE_FEEDBACK %s queued=%d rejected=%d ui=%d bounded=%d adjusted=%d partial=%d deployed=%d invalid=%d player_filter=%d full_route=%d deferred_failure=%d\n",
-        ok?"PASS":"FAIL",queued,rejected,feedback,bounded,adjusted,partial,deployed,invalid,filtered,route,deferred);
+    bool deferred=deferredFailures==0 && deferredAdjustments==1 && w.ents[tank].wps.empty()
+        && w.ents[tank].pathIdx>=(int)w.ents[tank].path.size() && w.ents[tank].state==UState::Idle
+        && (int)w.ents[tank].x==22 && (int)w.ents[tank].y==22;
+    bool ok=queued && fallback && feedback && bounded && adjusted && partial && deployed && invalid && filtered && route && deferred;
+    std::printf("MOVE_FEEDBACK %s queued=%d fallback=%d ui=%d bounded=%d adjusted=%d partial=%d deployed=%d invalid=%d player_filter=%d full_route=%d deferred_adjustment=%d\n",
+        ok?"PASS":"FAIL",queued,fallback,feedback,bounded,adjusted,partial,deployed,invalid,filtered,route,deferred);
     failures+=!ok;
     return failures;
 }
 
-int Game::economyRegression() {
+int GameRegression::economyRegression() {
     int failures=0;
     const int regrowth=g_gameRules.oreRegrowRate;
     g_gameRules.oreRegrowRate=0;
@@ -571,7 +605,7 @@ int Game::economyRegression() {
     return failures;
 }
 
-int Game::presentationReplay(bool sound) {
+int GameRegression::presentationReplay(bool sound) {
     if(sound) {
         g_sfx.init(); g_sfx.setMasterVol(0);
         if(!IsAudioDeviceReady() || !g_sfx.assetsOk()) {
@@ -761,7 +795,7 @@ int Game::presentationReplay(bool sound) {
     return apocOk && transformed && transformIsolated && g_sprites.assetsOk() && voxelFired && voxelIsolated && siegeLoaded && siegeDamage>0 && siegeIsolated && warpLoaded && warpEmitted && spriteLoaded && cameoLoaded && boarded && garrisoned && unloaded && evacuated && serviced && magneticDamage>0 && magneticBeam?0:1;
 }
 
-int Game::visualRegression(const char* outputDir) {
+int GameRegression::visualRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);
     world.init(64,64,20261031,2,0,{Faction::Soviet,Faction::Allies},0,"maps/skirmish-reference.txt",true);
     world.players[0].country=Country::Russia;world.players[1].country=Country::America;
@@ -1143,7 +1177,7 @@ int Game::visualRegression(const char* outputDir) {
     return failures;
 }
 
-int Game::animationRegression(const char* outputDir) {
+int GameRegression::animationRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);
     const UnitType types[]={UnitType::GI,UnitType::Conscript,UnitType::PLA,UnitType::Initiate,UnitType::AttackDog};
     const char* stages[]={"walk","fire","death"};
@@ -1310,7 +1344,7 @@ int Game::animationRegression(const char* outputDir) {
     return failures;
 }
 
-int Game::attackRegression() {
+int GameRegression::attackRegression() {
     int failures=0;localPlayer=0;phase=Phase::InGame;showMenu=false;gameOver=false;camZoom=1;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("ATTACK %s %s\n",ok?"PASS":"FAIL",name); };
     auto reset=[&]() {
@@ -1564,13 +1598,12 @@ int Game::attackRegression() {
     check(returningEmpty && world.valid(bomber) && world.ents[bomber].state==UState::Landed && world.ents[bomber].ammo==unitDef(UnitType::Intruder).ammo,
         "empty aircraft with destroyed target returns lands and rearms");
     reset();EID carrier=world.spawnUnit(0,UnitType::AircraftCarrier,3.5f,3.5f);
-    world.ents[carrier].cargo.resize(2);
-    EID hornet=world.spawnUnit(0,UnitType::Hornet,20.5f,20.5f);
-    world.ents[hornet].airbase=carrier;
-    captured=world.spawnUnit(1,UnitType::MCV,30.5f,20.5f);
-    command.ids={hornet};command.a=captured;world.applyCmd(0,command);
-    world.damage(captured,100000,-1);world.update();
-    bool hornetReturning=world.ents[hornet].state==UState::Returning;
+    captured=world.spawnUnit(1,UnitType::MCV,12.5f,3.5f);
+    command.ids={carrier};command.a=captured;world.applyCmd(0,command);
+    EID hornet=INVALID_EID;
+    for(int frame=0;frame<100 && hornet<0;++frame){world.update();for(const auto& node:world.aircraftSpawners.front().nodes)if(world.valid(node.aircraft))hornet=node.aircraft.id;}
+    world.damage(captured,100000,-1);
+    bool hornetReturning=world.valid(hornet) && world.ents[hornet].state==UState::Returning;
     for(int frame=0;frame<400 && world.valid(hornet);++frame) world.update();
     check(hornetReturning && !world.valid(hornet) && world.ents[carrier].cargo.size()==3,
         "hornet returns to carrier when target is lost with ammunition remaining");
@@ -1637,7 +1670,7 @@ int Game::attackRegression() {
     return failures;
 }
 
-int Game::engineerRegression() {
+int GameRegression::engineerRegression() {
     int failures=0;localPlayer=0;phase=Phase::InGame;showMenu=false;gameOver=false;camZoom=1;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("ENGINEER %s %s\n",ok?"PASS":"FAIL",name); };
     auto reset=[&]() {
@@ -1760,13 +1793,17 @@ int Game::engineerRegression() {
     file=tmpfile();bool migrated=file && writeLegacyV20(world,file);
     if(migrated) { rewind(file);migrated=restored.loadGame(file); }
     if(file) fclose(file);
-    check(migrated && restored.ents[engineer].engineerIntent==EngineerIntent::Repair && world.checksum()==restored.checksum(),
+    World legacyExpected=world;legacyExpected.map.bldOccRef=&legacyExpected.bldOcc;legacyExpected.aircraftSpawnersEnabled=false;legacyExpected.aswEnabled=false;legacyExpected.nativeFlightEnabled=false;legacyExpected.nativeJumpjetEnabled=false;
+    legacyExpected.veterancyProgressEnabled=false;legacyExpected.independentSupportEnabled=false;legacyExpected.supportDeliveryEnabled=false;
+    check(migrated && restored.ents[engineer].engineerIntent==EngineerIntent::Repair && legacyExpected.checksum()==restored.checksum(),
         "frozen v20 binary explicitly infers pending repair intent");
     world.ents[oil].player=-1;issue(engineer,oil,EngineerIntent::Capture);
     file=tmpfile();migrated=file && writeLegacyV20(world,file);
     if(migrated) { rewind(file);migrated=restored.loadGame(file); }
     if(file) fclose(file);
-    check(migrated && restored.ents[engineer].engineerIntent==EngineerIntent::Capture && world.checksum()==restored.checksum(),
+    legacyExpected=world;legacyExpected.map.bldOccRef=&legacyExpected.bldOcc;legacyExpected.aircraftSpawnersEnabled=false;legacyExpected.aswEnabled=false;legacyExpected.nativeFlightEnabled=false;legacyExpected.nativeJumpjetEnabled=false;
+    legacyExpected.veterancyProgressEnabled=false;legacyExpected.independentSupportEnabled=false;legacyExpected.supportDeliveryEnabled=false;
+    check(migrated && restored.ents[engineer].engineerIntent==EngineerIntent::Capture && legacyExpected.checksum()==restored.checksum(),
         "frozen v20 binary explicitly infers pending capture intent");
 #endif
     return failures;

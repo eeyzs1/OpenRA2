@@ -4,12 +4,16 @@
 #include "game/lang.h"
 #include "game/campaign.h"
 #include "game/campaign_runtime.h"
+#include "game/match_setup.h"
 #include "net/net.h"
 #include "raylib.h"
+#include "gfx/pixel.h"
 #include <vector>
 #include <deque>
 #include <map>
 #include <unordered_set>
+struct PixBuf;
+struct Sprite;
 
 constexpr int SCREEN_W = 1440;
 constexpr int SCREEN_H = 810;
@@ -30,81 +34,23 @@ enum KeyAction : int {
 };
 
 class Game {
+    friend class GameRegression; // Test harness is excluded from the shipping target.
 public:
     void init(bool windowed = false, bool hidden = false); // 默认无边框全屏；windowed 调试窗口；hidden 测试用隐藏窗口（不弹窗）
     bool assetsOk() const { return assetsOk_; } // false = 缺素材，main 应拒绝进主循环
     void shutdown();
     void run(); // 主循环
-    int smokeTest(int frames); // 无头冒烟测试，返回失败断言数
-    int campaignSmokeTest(int mission, int frames); // 战役冒烟测试：开局跑 N 帧，返回失败断言数
-    int campaignMatrixTest(int frames); // 32 关启动/触发器/胜负静态与运行矩阵
-    void benchCampaign(int mission, int warmTicks, int frames); // 临时诊断：战役真实渲染耗时（解除帧率上限）
-    int playTest();             // 自动化完整游玩测试：脚本注入输入，真实窗口跑全流程，返回失败数
-    int liveVerify();           // 可见窗口 + 真实 OS 鼠标点选/设置页目检（修复实机选不中）
-    int visualAudit();          // 建筑虚线笼/建造出售动画/地形目检截图（人工或脚本审图）
-    void debugMenuShot(const char* file, bool setup); // 菜单截图（验证用）
-    void debugShot(int warmTicks, const char* file); // 遭遇战截图：预热出基地/电厂/单位后拍全屏（验证用）
-    void debugGuiReview(const char* outDir); // 各 GUI 审核截图（含主菜单动画样帧）
-    int netSelfTestDriver(int role, int frames); // P8 双进程自测：role 0=--net-host 1=--net-client（main 驱动）
-    int presentationReplay(bool sound);
-    int economyRegression();
-    int movementRegression();
-    int combatPressureRegression(int scenarioFilter=-1, const char* outputDir="review_out/combat-pressure");
-    int trafficRegression(int scenarioFilter=-1);
-    int junctionRegression(int scenarioFilter=-1);
-    int blockerRegression();
-    int idleYieldRegression();
-    int chopperGroundRegression();
-    int immobilizedRegression();
-    int magneticLandingRegression(const char* outputDir);
-    int deploymentFeedbackRegression();
-    int feedbackVisualRegression(const char* outputDir);
-    int rallyRegression();
-    int refineryRecoveryRegression();
-    int rallyVisualRegression(const char* outputDir);
-    int skirmishRegression(int ticks, int factionFilter=-1, uint64_t seedFilter=0, bool requireOutcomes=false, int generatedMapType=-1);
-    int visualRegression(const char* outputDir);
-    int animationRegression(const char* outputDir);
-    int siegePoseRegression(const char* outputDir);
-    int voxelAnimationRegression(const char* outputDir);
-    int chopperTransitionRegression(const char* outputDir);
-    int elevationFeedbackRegression(const char* outputDir);
-    int attackRegression();
-    int apocalypseRegression();
-    int burstRegression();
-    int splashRegression();
-    int aiAttackRegression();
-    int aiAirDefenseRegression();
-    int aiEconomyRegression();
-    int aiFactoryExitRegression();
-    int aiTransportRegression();
-    int movingYieldRegression();
-    int magnetronRegression(const char* outputDir="review_out/magnetron");
-    int engineerRegression();
-    int lifecycleRegression();
-    int entryRegression();
-    int referenceMapRegression(const char* outputDir);
-    int placementRegression(const char* outputDir);
-    int productionFeedbackRegression(const char* outputDir);
-    int refundRegression(const char* outputDir);
-    int terrainVisualRegression(const char* outputDir);
-    int generatedMapRegression(bool health,const char* outputDir);
-    int factoryStateRegression(const char* outputDir);
-    int chronoVisualRegression(const char* outputDir);
-    int superweaponRegression(const char* outputDir);
-    int fogFeedbackRegression(const char* outputDir);
-    int fogKnowledgeRegression(const char* outputDir);
-    int releaseRegression();
-    int instantCombatRegression();
-    int serviceRegression();
-    int hudRegression(const char* outputDir);
-    int appPersistenceTest();
-    int statePersistenceTest(); // 存档 schema/边界/复杂状态 round-trip 与 checksum 覆盖
+    int observedDeckHeight(int x,int y) const;
+    void surfaceAt(float x,float y,int& tileX,int& tileY,int* layer=nullptr) const;
+    bool observedSurfacePassable(int x,int y,int domain,int layer,bool underBridge=true) const;
+    struct WorldDrawItem {float depth;int kind,id;};
+    void orderBridgeDrawItems(std::vector<WorldDrawItem>& items) const;
 
     // 快速存档固定槽位（F5 保存 / F9 读取，游戏内菜单共用）
     static constexpr const char* QUICKSAVE_PATH = "saves/quicksave.sav";
 
 private:
+    void setSetupMapCustom(bool enabled);
     World world;
     std::vector<SkirmishAI> ais;
     int localPlayer = 0;
@@ -112,16 +58,33 @@ private:
     // 阶段与遭遇战配置
     bool assetsOk_ = true; // init 校验素材；缺失则 main 拒绝进主循环
     Phase phase = Phase::MainMenu;
-    int cfgCountry = (int)Country::China; // 玩家国家（RA2 原作：国家决定阵营与特色单位；COUNT=随机）
+    int cfgCountry = (int)Country::America; // 玩家国家（RA2 原作：国家决定阵营与特色单位；COUNT=随机）
+    RulesChoice cfgRules=RulesChoice::RA2;
+    struct RulesInfo {bool checked=false,available=false;uint16_t countries=0;std::string source,id;};
+    std::array<RulesInfo,(int)RulesChoice::COUNT> rulesInfo;
+    std::optional<MatchSetup> matchSetup;
+    bool refreshRulesChoice(RulesChoice choice,bool force=false);
+    bool validateRulesSource(const World::RulesSnapshot& snapshot,RulesInfo& result,const Map* map=nullptr) const;
+    void selectRulesChoice(RulesChoice choice);
+    std::vector<int> selectableCountries() const;
+    const char* rulesChoiceName(RulesChoice choice) const;
+    std::optional<Sha256Digest> selectedRulesFingerprint();
+    MatchSetup currentMatchSetup(uint64_t seed) const;
+    void applyMatchSetup(const MatchSetup& setup);
+    void deriveMatchSetup();
+    void restartCurrentMatch();
     int cfgColor = 0;       // 玩家颜色
     int cfgAI = 2;          // AI 数量
     int cfgMoney = 10000;   // 初始资金
     int cfgMapSize = 96;    // 地图边长
     int cfgMapType = 0;     // 地图类型：0 大陆 1 岛屿 2 湖泊
     bool cfgReferenceMap = false; // Local skirmish profile; never encoded as a network map type.
+    std::string cfgOriginalMap;
     bool referenceMapReady = true;
     static constexpr const char* REFERENCE_MAP = "maps/skirmish-reference.txt";
     void selectReferenceMap();
+    bool selectOriginalMap(std::string_view id);
+    void clearOriginalMap();
     // 每个 AI 槽位的颜色与国家（RA2 式槽位配置；国家 COUNT=随机，国家即定阵营）
     int aiColor[7] = {1, 2, 3, 4, 5, 6, 7};
     int aiCountry[7] = {(int)Country::COUNT, (int)Country::COUNT, (int)Country::COUNT, (int)Country::COUNT,
@@ -144,6 +107,7 @@ private:
     int cfgWindowMode = 0;  // 显示模式：0 无边框全屏 1 窗口
     int cfgResIdx = 3;      // 窗口分辨率档位（RES_LIST 下标，默认 1440x810）
     bool cfgUiTips = true;  // 菜单悬停说明（遭遇战右上 info）
+    bool cfgClassicOrders = true; // Classic left-click orders; optional right-click scheme.
     bool borderlessActive = false; // 当前窗口实际状态（applyDisplay 幂等判断）
     bool displayDirty = false;     // 显示模式/分辨率待应用（帧首执行，避免帧中改窗口）
     int keyBind[KA_COUNT] = {};    // 动作 → raylib 键码
@@ -190,19 +154,30 @@ private:
     uint64_t netSimTick = 0;       // 已推进的模拟 tick（= world.tick）
     std::map<uint64_t, std::vector<World::Cmd>> localCmds, remoteCmds;
     std::vector<World::Cmd> pendingCmds; // 本逻辑帧收集，netAdvance 分配发送
-    std::map<uint64_t, uint32_t> localSums; // 本端历史校验和（MsgChecksum 比对用）
+    std::map<uint64_t, uint32_t> localSums, remoteSums;
     bool netDesync = false;        // 校验和不一致（不同步）
     bool netPeerLeft = false;      // 对手断线
     // 大厅状态
     int lobbyRole = 0;             // 0 主机 1 加入
     std::string lobbyIp = "127.0.0.1";
-    int lobbyState = 0;            // 0 选角色 1 等待连接 2 已连接待开局 3 连接失败
+    int lobbyState = 0;            // 0 roles,1 connecting,2 ready,3 failed,4 IP,5 awaiting rule confirmation
     bool lobbyEditingIp = false;
+    bool lobbyHelloSent = false;
+    NetLink::RejectReason lobbyError=NetLink::RejectReason::None;
+    Sha256Digest lobbyPeerRules{},lobbyAgreedRules{};
+    RulesChoice lobbyPeerChoice=RulesChoice::Fusion;
     uint64_t netSeed = 0;
     int peerCountry = -1, peerColor = -1; // 对手国家/颜色（握手交换）
     void issueCmd(const World::Cmd& c);   // 单机立即执行；联机入队（NET_DELAY 后执行）
     void netAdvance();                    // lockstep：收发命令帧，条件满足推进 1 tick
+    void netRecordChecksum(uint64_t tick,uint32_t sum,bool remote);
     void netHandleMsgs();                 // 消费 NetLink 消息（大厅握手/局中命令帧）
+    bool netHandleHandshake(const NetLink::Msg& message);
+    bool netSendHello();
+    bool netStartHandshake(uint64_t seed);
+    void netResetHandshake();
+    void netRejectLobby(NetLink::RejectReason reason,bool notify=true);
+    const char* netLobbyStatus() const;
     void netBeginGame();                  // 双方同步 newGame（host 在 Welcome 内定配置）
     void netLeave();                      // 结束联机状态回主菜单
     void drawNetLobby();                  // 大厅 UI（game_net.cpp）
@@ -217,10 +192,14 @@ private:
 
     // 选择
     std::vector<EID> sel;
+    std::map<EID,uint64_t> selectionGenerations,chronoGenerations,groupGenerations[10];
+    World::EntityRef selectedBuildingRef;
+    uint64_t interactionIdentityEpoch=0;
     EID selBuilding = INVALID_EID;
     bool dragging = false;
     Vector2 dragStart{0, 0};
     bool dragPressSelected = false; // 按下时已点中单位/建筑（松手小拖动则保持，大框则改框选）
+    bool dragOrderCandidate = false; // A short classic click can become an order on release.
 
     // 鼠标光标（RA2 mouse.shp 提取帧）
     enum class CursorKind : uint8_t {
@@ -251,8 +230,14 @@ private:
     // 建筑放置
     bool placing = false;
     BldType placementType = BldType::COUNT;
+    int nativePlacementType=-1;
     int placementPending=0,placementRequestSerial=0;
-    void clearPlacement() { placing=false;placementType=BldType::COUNT;placementPending=0; }
+    void clearPlacement() { placing=false;placementType=BldType::COUNT;nativePlacementType=-1;placementPending=0; }
+    const Sprite& nativeProductionIcon(int selector) const;
+    const Sprite& supportPowerIcon(SupportType type) const;
+    std::vector<int> nativeProductionPalette() const;
+    void drawNativeProductionItem(int selector,Rectangle box,const Texture2D* clocks,int clockCount);
+    void drawNativePlacementGhost();
     static S productionRejectText(ProductionRejectReason reason);
     std::string superweaponFeedbackText(const SuperweaponOrderResult& result) const;
     std::string productionFacilityFeedback(bool unit,int type) const;
@@ -265,6 +250,7 @@ private:
     std::vector<EID> chronoSourceSel; // 第一阶段来源区域车辆；最终随 lockstep Cmd 同步
     // 伞兵空降点选择模式（RA2 原作：美国空指部/科技机场支援技能）
     bool targetingParadrop = false;
+    SupportType targetingSupport=SupportType::COUNT;
 
     // 侧边栏维修/出售点击模式（RA2 标志性按钮）：0 无 1 维修 2 出售
     int sideMode = 0;
@@ -282,6 +268,8 @@ private:
     };
     bool auditHud=false;
     std::vector<HudItemAudit> hudItems;
+    struct SupportHudAudit {SupportType type;Rectangle bounds;bool ready;int charge;};
+    std::vector<SupportHudAudit> supportHudItems;
     HudTipAudit hudTip;
     struct HudMoneyAudit { Credits value=0;Rectangle bounds{};std::string text; };
     HudMoneyAudit hudMoney;
@@ -294,7 +282,8 @@ private:
     bool showFps = false; // F3 帧率/耗时显示（性能诊断）
     bool paused = false;
     bool showMenu = false;
-    int gameSpeed = 1; // 1x 2x
+    bool suppressUiInput = false; // Transient routing while a modal owns this frame's HUD events.
+    int gameSpeed = 1; // 0=slow, 1=normal, 2=fast
     std::string msg;
     float msgTimer = 0;
     float moveFeedbackTimer = 0;
@@ -308,6 +297,9 @@ private:
     bool gameOver = false;
     bool victory = false;
     bool wasLowPower = false;
+    bool wasInsufficientFunds=false,wasAudioGameOver=false;
+    Phase audioPhase=Phase::MainMenu;
+    SWType audioTargeting=SWType::COUNT;
     bool shotAtDisplaySize=false; // audit actual presented framebuffer rather than logical canvas
     std::string shotFile; // 非空时本帧渲染后截图
 
@@ -321,6 +313,19 @@ private:
     static constexpr float TERRAIN_SC = 1.0f; // 烘焙缩放目标（原生分辨率 = 清晰；过大时按 GPU 纹理上限降档）
     float terrainSC = TERRAIN_SC;             // 实际生效缩放（bakeTerrain 按纹理上限钳制后写入）
     void bakeTerrain();             // 开局/读档后调用（地图静态，矿脉动态瓦片除外）
+    bool bakeNativeTerrain();
+    std::vector<uint32_t> nativeFogOwners; // all contributors to coarse fog pixels
+    std::vector<uint32_t> nativeFogOffsets; // prefix ranges, presentation only
+    bool bakeNativeFogMask(PixBuf& pixels,int width,int height) const;
+    mutable std::map<std::string,Sprite> nativeActorSprites;
+    mutable uint64_t nativeActorSpriteEpoch=0;
+    int nativeActorFrame(const World::Ent& actor) const;
+    const Sprite& nativeActorSprite(const World::Ent& actor,int frame=-1) const;
+    const Sprite& nativeIFVSprite(const World::Ent& actor,bool turret=false,int frame=0) const;
+    void unloadNativeActors() const;
+    bool drawNativeBuilding(const World::Ent& actor,EID id,bool remembered=false,int frame=-1) const;
+    Color radarHouseColor(int player,int fallback) const;
+    void drawNativeSceneryRadar(float scale) const;
 
     // ---- 迷雾软遮罩（屏幕空间 1/8 分辨率 alpha 图，bilinear 放大 = 软边界，消除棋盘格）----
     Texture2D fogMaskTex{};
@@ -332,6 +337,8 @@ private:
 
     // Last observed information belongs to this viewer, never to deterministic World state.
     struct KnownBuilding {
+        int nativeType=-1;
+        int nativeFrame=-1;
         int x=0,y=0,player=-1,color=-1,height=0,constructAnim=0;
         BldType type=BldType::ConYard;
         Country country=Country::None;
@@ -346,10 +353,11 @@ private:
     } fogKnowledge;
     void syncFogKnowledge();
     const Cell& observedCell(int x,int y) const;
-    bool buildingVisible(int x,int y,BldType type) const;
+    bool buildingVisible(int x,int y,BldType type,int nativeType=-1) const;
+    const BldDef& knownBuildingDefinition(const KnownBuilding& b) const;
     bool buildingExplored(const KnownBuilding& b) const;
     bool writeFogKnowledge(FILE* file) const;
-    static bool readFogKnowledge(FILE* file,FogKnowledge& memory);
+    static bool readFogKnowledge(FILE* file,FogKnowledge& memory,bool cellMasks=true,bool nativeActors=true,bool nativeFrames=true);
     static bool validateFogKnowledge(const FogKnowledge& memory,const World& state,int player);
 
     // 小地图
@@ -361,8 +369,11 @@ private:
     bool waypointLatch = false; // 路径点模式（Z）：右键追加路径点而非替换目标
 
     // ---- 内部 ----
-    void newGame(uint64_t seed);
+    void newGame(uint64_t seed,const World::RulesSnapshot* rulesSnapshot=nullptr);
     void resetMatchInteraction();
+    void captureInteractionReferences();
+    void pruneInteractionReferences();
+    void rememberSelection();
     void newCampaignGame(int mission, bool prepareRender = true);
     void spawnCampaignWave();
     bool saveGameFile(const char* path); // 快速存档（F5/菜单）：Game 头 + World 全量状态
@@ -371,7 +382,7 @@ private:
     void logic();
     void render();
     void handleInput();
-    void updateCamera();
+    void updateCamera(float frameSeconds=-1.f);
     void clampCameraToMap(); // 视野钳在地图 AABB 内（RA2：到边停住）
 
     // 渲染子模块
@@ -383,6 +394,8 @@ private:
     void drawWarpEffect(const Effect& effect);
     void drawCombatFeedback();
     void drawFogLayer();
+    void drawNativeRockets() const;
+    void drawSupportActors() const;
     void drawRallyOverlay();
     void drawHUD();
     void updateMinimap(); // 定时重绘小地图纹理（须在画布渲染通道外调用）
@@ -426,6 +439,9 @@ private:
     float unitRenderLift(const World::Ent& e) const;
     float eventRenderLift(const PresentationEvent& event) const;
     int unitBodyFrame(const World::Ent& e) const;
+    int unitBodyFacing(const World::Ent& e) const;
+    int unitTurretFacing(const World::Ent& e) const;
+    const Sprite* swimmingSprite(const World::Ent& e,UnitType drawType,int color) const;
     int unitTurretFrame(const World::Ent& e) const;
     int chopperTransformFrame(const World::Ent& e) const;
     Vector2 bldScreenPos(const World::Ent& e) const;
@@ -433,7 +449,9 @@ private:
     Rectangle unitScreenRect(const World::Ent& e) const;
 
     // 输入辅助
-    EID pickUnit(int mx, int my) const;
+    enum class UnitHit { Nearby, Direct };
+    EID pickUnit(int mx, int my, UnitHit hit=UnitHit::Nearby) const;
+    EID pickCommandUnit(int mx, int my) const;
     EID pickBuilding(int mx, int my) const;
     void doSelect(int mx, int my, bool additive);
     void doBoxSelect(Rectangle r, bool additive);
@@ -442,6 +460,17 @@ private:
     void message(const std::string& m);
     void resetNotifications();
     void consumePresentationEvents();
+    void consumeNativeEventCues();
+    void updateNativeCampaignObjectives();
+    void preloadNativeMissionSpeech();
+    uint64_t nativeEventCueEpoch=0,nativeEventCueOverflow=0;
+    std::deque<NativeEventCue> pendingNativeEventCues;
+    void voiceSelection(const std::vector<EID>& ids);
+    void reportNativeSelection(const std::vector<EID>& selected,const std::vector<EID>& previous,bool all=false);
+    void voiceOrder(const PresentationEvent& event);
+    void announcementOrder(const PresentationEvent& event);
+    void updateAnnouncements();
+    void updateAudioPresentation();
     void advancePresentation(float seconds);
 
     // 输入包装：统一逻辑坐标（高 DPI 修正）+ 脚本注入（playTest 自动化）
@@ -473,6 +502,7 @@ private:
 // 菜单共享 UI 组件（game_menu.cpp 实现，game_settings.cpp 复用）
 void drawTextM(Font f, const char* s, int x, int y, int size, Color c);
 int textW(Font f, const char* s, int size);
+int drawWrapped(Font f,const char* s,int x,int y,int maxW,int size,Color c,int maxLines,bool centered=false);
 bool ra2Button(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size = 20,
                bool enabled = true, bool danger = false, bool primary = false);
 bool ra2TextButton(Font font, Vector2 m, bool pressed, Rectangle r, const char* text, int size = 28);

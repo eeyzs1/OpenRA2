@@ -27,20 +27,25 @@ Vector2 Game::mousePos() const {
 }
 
 bool Game::mPressed(int b) const {
+    if(suppressUiInput)return false;
     if (!sim.active) return IsMouseButtonPressed(b);
     return b == MOUSE_RIGHT_BUTTON ? sim.pressedR : sim.pressedL;
 }
 bool Game::mDown(int b) const {
+    if(suppressUiInput)return false;
     if (!sim.active) return IsMouseButtonDown(b);
     return b == MOUSE_RIGHT_BUTTON ? sim.downR : sim.downL;
 }
 bool Game::mReleased(int b) const {
+    if(suppressUiInput)return false;
     if (!sim.active) return IsMouseButtonReleased(b);
     return b == MOUSE_RIGHT_BUTTON ? sim.releasedR : sim.releasedL;
 }
 bool Game::kPressed(int k) const {
+    if(suppressUiInput)return false;
     return sim.active ? sim.keysPressed.count(k) > 0 : IsKeyPressed(k);
 }
 bool Game::kDown(int k) const {
+    if(suppressUiInput)return false;
     return sim.active ? sim.keysDown.count(k) > 0 : IsKeyDown(k);
 }

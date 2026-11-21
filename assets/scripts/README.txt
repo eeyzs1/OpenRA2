@@ -78,3 +78,7 @@ ra2.missionId()                 当前战役关卡（0-based，遭遇战返回 -
 example_events.lua.example    —— 事件 hook 演示（开局奖励、单位阵亡通报）
 example_triggers.lua.example  —— 自定义触发器条件与动作
 example_ai.lua.example        —— AI 决策 hook（脚本接管 AI）
+
+五、实体身份与存档
+----------------
+spawnUnit、spawnBuilding、findEnemy、findUnits/findBlds/findIdleUnits、findNearestBld 以及实体事件回调返回的是含出生代次的非负整数句柄；失败仍为 -1。不要将句柄当成数组下标、世界槽位编号或浮点数，OnSave/OnLoad 应原样保存 Lua 整数。moveTo、attack、killEntity、damageEntity 以及批量指令都会校验完整句柄；死亡后即使槽位被另一个单位复用，旧句柄也不会指向新单位。旧存档中的裸编号只允许操作迁移后的第一代实体，后续死亡即永久失效。

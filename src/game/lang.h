@@ -83,7 +83,7 @@ enum class S : int {
     MsgNotCapturable,MsgRepairFullHealth,MsgEngineerUnreachable,MsgEngineerInvalid,
     MsgBoardAccepted,MsgGarrisonAccepted,MsgEntryPartial,MsgEntryUnsupported,MsgEntryOwner,MsgEntryIncompatible,
     MsgEntryFull,MsgEntryDeployed,MsgEntryUnreachable,MsgEntryInvalid,
-    MsgUnloadDone,MsgUngarrisonDone,MsgReleasePartial,MsgReleaseBlocked,MsgReleaseSomeTargets,
+    MsgUnloadDone,MsgUngarrisonDone,MsgReleasePartial,MsgReleaseBlocked,MsgReleaseLanding,MsgReleaseWaiting,MsgReleaseSomeTargets,
     MsgReleaseEmpty,MsgReleaseUnsupported,MsgReleaseInvalid,
     MsgServiceAccepted,MsgServicePartial,MsgServiceUnsupported,MsgServiceOwner,MsgServiceIncompatible,
     MsgServiceFull,MsgServiceDeployed,MsgServiceUnreachable,MsgServiceInvalid,MsgServiceWorking,
@@ -103,6 +103,14 @@ enum class S : int {
     MsgDeployStarting,MsgUndeployStarting,MsgDeployBusy,
     MsgRepairStarted,MsgRepairStopped,MsgBuildingInvalid,MsgBuildingOwner,MsgBuildingSelling,MsgBuildingConstructing,
     CampaignUnavailable,
+    EvaUnitReady,EvaConstructionComplete,EvaInsufficientFunds,
+    MsgBridgeRepairAccepted,MsgBridgeRestored,MsgBridgeIntact,MsgBridgeUnavailable,MsgBridgeBlocked,
+    NetRulesMismatch,NetVersionMismatch,NetInvalidRules,NetHandshakeFailed,NetCheckingRules,
+    RulesSet,RulesFusion,RulesRA2,RulesYR,RulesUnavailable,TipRulesSet,NetProfileMismatch,
+    SpySourcePower,SpySourceRadar,SpySourceVehicles,SpySourceTechnology,
+    AmericanParadrop,
+    MouseOrders,ClassicMouseOrders,ModernMouseOrders,
+    MapLittleBigLake,MapSnowValley,TipOriginalSkirmish,
     COUNT
 };
 

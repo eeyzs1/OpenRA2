@@ -1,7 +1,7 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cstdio>
 
-int Game::aiAttackRegression() {
+int GameRegression::aiAttackRegression() {
     int failures=0;
     for(int scenario=0;scenario<4;++scenario) {
         World w;w.init(64,64,20261031,2,0,{Faction::Allies,Faction::Soviet},0,"",true);
@@ -134,7 +134,13 @@ int Game::aiAttackRegression() {
             if(scenario==6)ok &= w.attackRejection(id,enemy)!=AttackRejectReason::None;
         }
         if(scenario==1)ok &= ship.state==UState::Chasing && ship.target==enemy && bot.attackWave==1;
-        if(scenario==2 || scenario==3 || scenario==5)ok &= ship.state==UState::Idle && ship.target==INVALID_EID && bot.attackWave==0;
+        if(scenario==3) {
+            std::vector<Vec2i> path;
+            ok &= ship.state==UState::Moving && ship.target==INVALID_EID && bot.attackWave==0
+                && w.map.fogAt(0,(int)ship.goalX,(int)ship.goalY)==FOG_SEEN
+                && w.map.findPath(8,8,(int)ship.goalX,(int)ship.goalY,path,20000,1);
+        }
+        if(scenario==2 || scenario==5)ok &= ship.state==UState::Idle && ship.target==INVALID_EID && bot.attackWave==0;
         if(scenario==4)ok &= ship.state==UState::Chasing && ship.target==enemy && bot.attackWave==0;
         failures+=!ok;
         std::printf("AI_NAVAL %s faction=%d scenario=%d state=%d target=%d waves=%d\n",ok?"PASS":"FAIL",faction,scenario,(int)ship.state,ship.target,bot.attackWave);
@@ -190,12 +196,14 @@ int Game::aiAttackRegression() {
             if(w.ents[jet].state==UState::Returning && !returning)++returns;
             returning=w.ents[jet].state==UState::Returning;
             bot.update(w);
-            if(wasOnPad && w.ents[jet].state==UState::Chasing)++relaunches;
+            const auto state=w.ents[jet].state;
+            if(wasOnPad && (state==UState::Chasing || state==UState::Moving || state==UState::AttackMoving)
+                && w.ents[jet].ammo>0)++relaunches;
             w.presentationEvents.clear();w.evaQueue.clear();
         }
         const bool ok=w.valid(jet) && returns>=2 && relaunches>=2 && w.combatDamage[0]>0;
         failures+=!ok;
         std::printf("AI_AIR_SORTIES %s faction=%d returns=%d relaunches=%d damage=%llu\n",ok?"PASS":"FAIL",faction,returns,relaunches,(unsigned long long)w.combatDamage[0]);
     }
-    return failures;
+    return failures+aiAssaultRegression();
 }

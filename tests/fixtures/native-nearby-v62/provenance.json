@@ -1,0 +1,45 @@
+{
+  "scope": "Actual SourceScene39 / NativeAI3 / World62 / App11 files from the preceding closed batch, never reconstructed or normalized.",
+  "files": {
+    "ra2-profile.ini": {
+      "artifact": "final-producers/release/ra2-profile.ini",
+      "sourceBatch": "review_out/native-nearby-search-20261118",
+      "sha256": "4872e1c5f038197163d382422845f83a197299e64ae8cd63d650af2a3fa02a11"
+    },
+    "ra2-weighted.world": {
+      "artifact": "final-producers/release/house-leader/ra2/house-weighted.world",
+      "sourceBatch": "review_out/native-nearby-search-20261118",
+      "sha256": "8b7f257493bc2653976ad24504ca934258050bd2de5e4f5f2f19c8b52634b680"
+    },
+    "ra2-boarding.world": {
+      "artifact": "final-producers/release/house-leader/ra2/roles-boarding.world",
+      "sourceBatch": "review_out/native-nearby-search-20261118",
+      "sha256": "03015a3e4abef3f18b2ad79c39f886888d9ea6501f91a884ee0f9f9cd080f38e"
+    },
+    "ra2-tick0.app11": {
+      "artifact": "final-producers/release/app/ra2/tick-0.app11",
+      "sourceBatch": "review_out/native-nearby-search-20261118",
+      "sha256": "c2987ff91dbf3f4a6f31765d1c0d07e081a598ac00a6bbe6673ad53b29605b53"
+    },
+    "yr-profile.ini": {
+      "artifact": "final-producers/release/yr-profile.ini",
+      "sourceBatch": "review_out/native-nearby-search-20261118",
+      "sha256": "729d6416e85a88047239cb5548086ebc5220a1ef45bddd5a9a5b11e96db7225a"
+    },
+    "yr-weighted.world": {
+      "artifact": "final-producers/release/house-leader/yr/house-weighted.world",
+      "sourceBatch": "review_out/native-nearby-search-20261118",
+      "sha256": "e5c5ffee6c05a8d0d9ecb3f8a5ca7146abc9dbe5ef6c96a7322ba241676ab11b"
+    },
+    "yr-boarding.world": {
+      "artifact": "final-producers/release/house-leader/yr/roles-boarding.world",
+      "sourceBatch": "review_out/native-nearby-search-20261118",
+      "sha256": "0844e8168a9c5a23c531751269ac0a54355ef3d4f9c6e70fec99f10d0adb2829"
+    },
+    "yr-tick0.app11": {
+      "artifact": "final-producers/release/app/yr/tick-0.app11",
+      "sourceBatch": "review_out/native-nearby-search-20261118",
+      "sha256": "ab5d416194cdfbd5616e9569cb523580f436700f2deb2b4996cda4040e376763"
+    }
+  }
+}

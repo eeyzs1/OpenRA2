@@ -1,10 +1,10 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <set>
 #include <cstdio>
 #include <filesystem>
 #include <limits>
 
-int Game::superweaponRegression(const char* outputDir) {
+int GameRegression::superweaponRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);int failures=0;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("SUPERWEAPON %s %s\n",ok?"PASS":"FAIL",name); };
     auto reset=[&]() {

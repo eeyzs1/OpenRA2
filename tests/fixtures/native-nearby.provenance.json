@@ -1,0 +1,60 @@
+{
+  "originalSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "entryPointExecuted": false,
+  "independentYRExecuted": false,
+  "batch": "review_out/native-nearby-search-20261118",
+  "sourceOfExpectedOutputs": "Actual original instruction reports, not independent model outputs.",
+  "originalCases": {
+    "bounds": 792,
+    "projection": 256,
+    "footprint": 320,
+    "flatSearch": 202,
+    "compositeSearch": 256
+  },
+  "traceHash": "FNV1a64. Each row: little-endian uint32 field count, then each field as little-endian uint32. Finally uint32 total row count.",
+  "scope": "Compiled geometry kernel. Full composite executes original NearbyLocation, bounds, footprint, projection, Map.GetCell and approximate sqrt; only two low-level cell predicates are substituted. Synthetic map/cell data are explicit inputs. Runtime World adapters, original low-level clearance and independent YR remain pending.",
+  "files": {
+    "native-nearby-bounds-ra2.csv": {
+      "rows": 792,
+      "sha256": "3dbca19c9028ed8676cbc341945ddd2e7a2dab40dbf11bee22892896aae1a8d5"
+    },
+    "native-nearby-projection-ra2.csv": {
+      "rows": 256,
+      "sha256": "a998a8ae4d21c34184b750a8c7f6b7e3dcfcb2829f9849cf26e5f2c5669c9230"
+    },
+    "native-nearby-footprint-ra2.csv": {
+      "rows": 320,
+      "sha256": "35778ccd15796dfb8ca5bd3c4a2fec7334a4845bd08e35db513df068c5b0183c"
+    },
+    "native-nearby-flat-ra2.csv": {
+      "rows": 202,
+      "sha256": "713e153357e77430e23658e736a0868e1e8d42ca0a720c4bea13e7ff83575320"
+    },
+    "native-nearby-grids-ra2.csv": {
+      "rows": 8064,
+      "sha256": "b746db20716c5f8fc53021f37d719dc169397becd7ba8b641123e240e03555b8"
+    },
+    "native-nearby-composite-ra2.csv": {
+      "rows": 256,
+      "sha256": "e6abc8f38d567df07ccb8462f2f2247048ad830b9c2ba3636a16a76d044cddb9"
+    }
+  },
+  "originalFunctions": {
+    "nearby": "0x5502e0",
+    "bounds": "0x55a740",
+    "footprint": "0x550cf0",
+    "projection": "0x6a6a50",
+    "getCell": "0x548070",
+    "approximateSqrt": "0x4ba410"
+  },
+  "substitutedCompositePredicates": [
+    "0x478760",
+    "0x47c200"
+  ],
+  "sqrtOrderingProof": {
+    "tableAddress": "0x817dfc",
+    "entries": 16384,
+    "strictlyIncreasing": true,
+    "tableSHA256": "0a03bb84ceab037ab48004c1bfb0156279a21e7c6fbc6089a052118bfe31a248"
+  }
+}

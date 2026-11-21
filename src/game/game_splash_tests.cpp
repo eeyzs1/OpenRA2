@@ -1,4 +1,4 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "game/world_priv.h"
 #include "game/script.h"
 #include "core/content.h"
@@ -7,7 +7,7 @@
 #include <filesystem>
 #include <limits>
 
-int Game::splashRegression() {
+int GameRegression::splashRegression() {
     int failures=0;
     auto check=[&](bool ok,const char* label){failures+=!ok;std::printf("SPLASH %s %s\n",ok?"PASS":"FAIL",label);};
     auto reset=[](World& w) {
@@ -155,7 +155,7 @@ int Game::splashRegression() {
     const auto originalSlots=w.ents.size();
     const char* root="review_out/splash-callback";std::filesystem::create_directories(std::string(root)+"/assets/scripts");
     FILE* script=std::fopen("review_out/splash-callback/assets/scripts/zzzz_splash_callback.lua","wb");
-    if(script){std::fprintf(script,"local ran=false\nfunction OnUnitKilled(id)\n if not ran and id==%d then\n ran=true\n ra2.killEntity(%d)\n ra2.spawnUnit(1,'GI',11.5,10.5)\n end\nend\n",first,later);std::fclose(script);}
+    if(script){std::fputs("local ran=false\nlocal first=ra2.findUnits(1,'GI',10.5,10.5,0.1)[1]\nlocal later=ra2.findUnits(1,'GI',11.5,10.5,0.1)[1]\nfunction OnUnitKilled(id)\n if not ran and id==first then\n ran=true\n ra2.killEntity(later)\n ra2.spawnUnit(1,'GI',11.5,10.5)\n end\nend\n",script);std::fclose(script);}
     contentAddModPath(root,true);g_script.init(&w,0,-1);
     area.damage=100;area.cellSpread=1.5f;area.percentAtMax=1;area.vsInfantry=1;
     w.applyCellSpreadDamage(area,0,10.5f,10.5f,INVALID_EID);g_script.shutdown();

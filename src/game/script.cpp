@@ -7,6 +7,11 @@
 #include <cstring>
 #include <cstdio>
 #include <string>
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <bit>
 
 extern "C" {
 #include <lua.h>
@@ -31,7 +36,7 @@ ScriptEngine::~ScriptEngine() { shutdown(); }
 // ---- API 绑定辅助 ----
 namespace {
 char worldContextKey;
-struct ScriptWorldContext { World* world; uint64_t epoch; };
+struct ScriptWorldContext { World* world; uint64_t epoch; bool* readOnly; bool* loading; Rng* random; };
 ScriptWorldContext* context(lua_State* L) {
     lua_rawgetp(L, LUA_REGISTRYINDEX, &worldContextKey);
     auto* result = static_cast<ScriptWorldContext*>(lua_touserdata(L, -1));
@@ -48,11 +53,54 @@ static World* W(lua_State* L) {
     return binding->world;
 }
 
+static lua_Integer entityHandle(const World& world,EID id) {
+    if(id<0 || id>=(EID)world.ents.size() || !world.ents[id].generation)return -1;
+    if(world.ents[id].generation==1)return id; // Preserve legacy saved-ID comparisons in callbacks.
+    return (lua_Integer)((world.ents[id].generation<<32)|(uint32_t)id);
+}
+
+static EID checkedEntity(lua_State* L,int argument) {
+    const lua_Integer encoded=luaL_checkinteger(L,argument);
+    if(encoded<0)return INVALID_EID;
+    const auto value=(uint64_t)encoded;const uint32_t index=(uint32_t)value;
+    if(index>0x7fffffffu)return INVALID_EID;
+    // Old application snapshots stored raw slots. They migrate to generation
+    // one; after retirement an old raw slot must never adopt its successor.
+    const uint64_t generation=(value>>32)?value>>32:1;
+    const EID id=(EID)index;
+    return W(L)->valid(World::EntityRef{id,generation})?id:INVALID_EID;
+}
+
 // Gate every API, including Game callbacks, before entering its implementation.
 // Finalizers run during lua_close and must not mutate either the old or new game.
 static int checkedApi(lua_State* L) {
     W(L);
+    const int permission=(int)lua_tointeger(L,lua_upvalueindex(2));
+    if (*context(L)->readOnly && permission!=1 && !(permission==2 && *context(L)->loading))
+        return luaL_error(L, "OnSave/OnLoad and restore initialization may only read the match");
     return lua_tocfunction(L, lua_upvalueindex(1))(L);
+}
+
+// Keep Lua randomness reproducible without depending on the standard library's
+// private generator or consuming World RNG while reloading source declarations.
+static int l_random(lua_State* L) {
+    auto& random=*context(L)->random;
+    const int count=lua_gettop(L);
+    if(count==0){lua_pushnumber(L,(random.next()>>11)*(1.0/9007199254740992.0));return 1;}
+    lua_Integer low=1,high=luaL_checkinteger(L,1);
+    if(count==1 && high==0){lua_pushinteger(L,std::bit_cast<lua_Integer>(random.next()));return 1;}
+    if(count==2){low=high;high=luaL_checkinteger(L,2);}
+    if(count>2 || low>high)return luaL_error(L,"math.random interval is empty or has too many arguments");
+    const uint64_t span=(uint64_t)high-(uint64_t)low+1;
+    uint64_t sample=random.next();
+    if(span){const uint64_t threshold=(0ull-span)%span;while(sample<threshold)sample=random.next();sample%=span;}
+    lua_pushinteger(L,std::bit_cast<lua_Integer>((uint64_t)low+sample));return 1;
+}
+static int l_randomseed(lua_State* L) {
+    const lua_Integer first=luaL_optinteger(L,1,std::bit_cast<lua_Integer>(W(L)->rng.s));
+    const lua_Integer second=luaL_optinteger(L,2,0);
+    *context(L)->random=Rng((uint64_t)first^std::rotl((uint64_t)second,23));
+    lua_pushinteger(L,first);lua_pushinteger(L,second);return 2;
 }
 
 static int l_tick(lua_State* L) {
@@ -85,7 +133,7 @@ static int l_spawnUnit(lua_State* L) {
     EID id = W(L)->spawnUnit(p, ut, x, y);
     if (id >= 0 && var && var->hp > 0)
         W(L)->ents[id].hp = var->hp;
-    lua_pushinteger(L, id);
+    lua_pushinteger(L, entityHandle(*W(L),id));
     return 1;
 }
 static int l_spawnBuilding(lua_State* L) {
@@ -99,16 +147,16 @@ static int l_spawnBuilding(lua_State* L) {
     EID id = W(L)->spawnBuilding(p, bt, x, y, true);
     if (id >= 0 && var && var->hp > 0)
         W(L)->ents[id].hp = var->hp;
-    lua_pushinteger(L, id);
+    lua_pushinteger(L, entityHandle(*W(L),id));
     return 1;
 }
 static int l_killEntity(lua_State* L) {
-    EID id = (EID)luaL_checkinteger(L, 1);
+    EID id = checkedEntity(L, 1);
     W(L)->kill(id);
     return 0;
 }
 static int l_damageEntity(lua_State* L) {
-    EID id = (EID)luaL_checkinteger(L, 1);
+    EID id = checkedEntity(L, 1);
     int dmg = (int)luaL_checkinteger(L, 2);
     int byP = (int)luaL_optinteger(L, 3, -1);
     W(L)->damage(id, dmg, byP);
@@ -178,7 +226,7 @@ static int l_revealMap(lua_State* L) {
     return 0;
 }
 static int l_entityPos(lua_State* L) {
-    EID id = (EID)luaL_checkinteger(L, 1);
+    EID id = checkedEntity(L, 1);
     World* w = W(L);
     if (!w->valid(id)) { lua_pushnil(L); return 1; }
     lua_pushnumber(L, w->ents[id].x);
@@ -186,21 +234,21 @@ static int l_entityPos(lua_State* L) {
     return 2;
 }
 static int l_entityHp(lua_State* L) {
-    EID id = (EID)luaL_checkinteger(L, 1);
+    EID id = checkedEntity(L, 1);
     World* w = W(L);
     if (!w->valid(id)) { lua_pushinteger(L, 0); return 1; }
     lua_pushinteger(L, w->ents[id].hp);
     return 1;
 }
 static int l_entityPlayer(lua_State* L) {
-    EID id = (EID)luaL_checkinteger(L, 1);
+    EID id = checkedEntity(L, 1);
     World* w = W(L);
     if (!w->valid(id)) { lua_pushinteger(L, -1); return 1; }
     lua_pushinteger(L, w->ents[id].player);
     return 1;
 }
 static int l_entityType(lua_State* L) {
-    EID id = (EID)luaL_checkinteger(L, 1);
+    EID id = checkedEntity(L, 1);
     World* w = W(L);
     if (!w->valid(id)) { lua_pushnil(L); return 1; }
     const auto& e = w->ents[id];
@@ -219,24 +267,24 @@ static int l_findEnemy(lua_State* L) {
     float y = (float)luaL_checknumber(L, 3);
     float r = (float)luaL_checknumber(L, 4);
     EID id = W(L)->findNearestEnemy(p, x, y, r);
-    lua_pushinteger(L, id);
+    lua_pushinteger(L, entityHandle(*W(L),id));
     return 1;
 }
 static int l_moveTo(lua_State* L) {
-    EID id = (EID)luaL_checkinteger(L, 1);
+    EID id = checkedEntity(L, 1);
     float x = (float)luaL_checknumber(L, 2);
     float y = (float)luaL_checknumber(L, 3);
     if (W(L)->valid(id)) W(L)->orderMove({id}, x, y, false);
     return 0;
 }
 static int l_attack(lua_State* L) {
-    EID id = (EID)luaL_checkinteger(L, 1);
-    EID tgt = (EID)luaL_checkinteger(L, 2);
+    EID id = checkedEntity(L, 1);
+    EID tgt = checkedEntity(L, 2);
     if (W(L)->valid(id) && W(L)->valid(tgt)) W(L)->orderAttack({id}, tgt);
     return 0;
 }
 static int l_stop(lua_State* L) {
-    EID id = (EID)luaL_checkinteger(L, 1);
+    EID id = checkedEntity(L, 1);
     if (W(L)->valid(id)) W(L)->orderStop({id});
     return 0;
 }
@@ -264,7 +312,7 @@ static std::vector<EID> luaToIds(lua_State* L, int idx) {
     ids.reserve(n);
     for (int i = 1; i <= n; i++) {
         lua_rawgeti(L, idx, i);
-        ids.push_back((EID)lua_tointeger(L, -1));
+        const EID id=checkedEntity(L,-1);if(id!=INVALID_EID)ids.push_back(id);
         lua_pop(L, 1);
     }
     return ids;
@@ -410,7 +458,7 @@ static int l_orderMove(lua_State* L) {
 }
 static int l_orderAttack(lua_State* L) {
     auto ids = luaToIds(L, 1);
-    EID tgt = (EID)luaL_checkinteger(L, 2);
+    EID tgt = checkedEntity(L, 2);
     W(L)->orderAttack(ids, tgt);
     return 0;
 }
@@ -435,31 +483,31 @@ static int l_orderUnload(lua_State* L) {
     return 0;
 }
 static int l_orderDeploy(lua_State* L) {
-    EID id = (EID)luaL_checkinteger(L, 1);
+    EID id = checkedEntity(L, 1);
     W(L)->orderDeploy(id);
     return 0;
 }
 static int l_orderCapture(lua_State* L) {
     auto ids = luaToIds(L, 1);
-    EID tgt = (EID)luaL_checkinteger(L, 2);
+    EID tgt = checkedEntity(L, 2);
     W(L)->orderCapture(ids, tgt);
     return 0;
 }
 static int l_orderRepair(lua_State* L) {
     auto ids = luaToIds(L, 1);
-    EID tgt = (EID)luaL_checkinteger(L, 2);
+    EID tgt = checkedEntity(L, 2);
     W(L)->orderRepair(ids, tgt);
     return 0;
 }
 static int l_orderService(lua_State* L) {
     auto ids = luaToIds(L, 1);
-    EID tgt = (EID)luaL_checkinteger(L, 2);
+    EID tgt = checkedEntity(L, 2);
     W(L)->orderService(ids, tgt);
     return 0;
 }
 static int l_orderGarrison(lua_State* L) {
     auto ids = luaToIds(L, 1);
-    EID tgt = (EID)luaL_checkinteger(L, 2);
+    EID tgt = checkedEntity(L, 2);
     W(L)->orderGarrison(ids, tgt);
     return 0;
 }
@@ -469,7 +517,7 @@ static int l_orderUngarrison(lua_State* L) {
     return 0;
 }
 static int l_setRally(lua_State* L) {
-    EID bld = (EID)luaL_checkinteger(L, 1);
+    EID bld = checkedEntity(L, 1);
     float x = (float)luaL_checknumber(L, 2), y = (float)luaL_checknumber(L, 3);
     World* w = W(L);
     if (w->valid(bld) && w->ents[bld].isBuilding) {
@@ -500,7 +548,7 @@ static int l_paradropReady(lua_State* L) {
     int p = (int)luaL_checkinteger(L, 1);
     World* w = W(L);
     if (p < 0 || p >= w->numPlayers) { lua_pushboolean(L, 0); return 1; }
-    lua_pushboolean(L, w->players[p].paradropReady);
+    lua_pushboolean(L, w->independentSupportEnabled?w->supportReady(p,w->preferredParadrop(p)):w->players[p].paradropReady);
     return 1;
 }
 static int l_orderParadrop(lua_State* L) {
@@ -508,6 +556,19 @@ static int l_orderParadrop(lua_State* L) {
     float x = (float)luaL_checknumber(L, 2), y = (float)luaL_checknumber(L, 3);
     W(L)->orderParadrop(p, x, y);
     return 0;
+}
+static SupportType supportType(lua_State* L,int argument) {
+    const auto type=luaL_checkinteger(L,argument);
+    return type>=0 && type<SUPPORT_COUNT?(SupportType)type:SupportType::COUNT;
+}
+static int l_supportReady(lua_State* L) {
+    const int player=(int)luaL_checkinteger(L,1);const auto type=supportType(L,2);
+    lua_pushboolean(L,W(L)->supportReady(player,type));return 1;
+}
+static int l_orderSupport(lua_State* L) {
+    const int player=(int)luaL_checkinteger(L,1);const auto type=supportType(L,2);
+    const float x=(float)luaL_checknumber(L,3),y=(float)luaL_checknumber(L,4);
+    lua_pushboolean(L,W(L)->orderSupport(player,type,x,y));return 1;
 }
 static int l_findNearestBld(lua_State* L) {
     int p = (int)luaL_checkinteger(L, 1);
@@ -524,7 +585,7 @@ static int l_findNearestBld(lua_State* L) {
         float d = distf(x, y, e.x, e.y);
         if (d < bd) { bd = d; best = (int)i; }
     }
-    lua_pushinteger(L, best);
+    lua_pushinteger(L, entityHandle(*W(L),best));
     return 1;
 }
 static int l_findUnits(lua_State* L) {
@@ -545,7 +606,7 @@ static int l_findUnits(lua_State* L) {
         if (p >= 0 && e.player != p) continue;
         if (ut != UnitType::COUNT && e.utype != ut) continue;
         if (r > 0 && distf(x, y, e.x, e.y) > r) continue;
-        lua_pushinteger(L, (lua_Integer)i);
+        lua_pushinteger(L, entityHandle(*w,(EID)i));
         lua_rawseti(L, -2, idx++);
     }
     return 1;
@@ -568,7 +629,7 @@ static int l_findBlds(lua_State* L) {
         if (p >= 0 && e.player != p) continue;
         if (bt != BldType::COUNT && e.btype != bt) continue;
         if (r > 0 && distf(x, y, e.x, e.y) > r) continue;
-        lua_pushinteger(L, (lua_Integer)i);
+        lua_pushinteger(L, entityHandle(*w,(EID)i));
         lua_rawseti(L, -2, idx++);
     }
     return 1;
@@ -588,7 +649,7 @@ static int l_findIdleUnits(lua_State* L) {
         if (!e.alive || e.isBuilding || e.player != p) continue;
         if (ut != UnitType::COUNT && e.utype != ut) continue;
         if (e.state != UState::Idle) continue;
-        lua_pushinteger(L, (lua_Integer)i);
+        lua_pushinteger(L, entityHandle(*w,(EID)i));
         lua_rawseti(L, -2, idx++);
     }
     return 1;
@@ -642,18 +703,29 @@ void ScriptEngine::registerApi() {
         {"orderGarrison", l_orderGarrison}, {"orderUngarrison", l_orderUngarrison},
         {"setRally", l_setRally}, {"launchSW", l_launchSW}, {"swReady", l_swReady},
         {"paradropReady", l_paradropReady}, {"orderParadrop", l_orderParadrop},
+        {"supportReady", l_supportReady}, {"orderSupport", l_orderSupport},
         {"findNearestBld", l_findNearestBld}, {"findUnits", l_findUnits},
         {"findBlds", l_findBlds}, {"findIdleUnits", l_findIdleUnits},
     };
+    const char* writes[] = {"giveMoney","spawnUnit","spawnBuilding","killEntity","damageEntity",
+        "eva","evaAll","setObjective","win","lose","revealMap","moveTo","attack","stop",
+        "startBldProd","startUnitProd","tryPlaceBld","cancelProd","orderMove","orderAttack",
+        "orderStop","orderScatter","orderGuard","orderUnload","orderDeploy","orderCapture",
+        "orderRepair","orderService","orderGarrison","orderUngarrison","setRally","launchSW","orderParadrop","orderSupport"};
     for (auto& f : fns) {
         lua_pushcfunction(Ls, f.fn);
-        lua_pushcclosure(Ls, checkedApi, 1);
+        lua_pushinteger(Ls,std::none_of(std::begin(writes), std::end(writes), [&](const char* name){return !strcmp(name,f.name);})?1:0);
+        lua_pushcclosure(Ls, checkedApi, 2);
         lua_setfield(Ls, -2, f.name);
     }
     lua_pop(Ls, 1);
     auto* binding = static_cast<ScriptWorldContext*>(lua_newuserdata(Ls, sizeof(ScriptWorldContext)));
-    *binding = {world, worldEpoch};
+    *binding = {world, worldEpoch, &readOnlyApi, &loadingSources, &random};
     lua_rawsetp(Ls, LUA_REGISTRYINDEX, &worldContextKey);
+    lua_getglobal(Ls,"math");
+    lua_pushcfunction(Ls,l_random);lua_pushinteger(Ls,2);lua_pushcclosure(Ls,checkedApi,2);lua_setfield(Ls,-2,"random");
+    lua_pushcfunction(Ls,l_randomseed);lua_pushinteger(Ls,2);lua_pushcclosure(Ls,checkedApi,2);lua_setfield(Ls,-2,"randomseed");
+    lua_pop(Ls,1);
     // Keep the legacy global for scripts that inspect it; host APIs use registry state.
     lua_pushlightuserdata(Ls, (void*)world);
     lua_setglobal(Ls, "__world");
@@ -665,37 +737,71 @@ void ScriptEngine::registerApi() {
 
 bool ScriptEngine::loadScripts() {
     auto names = contentListFiles("assets/scripts", ".lua");
-    if (names.empty()) return false;
+    std::sort(names.begin(),names.end());
+    sources.clear();sourcesLoaded=true;
     lua_State* Ls = (lua_State*)L;
-    int loaded = 0;
+    int loaded = 0;size_t totalBytes=0;
     for (const std::string& name : names) {
         std::string virt = std::string("assets/scripts/") + name;
         std::string path = contentResolve(virt.c_str());
-        if (path.empty()) continue;
-        if (luaL_dofile(Ls, path.c_str()) != LUA_OK) {
+        std::error_code error;
+        const auto size=std::filesystem::file_size(std::filesystem::u8path(path),error);
+        if(error || size>4*1024*1024 || size>8*1024*1024-totalBytes || sources.size()>=64){sourcesLoaded=false;continue;}
+        std::ifstream file(std::filesystem::u8path(path),std::ios::binary);
+        if(path.empty() || !file){sourcesLoaded=false;continue;}
+        std::string text((std::istreambuf_iterator<char>(file)),{});
+        if(file.bad() || text.size()>4*1024*1024 || sources.size()>=64){sourcesLoaded=false;continue;}
+        sources.push_back({name,std::move(text)});
+        totalBytes+=sources.back().text.size();
+        const auto& source=sources.back();
+        if (luaL_loadbufferx(Ls,source.text.data(),source.text.size(),name.c_str(),"t") != LUA_OK || lua_pcall(Ls,0,0,0) != LUA_OK) {
             const char* err = lua_tostring(Ls, -1);
             TraceLog(LOG_WARNING, "Lua script error in %s: %s", path.c_str(), err ? err : "?");
             lua_pop(Ls, 1);
+            sourcesLoaded=false;
         } else {
             loaded++;
         }
     }
     if (loaded > 0) TraceLog(LOG_INFO, "Lua: %d script(s) loaded from content roots", loaded);
-    return loaded > 0;
+    return sourcesLoaded;
 }
 
 void ScriptEngine::init(World* w, int mode, int mission) {
+    open(w,mode,mission,false);
+}
+
+bool ScriptEngine::open(World* w, int mode, int mission, bool readOnly) {
     shutdown();
-    if (!w) return;
+    if (!w) return false;
     world = w;
     worldEpoch = w->presentationEpoch;
     gameMode = mode;
     missionId = mission;
+    readOnlyApi=readOnly;
+    random=Rng(w->rng.s^0x736372697074524eull);
     L = luaL_newstate();
-    if (!enabled()) return;
+    if (!enabled()) return false;
     luaL_openlibs((lua_State*)L);
     registerApi();
-    loadScripts();
+    loadingSources=true;const bool ok=loadScripts();loadingSources=false;return ok;
+}
+
+void ScriptEngine::rebind(World* target) {
+    world=target;worldEpoch=target->presentationEpoch;
+    auto* Ls=static_cast<lua_State*>(L);
+    *context(Ls)={world,worldEpoch,&readOnlyApi,&loadingSources,&random};
+    lua_pushlightuserdata(Ls,world);lua_setglobal(Ls,"__world");
+}
+
+void ScriptEngine::takePrepared(ScriptEngine& prepared, World* target) {
+    shutdown();
+    std::swap(L,prepared.L);
+    gameMode=prepared.gameMode;missionId=prepared.missionId;
+    sources=std::move(prepared.sources);sourcesLoaded=prepared.sourcesLoaded;
+    random=prepared.random;
+    readOnlyApi=false;
+    if(L)rebind(target);
 }
 
 void ScriptEngine::shutdown() {
@@ -705,6 +811,7 @@ void ScriptEngine::shutdown() {
     worldEpoch = 0;
     gameMode = 0;
     missionId = -1;
+    sources.clear();sourcesLoaded=true;readOnlyApi=false;loadingSources=false;lastError.clear();
     if (closing) {
         if (auto* binding = context(closing)) binding->world = nullptr;
         lua_close(closing);
@@ -758,7 +865,7 @@ void ScriptEngine::onUnitKilled(EID eid, int player, UnitType utype) {
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, "OnUnitKilled");
     if (lua_isfunction(Ls, -1)) {
-        lua_pushinteger(Ls, eid);
+        lua_pushinteger(Ls, entityHandle(*W(Ls),eid));
         lua_pushinteger(Ls, player);
         lua_pushstring(Ls, unitAssetName(utype));
         if (lua_pcall(Ls, 3, 0, 0) != LUA_OK) {
@@ -774,7 +881,7 @@ void ScriptEngine::onBuildingComplete(EID eid, int player, BldType btype) {
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, "OnBuildingComplete");
     if (lua_isfunction(Ls, -1)) {
-        lua_pushinteger(Ls, eid);
+        lua_pushinteger(Ls, entityHandle(*W(Ls),eid));
         lua_pushinteger(Ls, player);
         lua_pushstring(Ls, bldAssetName(btype));
         if (lua_pcall(Ls, 3, 0, 0) != LUA_OK) {
@@ -790,7 +897,7 @@ void ScriptEngine::onBuildingDestroyed(EID eid, int player, BldType btype) {
     lua_State* Ls = (lua_State*)L;
     lua_getglobal(Ls, "OnBuildingDestroyed");
     if (lua_isfunction(Ls, -1)) {
-        lua_pushinteger(Ls, eid);
+        lua_pushinteger(Ls, entityHandle(*W(Ls),eid));
         lua_pushinteger(Ls, player);
         lua_pushstring(Ls, bldAssetName(btype));
         if (lua_pcall(Ls, 3, 0, 0) != LUA_OK) {

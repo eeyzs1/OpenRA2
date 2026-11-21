@@ -89,6 +89,13 @@ void Game::drawSettings() {
         if (ra2RedSlider(font, m, pr, cx + 140, y + 2, 180, gameSpeed, 3, TR(speedNames[gameSpeed])))
             saveSettings();
 
+        y += 34;
+        if(menuLabeledValue(font,m,pr,cx,y,TR(S::MouseOrders),cx+140,180,22,
+            TR(cfgClassicOrders?S::ClassicMouseOrders:S::ModernMouseOrders),true)) {
+            cfgClassicOrders=!cfgClassicOrders;
+            dragging=dragPressSelected=dragOrderCandidate=false;
+            saveSettings();
+        }
         y += 44;
         menuSectionHeader(font, cx, y, TR(S::InterfaceSection));
         y += 26;

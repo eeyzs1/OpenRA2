@@ -5,16 +5,18 @@ bool SkirmishAI::recoverEconomy(World& world) {
     bool receiver=false,collector=false;
     for(const auto& unit:world.ents) {
         if(!unit.alive || unit.player!=player)continue;
-        if(!unit.isBuilding && unitDef(unit.utype).canHarvet())collector=true;
+        if(!unit.isBuilding && unitDef(unit).canHarvet())collector=true;
         if(unit.isBuilding && unit.btype==BldType::OreRefinery && unit.constructAnim<=0 && !unit.selling)receiver=true;
     }
     const auto type=harvesterType(world.players[player].faction);
     const auto& def=unitDef(type);
     auto& p=world.players[player];
+    const auto cancelUnit=[&](int selector){if(world.nativeProductionType(selector)){World::Cmd c{};c.type=World::Cmd::CancelUnitProd;c.a=selector;world.applyProductionCommand(player,c);}else world.cancelUnitProd(player,(UnitType)selector);};
+    const auto cancelBuilding=[&](int selector){if(world.nativeProductionType(selector)){World::Cmd c{};c.type=World::Cmd::CancelBldProd;c.a=selector;world.applyProductionCommand(player,c);}else world.cancelBldProd(player,(BldType)selector);};
     auto cancelUnits=[&]() {
         for(int category=0;category<PROD_CAT_N;++category) {
-            while(!p.unitQueue[category].empty())world.cancelUnitProd(player,(UnitType)p.unitQueue[category].back());
-            if(p.unitProd[category].active)world.cancelUnitProd(player,(UnitType)p.unitProd[category].typeIdx);
+            while(!p.unitQueue[category].empty())cancelUnit(p.unitQueue[category].back());
+            if(p.unitProd[category].active)cancelUnit(p.unitProd[category].typeIdx);
         }
     };
     auto rebuild=[&](BldType building) {
@@ -26,10 +28,10 @@ bool SkirmishAI::recoverEconomy(World& world) {
         // A paid, ready building can be placed by update before another order
         // replaces it. Do not repeatedly cancel finished infrastructure.
         if(p.bldProd.active && p.bldProd.ready)return true;
-        if(p.bldProd.active && p.bldProd.typeIdx!=(int)building)
-            world.cancelBldProd(player,(BldType)p.bldProd.typeIdx);
+        if(p.bldProd.active && p.bldProd.typeIdx!=world.productionSelector(player,false,(int)building))
+            cancelBuilding(p.bldProd.typeIdx);
         cancelUnits();
-        if(p.defProd.active)world.cancelBldProd(player,(BldType)p.defProd.typeIdx);
+        if(p.defProd.active)cancelBuilding(p.defProd.typeIdx);
         if(!p.bldProd.active)world.startBldProd(player,building);
         else world.holdBldProd(player,building,false);
         return p.bldProd.active;
@@ -53,19 +55,20 @@ bool SkirmishAI::recoverEconomy(World& world) {
     if(!receiver)return false;
     if(!world.hasFactoryFor(player,def))return rebuild(BldType::WarFactory);
     if(!world.unitPrereqMet(player,def))return false;
-    const int category=def.prodCat();
+    const int selector=world.productionSelector(player,true,(int)type);
+    const int category=selector>=0?world.productionCategory(true,selector):def.prodCat();
     for(int cat=0;cat<PROD_CAT_N;++cat) {
         // Pending orders have no paid work. Clear them before cancelling the
         // active blocker, so queue promotion cannot put another tank in front.
-        while(!p.unitQueue[cat].empty())world.cancelUnitProd(player,(UnitType)p.unitQueue[cat].back());
+        while(!p.unitQueue[cat].empty())cancelUnit(p.unitQueue[cat].back());
         auto& active=p.unitProd[cat];
-        if(active.active && (cat!=category || active.typeIdx!=(int)type))
-            world.cancelUnitProd(player,(UnitType)active.typeIdx);
+        if(active.active && (cat!=category || active.typeIdx!=selector))
+            cancelUnit(active.typeIdx);
     }
     // Reclaim actual paid work; no stipend, synthetic sale or free harvester.
     // Cancelling also prevents other queues from consuming the recovery budget.
-    if(p.bldProd.active)world.cancelBldProd(player,(BldType)p.bldProd.typeIdx);
-    if(p.defProd.active)world.cancelBldProd(player,(BldType)p.defProd.typeIdx);
+    if(p.bldProd.active)cancelBuilding(p.bldProd.typeIdx);
+    if(p.defProd.active)cancelBuilding(p.defProd.typeIdx);
     if(!p.unitProd[category].active)world.startUnitProd(player,type);
     else world.holdUnitProd(player,type,false);
     return true;

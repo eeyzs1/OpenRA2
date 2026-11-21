@@ -20,12 +20,17 @@ void Game::updateHoverCursor(int mx, int my) {
     if (sideMode == 2) { cursorKind = CursorKind::Sell; return; }
     // 放置模式：可放→Arrow（保持默认不误导），不可放→NoMove
     if (placing) {
+        if(nativePlacementType>=0 && world.nativeProductionType(nativePlacementType)) {
+            float wx,wy;screenToWorld(mx,my,wx,wy);int tx,ty;surfaceAt(wx,wy,tx,ty);
+            const auto& d=world.nativeTypes[nativePlacementType-NATIVE_PRODUCTION_BASE]->building;
+            cursorKind=world.canPlaceNativeBuilding(localPlayer,nativePlacementType,tx-d.w+1,ty-d.h+1)?CursorKind::Arrow:CursorKind::NoMove;return;
+        }
         BldType t = placementType;
         if (t != BldType::COUNT) {
             float wx, wy;
             screenToWorld(mx, my, wx, wy);
             int tx, ty;
-            screenToTile(wx, wy, tx, ty);
+            surfaceAt(wx,wy,tx,ty);
             const BldDef& d = bldDef(t);
             int bx = tx - (d.w - 1), by = ty - (d.h - 1);
             cursorKind = world.canPlace(t, bx, by, localPlayer) ? CursorKind::Arrow : CursorKind::NoMove;
@@ -37,9 +42,9 @@ void Game::updateHoverCursor(int mx, int my) {
 
     float wx, wy;
     screenToWorld(mx, my, wx, wy);
-    int tx, ty;
-    screenToTile(wx, wy, tx, ty);
-    EID eu = pickUnit(mx, my);
+    int tx,ty,layer;
+    surfaceAt(wx,wy,tx,ty,&layer);
+    EID eu = pickCommandUnit(mx, my);
     EID eb = pickBuilding(mx, my);
 
     // 无选单位：己方驻军建筑 → 部署光标（点一下撤出）；
@@ -58,6 +63,11 @@ void Game::updateHoverCursor(int mx, int my) {
                 cursorKind = CursorKind::Move;
             else
                 cursorKind = CursorKind::Deploy;
+        } else if(cfgClassicOrders && world.valid(selBuilding) && world.ents[selBuilding].player==localPlayer
+            && isRallyBuilding(world.ents[selBuilding].btype) && world.map.inBounds(tx,ty)
+            && (eu==INVALID_EID || world.ents[eu].player!=localPlayer)
+            && (eb==INVALID_EID || world.ents[eb].player!=localPlayer)) {
+            cursorKind=CursorKind::Move;
         }
         return;
     }
@@ -73,17 +83,27 @@ void Game::updateHoverCursor(int mx, int my) {
         if (ut == UnitType::MCV) hasMcv = true;
         if (ut == UnitType::GI || ut == UnitType::GuardianGI || ut == UnitType::Desolator
             || ut == UnitType::SiegeChopper || ut == UnitType::SlaveMiner
-            || ut == UnitType::V3Launcher)
+            || (ut == UnitType::V3Launcher && world.nativeLauncherDefinition(world.ents[id])<0))
             hasDeployable = true;
     }
 
+    const EID repairTarget=eu!=INVALID_EID?eu:eb;
+    if(world.nativeRepairIntent(sel,repairTarget)) {
+        bool eligible=false;for(EID id:sel)eligible |= world.attackRejection(id,repairTarget)==AttackRejectReason::None;
+        cursorKind=eligible?CursorKind::Repair:CursorKind::NoMove;return;
+    }
     // 工程师占领：敌方或中立可占领建筑（优先于进驻/攻击光标）
     if (hasEngineer && eb != INVALID_EID) {
         const World::Ent& b = world.ents[eb];
-        if(b.player==localPlayer && b.hp<bldDef(b.btype).hp) {
+        if(b.nativeIdentity.definition && b.nativeIdentity.definition->bridgeRepairHut) {
+            bool eligible=false;
+            for(EID id:sel)eligible |= world.engineerRejection(id,eb,EngineerIntent::RepairBridge)==EngineerRejectReason::None;
+            cursorKind=eligible?CursorKind::Repair:CursorKind::NoMove;return;
+        }
+        if(b.player==localPlayer && b.hp<bldDef(b).hp) {
             cursorKind=CursorKind::Repair;return;
         }
-        if (bldDef(b.btype).capturable && b.player != localPlayer
+        if (bldDef(b).capturable && b.player != localPlayer
             && (b.player < 0 || world.isEnemy(localPlayer, b.player))) {
             cursorKind = CursorKind::Enter;
             return;
@@ -93,13 +113,16 @@ void Game::updateHoverCursor(int mx, int my) {
     if (hasSpy && eb != INVALID_EID) {
         const World::Ent& b = world.ents[eb];
         if (b.player >= 0 && world.isEnemy(localPlayer, b.player)) {
-            cursorKind = CursorKind::Enter;
+            bool eligible=false;
+            for(EID id:sel)if(world.valid(id) && world.ents[id].utype==UnitType::Spy)
+                eligible |= world.attackRejection(id,eb)==AttackRejectReason::None;
+            cursorKind=eligible?CursorKind::Enter:CursorKind::NoMove;
             return;
         }
     }
     if (hasSpy && eu != INVALID_EID) {
         const World::Ent& u = world.ents[eu];
-        if (u.player >= 0 && world.isEnemy(localPlayer, u.player) && unitDef(u.utype).isInfantry()) {
+        if (u.player >= 0 && world.isEnemy(localPlayer, u.player) && unitDef(u).isInfantry()) {
             cursorKind = CursorKind::Attack; // 伪装指令（攻击目标兵种）
             return;
         }
@@ -111,7 +134,7 @@ void Game::updateHoverCursor(int mx, int my) {
     if (enemy == INVALID_EID && eb != INVALID_EID && world.isEnemy(localPlayer, world.ents[eb].player))
         enemy = eb;
     // Share entry capability/capacity checks with command execution; no A* on hover.
-    if(eb!=INVALID_EID && bldDef(world.ents[eb].btype).garrisonCap>0
+    if(eb!=INVALID_EID && world.buildingEntryDomain(world.ents[eb])>0
         && (world.ents[eb].player==localPlayer || world.ents[eb].player<0)) {
         bool eligible=false;
         for(EID id:sel) eligible |= world.entryRejection(id,eb,EntryKind::Garrison)==EntryRejectReason::None;
@@ -123,7 +146,7 @@ void Game::updateHoverCursor(int mx, int my) {
         cursorKind=eligible?CursorKind::Repair:CursorKind::NoMove;return;
     }
     if (enemy != INVALID_EID) {
-        if (hasEngineer && world.ents[enemy].isBuilding && bldDef(world.ents[enemy].btype).capturable)
+        if (hasEngineer && world.ents[enemy].isBuilding && bldDef(world.ents[enemy]).capturable)
             cursorKind = CursorKind::Enter;
         else {
             bool eligible=false;
@@ -135,7 +158,7 @@ void Game::updateHoverCursor(int mx, int my) {
 
     // 运输载具
     if (eu != INVALID_EID && world.ents[eu].player == localPlayer
-        && unitDef(world.ents[eu].utype).cargoCap > 0) {
+        && unitDef(world.ents[eu]).cargoCap > 0) {
         bool eligible=false;
         for(EID id:sel) eligible |= world.entryRejection(id,eu,EntryKind::Board)==EntryRejectReason::None;
         cursorKind=eligible?CursorKind::Enter:CursorKind::NoMove;
@@ -153,7 +176,9 @@ void Game::updateHoverCursor(int mx, int my) {
         return;
     }
     // MCV：可展开时显示 Deploy（含悬停自身；点选已不依赖光标种类）
-    if (hasMcv) {
+    const bool onSelectedMcv=world.valid(eu) && world.ents[eu].utype==UnitType::MCV
+        && std::find(sel.begin(),sel.end(),eu)!=sel.end();
+    if (hasMcv && (!cfgClassicOrders || onSelectedMcv)) {
         for (EID id : sel) {
             if (!world.valid(id) || world.ents[id].utype != UnitType::MCV) continue;
             if (world.canDeployMcv(id)) { cursorKind = CursorKind::Deploy; return; }
@@ -165,13 +190,19 @@ void Game::updateHoverCursor(int mx, int my) {
         UnitType ut = world.ents[eu].utype;
         if (ut == UnitType::GI || ut == UnitType::GuardianGI || ut == UnitType::Desolator
             || ut == UnitType::SiegeChopper || ut == UnitType::SlaveMiner
-            || ut == UnitType::V3Launcher) {
+            || (ut == UnitType::V3Launcher && world.nativeLauncherDefinition(world.ents[eu])<0)) {
             cursorKind = CursorKind::Deploy;
             return;
         }
     }
+    if(cfgClassicOrders && world.valid(eu) && world.ents[eu].player==localPlayer)return;
     // 默认可走地 → 移动；按住 A = 攻击移动光标（AttackMove@404，与矿上 Harvest 同源）
-    if (world.map.inBounds(tx, ty) && observedCell(tx, ty).passable()) {
+    bool canMove=false;
+    for(EID id:sel)if(world.valid(id)) {
+        const auto& unit=unitDef(world.ents[id]);
+        canMove |= unit.isAir() || observedSurfacePassable(tx,ty,unit.pathDomain(),layer,unit.fitsUnderBridge());
+    }
+    if (canMove) {
         if (!sel.empty() && kDown(KEY_A))
             cursorKind = CursorKind::Harvest; // AttackMove
         else

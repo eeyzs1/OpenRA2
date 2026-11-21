@@ -1,7 +1,7 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cstdio>
 
-int Game::idleYieldRegression() {
+int GameRegression::idleYieldRegression() {
     int failures=0;
     for(int scenario=0;scenario<9;++scenario) {
         World w;w.init(64,64,20261031,2,0,{scenario==3?Faction::China:Faction::Allies,Faction::Soviet},0,"",true);

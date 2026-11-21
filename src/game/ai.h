@@ -38,6 +38,12 @@ struct AIPersonalityConfig {
 // 遭遇战 AI：建造顺序 + 持续暴兵 + 波次进攻 + 战术微操
 class SkirmishAI {
 public:
+    struct KnownBuilding {
+        int x=0,y=0,owner=-1;
+        BldType type=BldType::COUNT;
+        uint64_t observedTick=0;
+        bool operator==(const KnownBuilding&) const = default;
+    };
     bool operator==(const SkirmishAI&) const = default;
     int player = -1;
     int thinkTimer = 0;
@@ -56,24 +62,47 @@ public:
     int expandTimer = 0;           // 扩张冷却（避免频繁造 MCV）
     int defenseCheckTimer = 0;     // 防御反应计时
     EID lastAttacker = INVALID_EID; // 上次攻击我方基地的敌方单位（防御反应用）
+    // Only observations made through this house's fog enter strategic memory.
+    int scoutMapW=0,scoutMapH=0;
+    std::vector<uint64_t> scoutObserved;
+    std::vector<KnownBuilding> knownBuildings;
 
     void reset(int p);
     void update(World& w);
+    bool saveKnowledge(FILE* file) const;
+    bool loadKnowledge(FILE* file);
+    bool knowledgeValid(const World& world) const;
 
     // 初始化人格参数
     void initPersonality();
 
 private:
+    bool buildingVisible(const World& world,const World::Ent& building) const;
+    bool constructionVehiclePlanned(const World& world) const;
+    bool deployConstructionVehicle(World& world,EID id);
+    void recoverConstruction(World& world);
+    bool constructionSitePreservesExits(const World& world,const BldDef& building,int x,int y) const;
+    bool canDeployConstructionVehicleAt(const World& world,EID id,int x,int y) const;
+    bool recoverFactoryProduction(World& world);
     bool recoverEconomy(World& w);
+    void observeBattlefield(const World& w);
+    Vec2i scoutDestination(const World& w,const World::Ent& unit,const std::vector<Vec2i>& claimed={}) const;
     bool needsTransport(const World& w) const;
     void doTransports(World& w);
     void doBuildOrder(World& w);
     void doProduction(World& w);
+    bool produceSourceAircraft(World& w,int category);
     void clearFactoryExits(World& w);
     void doAttack(World& w);
+    std::vector<KnownBuilding> assaultObjectives(const World& world,Vec2i center) const;
+    bool issueAssault(World& world,const std::vector<EID>& army,const std::vector<KnownBuilding>& objectives,Vec2i center,int& accepted);
+    void scoutGround(World& world,const std::vector<EID>& army);
     std::vector<EID> assignAirDefense(World& w);
+    EID airDefenseConstructionTarget(const World& w) const;
+    bool buildAirDefense(World& w);
     void doSuperWeapon(World& w);
     void doSupport(World& w);
+    void doIndependentSupport(World& w);
     void doEngineers(World& w);
     void doTactics(World& w);       // 战术微操：集火/残血撤退/防御反应
     void doExpansion(World& w);     // 分基地扩张

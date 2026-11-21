@@ -1,10 +1,10 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <array>
 #include <queue>
 #include <cstdio>
 #include <filesystem>
 
-int Game::generatedMapRegression(bool health,const char* outputDir) {
+int GameRegression::generatedMapRegression(bool health,const char* outputDir) {
     int failures=0,cases=0;
     constexpr std::array<uint64_t,3> seeds{20260722,20261031,305419896};
     if(!health) {

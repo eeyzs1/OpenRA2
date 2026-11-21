@@ -18,22 +18,35 @@ Vector2 Game::unitScreenPos(const World::Ent& e) const {
     float wx = (ex - ey) * (TILE_W / 2.0f);
     float wy = (ex + ey) * (TILE_H / 2.0f);
     int cx = (int)floorf(ex), cy = (int)floorf(ey);
-    if (world.map.inBounds(cx, cy))
-        wy -= (float)heightScreenY(world.map.at(cx, cy).height);
+    if (world.map.inBounds(cx, cy)) {
+        if(world.map.hasBridgeDecks()) {
+            const float before=(float)world.map.surfaceHeight((int)std::floor(e.px),(int)std::floor(e.py),e.previousNavLayer);
+            const float after=(float)world.actorSurfaceHeight(e);
+            wy-=(before+(after-before)*interpAlpha)*(TILE_H/2.f);
+        } else wy-=(float)heightScreenY(world.map.at(cx,cy).height);
+    }
     return {wx - camX, wy - camY};
 }
 
 float Game::unitRenderLift(const World::Ent& e) const {
+    if(e.supportAir || (e.nativeIdentity.definition && (e.nativeIdentity.definition->nativeRocket || e.nativeJumpjet.motion.started))) {
+        const float altitude=e.previousNativeAltitude+(e.nativeAltitude-e.previousNativeAltitude)*interpAlpha;
+        const float before=world.map.surfaceHeight((int)e.px,(int)e.py,e.previousNavLayer),after=world.actorSurfaceHeight(e);
+        return (altitude/104.f-(before+(after-before)*interpAlpha))*(TILE_H/2.f);
+    }
     return e.airborne()?AIR_ALT*e.flightFraction():e.magneticHeight*3.0f;
 }
 
 float Game::eventRenderLift(const PresentationEvent& event) const {
+    if(event.nativeAltitudePixels>=0)return event.nativeAltitudePixels;
     return event.visualTarget==VisualTarget::Aircraft?AIR_ALT*std::clamp(event.flightFraction,0.f,1.f)
         :3.f*std::clamp(event.magneticHeight,0,12);
 }
 
 int Game::unitBodyFrame(const World::Ent& e) const {
-    if(unitDef(e.utype).canHarvet())return e.oreLoad>=World::harvesterCapacity(e.utype)?1:0;
+    if(e.utype==UnitType::Destroyer)for(const auto& s:world.aircraftSpawners)
+        if(world.valid(s.owner) && &world.ents[s.owner.id]==&e)return world.dockedAircraft(s.owner.id)==0?1:0;
+    if(unitDef(e).canHarvet())return e.oreLoad>=World::harvesterCapacity(e.utype)?1:0;
     if(e.airborne())return (int)((world.tick/2)%std::max(1,g_sprites.unitBodyFrames(e.utype)));
     return 0;
 }
@@ -52,15 +65,16 @@ int Game::chopperTransformFrame(const World::Ent& e) const {
 
 Rectangle Game::unitScreenRect(const World::Ent& e) const {
     Vector2 p = unitScreenPos(e);
-    const UnitDef& ud = unitDef(e.utype);
+    const UnitDef& ud = unitDef(e);
     p.y -= unitRenderLift(e);
     int cid = (e.player >= 0 && e.player < world.numPlayers)
             ? world.players[e.player].colorId : 0;
     int frame = unitBodyFrame(e);
     const int transform=chopperTransformFrame(e);
-    const Sprite& body = transform>=0?g_sprites.chopperTransform(transform,cid):e.utype==UnitType::SiegeChopper && e.deployed
+    const Sprite* water=swimmingSprite(e,e.utype,cid);
+    const Sprite& body = ud.canHarvet() && world.harvesterUnloading(e)?g_sprites.unitUnload(e.utype,e.dir,cid):water?*water:world.hasNativeIFV(e)?nativeIFVSprite(e,false,frame):e.nativeIdentity.definition && e.nativeIdentity.definition->nativeBody?nativeActorSprite(e):transform>=0?g_sprites.chopperTransform(transform,cid):e.utype==UnitType::SiegeChopper && e.deployed
         ? g_sprites.unitDeployed(e.utype,e.dir,e.turretDir,cid)
-        : g_sprites.unitBody(e.utype,e.dir&7,frame,cid);
+        : g_sprites.unitBodyFacing(e.utype,unitBodyFacing(e),frame,cid);
     // 优先用不透明包围盒：与选中角标/点选一致，避免透明画布把命中区甩到左上
     if (body.visR > body.visL && body.visB > body.visT) {
         Rectangle r{
@@ -89,7 +103,11 @@ Rectangle Game::unitScreenRect(const World::Ent& e) const {
 }
 
 Vector2 Game::bldScreenPos(const World::Ent& e) const {
-    const BldDef& d = bldDef(e.btype);
+    if(e.nativeIdentity.definition && !e.nativeIdentity.definition->rulesOnly) {
+        int px,py;tileToScreen((int)e.x,(int)e.y,px,py);
+        return {(float)px-camX,(float)py+TILE_H/2-heightScreenY(world.map.at((int)e.x,(int)e.y).height)-camY};
+    }
+    const BldDef& d = bldDef(e);
     // 锚点 = 建筑占地东南角瓦片的南角点（含格高度抬升）
     int px, py;
     int tx = (int)e.x + d.w - 1, ty = (int)e.y + d.h - 1;

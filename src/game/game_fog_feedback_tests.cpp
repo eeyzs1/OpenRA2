@@ -1,10 +1,10 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "gfx/fog_line.h"
 #include <cmath>
 #include <filesystem>
 #include <cstdio>
 
-int Game::fogFeedbackRegression(const char* outputDir) {
+int GameRegression::fogFeedbackRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);int failures=0;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("FOG_FEEDBACK %s %s\n",ok?"PASS":"FAIL",name); };
     SetTargetFPS(0);world.init(64,64,20261031,2,0,{Faction::Allies,Faction::Soviet},0,"maps/skirmish-reference.txt",true);

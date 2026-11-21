@@ -17,7 +17,7 @@ int areaDistance(float x,float y,float tx,float ty) {
 }
 }
 
-void World::applyCellSpreadDamage(const WeaponDef& weapon,int player,float x,float y,EID source,int sourceSlot,bool chaosGas) {
+void World::applyCellSpreadDamage(const WeaponDef& weapon,int player,float x,float y,EID source,int sourceSlot,bool chaosGas,uint64_t sourceActor) {
     if(weapon.cellSpread<0 || weapon.cellSpread>11 || !std::isfinite(weapon.cellSpread)
         || !std::isfinite(weapon.percentAtMax) || weapon.percentAtMax<0 || weapon.percentAtMax>1
         || !std::isfinite(x) || !std::isfinite(y) || weapon.damage<=0
@@ -28,7 +28,7 @@ void World::applyCellSpreadDamage(const WeaponDef& weapon,int player,float x,flo
         World& world;
         Batch(World& w):world(w){++world.areaDamageDepth;}
         ~Batch(){
-            if(--world.areaDamageDepth==0 && !world.updateInProgress) {
+            if(--world.areaDamageDepth==0 && !world.updateInProgress && world.entityMutationDepth==0) {
                 world.freeList.insert(world.freeList.end(),world.retiredDuringUpdate.begin(),world.retiredDuringUpdate.end());
                 world.retiredDuringUpdate.clear();
             }
@@ -42,6 +42,8 @@ void World::applyCellSpreadDamage(const WeaponDef& weapon,int player,float x,flo
     for(EID id=0;id<(EID)ents.size();++id) {
         const auto& target=ents[id];
         if(!target.alive || id==source || (target.parasiting && target.utype==UnitType::TerrorDrone))continue;
+        if(weapon.nativeSource && weapon.nativeSource->warhead && !weapon.nativeSource->warhead->affectsAllies
+            && player>=0 && target.player>=0 && isAllied(player,target.player))continue;
         if(!std::isfinite(target.x) || !std::isfinite(target.y))continue;
         if(target.airborne()?!weapon.antiAir:!weapon.antiGround)continue;
         const float versus=weaponMultiplier(weapon,target);
@@ -57,7 +59,7 @@ void World::applyCellSpreadDamage(const WeaponDef& weapon,int player,float x,flo
             if(amount>0)recipients.push_back({id,distance,(int)std::min<int64_t>(amount,std::numeric_limits<int>::max())});
         };
         if(target.isBuilding) {
-            const auto& def=bldDef(target.btype);
+            const auto& def=bldDef(target);
             if(x<target.x-margin || x>target.x+def.w+margin || y<target.y-margin || y>target.y+def.h+margin)continue;
             // Each occupied cell contributes a separate hit. Do not merge these:
             // intermediate damage can evacuate a garrison before a later hit kills
@@ -80,10 +82,10 @@ void World::applyCellSpreadDamage(const WeaponDef& weapon,int player,float x,flo
     });
     for(const auto& recipient:recipients) {
         if(!valid(recipient.id))continue;
-        damage(recipient.id,recipient.amount,player,source,sourceSlot);
+        damage(recipient.id,recipient.amount,player,source,sourceSlot,false,sourceActor);
         if(chaosGas && valid(recipient.id)) {
             auto& target=ents[recipient.id];
-            if(!target.isBuilding && !unitDef(target.utype).isAir() && !psychicImmune(target.utype) && target.invuln==0) {
+            if(!target.isBuilding && !unitDef(target).isAir() && !psychicImmune(target.utype) && target.invuln==0) {
                 target.confused=180;target.target=INVALID_EID;
             }
         }

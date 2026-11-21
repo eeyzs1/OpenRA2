@@ -10,19 +10,22 @@
 
 class NetLink {
 public:
-    static constexpr uint32_t SIMULATION_VERSION = 3;
+    static constexpr uint32_t SIMULATION_VERSION = 95;
     static constexpr size_t MAX_BODY_BYTES = 60000;
     static constexpr size_t MAX_BUFFER_BYTES = 1u << 20;
     static constexpr size_t MAX_INBOX_MESSAGES = 256;
     // 消息类型
     enum MsgType : uint8_t {
-        MsgHello = 1,   // C→S：version u32, country u8, color u8
-        MsgWelcome,     // S→C：seed u64, mapSize u8, mapType u8, money i32, crates u8, hostCountry u8, hostColor u8
-        MsgStart,       // S→C：开始对局（双方同步 newGame）
-        MsgCmdFrame,    // 双向：tick u32, ncmds u8, cmds[]（World::Cmd 序列化）
+        MsgHello = 1,   // C→S：version u32, ruleset u8, country u8, color u8, rules SHA256[32]
+        MsgWelcome,     // S→C：version u32, ruleset u8, seed u64, mapSize u16, mapType u8, money i32, crates u8, hostCountry u8, hostColor u8, rules[32]
+        MsgStart,       // S→C：version u32, ruleset u8, seed u64, rules[32]; only after Ready
+        MsgCmdFrame,    // 双向：tick u32, ncmds u16, cmds[]（World::Cmd 序列化）
         MsgChecksum,    // 双向：tick u32, sum u32（反不同步）
         MsgBye,         // 双向：断线通知
+        MsgReady,       // C→S：version u32, ruleset u8, seed u64, rules[32]; acknowledges validated Welcome
+        MsgReject,      // 双向：RejectReason u8; no simulation starts
     };
+    enum class RejectReason : uint8_t { None,Version,Rules,InvalidRules,Protocol,Profile };
     struct Msg {
         uint8_t type = 0;
         std::vector<uint8_t> body; // payload（不含帧头）

@@ -37,11 +37,13 @@ for stage,count in [("walk",6),("fire",6),("death",15)]:
             frames=[sheet.crop((phase*64,row*80+14,phase*64+64,row*80+78)).tobytes() for phase in range(count)]
             if len(set(frames))<min(count,5):
                 raise AssertionError(f"Frozen rendered sequence: {stage}, row {row}")
-for case,key,count in [("missing","walk",7),("oversized","walk",257),("corrupt","walk",1),("missing_deployed","depfire",7)]:
+for case,key,count in [("missing","walk",7),("oversized","walk",257),("corrupt","walk",1),("missing_deployed","depfire",7),("missing_water","swim",7),("oversized_water","swim",257),("anchor_water","tread",1)]:
     with tempfile.TemporaryDirectory(prefix="openra2-animation-") as directory:
         mod=Path(directory);sprites=mod/"assets/sprites";sprites.mkdir(parents=True)
         (mod/"mod.ini").write_text("[Mod]\nName=Incomplete Animation\nLoadOrder=30000\nEnabled=yes\n",encoding="utf-8")
-        (sprites/"anims.ini").write_text(f"[gi]\n{key}={count}\n",encoding="utf-8")
+        unit='tanya' if 'water' in case else 'gi'
+        anchor=f"waterox={-1 if case=='anchor_water' else 60}\nwateroy=51\n" if 'water' in case else ''
+        (sprites/"anims.ini").write_text(f"[{unit}]\n{key}={count}\n{anchor}",encoding="utf-8")
         if case=="corrupt":
             (sprites/"unit_gi_walk_d0_f0.png").write_bytes(b"not a PNG")
         invalid=subprocess.run([str(exe),"--presentation-replay","0","--mod",str(mod)],cwd=root,capture_output=True,timeout=30)

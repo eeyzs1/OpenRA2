@@ -18,3 +18,22 @@ bool advanceProduction(Item& p, Funds& money, int buildTime, int workRate) {
     p.workRemainder = int(next % PRODUCTION_WORK_SCALE);
     return next == total && p.paid == p.totalCost;
 }
+
+// The source production clock has 54 discrete installments. This transient
+// view adapts the ordinary queue and authored-mission factory jobs without
+// changing either saved representation or their scheduling/price policies.
+struct NativeProductionWork {
+    int& work;
+    int& progress;
+    int& paid;
+};
+template<class Funds>
+bool advanceNativeProductionWork(NativeProductionWork p,Funds& money,int totalCost,int interval) {
+    if(p.progress>=54)return true;
+    if(!interval || ++p.work<interval)return false;
+    p.work=0;
+    const int installment=(totalCost-p.paid)/(54-p.progress);
+    if(money<installment)return false;
+    money-=installment;p.paid+=installment;++p.progress;
+    return p.progress==54;
+}

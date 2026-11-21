@@ -1,11 +1,11 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "gfx/sprites.h"
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <set>
 
-int Game::siegePoseRegression(const char* outputDir) {
+int GameRegression::siegePoseRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);
     int failures=0;
     auto check=[&](bool ok,const char* name){failures+=!ok;std::printf("SIEGE_POSE %s %s\n",ok?"PASS":"FAIL",name);};

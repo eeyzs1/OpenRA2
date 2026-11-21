@@ -1,0 +1,25 @@
+{
+  "purpose": "Actual pre-house-control Scene38 / World61 / App11 snapshots, not reconstructed or normalized.",
+  "files": {
+    "ra2-staging.world": {
+      "sourceBatch": "review_out/native-global-ai-app-siege-20261118",
+      "sourceArtifact": "final-test-outputs/release/ra2/staging.world",
+      "sha256": "5f5e4aad80dade3c63a9d2a99ae48967f93b95563e992c706fbeb865d56d5b53"
+    },
+    "ra2-tick0.app11": {
+      "sourceBatch": "review_out/native-global-ai-app-siege-20261118",
+      "sourceArtifact": "final-test-outputs/release/app/ra2/tick-0.app11",
+      "sha256": "86b6b127bfb60840656dd1d05b711275917514a6fd6d16b15ec9ce6b71923e3d"
+    },
+    "yr-staging.world": {
+      "sourceBatch": "review_out/native-global-ai-app-siege-20261118",
+      "sourceArtifact": "final-test-outputs/release/yr/staging.world",
+      "sha256": "92a32c27d3226314a581e32d4eb5bd92a25881b88d3cde4e18a731fd3a67ea0e"
+    },
+    "yr-tick0.app11": {
+      "sourceBatch": "review_out/native-global-ai-app-siege-20261118",
+      "sourceArtifact": "final-test-outputs/release/app/yr/tick-0.app11",
+      "sha256": "8c2fae5c12a8bfa440439d25afb96faaffd96429d9e4d68b6c0c957429278021"
+    }
+  }
+}

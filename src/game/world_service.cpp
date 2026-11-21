@@ -5,7 +5,7 @@ ServiceRejectReason World::serviceRejection(EID id,EID target) const {
     if(!valid(target) || !ents[target].isBuilding || ents[target].selling) return ServiceRejectReason::InvalidTarget;
     if(!serviceFacility(ents[target].btype) || ents[target].constructAnim>0) return ServiceRejectReason::Unsupported;
     if(!valid(id) || ents[id].isBuilding) return ServiceRejectReason::Incompatible;
-    const auto& unit=ents[id];const auto& def=unitDef(unit.utype);
+    const auto& unit=ents[id];const auto& def=unitDef(unit);
     if(unit.player<0 || unit.player!=ents[target].player) return ServiceRejectReason::WrongOwner;
     if(def.isInfantry() || def.isAir() || def.pathDomain()!=0 || def.canHarvet()) return ServiceRejectReason::Incompatible;
     if(unit.deployed || unit.radDeployed) return ServiceRejectReason::Deployed;
@@ -15,7 +15,7 @@ ServiceRejectReason World::serviceRejection(EID id,EID target) const {
 
 float World::serviceReach(const Ent& depot) const {
     // Stand beside the footprint; the former extra two cells allowed remote repair.
-    const auto& def=bldDef(depot.btype);
+    const auto& def=bldDef(depot);
     return std::max(def.w,def.h)/2.f+0.75f;
 }
 
@@ -33,6 +33,7 @@ ServiceOrderResult World::orderService(const std::vector<EID>& selected,EID depo
             continue;
         }
         auto& unit=ents[id];
+        unit.attackMove={};
         if(!continuing) {
             unit.path=std::move(path);unit.pathIdx=0;unit.wps.clear();unit.blockTick=0;
             unit.target=depot;unit.state=UState::Servicing;unit.guard=false;
@@ -51,7 +52,7 @@ void World::emitServiceResult(int player,EID depot,const ServiceOrderResult& res
     event.player=player;event.entity=result.failedEntity>=0?result.failedEntity:depot;event.service=result;event.serviceStatus=status;
     if(valid(depot)) {
         const auto& target=ents[depot];event.positional=true;event.x=target.x;event.y=target.y;
-        if(target.isBuilding) { event.x+=bldDef(target.btype).w/2.f;event.y+=bldDef(target.btype).h/2.f; }
+        if(target.isBuilding) { event.x+=bldDef(target).w/2.f;event.y+=bldDef(target).h/2.f; }
     }
     if(presentationEvents.size()>=4096) presentationEvents.pop_front();
     presentationEvents.push_back(event);
@@ -70,9 +71,8 @@ void World::updateService(Ent& unit,EID id) {
     if(reason!=ServiceRejectReason::None) {
         endService(unit,id,reason==ServiceRejectReason::FullHealth?ServiceRejectReason::None:reason);return;
     }
-    const auto& depot=ents[unit.target];const auto& def=bldDef(depot.btype);
-    const float cx=depot.x+def.w/2.f,cy=depot.y+def.h/2.f;
-    if(distf(unit.x,unit.y,cx,cy)<serviceReach(depot)) {
+    const auto& depot=ents[unit.target];
+    if(interactionWithinReach(unit,depot,serviceReach(depot))) {
         unit.clearPath();unit.blockTick=0;
         auto status=[&](ServiceStatus next) {
             if(unit.feedbackServiceTarget==unit.target && unit.feedbackServiceStatus!=next)
@@ -90,7 +90,7 @@ void World::updateService(Ent& unit,EID id) {
                 endService(unit,id,afterRemoval);return;
             }
         }
-        const int maxHp=maxHpFor(unit,unitDef(unit.utype));
+        const int maxHp=maxHpFor(unit,unitDef(unit));
         if(unit.hp>=maxHp) { endService(unit,id,ServiceRejectReason::None);return; }
         if(players[unit.player].money<6) { status(ServiceStatus::WaitingMoney);return; }
         status(ServiceStatus::Working);

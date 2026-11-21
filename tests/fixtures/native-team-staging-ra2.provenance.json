@@ -1,0 +1,13 @@
+{
+  "original": "tools/ra2pack/game/GAME.EXE",
+  "sha256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "entryPointExecuted": false,
+  "independentYRExecuted": false,
+  "samples": 800,
+  "fixtureSHA256": "dfd39abbc72635412cafb2eb76621f9d608481dcecad6ab87240e85762b62c4d",
+  "scope": "Original leader/geometry instructions before Map.NearByLocation; synthetic one-leader Foot/House interfaces. No source House.BaseCenter lifecycle, actual leader flags, map clearance or team arrival calibration.",
+  "evidence": [
+    "review_out/native-global-ai-app-siege-20261118/original-staging-calibration-v5.json",
+    "review_out/native-global-ai-app-siege-20261118/original-staging-calibration-v6.json"
+  ]
+}

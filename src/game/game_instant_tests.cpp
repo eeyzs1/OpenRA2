@@ -1,7 +1,7 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cstdio>
 
-int Game::instantCombatRegression() {
+int GameRegression::instantCombatRegression() {
     int failures=0;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("INSTANT %s %s\n",ok?"PASS":"FAIL",name); };
     auto reset=[&]() {

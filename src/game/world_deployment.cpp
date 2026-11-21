@@ -10,8 +10,9 @@ DeployOrderResult World::orderDeployment(const std::vector<EID>& selection,bool 
         const bool yard=unit.isBuilding && unit.btype==BldType::ConYard;
         const bool transform=yard || (!unit.isBuilding && (unit.utype==UnitType::MCV || unit.utype==UnitType::SlaveMiner));
         const bool toggle=!unit.isBuilding && (unit.utype==UnitType::Desolator || unit.utype==UnitType::GI
-            || unit.utype==UnitType::GuardianGI || unit.utype==UnitType::SiegeChopper || unit.utype==UnitType::V3Launcher);
-        const float x=unit.x+(unit.isBuilding?bldDef(unit.btype).w/2.0f:0),y=unit.y+(unit.isBuilding?bldDef(unit.btype).h/2.0f:0);
+            || unit.utype==UnitType::GuardianGI || unit.utype==UnitType::SiegeChopper
+            || (unit.utype==UnitType::V3Launcher && nativeLauncherDefinition(unit)<0));
+        const float x=unit.x+(unit.isBuilding?bldDef(unit).w/2.0f:0),y=unit.y+(unit.isBuilding?bldDef(unit).h/2.0f:0);
         DeployRejectReason reason=DeployRejectReason::None;
         if((!transform && !toggle) || (modesOnly && transform)) reason=DeployRejectReason::Unsupported;
         else if(unit.immobilized()) reason=DeployRejectReason::Immobilized;
@@ -20,8 +21,9 @@ DeployOrderResult World::orderDeployment(const std::vector<EID>& selection,bool 
         else if(yard && !mcvRepacks) reason=DeployRejectReason::RepackingDisabled;
         else if(!unit.isBuilding && unit.utype==UnitType::MCV && !canDeployMcv(id)) reason=DeployRejectReason::Blocked;
         else if(!unit.isBuilding && unit.utype==UnitType::SiegeChopper && !unit.deployed
-            && (!passableFor((int)unit.x,(int)unit.y,0) || bldBlocked((int)unit.x,(int)unit.y)
-                || cellHardBlockedForMove((int)unit.x,(int)unit.y,id))) reason=DeployRejectReason::Blocked;
+            && (usesNativeAirNavigation(unit)?nativeAirLandingLayer((int)unit.x,(int)unit.y,id)<0:
+                (!passableFor((int)unit.x,(int)unit.y,0) || bldBlocked((int)unit.x,(int)unit.y)
+                || cellHardBlockedForMove((int)unit.x,(int)unit.y,id)))) reason=DeployRejectReason::Blocked;
         if(result.feedbackEntity<0) { result.feedbackEntity=id;result.x=x;result.y=y; }
         if(reason!=DeployRejectReason::None) {
             ++result.rejected;
@@ -29,6 +31,7 @@ DeployOrderResult World::orderDeployment(const std::vector<EID>& selection,bool 
             continue;
         }
         const bool expanded=!unit.isBuilding && unit.utype==UnitType::MCV;
+        const auto sourceGeneration=unit.generation;
         EID replacement=id;
         if(transform) replacement=orderDeploy(id);else orderRadDeploy({id});
         if(!valid(replacement)) {
@@ -36,10 +39,11 @@ DeployOrderResult World::orderDeployment(const std::vector<EID>& selection,bool 
             if(result.reason==DeployRejectReason::None) { result.reason=DeployRejectReason::InvalidTarget;result.failedEntity=id; }
             continue;
         }
+        if(valid(replacement)){ents[replacement].attackMove={};ents[replacement].wps.clear();}
         ++result.accepted;
         if(yard || expanded) {
             if(yard) ++result.packed;else ++result.expanded;
-            result.changes.push_back({id,replacement,expanded});
+            result.changes.push_back({id,replacement,expanded,sourceGeneration,ents[replacement].generation});
         } else if(ents[replacement].deploying()) {
             if(ents[replacement].state==UState::DeployLanding)++result.deploying;else ++result.undeploying;
         } else if(ents[replacement].deployed || ents[replacement].radDeployed) ++result.deployed;
@@ -51,8 +55,9 @@ DeployOrderResult World::orderDeployment(const std::vector<EID>& selection,bool 
 void World::updateChopperDeployment(Ent& e,EID id) {
     if(--e.deployAnim>0)return;
     if(e.state==UState::DeployLanding) {
-        if(!passableFor((int)e.x,(int)e.y,0) || bldBlocked((int)e.x,(int)e.y)
-            || cellHardBlockedForMove((int)e.x,(int)e.y,id)) {
+        if(usesNativeAirNavigation(e)?nativeAirLandingLayer((int)e.x,(int)e.y,id)<0:
+            (!passableFor((int)e.x,(int)e.y,0) || bldBlocked((int)e.x,(int)e.y)
+            || cellHardBlockedForMove((int)e.x,(int)e.y,id))) {
             e.state=UState::DeployTakeoff;e.deployAnim=g_gameRules.chopperLandingTicks;
             DeployOrderResult result;result.rejected=1;result.reason=DeployRejectReason::Blocked;
             result.failedEntity=result.feedbackEntity=id;result.x=e.x;result.y=e.y;emitDeployResult(e.player,result);

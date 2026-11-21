@@ -1,4 +1,4 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "game/world_priv.h"
 #include <cmath>
 #include <cstdio>
@@ -6,7 +6,7 @@
 #include <filesystem>
 #include <limits>
 
-int Game::apocalypseRegression() {
+int GameRegression::apocalypseRegression() {
     int failures=0;
     auto check=[&](bool ok,const char* label){failures+=!ok;std::printf("APOCALYPSE %s %s\n",ok?"PASS":"FAIL",label);};
     auto reset=[](World& w) {

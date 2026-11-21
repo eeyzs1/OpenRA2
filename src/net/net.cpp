@@ -96,7 +96,7 @@ void NetLink::flushOut() {
 
 bool NetLink::send(uint8_t type, const std::vector<uint8_t>& body) {
     if (state != State::Linked) return false;
-    if (type < MsgHello || type > MsgBye || body.size() > MAX_BODY_BYTES) return false;
+    if (type < MsgHello || type > MsgReject || body.size() > MAX_BODY_BYTES) return false;
     uint16_t len = (uint16_t)(body.size() + 1);
     uint8_t header[2] = {(uint8_t)(len & 0xffu), (uint8_t)(len >> 8)};
     outBuf.append((const char*)header, sizeof(header));
@@ -146,7 +146,7 @@ void NetLink::poll() {
         if (len < 1 || len > MAX_BODY_BYTES + 1) { fail(); return; }
         if (rxBuf.size() < (size_t)len + 2) break;
         uint8_t type = rxBuf[2];
-        if (type < MsgHello || type > MsgBye || inbox.size() >= MAX_INBOX_MESSAGES) {
+        if (type < MsgHello || type > MsgReject || inbox.size() >= MAX_INBOX_MESSAGES) {
             fail();
             return;
         }

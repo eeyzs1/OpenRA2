@@ -1,8 +1,9 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cstdio>
 #include <filesystem>
 
-int Game::referenceMapRegression(const char* outputDir) {
+int GameRegression::referenceMapRegression(const char* outputDir) {
+    selectRulesChoice(RulesChoice::Fusion); // This fixture covers all four extended factions.
     std::filesystem::create_directories(outputDir);
     int failures = 0;
     auto check = [&](bool ok, const char* name) {

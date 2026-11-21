@@ -7,8 +7,18 @@
 #include <cstring>
 #include <algorithm>
 
+bool World::hasNativeSupportSource(int player,unsigned capability) const {
+    if(player<0 || player>=numPlayers)return false;
+    for(const auto& actor:ents)if(actor.player==player && actor.alive && actor.isBuilding
+        && !actor.selling && actor.constructAnim<=0 && actor.nativeIdentity.definition
+        && (actor.nativeIdentity.definition->production.supportMask&capability))return true;
+    return false;
+}
+
 bool World::hasParadropSource(int player) const {
     if (player < 0 || player >= numPlayers) return false;
+    if(independentSupportEnabled)return hasSupportSource(player,SupportType::Paradrop) || hasSupportSource(player,SupportType::AmericanParadrop);
+    if(nativeProductionRules.economy)return hasNativeSupportSource(player,nativeProductionRules.version>=4?3:1);
     bool hasAFC = false;
     for (const Ent& e : ents) {
         if (!e.alive || !e.isBuilding || e.player != player) continue;
@@ -20,6 +30,7 @@ bool World::hasParadropSource(int player) const {
 }
 
 void World::updateParadrop() {
+    if(independentSupportEnabled){updateSupportPowers();return;}
     for (int pi = 0; pi < numPlayers; pi++) {
         Player& p = players[pi];
         if (!p.active || p.defeated) continue;
@@ -38,6 +49,8 @@ void World::updateParadrop() {
 
 bool World::hasSpyPlaneSource(int player) const {
     if (player < 0 || player >= numPlayers) return false;
+    if(independentSupportEnabled)return hasSupportSource(player,SupportType::SpyPlane);
+    if(nativeProductionRules.economy)return hasNativeSupportSource(player,nativeProductionRules.version>=4?4:2);
     Faction f = players[player].faction;
     if (f != Faction::Soviet && f != Faction::China) return false;
     return hasBld(player, BldType::Radar);
@@ -45,6 +58,8 @@ bool World::hasSpyPlaneSource(int player) const {
 
 bool World::hasPsychicRevealSource(int player) const {
     if (player < 0 || player >= numPlayers) return false;
+    if(independentSupportEnabled)return hasSupportSource(player,SupportType::PsychicReveal);
+    if(nativeProductionRules.economy)return hasNativeSupportSource(player,nativeProductionRules.version>=4?8:4);
     if (players[player].faction != Faction::Yuri) return false;
     return hasBld(player, BldType::PsychicSensor);
 }
@@ -52,6 +67,7 @@ bool World::hasPsychicRevealSource(int player) const {
 // 空投一波基础步兵到目标点周围
 // 美国空指部：8 GI；科技机场：盟军 6 / 苏军 9 / 其他 6（form-plan 6/9/6）
 void World::orderParadrop(int player, float x, float y) {
+    if(independentSupportEnabled){orderSupport(player,preferredParadrop(player),x,y);return;}
     if (player < 0 || player >= numPlayers) return;
     Player& p = players[player];
     if (!p.paradropReady || !hasParadropSource(player)) return;
@@ -100,6 +116,7 @@ void World::orderParadrop(int player, float x, float y) {
 }
 
 void World::orderSpyPlane(int player, float x, float y) {
+    if(independentSupportEnabled){orderSupport(player,SupportType::SpyPlane,x,y);return;}
     if (player < 0 || player >= numPlayers) return;
     Player& p = players[player];
     if (!p.paradropReady || !hasSpyPlaneSource(player)) return;
@@ -119,6 +136,7 @@ void World::orderSpyPlane(int player, float x, float y) {
 }
 
 void World::orderPsychicReveal(int player, float x, float y) {
+    if(independentSupportEnabled){orderSupport(player,SupportType::PsychicReveal,x,y);return;}
     if (player < 0 || player >= numPlayers) return;
     Player& p = players[player];
     if (!p.paradropReady || !hasPsychicRevealSource(player)) return;
@@ -136,6 +154,7 @@ void World::orderPsychicReveal(int player, float x, float y) {
 // 工程师占领特殊效果（RA2 原作：科技机场给伞兵、秘密实验室随机解锁国家特色科技）
 void World::applyCaptureEffect(Ent& b, int newOwner) {
     if (newOwner < 0 || newOwner >= numPlayers) return;
+    if(b.nativeIdentity.definition && b.nativeIdentity.definition->gate)rebuildNativeGates();
     Player& p = players[newOwner];
     if (b.btype == BldType::OilDerrick) {
         creditIncome(newOwner,1000); // YR/手册：占领油田瞬间奖金
@@ -160,7 +179,8 @@ void World::mindControlRelease(Ent& yuri) {
     if (valid(yuri.mindTarget)) {
         Ent& t = ents[yuri.mindTarget];
         if (t.mindBy != INVALID_EID) {
-            t.player = t.origPlayer;      // 恢复原属（RA2 原作：控制者死亡则解放）
+            changeActorOwner(yuri.mindTarget,t.origPlayer);      // 恢复原属（RA2 原作：控制者死亡则解放）
+            t.attackMove={};t.wps.clear();
             t.mindBy = INVALID_EID;
             t.origPlayer = -1;
             if(!t.deploying())t.state = UState::Idle; t.target = INVALID_EID; t.clearPath();
@@ -172,12 +192,14 @@ void World::mindControlRelease(Ent& yuri) {
 void World::mindControlTake(Ent& yuri, EID yid, EID tid) {
     if (!valid(tid)) return;
     Ent& t = ents[tid];
+    if(t.nativeTemporalHead!=INVALID_EID || yuri.nativeTemporalHead!=INVALID_EID)return;
     if (t.isBuilding || psychicImmune(t.utype) || t.permaControlled || t.mindBy != INVALID_EID) return;
     if (t.player < 0 || !isEnemy(yuri.player, t.player)) return;
     mindControlRelease(yuri); // RA2 原作：同一时刻仅控制一个单位，控制新目标即释放旧目标
     Ent& tt = ents[tid];      // release 不会触发实体扩容，但保险起见重新取引用
     tt.origPlayer = tt.player;
-    tt.player = yuri.player;
+    changeActorOwner(tid,yuri.player);
+    tt.attackMove={};tt.wps.clear();
     tt.mindBy = yid;
     yuri.mindTarget = tid;
     if(!tt.deploying())tt.state = UState::Idle; tt.target = INVALID_EID; tt.clearPath();
@@ -194,7 +216,8 @@ void World::psychicAreaReleaseAll(Ent& beacon, EID bid) {
         if (!valid(tid)) continue;
         Ent& t = ents[tid];
         if (t.mindBy == bid && !t.permaControlled) {
-            t.player = t.origPlayer;
+            changeActorOwner(tid,t.origPlayer);
+            t.attackMove={};t.wps.clear();
             t.mindBy = INVALID_EID;
             t.origPlayer = -1;
             if(!t.deploying())t.state = UState::Idle; t.target = INVALID_EID; t.clearPath();
@@ -213,7 +236,8 @@ void World::psychicAreaTake(Ent& beacon, EID bid, EID tid) {
     if ((int)beacon.mindTargets.size() >= cap) return;
     Ent& tt = ents[tid];
     tt.origPlayer = tt.player;
-    tt.player = beacon.player;
+    changeActorOwner(tid,beacon.player);
+    tt.attackMove={};tt.wps.clear();
     tt.mindBy = bid;
     beacon.mindTargets.push_back(tid);
     if(!tt.deploying())tt.state = UState::Idle; tt.target = INVALID_EID; tt.clearPath();
@@ -236,7 +260,7 @@ void World::updatePsychicAreaDevices() {
             psychicAreaReleaseAll(e, id);
             continue;
         }
-        const BldDef& bd = bldDef(e.btype);
+        const BldDef& bd = bldDef(e);
         float cx = e.x + bd.w / 2.0f, cy = e.y + bd.h / 2.0f;
         float range = (e.btype == BldType::PsychicAmplifier) ? 14.0f : 10.0f;
         if ((tick + (uint64_t)id) % 15 != 0) continue; // 节流扫描
@@ -252,16 +276,21 @@ void World::updatePsychicAreaDevices() {
 }
 
 // ===================== 间谍渗透 =====================
-// RA2 原作效果：精炼厂=偷钱，电厂=断电，雷达=获取视野，兵营/工厂=新单位直接老兵，高科=破坏超武
+// Source v3 uses its original role/economy contract; fusion and older embedded
+// definitions retain the historical gameplay below.
 void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
+    if(nativeProductionRules.version>=3) {
+        if(bld.nativeIdentity.definition && bld.nativeIdentity.definition->production.spyable)applyNativeSpyEffect(spy,bld,spyId);
+        return;
+    }
     int victim = bld.player;
     Player& sp = players[spy.player];
-    const BldDef& bd = bldDef(bld.btype);
+    auto infiltrated=[&](const std::string& caption,EvaCue cue=EvaCue::BuildingInfiltrated){eva(spy.player,caption,cue);};
     switch (bld.btype) {
         case BldType::OreRefinery: {
             Credits steal = players[victim].money * 2 / 5; // 窃取对方 40% 资金
             steal=transferMoney(victim,spy.player,steal);
-            eva(spy.player, formatText(TR(S::SpyStealMoneyFmt), (long long)steal));
+            infiltrated( formatText(TR(S::SpyStealMoneyFmt), (long long)steal));
             if (victim >= 0) eva(victim, TR(S::SpyMoneyVictim));
             break;
         }
@@ -271,13 +300,13 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
                 players[victim].powerSabotage = 30 * 30; // 断电 30 秒
                 eva(victim, TR(S::SpyPowerVictim));
             }
-            eva(spy.player, TR(S::SpyPowerOk));
+            infiltrated( TR(S::SpyPowerOk));
             break;
         }
         case BldType::Radar: case BldType::PsychicSensor: {
             // 雷达/心灵探测器：获取全图视野；受害方迷雾回退
             sp.revealTimer = 30 * 60; // 全图视野 60 秒
-            eva(spy.player, TR(S::SpyRadarOk));
+            infiltrated( TR(S::SpyRadarOk));
             if (victim >= 0) {
                 for (auto& c : map.fog[victim])
                     if (c == FOG_SEEN) c = FOG_UNSEEN;
@@ -289,7 +318,7 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
             // 空指部：揭雾 + 空军老兵
             sp.revealTimer = 30 * 60;
             sp.vetCat[2] = true;
-            eva(spy.player, TR(S::SpyRadarOk));
+            infiltrated( TR(S::SpyRadarOk));
             if (victim >= 0) {
                 for (auto& c : map.fog[victim])
                     if (c == FOG_SEEN) c = FOG_UNSEEN;
@@ -299,22 +328,22 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
         }
         case BldType::Barracks:
             sp.vetCat[0] = true;
-            eva(spy.player, TR(S::SpyBarracks));
+            infiltrated( TR(S::SpyBarracks));
             break;
         case BldType::WarFactory:
             sp.vetCat[1] = true;
-            eva(spy.player, TR(S::SpyFactory));
+            infiltrated( TR(S::SpyFactory));
             break;
         case BldType::NavalYard:
             sp.vetCat[3] = true;
-            eva(spy.player, TR(S::SpyNavy));
+            infiltrated( TR(S::SpyNavy));
             break;
         case BldType::ConYard: {
             // 建造厂：窃取部分资金
             if (victim >= 0) {
                 Credits steal = std::min<Credits>(2000, players[victim].money * 3 / 10);
                 steal=transferMoney(victim,spy.player,steal);
-                eva(spy.player, formatText(TR(S::SpyStealMoneyFmt), (long long)steal));
+                infiltrated( formatText(TR(S::SpyStealMoneyFmt), (long long)steal));
                 eva(victim, TR(S::SpyMoneyVictim));
             }
             break;
@@ -324,24 +353,30 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
             if (victim >= 0) {
                 Credits steal = std::min<Credits>(1500, players[victim].money);
                 steal=transferMoney(victim,spy.player,steal);
-                if (players[victim].faction == Faction::Allies) {
+                if(nativeProductionRules.economy && bld.nativeIdentity.definition) {
+                    const int side=bld.nativeIdentity.definition->rulesFaction;
+                    const int technology=side==(int)Faction::Allies?1:side==(int)Faction::Soviet?2:side==(int)Faction::Yuri?4:0;
+                    if(technology && !(sp.stolenTech&technology)) {
+                        sp.stolenTech|=technology;infiltrated(TR(S::SpyLabOk),EvaCue::NewTechnology);
+                    }
+                } else if (players[victim].faction == Faction::Allies) {
                     if (!(sp.stolenTech & 1)) {
                         sp.stolenTech |= 1;
-                        eva(spy.player, TR(S::SpyTechChrono));
+                        infiltrated( TR(S::SpyTechChrono),EvaCue::NewTechnology);
                     }
                 } else {
                     if (!(sp.stolenTech & 2)) {
                         sp.stolenTech |= 2;
-                        eva(spy.player, TR(S::SpyTechPsi));
+                        infiltrated( TR(S::SpyTechPsi),EvaCue::NewTechnology);
                     }
                     if (!(sp.stolenTech & 4)) {
                         sp.stolenTech |= 4; // Chrono Ivan
-                        eva(spy.player, g_lang ? "Tech stolen: Chrono Ivan" : "偷取科技：超时空伊文");
+                        infiltrated( g_lang ? "Tech stolen: Chrono Ivan" : "偷取科技：超时空伊文",EvaCue::NewTechnology);
                     }
                 }
                 eva(victim, TR(S::SpyLabVictim));
             }
-            eva(spy.player, TR(S::SpyLabOk));
+            infiltrated( TR(S::SpyLabOk));
             break;
         }
         // RA2 原作：渗透超武建筑 → 重置其充能倒计时
@@ -356,12 +391,12 @@ void World::applySpyEffect(Ent& spy, Ent& bld, EID spyId) {
                 }
                 eva(victim, TR(S::SpySWVictim));
             }
-            eva(spy.player, TR(S::SpySWReset));
+            infiltrated( TR(S::SpySWReset));
             break;
         }
         default:
             sp.revealTimer = 30 * 15; // 其他建筑：短暂全图侦查
-            eva(spy.player, formatText(TR(S::SpyGenericFmt), bldName(bld.btype)));
+            infiltrated( formatText(TR(S::SpyGenericFmt), bldName(bld.btype)));
             break;
     }
     emitSoundAt(Sfx::Eva, spy.x, spy.y);
@@ -378,7 +413,7 @@ void World::updateTimedBombs() {
         if (valid(b.attachedTo)) {
             const Ent& t = ents[b.attachedTo];
             b.x = t.x; b.y = t.y;
-            if (t.isBuilding) { b.x += bldDef(t.btype).w / 2.0f; b.y += bldDef(t.btype).h / 2.0f; }
+            if (t.isBuilding) { b.x += bldDef(t).w / 2.0f; b.y += bldDef(t).h / 2.0f; }
         }
         --b.timer;timedBombs[index]=b;
         if(b.timer>0) continue;
@@ -391,14 +426,14 @@ void World::updateTimedBombs() {
             // 定时炸弹为地面爆炸：空中单位免疫（避免基洛夫空艇被自己的炸弹误伤）
             if (e.airborne()) continue;
             float ex = e.x, ey = e.y;
-            if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
+            if (e.isBuilding) { ex += bldDef(e).w / 2.0f; ey += bldDef(e).h / 2.0f; }
             float d = distf(ex, ey, b.x, b.y);
             if (d > R) continue;
             int dmg = (int)(b.dmg * (1.0f - d / (R + 1.0f)));
             damage((int)i, dmg, b.player);
             // 基洛夫等：地面载具被炸掀起（左右交替）
             if (b.rockVehicles && valid((EID)i) && !ents[i].isBuilding) {
-                const UnitDef& ud = unitDef(ents[i].utype);
+                const UnitDef& ud = unitDef(ents[i]);
                 if (!ud.isInfantry() && !ud.isAir() && !ud.isNaval())
                     ents[i].rockTilt = std::max(ents[i].rockTilt, 36);
             }
@@ -410,12 +445,13 @@ void World::updateTimedBombs() {
 
 // ===================== 补给箱 =====================
 void World::spawnCrateTick() {
+    if(nativeCrateRules.randomCrates){updateSourceRandomCrates();return;}
     if (!cratesEnabled) return;
     if (g_gameRules.crateInterval <= 0 || tick % (uint64_t)g_gameRules.crateInterval != 0) return;
     if ((int)crates.size() >= 6) return;
     for (int tries = 0; tries < 40; tries++) {
         int x = rng.range(2, map.w - 3), y = rng.range(2, map.h - 3);
-        if (!map.passable(x, y) || bldBlocked(x, y)) continue;
+        if (!map.passable(x, y) || bldAt(x,y)!=INVALID_EID) continue;
         Crate c;
         c.x = x; c.y = y; c.kind = rng.range(0, Crate::KIND_COUNT-1); // 见 Crate.kind 注释
         crates.push_back(c);
@@ -424,10 +460,15 @@ void World::spawnCrateTick() {
 }
 
 void World::pickupCrates(Ent& e) {
-    if (unitDef(e.utype).isAir()) return;
-    for (auto& c : crates) {
+    if (unitDef(e).isAir()) return;
+    const size_t originalCrates=crates.size();
+    for (size_t crateIndex=0;crateIndex<originalCrates;++crateIndex) {
+        auto& c=crates[crateIndex];
         if (!c.alive) continue;
         if ((int)e.x != c.x || (int)e.y != c.y) continue;
+        if(c.kind>=NATIVE_CRATE_BASE){const Crate picked=c;c.alive=false;
+            // Source pickup can append the immediate replacement crate.
+            if(!pickupNativeCrate(e,picked))crates[crateIndex].alive=true;continue;}
         c.alive = false;
         emitSoundAt(Sfx::Cash, e.x, e.y);
         if (c.kind == 0) {
@@ -435,7 +476,7 @@ void World::pickupCrates(Ent& e) {
             if (e.player == 0) eva(0, formatText(TR(S::CrateMoney), gain));
         } else if (c.kind == 1) {
             for (Ent& o : ents)
-                if (o.alive && !o.isBuilding && o.player == e.player) o.hp = unitDef(o.utype).hp;
+                if (o.alive && !o.isBuilding && o.player == e.player) o.hp = unitDef(o).hp;
             if (e.player == 0) eva(0, TR(S::CrateHeal));
         } else if (c.kind == 2) {
             e.vetRank = std::min(2, e.vetRank + 1);
@@ -448,7 +489,7 @@ void World::pickupCrates(Ent& e) {
             e.camoTick = 30 * 20;
             if (e.player == 0) eva(0, TR(S::CrateHeal));
         } else if (c.kind == 5) {
-            e.hp = unitDef(e.utype).hp;
+            e.hp = unitDef(e).hp;
             e.vetRank = std::min(2, e.vetRank + 1);
             if (e.player == 0) eva(0, TR(S::CrateVet));
         } else if (c.kind == 6) {
@@ -493,6 +534,7 @@ void World::pickupCrates(Ent& e) {
 // ===================== 矿脉再生 =====================
 // RA2 矿钻等效：矿脉以极慢速度恢复，避免残局经济彻底枯竭
 void World::regrowOre() {
+    if(usesRulesProfile() && nativeProductionRules.sourceModes && !nativeProductionRules.oreGrowth)return;
     if (tick % 120 != 0) return; // 每 4 秒一批
     if (g_gameRules.oreRegrowRate <= 0) return;
     for (int k = 0; k < 32; k++) {
@@ -501,7 +543,7 @@ void World::regrowOre() {
         if (c.oreMax <= 0 || c.ore >= c.oreMax) continue;
         if (c.ore == 0) {
             // 采空的格子（已变 Rough）：无占用才恢复矿脉地形
-            if (bldBlocked(x, y) || unitAtCell(x, y) != INVALID_EID) continue;
+            if (bldAt(x,y)!=INVALID_EID || unitAtCell(x, y) != INVALID_EID) continue;
             c.terrain = c.oreMax <= 150 ? Terrain::Gems : Terrain::Ore;
         }
         c.ore = (int16_t)std::min<int>(c.oreMax, c.ore + g_gameRules.oreRegrowRate);

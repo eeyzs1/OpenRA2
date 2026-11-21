@@ -1,7 +1,7 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cstdio>
 
-int Game::blockerRegression() {
+int GameRegression::blockerRegression() {
     int failures=0;
     for(int scenario=0;scenario<15;++scenario) {
         World w;w.init(64,64,20261031,2,0,{scenario==10?Faction::China:Faction::Allies,scenario==10?Faction::China:Faction::Soviet},0,"",true);

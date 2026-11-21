@@ -1,11 +1,11 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "game/lang.h"
 #include <cstdio>
 #ifdef RA2_TESTING
 bool writeLegacyV21(const World&,FILE*);
 #endif
 
-int Game::serviceRegression() {
+int GameRegression::serviceRegression() {
     int failures=0;localPlayer=0;phase=Phase::InGame;showMenu=false;gameOver=false;camZoom=1;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("SERVICE %s %s\n",ok?"PASS":"FAIL",name); };
     auto reset=[&]() {
@@ -141,9 +141,10 @@ int Game::serviceRegression() {
     world.ents[tank].state=UState::Moving;file=tmpfile();bool migrated=file && writeLegacyV21(world,file);
     if(migrated) { rewind(file);migrated=restored.loadGame(file); }
     if(file) fclose(file);
-    world.ents[tank].state=UState::Servicing;
-    migrated &= restored.ents[tank].state==UState::Servicing && world.checksum()==restored.checksum();
-    for(int frame=0;frame<600 && migrated;++frame) { world.update();restored.update();migrated=world.checksum()==restored.checksum(); }
+    World expected=world;expected.map.bldOccRef=&expected.bldOcc;expected.ents[tank].state=UState::Servicing;expected.aircraftSpawnersEnabled=false;expected.aswEnabled=false;expected.nativeFlightEnabled=false;expected.nativeJumpjetEnabled=false;
+    expected.veterancyProgressEnabled=false;expected.independentSupportEnabled=false;expected.supportDeliveryEnabled=false;
+    migrated = migrated && restored.valid(tank) && restored.ents[tank].state==UState::Servicing && expected.checksum()==restored.checksum();
+    for(int frame=0;frame<600 && migrated;++frame) { expected.update();restored.update();migrated=expected.checksum()==restored.checksum(); }
     check(migrated,"frozen v21 moving-to-depot snapshot explicitly converts and matches 600 continued ticks");
     reset();infantry=world.spawnUnit(0,UnitType::GI,10.5f,20.5f);depot=world.spawnBuilding(0,BldType::ServiceDepot,30,20,true);
     world.ents[infantry].state=UState::Servicing;world.ents[infantry].target=depot;

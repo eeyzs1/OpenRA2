@@ -1,0 +1,16 @@
+{
+  "originalSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "entryPointExecuted": false,
+  "independentYRExecuted": false,
+  "houseSamples": 122,
+  "leaderSelectionSamples": 320,
+  "freshJoinCases": 4,
+  "strengthCases": 24,
+  "scope": "Original House center arithmetic and Foot leader selection/flags using explicit synthetic virtuals. Native Map.NearByLocation clearance, full Team.AI/movement and independent YR remain uncalibrated. First leader model failure retained: availability tests Health!=0, not Health>0.",
+  "native-house-center-ra2.csv": "e636cdda0d326d46bd5280189fd9e46d76107a0841cc3dfab5cfd4a3e2a14136",
+  "native-team-leader-ra2.csv": "e98ad78a888c87f399e70b25def80dfde8626bedc7931e4da8f190bf6f9b2f71",
+  "openingBuildConstCases": 186,
+  "totalOriginalInstructionCases": 656,
+  "openingFinding": "The original House+0x54 vector is ConYards, not vehicles. An MCV-only opening retains an empty center; the BuildConst scan prefers the last matching building.",
+  "openingFallbackEvidence": "The last BuildConst choice has 186 original-instruction samples. The earlier first-ConYard fallback is inferred from static original setup instructions and pinned field-layout headers; the complete original opening path was not executed."
+}

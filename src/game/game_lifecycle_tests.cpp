@@ -1,4 +1,4 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "game/lang.h"
 #include "game/script.h"
 #include "core/content.h"
@@ -7,7 +7,7 @@
 #include <fstream>
 
 // Slot-reuse mechanisms are intentionally separate from natural-start matches.
-int Game::lifecycleRegression() {
+int GameRegression::lifecycleRegression() {
     int failures=0;localPlayer=0;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("LIFECYCLE %s %s\n",ok?"PASS":"FAIL",name); };
     auto reset=[&]() {

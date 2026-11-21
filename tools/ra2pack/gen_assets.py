@@ -94,7 +94,8 @@ UNITS = {
     "v3launcher": ["V3"], "apocalypse": ["APOC"], "terrordrone": ["DRON"],
     "demotruck": ["DTRUCK"], "tankdestroyer": ["TNKD"],
     "intruder": ["ORCA"], "blackeagle": ["BEAG"], "kirov": ["ZEP"],
-    "nighthawk": ["SHAD"], "hornet": ["HORNET"],
+    "nighthawk": ["SHAD"], "hornet": ["HORNET"], "asw": ["ASW"],
+    "cargoplane": ["PDPLANE"], "spyplane": ["SPYP"],
     "destroyer": ["DEST"], "typhoon": ["SUB"], "aegis": ["AEGIS"],
     "seascorpion": ["HYD"], "dreadnought": ["DRED"], "aircraftcarrier": ["CARRIER"],
     "amphtransport": ["SAPC"], "dolphin": ["DLPH"], "squid": ["SQD"],
@@ -132,7 +133,7 @@ MINERS = {"harvester", "chronominer", "warminer", "slaveminer"}
 # 卸货动画 VXL（HORV/CMON）：与车体 Image 不同
 MINER_UNLOAD_VXL = {"harvester": "horv", "chronominer": "cmon", "warminer": "horv"}
 # 引擎 MoveType（src/game/data.cpp）：空军/海军不烘地面投影，锚点=内容中心
-AIR = {"intruder", "blackeagle", "kirov", "nighthawk", "hornet", "rocketeer",
+AIR = {"intruder", "blackeagle", "kirov", "nighthawk", "hornet", "asw", "cargoplane", "spyplane", "rocketeer",
        "mig", "siegechopper", "floatingdisc"}
 # 气垫/悬浮地面单位：无履带触地点，用内容中心锚点（避免遥控坦克左偏裁切）
 HOVER = {"robottank"}
@@ -665,6 +666,25 @@ def render_seq_unit(img, eng, canvas):
                 if not im:
                     return False
                 save(im, f"unit_{eng}_depfire_d{e}_f{p}.png")
+    # Water poses share one SHP coordinate transform. Cropping and fitting each
+    # pose separately stretches ripples and makes the swimmer jump between frames.
+    if eng in {"tanya", "navyseal"}:
+        reference = composite_frames(shp, [sequence_frame(ready, 0)], PAL_U)
+        scale = min(canvas[0] / reference.width, (canvas[1] - 4) / reference.height, 2.0)
+        water_size = (round(shp.w * scale), round(shp.h * scale))
+        meta.update(waterox=water_size[0] // 2, wateroy=water_size[1] // 2)
+        for field, key in [("swim", "Swim"), ("tread", "Tread"), ("wetfire", "WetAttack")]:
+            part = seq_part(seq, key)
+            if not sequence_fits(part, n):
+                raise ValueError((eng, key, "missing or invalid original water sequence"))
+            meta[field] = part[1]
+            meta[field + "rate"] = 2
+            for e in range(8):
+                for p in range(part[1]):
+                    frame, (x, y, _, _) = shp_frame_img(shp, sequence_frame(part, (e + 6) % 8, p), PAL_U)
+                    full = Image.new("RGBA", (shp.w, shp.h), (0, 0, 0, 0))
+                    full.alpha_composite(frame, (x, y))
+                    save(full.resize(water_size, Image.Resampling.NEAREST), f"unit_{eng}_{field}_d{e}_f{p}.png")
     ANIM_META["units"][eng] = meta
     return True
 
@@ -1551,8 +1571,28 @@ def main():
 
     if ONLY is None:
         from pathlib import Path
+        from gen_support_art import export_parachute
+        export_parachute(T, Path(ROOT) / "assets/sprites")
         from gen_chrono_fx import export_chrono
         export_chrono(T, Path(ROOT) / "assets")
+        from gen_voices import export_voices
+        export_voices(T, Path(ROOT) / "assets/sfx/voices")
+        from gen_announcer import export_announcer
+        from gen_music import export_music
+        export_announcer(T,Path(ROOT)/"assets/sfx/announcer")
+        export_music(T,Path(ROOT)/"assets/music/native")
+        from source_rules import export_profile
+        for edition in ("ra2", "yr"):
+            export_profile(T,edition,Path(ROOT)/"assets/rules/profiles"/(edition+".ini"))
+        from gen_native_maps import import_map
+        for filename in ("all01t.map","sov01t.map"):
+            if T.find_all(filename):
+                import_map(T,filename)
+            else:
+                print("Native map source not installed:",filename)
+        if T.find_all("all01t.map"):
+            from gen_native_scene import export_scene
+            export_scene(T,"all01t.map")
     if ONLY is None or "unit_siegechopper" in ONLY:
         from pathlib import Path
         from gen_chopper_deploy import export_chopper

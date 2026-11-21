@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -197,9 +198,8 @@ static const VxlFile* getVxl(const char* stem) {
     if (!stem || !stem[0]) return nullptr;
     auto it = gVxlCache.find(stem);
     if (it != gVxlCache.end()) return it->second.valid ? &it->second : nullptr;
-    char virt[256];
-    snprintf(virt, sizeof(virt), "assets/voxels/%s.vxl", stem);
-    std::string path = contentResolve(virt);
+    const std::string virt=(std::string(stem).starts_with("assets/")?std::string(stem):"assets/voxels/"+std::string(stem))+".vxl";
+    std::string path = contentResolve(virt.c_str());
     if (path.empty()) path = virt;
     std::vector<uint8_t> raw;
     VxlFile vf;
@@ -248,9 +248,8 @@ static const HvaFile* getHva(const char* stem) {
     if (!stem || !stem[0]) return nullptr;
     auto it = gHvaCache.find(stem);
     if (it != gHvaCache.end()) return it->second.valid ? &it->second : nullptr;
-    char virt[256];
-    snprintf(virt, sizeof(virt), "assets/voxels/%s.hva", stem);
-    std::string path = contentResolve(virt);
+    const std::string virt=(std::string(stem).starts_with("assets/")?std::string(stem):"assets/voxels/"+std::string(stem))+".hva";
+    std::string path = contentResolve(virt.c_str());
     if (path.empty()) path = virt;
     std::vector<uint8_t> raw;
     HvaFile hf;
@@ -362,7 +361,7 @@ static const float kFaceMul[6] = {0.88f, 0.72f, 0.92f, 0.78f, 1.05f, 0.65f};
 
 static void projectVxl(const VxlFile& vxl, float facingPhiDeg, std::vector<Pt>& pts,
                        float& mnx, float& mxx, float& mny, float& mxy,
-                       const HvaFile* hva = nullptr, int hvaFrame = 0) {
+                       const HvaFile* hva = nullptr, int hvaFrame = 0, std::optional<Vector2>* barrelTip = nullptr) {
     pts.clear();
     mnx = 1e9f; mxx = -1e9f; mny = 1e9f; mxy = -1e9f;
     float cosf = std::cos(facingPhiDeg * (float)(3.14159265358979323846 / 180.0));
@@ -370,6 +369,9 @@ static void projectVxl(const VxlFile& vxl, float facingPhiDeg, std::vector<Pt>& 
     int frame = 0;
     if (hva && hva->valid && hva->nframes > 0)
         frame = std::max(0,hvaFrame)%hva->nframes;
+    float furthest = std::numeric_limits<float>::lowest();
+    Vector2 tipSum{};
+    int tipSamples = 0;
 
     for (const Section& sec : vxl.sections) {
         const float* hm = nullptr;
@@ -417,6 +419,25 @@ static void projectVxl(const VxlFile& vxl, float facingPhiDeg, std::vector<Pt>& 
         for (const Voxel& v : sec.voxels) {
             float cx, cy, cz;
             xform(v.x + 0.5f, v.y + 0.5f, v.z + 0.5f, cx, cy, cz);
+            if (barrelTip) {
+                // These barrels extend along local +X. Average the end face before view culling.
+                float x, y, z;
+                xform(v.x + 1.f, v.y + .5f, v.z + .5f, x, y, z);
+                const float forward = x * cosf + y * sinf;
+                constexpr float tolerance = .001f;
+                if (forward > furthest + tolerance) {
+                    furthest = forward;
+                    tipSum = {};
+                    tipSamples = 0;
+                }
+                if (std::abs(forward - furthest) <= tolerance) {
+                    Vector2 point;
+                    proj(x, y, z, point.x, point.y);
+                    tipSum.x += point.x;
+                    tipSum.y += point.y;
+                    ++tipSamples;
+                }
+            }
             float sh0 = 1.f;
             uint8_t colLit = shadeIndex(v.color, v.normal, sec.normalsType, cosf, sinf, sh0,hm);
             Pt pt{};
@@ -459,6 +480,8 @@ static void projectVxl(const VxlFile& vxl, float facingPhiDeg, std::vector<Pt>& 
             mny = std::min(mny, pt.sy); mxy = std::max(mxy, pt.sy);
         }
     }
+    if (barrelTip && tipSamples > 0)
+        *barrelTip = Vector2{tipSum.x * kScale / tipSamples, tipSum.y * kScale / tipSamples};
 }
 
 static Color rgbOf(uint8_t c, float shade, const Color* houseColor) {
@@ -696,6 +719,8 @@ static Stems stemsOf(UnitType t) {
             return {"schp", nullptr, nullptr, nullptr, true};
         case UnitType::Hornet:
             return {"hornet", nullptr, nullptr, nullptr, true};
+        case UnitType::ASW:
+            return {"asw", nullptr, nullptr, nullptr, true};
         case UnitType::Destroyer:
             return {"dest", nullptr, nullptr, nullptr, true};
         case UnitType::Typhoon:
@@ -718,14 +743,15 @@ static Stems stemsOf(UnitType t) {
 }
 
 static bool projectStemPts(const char* stem, float phi, std::vector<Pt>& pts,
-                           float& mnx, float& mxx, float& mny, float& mxy,int frame=0) {
+                           float& mnx, float& mxx, float& mny, float& mxy,int frame=0,
+                           std::optional<Vector2>* barrelTip=nullptr) {
     const VxlFile* v = getVxl(stem);
     if (!v) return false;
     std::vector<Pt> part;
     float a, b, c, d;
     const auto* animation=getHva(stem);
     if(!animation)return false;
-    projectVxl(*v, phi, part, a, b, c, d, animation, frame);
+    projectVxl(*v, phi, part, a, b, c, d, animation, frame, barrelTip);
     if (part.empty()) return false;
     if (pts.empty()) {
         mnx = a; mxx = b; mny = c; mxy = d;
@@ -737,20 +763,50 @@ static bool projectStemPts(const char* stem, float phi, std::vector<Pt>& pts,
     return true;
 }
 
-static bool renderStem(const char* stem, const char* barl, int dir, bool floating,
-                       const Layout* forced, PixBuf& out, Layout* outLayout, const Color* houseColor,int frame=0) {
+static bool renderStemAt(const char* stem, const char* barl, float phi, bool floating,
+                       const Layout* forced, PixBuf& out, Layout* outLayout, const Color* houseColor,int frame=0,
+                       std::optional<Vector2>* barrelTip=nullptr) {
     const VxlFile* v = getVxl(stem);
     if (!v) return false;
-    float phi = voxelFacingDegrees(dir);
     std::vector<Pt> pts;
     float mnx, mxx, mny, mxy;
     // 炮塔/炮管分开投影、各自 HVA，再合并点集（避免 MDUMMY01/DUMMY01 抢错矩阵）
     if (!projectStemPts(stem, phi, pts, mnx, mxx, mny, mxy,frame)) return false;
-    if (barl && !projectStemPts(barl, phi, pts, mnx, mxx, mny, mxy,frame))return false;
+    if (barl && !projectStemPts(barl, phi, pts, mnx, mxx, mny, mxy,frame,barrelTip))return false;
     if (pts.empty()) return false;
     Layout L = forced ? *forced : makeLayout(pts, mnx, mxx, mny, mxy, floating);
     rasterize(pts, L.scale, L.orgx, L.orgy, L.w, L.h, out, houseColor);
     if (outLayout) *outLayout = L;
+    return true;
+}
+
+static bool renderStem(const char* stem,const char* barl,int dir,bool floating,
+                       const Layout* forced,PixBuf& out,Layout* outLayout,const Color* houseColor,int frame=0) {
+    return renderStemAt(stem,barl,voxelFacingDegrees(dir),floating,forced,out,outLayout,houseColor,frame);
+}
+
+static bool fineAssemblyLayout(const Stems& stems,Layout& layout) {
+    if(!stems.hull)return false;
+    static std::unordered_map<std::string,Layout> layouts;
+    if(auto found=layouts.find(stems.hull);found!=layouts.end()){layout=found->second;return true;}
+    float minX=0,maxX=0,minY=0,maxY=0;
+    const auto includePose=[&](const char* stem,float angle,int phase) {
+        std::vector<Pt> points;float a,b,c,d;
+        if(!projectStemPts(stem,angle,points,a,b,c,d,phase))return false;
+        minX=std::min(minX,a);maxX=std::max(maxX,b);minY=std::min(minY,c);maxY=std::max(maxY,d);
+        return true;
+    };
+    // Stream bounds, rather than retaining every facing's projected voxels.
+    for(const char* stem:{stems.hull,stems.tur,stems.barl})if(stem) {
+        const auto* animation=getHva(stem);if(!animation || !getVxl(stem))return false;
+        for(int facing=0;facing<32;++facing)for(int phase=0;phase<animation->nframes;++phase)
+            if(!includePose(stem,11.25f*(facing-4),phase))return false;
+    }
+    // Optional unload models share the rolling vehicle's physical origin.
+    if(stems.unload && getVxl(stems.unload) && getHva(stems.unload))
+        for(int dir=0;dir<8;++dir)includePose(stems.unload,voxelFacingDegrees(dir),0);
+    layout=originLayout(minX,maxX,minY,maxY);
+    layouts.emplace(stems.hull,layout);
     return true;
 }
 
@@ -815,7 +871,10 @@ bool renderBody(UnitType t, int dir, int frame, PixBuf& out, const Color* houseC
     if (!gPalOk) return false;
     Stems s = stemsOf(t);
     if (!s.hull) return false;
+    if(t==UnitType::Destroyer && frame==1){s.hull="destwo";frame=0;}
     Layout L;
+    if(t==UnitType::Destroyer && assemblyLayout(stemsOf(t),dir,L))
+        return renderStem(s.hull,nullptr,dir,s.floating,&L,out,nullptr,houseColor,frame);
     // 有炮塔时用整车盒做画布，保证车体/炮塔同锚点且炮塔不被裁切
     if ((s.tur || bodyFrames(t)>1) && assemblyLayout(s, dir, L)) {
         if(originAnchor)*originAnchor={(int)L.orgx,(int)L.orgy};
@@ -834,6 +893,56 @@ bool renderTurret(UnitType t, int dir, PixBuf& out, const Color* houseColor,int 
     return renderStem(s.tur, s.barl, dir, s.floating, &L, out, nullptr, houseColor,frame);
 }
 
+bool renderBodyFacing(UnitType t,int facing,int frame,PixBuf& out,Vec2i& anchor,const Color* houseColor) {
+    init();const auto stems=stemsOf(t);Layout layout;
+    if(!gPalOk || !fineAssemblyLayout(stems,layout))return false;
+    anchor={(int)layout.orgx,(int)layout.orgy};
+    return renderStemAt(stems.hull,nullptr,11.25f*((facing&31)-4),stems.floating,&layout,out,nullptr,houseColor,frame);
+}
+
+bool renderTurretFacing(UnitType t,int facing,int frame,PixBuf& out,Vec2i& anchor,const Color* houseColor,
+                        std::optional<Vector2>* barrelTip) {
+    if (barrelTip) barrelTip->reset();
+    init();const auto stems=stemsOf(t);Layout layout;
+    if(!gPalOk || !stems.tur || !fineAssemblyLayout(stems,layout))return false;
+    anchor={(int)layout.orgx,(int)layout.orgy};
+    const bool singleBarrel = t == UnitType::Grizzly || t == UnitType::Rhino || t == UnitType::MirageTank;
+    return renderStemAt(stems.tur,stems.barl,11.25f*((facing&31)-4),stems.floating,&layout,out,nullptr,houseColor,frame,
+                        singleBarrel ? barrelTip : nullptr);
+}
+
+int ifvFrames(const std::string& root,int turret) {
+    const auto stem=root+(turret>=0?"tur"+(turret?std::to_string(turret):std::string{}):std::string{});
+    const auto* animation=getHva(stem.c_str());
+    return getVxl(stem.c_str()) && animation?animation->nframes:0;
+}
+
+bool renderIFV(const std::string& root,int turrets,int turret,int dir,int frame,
+               PixBuf& out,Vec2i& anchor,const Color* houseColor) {
+    init();if(!gPalOk || turrets<1 || turrets>32 || turret < -1 || turret>=turrets)return false;
+    static std::unordered_map<std::string,Layout> layouts;
+    const auto key=root+":"+std::to_string(turrets);auto found=layouts.find(key);
+    if(found==layouts.end()) {
+        float minX=0,maxX=0,minY=0,maxY=0;bool any=false;
+        for(int part=-1;part<turrets;++part) {
+            const auto stem=root+(part>=0?"tur"+(part?std::to_string(part):std::string{}):std::string{});
+            const int frames=ifvFrames(root,part);if(!frames)return false;
+            for(int facing=0;facing<8;++facing)for(int phase=0;phase<frames;++phase) {
+                std::vector<Pt> points;float a,b,c,d;
+                if(!projectStemPts(stem.c_str(),voxelFacingDegrees(facing),points,a,b,c,d,phase))return false;
+                minX=any?std::min(minX,a):a;maxX=any?std::max(maxX,b):b;
+                minY=any?std::min(minY,c):c;maxY=any?std::max(maxY,d):d;any=true;
+            }
+        }
+        const auto layout=originLayout(minX,maxX,minY,maxY);
+        if(!any || layout.w<1 || layout.h<1 || layout.w>384 || layout.h>384)return false;
+        found=layouts.emplace(key,layout).first;
+    }
+    const auto stem=root+(turret>=0?"tur"+(turret?std::to_string(turret):std::string{}):std::string{});
+    const auto& layout=found->second;anchor={(int)layout.orgx,(int)layout.orgy};
+    return renderStem(stem.c_str(),nullptr,dir&7,false,&layout,out,nullptr,houseColor,frame);
+}
+
 bool renderDeployed(UnitType t,int bodyDir,int turretDir,PixBuf& out,Vec2i& anchor,const Color* houseColor) {
     init();if(t!=UnitType::SiegeChopper || !gPalOk)return false;
     std::vector<Pt> points;float minX,maxX,minY,maxY;
@@ -846,12 +955,11 @@ bool renderDeployed(UnitType t,int bodyDir,int turretDir,PixBuf& out,Vec2i& anch
     return true;
 }
 
-bool renderUnload(UnitType t, int dir, PixBuf& out, const Color* houseColor) {
-    init();
-    if (!gPalOk) return false;
-    Stems s = stemsOf(t);
-    if (!s.unload) return false;
-    return renderStem(s.unload, nullptr, dir, s.floating, nullptr, out, nullptr, houseColor);
+bool renderUnload(UnitType t,int dir,PixBuf& out,Vec2i& anchor,const Color* houseColor) {
+    init();const auto stems=stemsOf(t);Layout layout;
+    if(!gPalOk || !stems.unload || !fineAssemblyLayout(stems,layout))return false;
+    anchor={(int)layout.orgx,(int)layout.orgy};
+    return renderStem(stems.unload,nullptr,dir,stems.floating,&layout,out,nullptr,houseColor);
 }
 
 } // namespace VxlRt

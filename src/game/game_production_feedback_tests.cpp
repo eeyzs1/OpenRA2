@@ -1,8 +1,8 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cstdio>
 #include <filesystem>
 
-int Game::productionFeedbackRegression(const char* outputDir) {
+int GameRegression::productionFeedbackRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);int failures=0;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("PRODUCTION_FEEDBACK %s %s\n",ok?"PASS":"FAIL",name); };
     world.init(64,64,20261031,2,0,{Faction::Allies,Faction::Soviet},0,"maps/skirmish-reference.txt",true);
@@ -164,8 +164,8 @@ int Game::productionFeedbackRegression(const char* outputDir) {
         for(int i=0;i<30;++i) execute(World::Cmd::StartUnitProd,(int)UnitType::GI);
         visual &= hoverGI() && hudTip.reason==TR(S::MsgProductionFull);
         before=world.checksum();sim.pressedL=true;render();sim.pressedL=false;
-        visual &= !world.presentationEvents.empty() && world.presentationEvents.back().kind==PresentationKind::ProductionOrder &&
-            world.presentationEvents.back().production.reason==ProductionRejectReason::QueueFull && before==world.checksum();
+        visual &= world.presentationEvents.empty() && before==world.checksum()
+            && msg.find(TR(S::MsgProductionFull))!=std::string::npos;
         consumePresentationEvents();visual &= msg.find(TR(S::MsgProductionFull))!=std::string::npos;capture("full");
         sim.pressedR=true;render();sim.pressedR=false;consumePresentationEvents();render();
         visual &= world.players[0].unitProd[0].held && hudTip.reason==TR(S::TipHeld) && msg.find(TR(S::MsgProductionPaused))!=std::string::npos;

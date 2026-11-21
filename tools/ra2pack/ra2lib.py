@@ -524,13 +524,16 @@ def get_normals_for_type(ntype: int):
     return get_normals4()
 
 def vpl_shade_index(color: int, normal_idx: int, facing_cos: float, facing_sin: float,
-                    normals_type: int = 4, light=(-0.55, -0.55, 0.63)):
+                    normals_type: int = 4, light=(-0.55, -0.55, 0.63), pitch: float = 0):
     """按 normals_type 取法线表 × voxels.vpl → 调色板索引。"""
     norms = get_normals_for_type(normals_type)
     vpl = get_vpl()
     if norms and vpl:
         ni = normal_idx % len(norms)
         nx, ny, nz = norms[ni]
+        if pitch:
+            cp,sp=math.cos(pitch),math.sin(pitch)
+            nx,nz=nx*cp-nz*sp,nx*sp+nz*cp
         rx = nx * facing_cos - ny * facing_sin
         ry = nx * facing_sin + ny * facing_cos
         rz = nz
@@ -554,6 +557,9 @@ def vpl_shade_index(color: int, normal_idx: int, facing_cos: float, facing_sin: 
     if norms:
         ni = normal_idx % len(norms)
         nx, ny, nz = norms[ni]
+        if pitch:
+            cp,sp=math.cos(pitch),math.sin(pitch)
+            nx,nz=nx*cp-nz*sp,nx*sp+nz*cp
         rx = nx * facing_cos - ny * facing_sin
         ry = nx * facing_sin + ny * facing_cos
         rz = nz
@@ -627,7 +633,7 @@ def _proj(x, y, z):
 def _rot_z(x, y, z, cosf, sinf):
     return x * cosf - y * sinf, x * sinf + y * cosf, z
 
-def vxl_project(vxl: Vxl, hva, facing_phi_deg: float, hva_frame: int = 0):
+def vxl_project(vxl: Vxl, hva, facing_phi_deg: float, hva_frame: int = 0, pitch: float = 0):
     cosf = math.cos(math.radians(facing_phi_deg))
     sinf = math.sin(math.radians(facing_phi_deg))
     pts = []
@@ -684,18 +690,24 @@ def vxl_project(vxl: Vxl, hva, facing_phi_deg: float, hva_frame: int = 0):
                     _m[4] * x1 + _m[5] * y1 + _m[6] * z1 + _m[7] * _hs,
                     _m[8] * x1 + _m[9] * y1 + _m[10] * z1 + _m[11] * _hs,
                 )
+            if pitch:
+                cp,sp=math.cos(pitch),math.sin(pitch)
+                x1,z1=x1*cp-z1*sp,x1*sp+z1*cp
             return _rot_z(x1, y1, z1, cosf, sinf)
 
         for (vx, vy, vz, c, nrm) in sec.voxels:
             cx, cy, cz = xform(vx + 0.5, vy + 0.5, vz + 0.5)
             if cz < zmin:
                 zmin = cz
-            col_lit, sh0 = vpl_shade_index(c, nrm, cosf, sinf, normals_type=ntype)
+            col_lit, sh0 = vpl_shade_index(c, nrm, cosf, sinf, normals_type=ntype,pitch=pitch)
             face_list = []
             for fi, (dx, dy, dz) in enumerate(_FACE_OFFSETS):
                 if (vx + dx, vy + dy, vz + dz) in occ:
                     continue
                 fnx, fny, fnz = _FACE_NORMALS[fi]
+                if pitch:
+                    cp,sp=math.cos(pitch),math.sin(pitch)
+                    fnx,fnz=fnx*cp-fnz*sp,fnx*sp+fnz*cp
                 rnx, rny, rnz = _rot_z(fnx, fny, fnz, cosf, sinf)
                 if rnx + rny + rnz <= 0.02:
                     continue

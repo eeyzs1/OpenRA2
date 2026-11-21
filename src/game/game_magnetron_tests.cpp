@@ -1,8 +1,8 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cstdio>
 #include <filesystem>
 
-int Game::magnetronRegression(const char* outputDir) {
+int GameRegression::magnetronRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);
     int failures=0;
     for(int scenario=0;scenario<2;++scenario) {

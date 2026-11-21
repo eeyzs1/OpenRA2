@@ -23,6 +23,10 @@ std::string Game::productionFeedbackText(const ProductionOrderResult& result) co
     else if(result.queued) text=TR(S::MsgProductionRemoved);
     else text=TextFormat(TR(S::MsgProductionCanceled),result.refund);
     const int count=result.unit?(int)UnitType::COUNT:(int)BldType::COUNT;
+    if(world.nativeProductionType(result.type)) {
+        const auto& d=*world.nativeTypes[result.type-NATIVE_PRODUCTION_BASE];
+        return std::string(d.isBuilding?bldName(d.building.type):unitName(d.unit.type))+(g_lang?": ":"：")+text;
+    }
     if(result.type>=0 && result.type<count)
         text=std::string(result.unit?unitName((UnitType)result.type):bldName((BldType)result.type))+(g_lang?": ":"：")+text;
     return text;

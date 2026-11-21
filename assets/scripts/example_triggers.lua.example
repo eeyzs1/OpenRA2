@@ -42,3 +42,14 @@ function OnTrigger(tag)
         end
     end
 end
+
+local previousSave, previousLoad = OnSave, OnLoad
+function OnSave()
+    local state = previousSave and previousSave() or {}
+    state.example_triggers = { ambushFired = ambushFired }
+    return state
+end
+function OnLoad(state)
+    if previousLoad then previousLoad(state) end
+    ambushFired = assert(state.example_triggers).ambushFired
+end

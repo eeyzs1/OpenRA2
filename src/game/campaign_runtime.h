@@ -11,6 +11,7 @@ struct CampaignRuntime {
     bool timerVisible = false;
     bool winOnAllPrimary = true; // Objective=2 时：全部 GateWin 主目标完成 → 胜
     bool armed = false;
+    bool operator==(const CampaignRuntime&) const = default;
 
     void reset(const MissionDef& md);
     void setPhase(int p) { phase = p; }

@@ -8,9 +8,10 @@
 #include <algorithm>
 
 void World::updateBuilding(Ent& e, EID id) {
-    const BldDef& bd = bldDef(e.btype);
+    const BldDef& bd = bldDef(e);
     if (e.atkCd > 0) e.atkCd--;
-    if (e.btype == BldType::GatlingCannon) {
+    if(hasNativeGatling(e))updateNativeGatling(e);
+    else if (e.btype == BldType::GatlingCannon) {
         if (e.gatlingHeat > 0 && !valid(e.target)) e.gatlingHeat = std::max(0, e.gatlingHeat - 2);
         e.gatlingStage = e.gatlingHeat >= 120 ? 2 : (e.gatlingHeat >= 50 ? 1 : 0);
     }
@@ -43,26 +44,26 @@ void World::updateBuilding(Ent& e, EID id) {
         } else if (e.btype == BldType::Hospital && e.bldAnim % 60 == 0) {
             // 医院：全体己方步兵持续回血
             for (Ent& o : ents)
-                if (o.alive && !o.isBuilding && o.player == e.player && unitDef(o.utype).isInfantry())
-                    o.hp = std::min(maxHpFor(o, unitDef(o.utype)), o.hp + 3);
+                if (o.alive && !o.isBuilding && o.player == e.player && o.nativeTemporalHead==INVALID_EID && unitDef(o).isInfantry())
+                    o.hp = std::min(maxHpFor(o, unitDef(o)), o.hp + 3);
         } else if (e.btype == BldType::MachineShop && e.bldAnim % 60 == 0) {
             // 机械商店：全体己方车辆/舰船持续维修
             for (Ent& o : ents)
-                if (o.alive && !o.isBuilding && o.player == e.player && !unitDef(o.utype).isInfantry())
-                    o.hp = std::min(maxHpFor(o, unitDef(o.utype)), o.hp + 4);
+                if (o.alive && !o.isBuilding && o.player == e.player && o.nativeTemporalHead==INVALID_EID && !unitDef(o).isInfantry())
+                    o.hp = std::min(maxHpFor(o, unitDef(o)), o.hp + 4);
         } else if (e.btype == BldType::TechOutpost && e.bldAnim % 60 == 0) {
             // 科技前哨站：全体己方单位持续维修+回血（医院+机械商店合体）
             for (Ent& o : ents)
-                if (o.alive && !o.isBuilding && o.player == e.player)
-                    o.hp = std::min(maxHpFor(o, unitDef(o.utype)), o.hp + 3);
+                if (o.alive && !o.isBuilding && o.player == e.player && o.nativeTemporalHead==INVALID_EID)
+                    o.hp = std::min(maxHpFor(o, unitDef(o)), o.hp + 3);
         }
     }
     // 破损民房：半血以下冒烟燃烧
-    if (e.btype == BldType::CivHouse && e.hp * 2 <= bldDef(e.btype).hp && tick % 18 == (uint64_t)(id % 18)) {
+    if (e.btype == BldType::CivHouse && e.hp * 2 <= bldDef(e).hp && tick % 18 == (uint64_t)(id % 18)) {
         Effect sm;
         sm.kind = 1;
-        sm.x = e.x + bldDef(e.btype).w * 0.5f + (rng.unit() - 0.5f) * 0.8f;
-        sm.y = e.y + bldDef(e.btype).h * 0.5f + (rng.unit() - 0.5f) * 0.8f;
+        sm.x = e.x + bldDef(e).w * 0.5f + (rng.unit() - 0.5f) * 0.8f;
+        sm.y = e.y + bldDef(e).h * 0.5f + (rng.unit() - 0.5f) * 0.8f;
         sm.maxAge = 36;
         effects.push_back(sm);
         if (tick % 36 == (uint64_t)(id % 36)) {
@@ -96,7 +97,7 @@ void World::updateBuilding(Ent& e, EID id) {
                 if (!valid(tid)) continue;
                 Ent& t = ents[tid];
                 if (t.mindBy == id && !t.permaControlled) {
-                    t.player = t.origPlayer;
+                    changeActorOwner(tid,t.origPlayer);
                     t.mindBy = INVALID_EID;
                     t.origPlayer = -1;
                     t.state = UState::Idle; t.target = INVALID_EID; t.clearPath();
@@ -115,18 +116,31 @@ void World::updateBuilding(Ent& e, EID id) {
         auto bldTargetOk = [&](EID tid) {
             if (!valid(tid)) return false;
             const Ent& t = ents[tid];
-            bool airT = t.airborne();
-            if (airT && !bd.weapon.antiAir) return false;
-            if (!airT && !bd.weapon.antiGround) return false;
+            if(!isEnemy(e.player,t.player))return false;
+            bool airT = t.airborne();const auto weapon=hasNativeGatling(e)?effWeapon(e,&t):bd.weapon;
+            if (airT && !weapon.antiAir) return false;
+            if (!airT && !weapon.antiGround) return false;
             float tx = t.x, ty = t.y;
-            if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
-            return distf(cx, cy, tx, ty) <= bd.weapon.range + 1;
+            if (t.isBuilding) { tx += bldDef(t).w / 2.0f; ty += bldDef(t).h / 2.0f; }
+            return distf(cx, cy, tx, ty) <= weapon.range + 1;
         };
         if (!bldTargetOk(e.target)) {
-            e.target = findNearestEnemy(e.player, cx, cy, (float)bd.weapon.range, false, &bd.weapon);
-            if (e.target == INVALID_EID) e.target = findNearestEnemy(e.player, cx, cy, (float)bd.weapon.range, true, &bd.weapon);
+            if(hasNativeGatling(e)){
+                const auto& p=e.nativeIdentity.definition->guns;const int slot=std::clamp(e.gatlingStage,0,2)*4+(e.vetRank>=2?2:0);
+                const float range=std::max(p.slots[slot].weapon.range,p.slots[slot+1].weapon.range);
+                e.target=findNearestEnemy(e.player,cx,cy,range,false,nullptr,UnitType::COUNT,id,true);
+                if(e.target==INVALID_EID)e.target=findNearestEnemy(e.player,cx,cy,range,true,nullptr,UnitType::COUNT,id,true);
+            }else{
+                e.target = findNearestEnemy(e.player, cx, cy, (float)bd.weapon.range, false, &bd.weapon);
+                if (e.target == INVALID_EID) e.target = findNearestEnemy(e.player, cx, cy, (float)bd.weapon.range, true, &bd.weapon);
+            }
         }
         if (valid(e.target) && e.atkCd <= 0) {
+            if(hasNativeGatling(e)){
+                const auto& target=ents[e.target];float x=target.x,y=target.y;
+                if(target.isBuilding){x+=bldDef(target).w/2.f;y+=bldDef(target).h/2.f;}
+                e.dir=e.turretDir=dirFromVec(x-cx,y-cy);
+            }
             // 心灵控制塔：多槽心控，硬顶 3（对齐 MasterMind 前三稳定槽，无过载）
             if (e.btype == BldType::PsychicTower) {
                 Ent& t = ents[e.target];
@@ -134,7 +148,7 @@ void World::updateBuilding(Ent& e, EID id) {
                     && t.player >= 0 && isEnemy(e.player, t.player) && e.mindTargets.size() < 3) {
                     Ent& controlled = ents[e.target];
                     controlled.origPlayer = controlled.player;
-                    controlled.player = e.player;
+                    changeActorOwner(e.target,e.player);
                     controlled.mindBy = id;
                     controlled.state = UState::Idle; controlled.target = INVALID_EID; controlled.clearPath();
                     e.mindTargets.push_back(e.target);
@@ -156,7 +170,7 @@ void World::updateBuilding(Ent& e, EID id) {
                 }
                 const Ent& t = ents[e.target];
                 float tx = t.x, ty = t.y;
-                if (t.isBuilding) { tx += bldDef(t.btype).w / 2.0f; ty += bldDef(t.btype).h / 2.0f; }
+                if (t.isBuilding) { tx += bldDef(t).w / 2.0f; ty += bldDef(t).h / 2.0f; }
                 float mult = weaponMultiplier(bd.weapon, t);
                 int dmg = scaledWeaponDamage(bd.weapon.damage, mult * (1.0f + 0.75f * sup));
                 damage(e.target, dmg, e.player, id);
@@ -172,9 +186,10 @@ void World::updateBuilding(Ent& e, EID id) {
                 if(!e.alive) return;
                 e.atkCd = bd.weapon.cooldown;
             } else {
+                const int nativeCooldown=hasNativeGatling(e)?effWeapon(e,&ents[e.target]).cooldown:0;
                 fireWeapon(e, id, e.target);
                 if(!e.alive) return;
-                e.atkCd = e.btype == BldType::GatlingCannon
+                e.atkCd = hasNativeGatling(e)?nativeCooldown:e.btype == BldType::GatlingCannon
                     ? std::max(3, bd.weapon.cooldown * (e.gatlingStage == 0 ? 3 : (e.gatlingStage == 1 ? 2 : 1)) / 3)
                     : bd.weapon.cooldown;
             }
@@ -186,14 +201,19 @@ void World::updateBuilding(Ent& e, EID id) {
 
 // 驻军火力：每 8 帧一名驻军射击一次（轮换），享受射程与伤害加成
 void World::garrisonFire(Ent& b, EID id) {
+    if(nativeCrewRules.enabled && nativeCrewFires(b)){updateNativeCrew(id);return;}
+    if(nativeProductionRules.version>=3 && b.nativeIdentity.definition) {
+        const auto& profile=b.nativeIdentity.definition->production;
+        if(profile.infantryAbsorb || profile.unitAbsorb)return;
+    }
     if (tick % 8 != (uint64_t)(id % 8)) return;
-    const BldDef& bd = bldDef(b.btype);
+    const BldDef& bd = bldDef(b);
     float cx = b.x + bd.w / 2.0f, cy = b.y + bd.h / 2.0f;
     int slot = (int)((tick / 8 + id) % b.garrison.size());
     Ent::GarrisonedUnit& gu = b.garrison[slot];
     UnitType gt = gu.type;
-    WeaponDef w = unitDef(gt).weapon;
-    if (gu.vetRank >= 2 && unitDef(gt).elite) w = *unitDef(gt).elite;
+    WeaponDef w = unitDef(gu).weapon;
+    if (gu.vetRank >= 2 && unitDef(gu).elite) w = *unitDef(gu).elite;
     int rank = std::clamp(gu.vetRank, 0, 2);
     w.damage = (int)(w.damage * g_gameRules.veteranismDmgBonus[rank]);
     w.cooldown = std::max(1, (int)(w.cooldown * g_gameRules.veteranRofBonus[rank]));

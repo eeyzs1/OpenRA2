@@ -3,6 +3,7 @@
 #include <queue>
 #include <cstring>
 #include <algorithm>
+#include <limits>
 
 float Map::noise2(int x, int y, uint64_t seed) const {
     uint64_t hsh = (uint64_t)x * 0x8C8674F5C7A5A5B5ull ^ (uint64_t)y * 0xC2B2AE3D27D4EB4Full ^ seed;
@@ -29,6 +30,8 @@ float Map::fbm(float x, float y, uint64_t seed) const {
 }
 
 void Map::generate(int w_, int h_, uint64_t seed, int numPlayers, std::vector<Vec2i>& outSpawns, int mapType) {
+    bridgeCells.clear();
+    native={};
     w = w_; h = h_;
     cells.assign((size_t)w * h, Cell{});
     Rng rng(seed);
@@ -240,27 +243,31 @@ bool Map::findNearestOre(int sx, int sy, int maxR, Vec2i& out) const {
     return false;
 }
 
-struct AStarNode { int x, y; float g, f; int parent; };
+struct AStarNode { int x, y; int64_t g, f; int parent; };
 
-bool Map::findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, int maxNodes, int domain, const std::vector<uint8_t>* congestion) const {
-    return findPathImpl(sx,sy,tx,ty,tx+0.5f,ty+0.5f,0,outPath,maxNodes,domain,congestion);
+bool Map::findPath(int sx, int sy, int tx, int ty, std::vector<Vec2i>& outPath, int maxNodes, int domain, const std::vector<uint8_t>* congestion,int startLayer,int goalLayer,bool underBridge,uint8_t gateAccess) const {
+    if(!hasBridgeDecks() && (startLayer>0 || goalLayer>0)){outPath.clear();return false;}
+    if(hasBridgeDecks())return findLayeredPath(sx,sy,startLayer,tx,ty,goalLayer<0?preferredLayer(tx,ty,domain):goalLayer,tx+.5f,ty+.5f,0,outPath,maxNodes,domain,congestion,-1,underBridge,gateAccess);
+    return findPathImpl(sx,sy,tx,ty,tx+0.5f,ty+0.5f,0,outPath,maxNodes,domain,congestion,gateAccess);
 }
 
-bool Map::findPathToRange(int sx,int sy,float tx,float ty,float range,std::vector<Vec2i>& outPath,int maxNodes,int domain,const std::vector<uint8_t>* congestion) const {
+bool Map::findPathToRange(int sx,int sy,float tx,float ty,float range,std::vector<Vec2i>& outPath,int maxNodes,int domain,const std::vector<uint8_t>* congestion,int startLayer,int goalLayer,int goalHeight,bool underBridge,uint8_t gateAccess) const {
     outPath.clear();
     if(!std::isfinite(tx) || !std::isfinite(ty) || !std::isfinite(range) || range<=0 || tx<0 || ty<0 || tx>=w || ty>=h) return false;
-    return findPathImpl(sx,sy,(int)tx,(int)ty,tx,ty,range,outPath,maxNodes,domain,congestion);
+    if(hasBridgeDecks() || goalHeight>=0)return findLayeredPath(sx,sy,startLayer,(int)tx,(int)ty,goalLayer,tx,ty,range,outPath,maxNodes,domain,congestion,goalHeight,underBridge,gateAccess);
+    return findPathImpl(sx,sy,(int)tx,(int)ty,tx,ty,range,outPath,maxNodes,domain,congestion,gateAccess);
 }
 
-bool Map::findPathImpl(int sx,int sy,int tx,int ty,float goalX,float goalY,float range,std::vector<Vec2i>& outPath,int maxNodes,int domain,const std::vector<uint8_t>* congestion) const {
+bool Map::findPathImpl(int sx,int sy,int tx,int ty,float goalX,float goalY,float range,std::vector<Vec2i>& outPath,int maxNodes,int domain,const std::vector<uint8_t>* congestion,uint8_t gateAccess) const {
     outPath.clear();
     if (!inBounds(sx, sy) || !inBounds(tx, ty)) return false;
     // domain: 0 陆地 1 水面 2 两栖；建筑占用一律视为不可通行
     auto walkable = [&](int x, int y) {
-        if (!inBounds(x, y) || cellBlocked(x, y)) return false;
+        if (!inBounds(x, y) || cellBlocked(x, y,gateAccess)) return false;
         // 255 denotes an immovable occupant; lower values are soft congestion.
         if(congestion && congestion->size()==cells.size() && (*congestion)[(size_t)y*w+x]==255 && (x!=sx || y!=sy)) return false;
         const Cell& c = at(x, y);
+        if(c.blocked)return false;
         if (domain == 1) return c.terrain == Terrain::Water;
         if (domain == 2) return c.passable() || c.terrain == Terrain::Water;
         return c.passable();
@@ -285,7 +292,7 @@ bool Map::findPathImpl(int sx,int sy,int tx,int ty,float goalX,float goalY,float
 
     const int N = w * h;
     if ((int)astarG.size() != N) {
-        astarG.assign((size_t)N, 0.0f);
+        astarG.assign((size_t)N, 0);
         astarParent.assign((size_t)N, -1);
         astarOpenStamp.assign((size_t)N, 0);
         astarClosedStamp.assign((size_t)N, 0);
@@ -298,10 +305,10 @@ bool Map::findPathImpl(int sx,int sy,int tx,int ty,float goalX,float goalY,float
     }
     const uint32_t gen = astarGen;
 
-    auto gAt = [&](int i) -> float {
-        return astarOpenStamp[(size_t)i] == gen ? astarG[(size_t)i] : 1e30f;
+    auto gAt = [&](int i) -> int64_t {
+        return astarOpenStamp[(size_t)i] == gen ? astarG[(size_t)i] : std::numeric_limits<int64_t>::max()/4;
     };
-    auto setG = [&](int i, float g, int par) {
+    auto setG = [&](int i, int64_t g, int par) {
         astarOpenStamp[(size_t)i] = gen;
         astarG[(size_t)i] = g;
         astarParent[(size_t)i] = par;
@@ -313,21 +320,31 @@ bool Map::findPathImpl(int sx,int sy,int tx,int ty,float goalX,float goalY,float
         astarClosedStamp[(size_t)i] = gen;
     };
 
-    auto hFn = [&](int x, int y) {
-        if(range>0) return std::max(0.0f,distf(x+0.5f,y+0.5f,goalX,goalY)-range)*0.99999f;
-        float dx = (float)abs(x - tx), dy = (float)abs(y - ty);
-        return std::max(dx, dy) + 0.4142f * std::min(dx, dy);
+    auto hFn = [&](int x, int y) -> int64_t {
+        if(range>0) return (int64_t)(std::max(0.0f,distf(x+0.5f,y+0.5f,goalX,goalY)-range)*9999.9f);
+        const int dx=abs(x-tx),dy=abs(y-ty);
+        return 10000LL*std::max(dx,dy)+4142LL*std::min(dx,dy);
     };
-    auto cmp = [](const AStarNode& a, const AStarNode& b) { return a.f > b.f; };
+    // Integer octile costs avoid tiny accumulated float differences expanding
+    // an entire equal-cost rectangle. Prefer the command line, then progress
+    // and stable cell order; all secondary criteria preserve shortest paths.
+    auto cmp = [=](const AStarNode& a, const AStarNode& b) {
+        if(a.f!=b.f)return a.f>b.f;
+        const int64_t crossA=std::abs((int64_t)(a.x-sx)*(ty-sy)-(int64_t)(a.y-sy)*(tx-sx));
+        const int64_t crossB=std::abs((int64_t)(b.x-sx)*(ty-sy)-(int64_t)(b.y-sy)*(tx-sx));
+        if(crossA!=crossB)return crossA>crossB;
+        if(a.g!=b.g)return a.g<b.g;
+        return a.y!=b.y?a.y>b.y:a.x>b.x;
+    };
     std::priority_queue<AStarNode, std::vector<AStarNode>, decltype(cmp)> open(cmp);
 
     int startIdx = sy * w + sx;
-    setG(startIdx, 0.0f, -1);
+    setG(startIdx, 0, -1);
     open.push({sx, sy, 0, hFn(sx, sy), -1});
 
     static const int DX[8] = {1, -1, 0, 0, 1, 1, -1, -1};
     static const int DY[8] = {0, 0, 1, -1, 1, -1, 1, -1};
-    static const float COST[8] = {1, 1, 1, 1, 1.4142f, 1.4142f, 1.4142f, 1.4142f};
+    static constexpr int64_t COST[8] = {10000,10000,10000,10000,14142,14142,14142,14142};
 
     int expanded = 0;
     while (!open.empty() && expanded++ < maxNodes) {
@@ -352,12 +369,14 @@ bool Map::findPathImpl(int sx,int sy,int tx,int ty,float goalX,float goalY,float
             if (d >= 4) { // 禁止穿对角障碍
                 if (!walkable(cur.x + DX[d], cur.y) || !walkable(cur.x, cur.y + DY[d])) continue;
                 if (!climbOk(cur.x, cur.y, cur.x + DX[d], cur.y, domain)
-                    || !climbOk(cur.x, cur.y, cur.x, cur.y + DY[d], domain)) continue;
+                    || !climbOk(cur.x, cur.y, cur.x, cur.y + DY[d], domain)
+                    || !climbOk(cur.x + DX[d], cur.y, nx, ny, domain)
+                    || !climbOk(cur.x, cur.y + DY[d], nx, ny, domain)) continue;
             }
             int ni = ny * w + nx;
             if (closed(ni)) continue;
-            float ng = cur.g + COST[d];
-            if (congestion && congestion->size() == (size_t)N) ng += (*congestion)[ni];
+            int64_t ng = cur.g + COST[d];
+            if (congestion && congestion->size() == (size_t)N) ng += 10000LL*(*congestion)[ni];
             if (ng < gAt(ni)) {
                 setG(ni, ng, ci);
                 open.push({nx, ny, ng, ng + hFn(nx, ny), (int)ci});

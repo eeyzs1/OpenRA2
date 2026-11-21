@@ -1,4 +1,4 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "game/lang.h"
 #include "gfx/sprites.h"
 #include <algorithm>
@@ -6,7 +6,7 @@
 #include <filesystem>
 #include <set>
 
-int Game::chopperTransitionRegression(const char* outputDir) {
+int GameRegression::chopperTransitionRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);int failures=0;
     auto check=[&](bool ok,const char* name){failures+=!ok;std::printf("CHOPPER_TRANSITION %s %s\n",ok?"PASS":"FAIL",name);};
     const auto rules=g_gameRules;const int language=g_lang;

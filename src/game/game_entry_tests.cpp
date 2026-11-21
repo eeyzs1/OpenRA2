@@ -1,8 +1,8 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "game/lang.h"
 #include <cstdio>
 
-int Game::entryRegression() {
+int GameRegression::entryRegression() {
     int failures=0;localPlayer=0;phase=Phase::InGame;showMenu=false;gameOver=false;camZoom=1;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("ENTRY %s %s\n",ok?"PASS":"FAIL",name); };
     auto reset=[&]() {

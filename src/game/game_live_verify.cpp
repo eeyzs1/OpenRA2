@@ -1,4 +1,4 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -15,7 +15,7 @@
 #  undef ShowCursor
 #endif
 
-int Game::liveVerify() {
+int GameRegression::liveVerify() {
 #ifdef _WIN32
     sim.active = false;
     int fails = 0, step = 0;

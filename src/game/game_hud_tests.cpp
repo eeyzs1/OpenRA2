@@ -1,4 +1,4 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "game/lang.h"
 #include "game/hud_text.h"
 #include "game/production_work.h"
@@ -6,7 +6,7 @@
 #include <cstdio>
 #include <filesystem>
 
-int Game::hudRegression(const char* outputDir) {
+int GameRegression::hudRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);
     int failures=0;localPlayer=0;phase=Phase::InGame;showMenu=false;gameOver=false;
     auditHud=true;shotAtDisplaySize=true;SetTargetFPS(0);

@@ -1,8 +1,8 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "game/lang.h"
 #include <cstdio>
 
-int Game::releaseRegression() {
+int GameRegression::releaseRegression() {
     int failures=0;localPlayer=0;phase=Phase::InGame;showMenu=false;gameOver=false;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("RELEASE %s %s\n",ok?"PASS":"FAIL",name); };
     auto reset=[&]() {

@@ -1,11 +1,12 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "gfx/sprites.h"
 #include "gfx/vxl.h"
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <filesystem>
 
-int Game::voxelAnimationRegression(const char* outputDir) {
+int GameRegression::voxelAnimationRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);
     int failures=0;
     auto check=[&](bool ok,const char* name){failures+=!ok;std::printf("VOXEL_ANIMATION %s %s\n",ok?"PASS":"FAIL",name);};
@@ -93,6 +94,159 @@ int Game::voxelAnimationRegression(const char* outputDir) {
         }
         world.kill(actor,false);
     }
+    // A real move changes the logical heading by one octant. Freeze only the
+    // fixture's translation so these captures isolate the displayed rotation.
+    SetWindowSize(1440,810);
+    const EID tank=world.spawnUnit(0,UnitType::Grizzly,20.5f,20.5f);
+    world.ents[tank].dir=world.ents[tank].turretDir=0;
+    world.orderMove({tank},26.5f,20.5f,false);
+    world.update();
+    auto& turning=world.ents[tank];turning.px=turning.x;turning.py=turning.y;
+    check(turning.dir==1,"actual move changes tank heading by one octant");
+    std::vector<uint32_t> poses;
+    for(int turnPhase=0;turnPhase<=4;++turnPhase) {
+        interpAlpha=turnPhase/4.f;
+        const auto before=world.checksum();
+        const auto path=(std::filesystem::path(outputDir)/("turn_phase_"+std::to_string(turnPhase)+".png")).string();
+        shotFile=path;render();
+        Image image=LoadImage(path.c_str());
+        const Vector2 at=unitScreenPos(turning);
+        ImageCrop(&image,Rectangle{at.x-90,at.y-90,180,180});
+        Color* pixels=LoadImageColors(image);uint32_t value=2166136261u;
+        for(int i=0;pixels && i<image.width*image.height;++i)for(uint8_t c:{pixels[i].r,pixels[i].g,pixels[i].b,pixels[i].a})value=(value^c)*16777619u;
+        if(pixels)UnloadImageColors(pixels);UnloadImage(image);
+        if(std::find(poses.begin(),poses.end(),value)==poses.end())poses.push_back(value);
+        const Rectangle box=unitScreenRect(turning);
+        check(pickUnit((int)(box.x+box.width/2),(int)(box.y+box.height/2))==tank,"turning tank remains selectable");
+        check(before==world.checksum(),"turn rendering leaves simulation unchanged");
+    }
+    std::printf("VEHICLE_TURN distinct_rendered_poses=%zu expected=5\n",poses.size());
+    check(poses.size()==5,"tank heading uses intermediate rendered poses");
+    for(UnitType type:{UnitType::Grizzly,UnitType::Rhino,UnitType::Apocalypse,UnitType::ChronoMiner,UnitType::WarMiner,
+            UnitType::PrismTank,UnitType::MirageTank,UnitType::TeslaTank,UnitType::TankDestroyer}) {
+        std::vector<uint32_t> facings;
+        Vec2i origin{};int width=0,height=0;
+        bool aligned=true,inside=true;
+        Image strip=GenImageColor(32*96,112,Color{22,28,28,255});
+        for(int facing=0;facing<32;++facing) {
+            const auto& body=g_sprites.unitBodyFacing(type,facing,0,0);
+            const auto value=hash(body);if(std::find(facings.begin(),facings.end(),value)==facings.end())facings.push_back(value);
+            PixBuf pixels;Vec2i anchor;
+            const bool rendered=VxlRt::renderBodyFacing(type,facing,0,pixels,anchor,&HOUSE_COLORS[0]);
+            if(!facing){origin=anchor;width=pixels.w;height=pixels.h;}
+            aligned &= rendered && anchor.x==origin.x && anchor.y==origin.y && pixels.w==width && pixels.h==height;
+            inside &= body.visL>0 && body.visT>0 && body.visR<body.tex.width-1 && body.visB<body.tex.height-1;
+            Image image=LoadImageFromTexture(body.tex);
+            ImageDraw(&strip,image,Rectangle{0,0,(float)image.width,(float)image.height},Rectangle{(float)(facing*96+48-body.ox),(float)(88-body.oy),(float)image.width,(float)image.height},WHITE);UnloadImage(image);
+            if(g_sprites.hasTurret(type)) {
+                const int turretFacing=(facing+7)&31;
+                PixBuf turret;Vec2i turretAnchor;
+                aligned &= VxlRt::renderTurretFacing(type,turretFacing,0,turret,turretAnchor,&HOUSE_COLORS[0])
+                    && turretAnchor.x==origin.x && turretAnchor.y==origin.y && turret.w==width && turret.h==height;
+                const auto& part=g_sprites.unitTurretFacing(type,turretFacing,0);
+                image=LoadImageFromTexture(part.tex);
+                ImageDraw(&strip,image,Rectangle{0,0,(float)image.width,(float)image.height},Rectangle{(float)(facing*96+48-part.ox),(float)(88-part.oy),(float)image.width,(float)image.height},WHITE);UnloadImage(image);
+            }
+        }
+        ExportImage(strip,(std::filesystem::path(outputDir)/("facings_"+std::to_string((int)type)+".png")).string().c_str());UnloadImage(strip);
+        const bool colors=hash(g_sprites.unitBodyFacing(type,3,0,0))!=hash(g_sprites.unitBodyFacing(type,3,0,1));
+        check(aligned && inside && facings.size()==32 && colors,"32 vehicle headings retain origin, bounds and house color");
+        std::printf("VEHICLE_FACINGS type=%d unique=%zu aligned=%d inside=%d colors=%d\n",(int)type,facings.size(),aligned,inside,colors);
+        if(type==UnitType::WarMiner || type==UnitType::ChronoMiner) {
+            bool stableOrigin=true,unclipped=true,distinct=true,remapped=true;
+            for(int dir=0;dir<8;++dir) {
+                const auto& travel=g_sprites.unitBody(type,dir,0,0);
+                const auto& unloading=g_sprites.unitUnload(type,dir,0);
+                stableOrigin &= unloading.ox==travel.ox && unloading.oy==travel.oy
+                    && unloading.tex.width==travel.tex.width && unloading.tex.height==travel.tex.height;
+                unclipped &= unloading.visL>0 && unloading.visT>0
+                    && unloading.visR<unloading.tex.width-1 && unloading.visB<unloading.tex.height-1;
+                const auto dump=hash(unloading);
+                distinct &= dump!=hash(travel);
+                remapped &= dump!=hash(g_sprites.unitUnload(type,dir,1));
+            }
+            std::printf("MINER_VOXEL_UNLOAD type=%d aligned=%d inside=%d distinct=%d colors=%d\n",
+                (int)type,stableOrigin,unclipped,distinct,remapped);
+            check(stableOrigin && unclipped && distinct && remapped,
+                "a distinct unload shape keeps the ground origin, full bounds and house color from all eight directions");
+        }
+    }
+    turning.previousDir=7;turning.dir=0;turning.previousTurretDir=1;turning.turretDir=0;interpAlpha=.5f;
+    check(unitBodyFacing(turning)==30 && unitTurretFacing(turning)==2,"body and turret wrap independently along shortest turn");
+    const auto stable=world.checksum();turning.previousDir=5;turning.previousTurretDir=4;
+    check(stable==world.checksum(),"derived headings do not participate in simulation checksum");
+    FILE* saved=tmpfile();
+    if(saved) {
+        const bool written=world.saveGame(saved);rewind(saved);World resumed;
+        const bool read=written && resumed.loadGame(saved);fclose(saved);
+        check(read && stable==resumed.checksum() && resumed.ents[tank].previousDir==resumed.ents[tank].dir
+            && resumed.ents[tank].previousTurretDir==resumed.ents[tank].turretDir,"loaded vehicle begins at its current logical heading");
+    }else check(false,"create current vehicle save");
+    const EID fresh=world.spawnUnit(0,UnitType::Rhino,24.5f,24.5f);
+    check(world.ents[fresh].previousDir==world.ents[fresh].dir && world.ents[fresh].previousTurretDir==world.ents[fresh].turretDir,"new vehicle begins at its own heading");
+
+    const bool loaded=world.init(64,64,20261031,2,0,{Faction::Allies,Faction::Soviet},0,"maps/skirmish-reference.txt",true,true,
+        "assets/rules/profiles/ra2.ini",{Country::Germany,Country::Russia});
+    check(loaded,"the native tank turn fixture loads its map and rules");
+    if(!loaded)return failures;
+    for(EID id=0;id<(EID)world.ents.size();++id)if(world.valid(id))world.kill(id,false);
+    for(auto& cell:world.map.cells)cell=Cell{};
+    for(auto& player:world.players)player.isAI=false;
+    world.cratesEnabled=false;world.crates.clear();world.effects.clear();
+    world.spawnBuilding(0,BldType::ConYard,3,3,true);
+    world.spawnBuilding(1,BldType::ConYard,50,50,true);
+    fogMaskTick=-1;bakeTerrain();
+    for(UnitType type:{UnitType::PrismTank,UnitType::MirageTank,UnitType::TeslaTank,UnitType::TankDestroyer}) {
+        const auto definition=std::find_if(world.nativeTypes.begin(),world.nativeTypes.end(),[&](const auto& candidate) {
+            return candidate->rulesOnly && !candidate->isBuilding && candidate->unit.type==type;
+        });
+        if(definition==world.nativeTypes.end())return 1;
+        localPlayer=type==UnitType::TeslaTank?1:0;
+        const auto id=world.spawnUnit(localPlayer,type,20.5f,20.5f,(int)(definition-world.nativeTypes.begin()));
+        if(!world.valid(id))return 1;
+        auto& unit=world.ents[id];
+        check(world.usesNativeGround(unit) && !unit.nativeIdentity.definition->nativeBody,"the ordinary tank draws its timed native ground heading through the shared sprite bank");
+        unit.dir=unit.previousDir=7;
+        unit.turretDir=unit.previousTurretDir=3;
+        World::Cmd move{};move.type=World::Cmd::Move;move.ids={id};move.x=26.5f;move.y=20.5f;
+        world.bindCommand(move);world.applyCmd(localPlayer,move);
+        const bool admitted=unit.state==UState::Moving;
+        int previousBody=28,previousTurret=12,bodyStep=0,turretStep=0,middlePose=-1;
+        std::array<bool,32> bodyPoses{},turretPoses{};
+        const bool turreted=g_sprites.hasTurret(type);
+        bool arrivedFacing=false,captured=false;
+        for(int t=0;t<160 && !arrivedFacing;++t) {
+            world.update();
+            const auto hull=world.nativeHullHeading(unit,world.tick);
+            for(int sample=0;sample<=4;++sample) {
+                interpAlpha=sample/4.f;
+                const int body=unitBodyFacing(unit),turret=unitTurretFacing(unit);
+                bodyStep=std::max(bodyStep,std::abs(((body-previousBody+16)&31)-16));
+                turretStep=std::max(turretStep,std::abs(((turret-previousTurret+16)&31)-16));
+                bodyPoses[body]=true;turretPoses[turret]=true;
+                previousBody=body;previousTurret=turret;
+                const auto raw=uint16_t(unit.previousHullHeading+std::lround(NativeGroundMath::delta(unit.previousHullHeading,hull)*interpAlpha));
+                if(middlePose<0 && NativeGroundMath::facing32(raw)==31) {
+                    middlePose=body;
+                    const auto before=world.checksum();
+                    const auto path=(std::filesystem::path(outputDir)/("native-turn-"+std::to_string((int)type)+".png")).string();
+                    shotFile=path;render();shotFile.clear();
+                    const auto box=unitScreenRect(unit);
+                    captured=FileExists(path.c_str()) && before==world.checksum()
+                        && pickUnit((int)(box.x+box.width/2),(int)(box.y+box.height/2))==id;
+                }
+            }
+            arrivedFacing=hull==16384 && (!turreted || world.nativeTurretHeading(unit,world.tick)==16384) && unit.x>20.5f;
+        }
+        const auto bodies=std::count(bodyPoses.begin(),bodyPoses.end(),true);
+        const auto turrets=std::count(turretPoses.begin(),turretPoses.end(),true);
+        std::printf("NATIVE_TANK_POSES type=%d hull=%d turret=%d hull_step=%d turret_step=%d midpoint=%d screenshot=%d\n",
+            (int)type,(int)bodies,turreted?(int)turrets:0,bodyStep,turreted?turretStep:0,middlePose,captured);
+        check(admitted && arrivedFacing && bodyStep==1 && bodies==9 && (!turreted || (turretStep==1 && turrets==9))
+            && middlePose==31 && captured,"native ninety-degree tank turns render every intermediate hull and turret pose and remain selectable");
+        world.kill(id,false);
+    }
+    interpAlpha=1;
     check(g_sprites.assetsOk(),"native voxel animations have no missing assets");
     return failures;
 }

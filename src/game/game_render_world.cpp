@@ -129,6 +129,9 @@ void Game::bakeTerrain() {
     // GPU 纹理上限钳制（常见上限 8192）：128 大地图 8193px 超界，降到 8000 内
     terrainSC = std::min(TERRAIN_SC, std::min(8000.0f / terrainW, 8000.0f / terrainH));
     int bw = (int)(terrainW * terrainSC) + 1, bh = (int)(terrainH * terrainSC) + 1;
+    if(world.map.native.active()) { bakeNativeTerrain();return; }
+    nativeFogOwners.clear();
+    nativeFogOffsets.clear();
     PixBuf pb(bw, bh);
     const uint64_t seed = 20260723; // 固定种子：同一地形类型烘焙观感一致
     // 真实 RA2 地形瓦片（gen_terrain.py 自 isotemp.mix 提取，64x32 菱形）：
@@ -320,27 +323,29 @@ void Game::bakeFogMask() {
     // Uncovered projected pixels must remain unknown. Raised tiles can leave
     // gaps between diamonds; a transparent default would expose terrain there.
     PixBuf pb(fw, fh);pb.clear(Color{0,0,0,255});
-    std::vector<uint8_t> covered((size_t)fw*fh,0);
-    int w = world.map.w, h = world.map.h;
-    for (int ty = 0; ty < h; ty++)
-        for (int tx = 0; tx < w; tx++) {
-            FogState fs = world.map.fogAt(localPlayer, tx, ty);
-            uint8_t a = fs == FOG_UNSEEN ? 255 : fs == FOG_SEEN ? 170 : 0;
-            int px, py;
-            tileToScreen(tx, ty, px, py);
-            py -= heightScreenY(world.map.at(tx, ty).height);
-            float mx = (px + terrainOX) / FS, my = (float)py / FS; // 菱形顶（遮罩域）
-            // 填充菱形（世界 64x32 → 遮罩 8x4；略放大保证无漏缝；max 规则保证 UNSEEN 优先）
-            for (int dy = -1; dy <= 5; dy++)
-                for (int dx = -5; dx <= 5; dx++) {
-                    if (fabsf(dx) / 5.0f + fabsf(dy - 2) / 3.0f > 1.0f) continue;
-                    int mx2 = (int)mx + dx, my2 = (int)my + dy;
-                    if(mx2<0 || my2<0 || mx2>=fw || my2>=fh) continue;
-                    const size_t index=(size_t)my2*fw+mx2;
-                    if(!covered[index] || a>=pb.px[index].a) pb.px[index]=Color{0,0,0,a};
-                    covered[index]=1;
-                }
+    if(!bakeNativeFogMask(pb,fw,fh)) {
+        // The expanded diamond covers rows -1 through 5 at these widths.
+        constexpr int halfWidth[]={0,1,3,5,3,1,0};
+        // Untouched pixels, visible, explored, unseen. The darkest tile wins
+        // in overlaps and uncovered gaps stay opaque.
+        constexpr uint8_t opacity[]={255,0,170,255};
+        std::vector<uint8_t> shade(pb.px.size());
+        for(int ty=0;ty<world.map.h;++ty)for(int tx=0;tx<world.map.w;++tx) {
+            const FogState state=world.map.fogAt(localPlayer,tx,ty);
+            const uint8_t value=state==FOG_UNSEEN?3:state==FOG_SEEN?2:1;
+            int px,py;
+            tileToScreen(tx,ty,px,py);
+            const int mx=(px+terrainOX)/FS;
+            const int my=(py-heightScreenY(world.map.at(tx,ty).height))/FS;
+            for(int dy=std::max(-1,-my);dy<=std::min(5,fh-1-my);++dy) {
+                const int radius=halfWidth[dy+1];
+                auto* row=shade.data()+(size_t)(my+dy)*fw;
+                const int end=std::min(fw,mx+radius+1);
+                for(int x=std::max(0,mx-radius);x<end;++x)row[x]=std::max(row[x],value);
+            }
         }
+        for(size_t i=0;i<shade.size();++i)pb.px[i].a=opacity[shade[i]];
+    }
     if (fogMaskTex.id) UnloadTexture(fogMaskTex);
     fogMaskTex = pb.toTexture();
     SetTextureFilter(fogMaskTex, TEXTURE_FILTER_BILINEAR); // Smooth only the mask; entity visibility still uses exact fog cells
@@ -395,14 +400,14 @@ void Game::drawEntities() {
     float visW = (float)viewW / camZoom;
     float visH = (float)SCREEN_H / camZoom;
     // 深度排序绘制项
-    struct Item { float depth; int kind; int id; }; // kind 0 单位 1 建筑 2 树
+    using Item=WorldDrawItem; // kind 0 unit, 1 building, 2 tree
     std::vector<Item> items;
     items.reserve(world.ents.size() + 512);
     for (size_t i = 0; i < world.ents.size(); i++) {
         const World::Ent& e = world.ents[i];
         if (!e.alive) continue;
         if (e.isBuilding) {
-            const BldDef& d = bldDef(e.btype);
+            const BldDef& d = bldDef(e);
             // 深度用占地东南角：单位走在建筑南侧时压在贴图之上，避免「穿模被挡」
             items.push_back({e.x + (d.w - 1) + e.y + (d.h - 1) + 0.05f, 1, (int)i});
         } else {
@@ -412,8 +417,8 @@ void Game::drawEntities() {
         }
     }
     for(const auto& [key,b]:fogKnowledge.buildings) {
-        if(!buildingVisible(b.x,b.y,b.type) && buildingExplored(b)) {
-            const auto& d=bldDef(b.type);
+        if(!buildingVisible(b.x,b.y,b.type,b.nativeType) && buildingExplored(b)) {
+            const auto& d=knownBuildingDefinition(b);
             items.push_back({(float)(b.x+d.w-1+b.y+d.h-1)+0.05f,4,key});
         }
     }
@@ -456,13 +461,21 @@ void Game::drawEntities() {
         items.push_back({(float)(c.x + c.y) + 0.5f, 3, (int)i});
     }
     std::sort(items.begin(), items.end(), [](const Item& a, const Item& b) { return a.depth < b.depth; });
+    orderBridgeDrawItems(items);
     // 选择集 O(1) 查找
     std::unordered_set<EID> selSet(sel.begin(), sel.end());
 
     for (const Item& it : items) {
         if(it.kind==5) { drawWarpEffect(world.effects[it.id]);continue; }
         if(it.kind==4) {
-            const auto& b=fogKnowledge.buildings.at(it.id);const auto& d=bldDef(b.type);
+            const auto& memory=fogKnowledge.buildings.at(it.id);
+            if(memory.nativeType>=0 && !world.nativeTypes[memory.nativeType]->rulesOnly) {
+                World::Ent remembered;remembered.isBuilding=true;remembered.x=(float)memory.x;remembered.y=(float)memory.y;
+                remembered.player=memory.player;remembered.btype=memory.type;
+                remembered.nativeIdentity.type=memory.nativeType;remembered.nativeIdentity.definition=world.nativeTypes[memory.nativeType];
+                remembered.hp=memory.damaged?1:bldDef(remembered).hp;drawNativeBuilding(remembered,INVALID_EID,true,memory.nativeFrame);continue;
+            }
+            const auto& b=fogKnowledge.buildings.at(it.id);const auto& d=knownBuildingDefinition(b);
             int px,py;tileToScreen(b.x+d.w-1,b.y+d.h-1,px,py);
             py+=TILE_H-heightScreenY(b.height);
             const Sprite* sp;const int mkf=g_sprites.bldMkFrames(b.type);
@@ -503,7 +516,8 @@ void Game::drawEntities() {
         }
         const World::Ent& e = world.ents[it.id];
         if (!e.isBuilding) {
-            const UnitDef& ud = unitDef(e.utype);
+            if(e.supportAir || (e.nativeIdentity.definition && e.nativeIdentity.definition->nativeRocket))continue;
+            const UnitDef& ud = unitDef(e);
             // 恐怖机器人钻入车底后隐藏（逻辑仍附着）
             if (e.parasiting) continue;
             bool flying = e.airborne() || e.magneticHeight>0;
@@ -513,7 +527,7 @@ void Game::drawEntities() {
             if (p.x < -80 || p.x > visW + 80 || p.y < -80 || p.y > visH + 80) continue;
             int cid = world.players[e.player].colorId;
             // RA2 式阴影：地面单位贴图已含烘焙投影，勿再叠运行时椭圆（否则坦克/矿车发黑）
-            if (flying) {
+            if (flying && (!e.nativeIdentity.definition || !e.nativeIdentity.definition->nativeRocket)) {
                 DrawEllipse((int)p.x, (int)p.y + 4, 10, 4, Color{0, 0, 0, 20});
                 DrawEllipse((int)p.x, (int)p.y + 4, 6, 2, Color{0, 0, 0, 40});
             }
@@ -553,7 +567,9 @@ void Game::drawEntities() {
             const bool heldFire=chronoHoldFire || (e.radDeployed && deployedFire);
             const bool deployedChopper=drawType==UnitType::SiegeChopper && e.deployed;
             const int transform=chopperTransformFrame(e);
-            if(transform>=0) {
+            if(const auto* water=swimmingSprite(e,drawType,drawCid)) {
+                bodyP=water;
+            } else if(transform>=0) {
                 bodyP=&g_sprites.chopperTransform(transform,drawCid);
             } else if(deployedChopper) {
                 bodyP=&g_sprites.unitDeployed(drawType,e.dir,e.turretDir,drawCid);
@@ -575,19 +591,19 @@ void Game::drawEntities() {
                 bodyP = &g_sprites.unitAnim(drawType, UAnim::Walk, e.dir, (e.walkAnim / std::max(1, ai.walkRate)) % ai.walk, drawCid);
             } else if (deployedPose && ai.dep) {
                 bodyP = &g_sprites.unitAnim(drawType, UAnim::Dep, e.dir, 0, drawCid);
-            } else if (ud.canHarvet() && e.state == UState::HarvestUnload) {
+            } else if (ud.canHarvet() && world.harvesterUnloading(e)) {
                 bodyP = &g_sprites.unitUnload(drawType, e.dir, drawCid);
             } else {
                 // Flight HVA phase is presentation-only; landed aircraft stop their rotors.
                 int stf = unitBodyFrame(e);
-                bodyP = &g_sprites.unitBody(drawType, e.dir, stf, drawCid);
+                bodyP = world.hasNativeIFV(e)?&nativeIFVSprite(e,false,stf):e.nativeIdentity.definition && e.nativeIdentity.definition->nativeBody?&nativeActorSprite(e):&g_sprites.unitBodyFacing(drawType,unitBodyFacing(e),stf,drawCid);
             }
             const Sprite& body = *bodyP;
             Color tint = (e.player != localPlayer && fs == FOG_SEEN) ? Color{120, 120, 120, 255} : WHITE;
             // Phase hold applies to transferred vehicles/miners/ships as well as chrono infantry.
-            if(e.tpSick>0 || e.chrono>0) {
+            if(e.tpSick>0 || e.chrono>0 || e.nativeTemporalHead!=INVALID_EID) {
                 const bool pulse=((world.tick/4)%2)!=0;
-                tint=e.chrono>0?(pulse?Color{100,170,255,190}:Color{150,210,255,180})
+                tint=e.chrono>0 || e.nativeTemporalHead!=INVALID_EID?(pulse?Color{100,170,255,190}:Color{150,210,255,180})
                     :(pulse?Color{140,200,255,220}:Color{180,220,255,190});
             }
             int drawX = (int)p.x - body.ox;
@@ -601,7 +617,7 @@ void Game::drawEntities() {
                 DrawTexture(body.tex, drawX, drawY, tint);
             }
             if (!deployedChopper && g_sprites.hasTurret(drawType)) {
-                const Sprite& tur = g_sprites.unitTurret(drawType, e.turretDir, drawCid,unitTurretFrame(e));
+                const Sprite& tur = world.hasNativeIFV(e)?nativeIFVSprite(e,true,unitTurretFrame(e)):g_sprites.unitTurretFacing(drawType,unitTurretFacing(e),drawCid,unitTurretFrame(e));
                 if (rockDeg != 0.f) {
                     Rectangle src{0, 0, (float)tur.tex.width, (float)tur.tex.height};
                     Rectangle dst{(float)p.x, (float)p.y, (float)tur.tex.width, (float)tur.tex.height};
@@ -626,7 +642,7 @@ void Game::drawEntities() {
                 if (boxW < 8) { boxX = drawX; boxW = body.tex.width; }
                 if (boxH < 8) { boxY = drawY; boxH = body.tex.height; }
             }
-            if (selected || e.hp < ud.hp)
+            if (selected || ((!e.nativeIdentity.definition || e.nativeIdentity.definition->rulesOnly) && e.hp < ud.hp))
                 drawHealthBar(boxX, boxY - 6, std::max(28, boxW), (float)e.hp / std::max(1, ud.hp), selected);
             if (selected) {
                 const float L = (float)std::min(10, std::min(std::max(boxW, 1), std::max(boxH, 1)) * 35 / 100);
@@ -668,7 +684,8 @@ void Game::drawEntities() {
             }
         } else {
             FogState fs = world.map.fogAt(localPlayer, (int)e.x, (int)e.y);
-            if (e.player != localPlayer && !buildingVisible((int)e.x,(int)e.y,e.btype)) continue;
+            if (e.player != localPlayer && !buildingVisible((int)e.x,(int)e.y,e.btype,e.nativeIdentity.type)) continue;
+            if(drawNativeBuilding(e,it.id))continue;
             Vector2 p = bldScreenPos(e);
             // 占领后阵营染色；中立科技保留原色（cid=-2）
             int cid;
@@ -700,13 +717,13 @@ void Game::drawEntities() {
             Color tint = (e.player != localPlayer && fs == FOG_SEEN) ? Color{110, 110, 110, 255} : WHITE;
             // 出售：仅倒放 Buildup(mk) 帧（RA2 原作），不加程序化闪烁
             // 破损民房：焦黑+橙红燃烧感
-            if (e.btype == BldType::CivHouse && e.hp * 2 <= bldDef(e.btype).hp) {
+            if (e.btype == BldType::CivHouse && e.hp * 2 <= bldDef(e).hp) {
                 bool flicker = ((world.tick / 4 + (int)it.id) % 2) != 0;
                 tint = flicker ? Color{200, 110, 70, 255} : Color{90, 70, 60, 255};
                 if (e.player != localPlayer && fs == FOG_SEEN)
                     tint = Color{70, 55, 48, 255};
             }
-            if(e.chrono>0) tint=((world.tick/4)%2)?Color{100,170,255,210}:Color{150,210,255,190};
+            if(e.chrono>0 || e.nativeTemporalHead!=INVALID_EID) tint=((world.tick/4)%2)?Color{100,170,255,210}:Color{150,210,255,190};
             DrawTexture(s.tex, (int)p.x - s.ox, (int)p.y - s.oy, tint);
             // ActiveAnim：油井/医院泵机与灯火循环（CAOILD_A / CAHOSP_A）
             if (e.constructAnim <= 0 && !e.selling && (e.btype == BldType::OilDerrick || e.btype == BldType::Hospital)) {
@@ -752,7 +769,7 @@ void Game::drawEntities() {
                     }
                 }
             }
-            const BldDef& d = bldDef(e.btype);
+            const BldDef& d = bldDef(e);
             const bool bldSelected = ((int)it.id == selBuilding);
             // 选中笼：底面/高度/偏移按贴图拟合（fit_bld_cages.py）；stem 与阵营贴图一致。
             const Sprite& cageS = g_sprites.building(e.btype, cid, false, bldCountry);
@@ -800,11 +817,12 @@ void Game::drawEntities() {
                     DrawCircleV(ts, 3.0f, Color{0, 255, 0, 255});
                 }
             };
-            const char* cageStem = SpriteBank::bldSpriteStem(e.btype, bldCountry);
-            BldCageParams cage = resolveBldCage(cageStem, d.w, d.h, cageS);
-            Vector2 cageP{p.x + cage.offX, p.y + cage.offY};
-            if (bldSelected)
+            if (bldSelected) {
+                const char* cageStem = SpriteBank::bldSpriteStem(e.btype, bldCountry);
+                BldCageParams cage = resolveBldCage(cageStem, d.w, d.h, cageS);
+                Vector2 cageP{p.x + cage.offX, p.y + cage.offY};
                 drawIsoCuboid(cageP, cage, Color{255, 240, 60, 245});
+            }
             // 血条贴在贴图不透明顶上方（不用 cage.elev：矮笼改完后条会沉进楼体）
             const int bldPips = 20;
             int barW = bldPips * 3 + (bldPips - 1) * 1;
@@ -843,7 +861,7 @@ void Game::drawEntities() {
             }
             // 驻军槽：选中可进驻建筑时显示空位框 + 占位兵种剪影（贴近原作 pip 条）
             if ((int)it.id == selBuilding && e.player == localPlayer) {
-                const BldDef& gd = bldDef(e.btype);
+                const BldDef& gd = bldDef(e);
                 if (gd.garrisonCap > 0) {
                     int slots = gd.garrisonCap;
                     int filled = (int)e.garrison.size();
@@ -915,10 +933,17 @@ void Game::drawEntities() {
         // 普通移动：单位 → 剩余 path 格中心
         if (!e.path.empty() && e.pathIdx < (int)e.path.size()) {
             int drawn = 0;
+            int pathX=(int)e.x,pathY=(int)e.y,pathLayer=e.navLayer;
             for (int pi = e.pathIdx; pi < (int)e.path.size() && drawn < 24; ++pi, ++drawn) {
                 const Vec2i& cell = e.path[pi];
                 float wx = (cell.x - cell.y) * (TILE_W / 2.0f) + TILE_W / 4.0f - camX;
                 float wy = (cell.x + cell.y) * (TILE_H / 2.0f) + TILE_H / 4.0f - camY;
+                if(world.map.native.active()) {
+                    const int next=world.map.stepLayer(pathX,pathY,pathLayer,cell.x,cell.y,unitDef(e).pathDomain());
+                    if(next>=0)pathLayer=next;pathX=cell.x;pathY=cell.y;
+                    wx=(cell.x-cell.y)*(TILE_W/2.f)-camX;
+                    wy=(cell.x+cell.y+1)*(TILE_H/2.f)-camY-world.map.surfaceHeight(cell.x,cell.y,pathLayer)*(TILE_H/2.f);
+                }
                 DrawLine((int)prev.x, (int)prev.y, (int)wx, (int)wy, Color{80, 220, 255, 160});
                 prev = {wx, wy};
             }
@@ -931,6 +956,10 @@ void Game::drawEntities() {
         for (auto& w : e.wps) {
             float wx = (w.first - w.second) * (TILE_W / 2.0f) - camX;
             float wy = (w.first + w.second) * (TILE_H / 2.0f) - camY;
+            if(world.map.native.active()) {
+                const int layer=unitDef(e).pathDomain()==1?0:w.layer<0?world.map.preferredLayer((int)w.first,(int)w.second,unitDef(e).pathDomain()):w.layer;
+                wy-=world.map.surfaceHeight((int)w.first,(int)w.second,layer)*(TILE_H/2.f);
+            }
             DrawLine((int)prev.x, (int)prev.y, (int)wx, (int)wy, Color{80, 255, 80, 170});
             DrawTriangle({wx, wy - 5}, {wx + 5, wy}, {wx, wy + 5}, Color{60, 230, 60, 220});
             DrawTriangle({wx, wy - 5}, {wx - 5, wy}, {wx, wy + 5}, Color{60, 230, 60, 220});
@@ -973,7 +1002,7 @@ void Game::drawEntities() {
             const World::Ent& t = world.ents[b.attachedTo];
             if (!t.alive) continue;
             fx = t.x; fy = t.y;
-            if (t.isBuilding) { fx += bldDef(t.btype).w / 2.0f; fy += bldDef(t.btype).h / 2.0f; }
+            if (t.isBuilding) { fx += bldDef(t).w / 2.0f; fy += bldDef(t).h / 2.0f; }
         }
         if (world.map.fogAt(localPlayer, (int)fx, (int)fy) != FOG_VISIBLE) continue;
         float wx = (fx - fy) * (TILE_W / 2.0f), wy = (fx + fy) * (TILE_H / 2.0f);
@@ -988,19 +1017,35 @@ void Game::drawCombatFeedback() {
     for(const auto& cue:combatCues) {
         const auto& ev=cue.event;
         if(ev.player!=localPlayer && world.map.fogAt(localPlayer,(int)ev.x,(int)ev.y)!=FOG_VISIBLE) continue;
+        std::optional<Vector2> tip;
+        if (ev.kind == PresentationKind::Muzzle && ev.muzzleUnitType >= 0 && ev.muzzleUnitType < (int)UnitType::COUNT) {
+            const auto type = (UnitType)ev.muzzleUnitType;
+            if (g_sprites.hasFineFacings(type) && g_sprites.hasTurret(type)) {
+                const int facing = NativeGroundMath::facing32(ev.muzzleHeading);
+                const int phase = (int)((ev.tick / 2) % std::max(1, g_sprites.unitTurretFrames(type)));
+                const int color = ev.player >= 0 && ev.player < world.numPlayers ? world.players[ev.player].colorId : 0;
+                tip = g_sprites.unitTurretFacing(type, facing, color, phase).barrelTip;
+            }
+        }
         float sx=(ev.x-ev.y)*(TILE_W/2.0f)-camX;
         float sy=(ev.x+ev.y)*(TILE_H/2.0f)-camY;
-        sy-=eventRenderLift(ev)+(ev.visualTarget==VisualTarget::Building?28:10);
+        const float fallbackHeight = ev.visualTarget == VisualTarget::Building ? 28.f : 10.f;
+        sy -= eventRenderLift(ev) + (tip ? 0.f : fallbackHeight);
         const int tx=(int)std::floor(ev.x),ty=(int)std::floor(ev.y);
         if(ev.terrainHeight>=0)sy-=heightScreenY((uint8_t)std::clamp(ev.terrainHeight,0,255));
         else if(world.map.inBounds(tx,ty))sy-=heightScreenY(world.map.at(tx,ty).height);
         float t=std::clamp(cue.age/cue.duration,0.0f,1.0f);
         if(ev.kind==PresentationKind::Muzzle) {
-            float dx=(ev.targetX-ev.targetY-ev.x+ev.y)*(TILE_W/2.0f);
-            float dy=(ev.targetX+ev.targetY-ev.x-ev.y)*(TILE_H/2.0f);
-            float length=std::sqrt(dx*dx+dy*dy);
-            float barrel=ev.visualTarget==VisualTarget::Infantry?6:ev.visualTarget==VisualTarget::Building?0:17;
-            if(length>0) { sx+=dx/length*barrel;sy+=dy/length*barrel; }
+            if (tip) {
+                sx += tip->x;
+                sy += tip->y;
+            } else {
+                const float dx=(ev.targetX-ev.targetY-ev.x+ev.y)*(TILE_W/2.0f);
+                const float dy=(ev.targetX+ev.targetY-ev.x-ev.y)*(TILE_H/2.0f);
+                const float length=std::sqrt(dx*dx+dy*dy);
+                const float barrel=ev.visualTarget==VisualTarget::Infantry?6:ev.visualTarget==VisualTarget::Building?0:17;
+                if(length>0) { sx+=dx/length*barrel;sy+=dy/length*barrel; }
+            }
             const auto& sprite=g_sprites.muzzle();
             float scale=ev.visualTarget==VisualTarget::Infantry?0.9f:1.5f;
             DrawTextureEx(sprite.tex,{sx-sprite.ox*scale,sy-sprite.oy*scale},0,scale,Color{255,255,255,(uint8_t)(255*(1-t))});
@@ -1022,7 +1067,9 @@ void Game::drawCombatFeedback() {
 }
 
 void Game::drawEffectsLayer() {
-    for (const Effect& ef : world.effects) {
+    const auto temporalBeams=world.nativeTemporalVisuals();
+    for (size_t effectIndex=0;effectIndex<world.effects.size()+temporalBeams.size();++effectIndex) {
+        const Effect& ef=effectIndex<world.effects.size()?world.effects[effectIndex]:temporalBeams[effectIndex-world.effects.size()];
         if(ef.kind==9) continue; // Chrono ground layers are depth-sorted in drawEntities.
         if(!ef.alive || ef.maxAge<=0 || ef.age<0 || ef.age>=ef.maxAge) continue;
         const bool beam=ef.kind==2 || ef.kind==3;
@@ -1087,6 +1134,12 @@ void Game::drawEffectsLayer() {
             Color c1{255, 255, 255, (uint8_t)(255 * a)};
             Color c2{120, 220, 255, (uint8_t)(160 * a)};
             if(ef.aux==1) { c1={255,180,242,(uint8_t)(255*a)};c2={216,0,184,(uint8_t)(220*a)}; }
+            if(ef.aux==2) {
+                const auto rgb=(uint32_t)ef.aux2;
+                c2=ef.aux3>0 && ef.aux3<=MAX_PLAYERS?HOUSE_COLORS[ef.aux3-1]
+                    :Color{(uint8_t)(rgb>>16),(uint8_t)(rgb>>8),(uint8_t)rgb,255};
+                c2.a=(uint8_t)(200*a);
+            }
             drawBeamSegment({(float)sx,(float)sy},{(float)tx2,(float)ty2},0,1,4.0f,c2);
             drawBeamSegment({(float)sx,(float)sy},{(float)tx2,(float)ty2},0,1,1.5f,c1);
         } else if (ef.kind == 1) {
@@ -1250,9 +1303,14 @@ void Game::drawPlacement() {
         int px, py;
         tileToScreen(tx, ty, px, py);
         int sx = px - (int)camX, sy = py - (int)camY + TILE_H / 2;
-        float ex = 2.5f * TILE_W / 2.0f, ey = 2.5f * TILE_H / 2.0f;
+        const float radius=world.independentSupportEnabled && targetingSupport==SupportType::PsychicReveal?10.f:2.5f;
+        float ex = radius * TILE_W / 2.0f, ey = radius * TILE_H / 2.0f;
         Color cc{140, 220, 255, 220};
         if ((world.tick / 8) % 2) cc.a = 130;
+        if(world.independentSupportEnabled && targetingSupport==SupportType::SpyPlane) {
+            int x1,y1,x2,y2;tileToScreen(std::max(0,tx-24),ty,x1,y1);tileToScreen(std::min(world.map.w-1,tx+24),ty,x2,y2);
+            DrawLineEx({x1-camX,y1-camY+TILE_H/2.f},{x2-camX,y2-camY+TILE_H/2.f},3,cc);return;
+        }
         DrawEllipseLines(sx, sy, ex, ey, cc);
         DrawEllipse(sx, sy, ex, ey, Color{140, 220, 255, 30});
         DrawLine(sx - 10, sy, sx + 10, sy, cc);
@@ -1287,6 +1345,7 @@ void Game::drawPlacement() {
         return;
     }
     if (!placing) return;
+    if(nativePlacementType>=0){drawNativePlacementGhost();return;}
     BldType t = placementType;
     if (t == BldType::COUNT) return;
     const BldDef& d = bldDef(t);

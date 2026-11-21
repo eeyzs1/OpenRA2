@@ -1,6 +1,7 @@
 // Game 的主菜单与遭遇战设置界面（Tech HUD 壳层）
 // 共享 UI 组件（drawTextM/textW/ra2Button/ra2TextButton/drawRa2Shell）供 settings/net 复用
 #include "game/game.h"
+#include "game/skirmish_map.h"
 #include "game/campaign.h"
 #include "gfx/sprites.h"
 #include "gfx/pixel.h"
@@ -299,7 +300,6 @@ static void menuScissorUi(int x, int y, int w, int h) {
         BeginScissorMode(x, y, w, h);
     }
 }
-static int drawWrapped(Font f, const char* s, int x, int y, int maxW, int size, Color c, int maxLines);
 
 void menuBlitUi() {
     if (!g_menu.uiRT.id) return;
@@ -862,134 +862,21 @@ void Game::drawMainMenu() {
     drawTextS(font, "Version 1.0", (int)(g_shellSide.x + 10), UI_H - 16, 11, MENU_MUTE);
 }
 
-void Game::debugMenuShot(const char* file, bool setup) {
-    phase = setup ? Phase::Setup : Phase::MainMenu;
-    if (setup) refreshMapPreview();
-    menuBeginUi();
-    if (setup) drawSetup();
-    else drawMainMenu();
-    menuEndUi();
-    BeginTextureMode(canvas);
-    ClearBackground(BLACK);
-    menuBlitUi();
-    EndTextureMode();
-    Image img = LoadImageFromTexture(canvas.texture);
-    ImageFlipVertical(&img);
-    ExportImage(img, file);
-    UnloadImage(img);
-}
-
-void Game::debugGuiReview(const char* outDir) {
-    ensureMenuGui();
-    if (outDir && outDir[0]) {
-#ifdef _WIN32
-        _mkdir(outDir);
-#else
-        mkdir(outDir, 0755);
-#endif
-    }
-    const char* dir = (outDir && outDir[0]) ? outDir : "gui_review";
-    auto saveCanvas = [&](const char* name) {
-        Image img = LoadImageFromTexture(canvas.texture);
-        ImageFlipVertical(&img);
-        ExportImage(img, TextFormat("%s/%s.png", dir, name));
-        UnloadImage(img);
-        TraceLog(LOG_INFO, "gui_review: %s/%s.png", dir, name);
-    };
-    auto shotPhase = [&](Phase p, const char* name) {
-        phase = p;
-        if (p == Phase::Setup) refreshMapPreview();
-        if (p == Phase::MapEditor) editorNewMap();
-        if (menuShellPhase(p)) {
-            menuBeginUi();
-            if (p == Phase::MainMenu) drawMainMenu();
-            else if (p == Phase::MissionSelect) drawMissionSelect();
-            else if (p == Phase::MissionBrief) drawMissionBrief();
-            else if (p == Phase::Settings) drawSettings();
-            else if (p == Phase::NetLobby) drawNetLobby();
-            else drawSetup();
-            menuEndUi();
-            BeginTextureMode(canvas);
-            ClearBackground(BLACK);
-            menuBlitUi();
-            EndTextureMode();
-        } else {
-            BeginTextureMode(canvas);
-            ClearBackground(BLACK);
-            if (p == Phase::MapEditor) drawMapEditor();
-            else drawSetup();
-            EndTextureMode();
-        }
-        saveCanvas(name);
-    };
-
-    int bn = menuBikFrameCount();
-    menuSetBikForceFrame(0);
-    shotPhase(Phase::MainMenu, "01_mainmenu_bik0");
-    if (bn > 1) {
-        menuSetBikForceFrame(bn / 2);
-        shotPhase(Phase::MainMenu, "01b_mainmenu_bik_mid");
-        menuSetBikForceFrame(bn - 1);
-        shotPhase(Phase::MainMenu, "01c_mainmenu_bik_end");
-    }
-    menuSetBikForceFrame(-1);
-
-    shotPhase(Phase::Setup, "02_setup");
-    g_setupMapCustom = true;
-    seedHistEnsure(previewSeed);
-    shotPhase(Phase::Setup, "02b_setup_mapcustom");
-    g_setupMapCustom = false;
-    shotPhase(Phase::MissionSelect, "03_campaign");
-    shotPhase(Phase::Settings, "04_settings");
-    shotPhase(Phase::NetLobby, "05_netlobby");
-    shotPhase(Phase::MapEditor, "06_mapeditor");
-
-    newGame(42);
-    phase = Phase::InGame;
-    showMenu = true;
-    paused = true;
-    updateMinimap();
-    menuBeginUi();
-    drawGameMenuOverlay();
-    menuEndUi();
-    BeginTextureMode(canvas);
-    ClearBackground(BLACK);
-    {
-        int viewW = SCREEN_W - sidebarW;
-        BeginScissorMode(0, 0, viewW, SCREEN_H);
-        rlPushMatrix();
-        rlLoadIdentity();
-        rlScalef(camZoom, camZoom, 1.0f);
-        drawWorld();
-        drawEntities();
-        drawEffectsLayer();
-        drawFogLayer();
-        rlPopMatrix();
-        flushWorldOverlayRects();
-        EndScissorMode();
-    }
-    DrawRectangle(0, 0, SCREEN_W, SCREEN_H, Color{0, 0, 0, 170});
-    menuBlitUi();
-    EndTextureMode();
-    saveCanvas("07_esc_menu");
-    showMenu = false;
-    paused = false;
-    phase = Phase::MainMenu;
-    TraceLog(LOG_INFO, "gui_review: done -> %s (bik_frames=%d)", dir, bn);
-}
-
-static int drawWrapped(Font f, const char* s, int x, int y, int maxW, int size, Color c, int maxLines) {
+int drawWrapped(Font f, const char* s, int x, int y, int maxW, int size, Color c, int maxLines,bool centered) {
     int lines = 0;
     std::string cur;
-    auto flush = [&]() {
-        if (!cur.empty() && lines < maxLines) { drawTextM(f, cur.c_str(), x, y + lines * (size + 2), size, c); lines++; }
+    auto flush = [&](bool blank=false) {
+        if ((!cur.empty() || blank) && lines < maxLines) { const int left=centered?x+(maxW-textW(f,cur.c_str(),size))/2:x;
+            drawTextM(f, cur.c_str(), left, y + lines * (size + 2), size, c); lines++; }
         cur.clear();
     };
     const char* p = s;
     while (*p && lines < maxLines) {
+        if(*p=='\r'){++p;continue;}
+        if(*p=='\n'){++p;flush(true);continue;}
         std::string word;
         if ((unsigned char)*p < 0x80) {
-            while (*p && (unsigned char)*p < 0x80 && *p != ' ') word += *p++;
+            while (*p && (unsigned char)*p < 0x80 && *p != ' ' && *p!='\n' && *p!='\r') word += *p++;
             if (*p == ' ') word += *p++;
         } else {
             int n = (*p & 0xE0) == 0xC0 ? 2 : (*p & 0xF0) == 0xE0 ? 3 : (*p & 0xF8) == 0xF0 ? 4 : 1;
@@ -1029,7 +916,7 @@ void Game::drawMissionSelect() {
                     {mon.x + (mon.width - dw) * 0.5f, mon.y + (mon.height - dh) * 0.5f, dw, dh}, WHITE);
     }
 
-    static int campTab = 0;
+    static int campTab = -1;
     static int campTabPrev = -1;
     static float campScroll = 0.f;
     static bool campSbDrag = false;
@@ -1037,6 +924,7 @@ void Game::drawMissionSelect() {
 
     const auto& tbl = missionTable();
     const Faction campFac[4] = {Faction::China, Faction::Allies, Faction::Soviet, Faction::Yuri};
+    if(campTab<0)for(int t=0;t<4;++t)if(campFac[t]==tbl.front().playerFaction){campTab=t;break;}
     int tabW = 80, tabH = 28, tabGap = 4;
     int tabsX = (int)content.x + 12, tabsY = 40;
     for (int t = 0; t < 4; t++) {
@@ -1157,7 +1045,7 @@ void Game::drawMissionSelect() {
                 campaignDifficulty = d;
             }
         }
-        const char* trackHint = campTab < 4 ? TR(S::FusionLabel) : TR(S::OfficialLabel);
+        const char* trackHint = !indices.empty() && tbl[indices.front()].track==1 ? TR(S::OfficialLabel) : TR(S::FusionLabel);
         drawTextS(font, trackHint, (int)(side.x + 10), (int)(side.y + 44), 12, MENU_MUTE);
     }
 
@@ -1241,8 +1129,9 @@ void Game::drawMissionBrief() {
         DrawRectangleLinesEx(dst, 1.f, Color{60, 90, 95, 220});
         ty += (int)dh + 8;
     }
-    ty += 14 * drawWrapped(font, missionBrief(pendingMission), tx, ty, (int)content.width - 40, 14,
-                           Color{180, 210, 205, 255}, 8);
+    const int briefLines=md.nativeScene.empty()?8:std::max(1,(UI_H-12-ty-32-(int)md.objectives.size()*16)/16);
+    ty += 16 * drawWrapped(font, missionBrief(pendingMission), tx, ty, (int)content.width - 40, 14,
+                           Color{180, 210, 205, 255}, briefLines);
     ty += 12;
     drawTextS(font, TR(S::ObjTrigger), tx, ty, 13, MENU_ACCENT);
     ty += 20;
@@ -1283,6 +1172,28 @@ void Game::refreshMapPreview() {
     // 与 newGame 一致：海战强制岛屿类地形
     int mapType = (cfgGameMode == (int)SkirmishMode::NavalWar) ? 1 : cfgMapType;
     referenceMapReady = true;
+    if(!cfgOriginalMap.empty()) {
+        OriginalSkirmishMaps::Data data;
+        referenceMapReady=OriginalSkirmishMaps::load(cfgOriginalMap,data,cfgAI+1);
+        Image image=referenceMapReady?LoadImage(contentPathFmt("assets/maps/native/%s/terrain.png",cfgOriginalMap.c_str())):Image{};
+        referenceMapReady=referenceMapReady && image.data;
+        if(previewTex.id)UnloadTexture(previewTex);previewTex={};previewMap={};
+        if(referenceMapReady){
+            previewMap=std::move(data.terrain);previewMap.bldOccRef=nullptr;
+            const Rectangle crop=GetImageAlphaBorder(image,0.01f);
+            ImageCrop(&image,crop);const float scale=std::min(280.f/image.width,200.f/image.height);
+            ImageResize(&image,std::max(1,(int)(image.width*scale)),std::max(1,(int)(image.height*scale)));
+            bool used[MAX_PLAYERS]{};
+            for(int i=0;i<cfgAI+1;++i){int x,y;tileToScreen(data.starts[i].x,data.starts[i].y,x,y);
+                x=(int)((x+(previewMap.h-1)*TILE_W/2-crop.x)*scale);
+                y=(int)((y-heightScreenY(previewMap.at(data.starts[i].x,data.starts[i].y).height)+TILE_H/2-crop.y)*scale);
+                int color=i?aiColor[i-1]:cfgColor;while(used[color])color=(color+1)%MAX_PLAYERS;used[color]=true;
+                ImageDrawRectangle(&image,x-3,y-3,7,7,BLACK);ImageDrawRectangle(&image,x-2,y-2,5,5,HOUSE_COLORS[color]);
+            }
+            previewTex=LoadTextureFromImage(image);SetTextureFilter(previewTex,TEXTURE_FILTER_POINT);
+        }
+        if(image.data)UnloadImage(image);previewDirty=false;return;
+    }
     if (cfgReferenceMap) {
         World reference;
         referenceMapReady = reference.init(64, 64, previewSeed, 1, 1,
@@ -1416,7 +1327,7 @@ void Game::refreshMapPreview() {
 }
 
 // ===================== 遭遇战下拉（真正弹出列表，不再点击轮转） =====================
-enum class SetupDrop : int { None = 0, Country, Color, Diff, Mode, MapSize, MapType };
+enum class SetupDrop : int { None = 0, Country, Color, Diff, Mode, MapSize, MapType, Rules };
 struct SetupDropState {
     SetupDrop kind = SetupDrop::None;
     int slot = -1; // 玩家行（Country/Color/Diff）；全局项为 -1
@@ -1489,6 +1400,8 @@ static void setupDropDrawPanel(int nItems, float rowH) {
 
 // ===================== 遭遇战设置（640 逻辑：左玩家/规则 + 右地图轨） =====================
 void Game::drawSetup() {
+    const bool rulesReady=refreshRulesChoice(cfgRules);
+    const auto countryChoices=selectableCountries();
     drawRa2Shell(font, TR(S::Skirmish), 0, false);
     Rectangle content = menuShellContent();
     Rectangle side = menuShellSide();
@@ -1496,7 +1409,8 @@ void Game::drawSetup() {
     bool pr = mPressed(MOUSE_LEFT_BUTTON);
     if (previewDirty) refreshMapPreview();
 
-    int maxAI = cfgReferenceMap ? 1 : cfgMapSize <= 64 ? 3 : (cfgMapSize <= 96 ? 5 : (cfgMapSize <= 160 ? 7 : 7));
+    const auto* originalChoice=OriginalSkirmishMaps::find(cfgOriginalMap);
+    int maxAI = originalChoice?originalChoice->players-1:cfgReferenceMap ? 1 : cfgMapSize <= 64 ? 3 : (cfgMapSize <= 96 ? 5 : (cfgMapSize <= 160 ? 7 : 7));
     if (cfgAI > maxAI) cfgAI = maxAI;
 
     // ---------- 右栏：CRT 内等距菱形预览（等比 contain，与局内投影一致） ----------
@@ -1543,13 +1457,14 @@ void Game::drawSetup() {
         S::SizeXS, S::SizeS, S::SizeM, S::SizeL, S::SizeXL, S::SizeHuge, S::SizeEpic,
     };
     static constexpr int kMapSizeN = 7;
-    static constexpr int kMapTypeN = 8;
-    auto mapName = [&](int i) { return i == 7 ? TR(S::MapReference) : TR(typeNames[i]); };
-    auto mapTip = [&](int i) { return i == 7 ? TR(S::TipMapReference) : TR(typeTips[i]); };
+    const int kMapTypeN = cfgRules==RulesChoice::Fusion?8:10;
+    auto mapName = [&](int i) { return i==8?TR(S::MapLittleBigLake):i==9?TR(S::MapSnowValley):i == 7 ? TR(S::MapReference) : TR(typeNames[i]); };
+    auto mapTip = [&](int i) { return i>=8?TR(S::TipOriginalSkirmish):i == 7 ? TR(S::TipMapReference) : TR(typeTips[i]); };
     const float dropRowH = 20.f;
     auto dropItemCount = [&]() -> int {
         switch (g_sdrop.kind) {
-            case SetupDrop::Country: return (int)Country::COUNT; // 11 国 + 随机
+            case SetupDrop::Country: return (int)countryChoices.size();
+            case SetupDrop::Rules: return (int)RulesChoice::COUNT;
             case SetupDrop::Color: return MAX_PLAYERS;
             case SetupDrop::Diff: return 4;
             case SetupDrop::Mode: return (int)SkirmishMode::COUNT;
@@ -1565,11 +1480,12 @@ void Game::drawSetup() {
     if (dropSel >= 0) {
         switch (g_sdrop.kind) {
             case SetupDrop::Country: {
-                int v = (dropSel < (int)Country::COUNT - 1) ? (dropSel + 1) : (int)Country::COUNT;
+                int v = countryChoices[dropSel];
                 if (g_sdrop.slot <= 0) cfgCountry = v;
                 else if (g_sdrop.slot - 1 < cfgAI) aiCountry[g_sdrop.slot - 1] = v;
                 break;
             }
+            case SetupDrop::Rules: selectRulesChoice((RulesChoice)dropSel);break;
             case SetupDrop::Color: {
                 int v = dropSel % MAX_PLAYERS;
                 if (g_sdrop.slot <= 0) cfgColor = v;
@@ -1581,6 +1497,7 @@ void Game::drawSetup() {
                 break;
             case SetupDrop::Mode:
                 cfgReferenceMap = false;
+                if(dropSel>1)clearOriginalMap();
                 cfgGameMode = dropSel;
                 if (cfgGameMode == (int)SkirmishMode::FreeForAll) cfgAlliance = false;
                 if (cfgGameMode == (int)SkirmishMode::LandRush) cfgCrates = true;
@@ -1590,13 +1507,16 @@ void Game::drawSetup() {
                 break;
             case SetupDrop::MapSize:
                 cfgReferenceMap = false;
+                clearOriginalMap();
                 cfgMapSize = mapSizes[dropSel];
                 if (cfgAI > maxAI) cfgAI = maxAI;
                 previewDirty = true;
                 break;
             case SetupDrop::MapType:
                 if (dropSel == 7) { selectReferenceMap(); break; }
+                if (dropSel>=8) {selectOriginalMap(OriginalSkirmishMaps::choices[dropSel-8].id);break;}
                 cfgReferenceMap = false;
+                clearOriginalMap();
                 cfgMapType = dropSel;
                 if (cfgGameMode == (int)SkirmishMode::NavalWar) cfgMapType = 1;
                 previewDirty = true;
@@ -1622,6 +1542,7 @@ void Game::drawSetup() {
 
     auto rollRandomMap = [&]() {
         cfgReferenceMap = false;
+        clearOriginalMap();
         uint64_t ns = seedRollNew(previewSeed);
         previewSeed = ns;
         seedHistPush(ns);
@@ -1630,7 +1551,7 @@ void Game::drawSetup() {
     };
 
     menuDrawWell({bx - 4.f, byBtn - 4.f, bw + 8.f, bhSide + sideGap + midH + 8.f}, false);
-    if (ra2Button(font, m, prUi, {bx, byBtn, bw, bhSide}, TR(S::StartGame), 13, !cfgReferenceMap || referenceMapReady, false, true))
+    if (ra2Button(font, m, prUi, {bx, byBtn, bw, bhSide}, TR(S::StartGame), 13, rulesReady && ((!cfgReferenceMap && cfgOriginalMap.empty()) || referenceMapReady), false, true))
         newGame(previewSeed);
     float y2 = byBtn + bhSide + sideGap;
     if (ra2Button(font, m, prUi, {bx, y2, bw, bhSide}, TR(S::RandomNewMap), 12))
@@ -1639,22 +1560,21 @@ void Game::drawSetup() {
         setTip(TR(S::RandomNewMap), TR(S::TipMapSeed));
     float y3 = y2 + bhSide + sideGap;
     if (ra2Button(font, m, prUi, {bx, y3, bw, bhSide}, TR(S::CustomizeBattle), 12)) {
-        g_setupMapCustom = !g_setupMapCustom;
-        if (g_setupMapCustom) seedHistEnsure(previewSeed);
+        setSetupMapCustom(!g_setupMapCustom);
         g_sfx.play(Sfx::Click, 0.55f);
     }
     if (CheckCollisionPointRec(m, {bx, y3, bw, bhSide}) && cfgUiTips)
         setTip(TR(S::CustomizeBattle), TR(S::TipCustomizeBattle));
     if (ra2Button(font, m, prUi, {bx, backY, bw, bhSide}, TR(S::Back), 13)) {
         setupDropClose();
-        g_setupMapCustom = false;
+        setSetupMapCustom(false);
         phase = Phase::MainMenu;
     }
 
     // ---------- 左：玩家槽 [名][阵营徽][旗+国家][颜色][难度▾] ----------
     int sx = (int)content.x + 8, sy = 14;
     int sw = (int)content.width - 16;
-    int rowH = 28;
+    int rowH = cfgAI>5?24:28;
     int nameW = std::max(70, sw * 18 / 100);
     int factW = std::max(96, std::min(120, sw * 34 / 100));
     int colorW = 28;
@@ -1755,7 +1675,7 @@ void Game::drawSetup() {
                 g_sfx.play(Sfx::Click, 0.45f);
             }
             Rectangle dr{(float)delX, (float)y + 2, (float)delW, (float)(rowH - 6)};
-            if (ra2Button(font, m, prUi, dr, TR(S::Remove), 9, !cfgReferenceMap, true)) {
+            if (ra2Button(font, m, prUi, dr, TR(S::Remove), 9, !cfgReferenceMap && (cfgOriginalMap.empty() || cfgAI>1), true)) {
                 for (int i = idx - 1; i < cfgAI - 1; i++) {
                     aiColor[i] = aiColor[i + 1]; aiCountry[i] = aiCountry[i + 1];
                     aiDiff[i] = aiDiff[i + 1]; aiPersonality[i] = aiPersonality[i + 1];
@@ -1844,7 +1764,7 @@ void Game::drawSetup() {
     int sySliders = ty + optGap * 3 + 8;
     Rectangle speedHit{12, (float)sySliders, 180, 34};
     drawTextS(font, TR(S::GameSpeed), 12, sySliders, 11, MENU_YELLOW);
-    if (ra2RedSlider(font, m, prUi, 12, sySliders + 14, 150, gameSpeed, 3, TR(speedNames[gameSpeed]))) {}
+    if (ra2RedSlider(font, m, prUi, 12, sySliders + 14, 140, gameSpeed, 3, TR(speedNames[gameSpeed]))) {}
     if (CheckCollisionPointRec(m, speedHit) && cfgUiTips) setTip(TR(S::GameSpeed), TR(S::TipGameSpeed));
     static const int monies[] = {5000, 10000, 20000, 50000};
     int moneyStep = 0;
@@ -1859,16 +1779,20 @@ void Game::drawSetup() {
     // 底栏：定宽值槽（模式一行；尺寸/类型并排，左对齐短字）
     dropField(formX, oyMode, labelW, modeSlotW, TR(S::GameMode), TR(modeNames[cfgGameMode]), SetupDrop::Mode,
               TR(S::GameMode), TR(modeTips[cfgGameMode]));
+    dropField(252,oyMode,52,128,TR(S::RulesSet),rulesChoiceName(cfgRules),SetupDrop::Rules,TR(S::RulesSet),TR(S::TipRulesSet));
     int si = 0;
     while (si < kMapSizeN && mapSizes[si] != cfgMapSize) si++;
     if (si >= kMapSizeN) si = 2;
-    dropField(formX, oyMap, labelW, mapSlotW, TR(S::MapSize), TR(sizeNames[si]), SetupDrop::MapSize,
+    originalChoice=OriginalSkirmishMaps::find(cfgOriginalMap);
+    const auto sizeLabel=originalChoice?TextFormat("%d×%d",originalChoice->width,originalChoice->height):TR(sizeNames[si]);
+    dropField(formX, oyMap, labelW, mapSlotW, TR(S::MapSize), sizeLabel, SetupDrop::MapSize,
               TR(S::MapSize), TR(S::TipMapSize));
     int ti = cfgMapType;
     if (ti < 0 || ti >= kMapTypeN) ti = 0;
     int typeX = formX + labelW + mapSlotW + 18;
-    dropField(typeX, oyMap, labelW, mapSlotW, TR(S::MapType), mapName(cfgReferenceMap ? 7 : ti), SetupDrop::MapType,
-              TR(S::MapType), mapTip(cfgReferenceMap ? 7 : ti));
+    const int selectedMap=originalChoice?8+(int)(originalChoice-OriginalSkirmishMaps::choices.data()):cfgReferenceMap?7:ti;
+    dropField(typeX, oyMap, labelW, mapSlotW, TR(S::MapType), mapName(selectedMap), SetupDrop::MapType,
+              TR(S::MapType), mapTip(selectedMap));
 
     // ---------- 地图定制面板（换地图展开）：种子 + 随机/上一个/下一个/切换类型 ----------
     if (g_setupMapCustom) {
@@ -1897,6 +1821,7 @@ void Game::drawSetup() {
         };
         if (miniBtn(ax, 78.f, TR(S::RandomNewMap))) {
             cfgReferenceMap = false;
+            clearOriginalMap();
             uint64_t ns = seedRollNew(previewSeed);
             previewSeed = ns;
             seedHistPush(ns);
@@ -1905,12 +1830,14 @@ void Game::drawSetup() {
         bool canPrev = g_seedHistI > 0;
         if (miniBtn(ax, 78.f, TR(S::PrevSeed), canPrev) && canPrev) {
             cfgReferenceMap = false;
+            clearOriginalMap();
             g_seedHistI--;
             previewSeed = g_seedHist[g_seedHistI];
             previewDirty = true;
         }
         if (miniBtn(ax, 78.f, TR(S::NextSeed))) {
             cfgReferenceMap = false;
+            clearOriginalMap();
             if (g_seedHistI >= 0 && g_seedHistI < g_seedHistN - 1) {
                 g_seedHistI++;
                 previewSeed = g_seedHist[g_seedHistI];
@@ -1924,6 +1851,7 @@ void Game::drawSetup() {
         bool canCycleType = cfgGameMode != (int)SkirmishMode::NavalWar;
         if (miniBtn(ax, 78.f, TR(S::CycleMapType), canCycleType) && canCycleType) {
             cfgReferenceMap = false;
+            clearOriginalMap();
             cfgMapType = (cfgMapType + 1) % 7;
             previewDirty = true;
         }
@@ -1943,8 +1871,8 @@ void Game::drawSetup() {
             switch (g_sdrop.kind) {
                 case SetupDrop::Country: {
                     const char* cn = nullptr;
-                    if (i < (int)Country::COUNT - 1) {
-                        int c = i + 1;
+                    if (countryChoices[i]<(int)Country::COUNT) {
+                        int c = countryChoices[i];
                         int tx = (int)row.x + 4;
                         Texture2D fl = g_menu.countryFlag[c];
                         if (fl.id) {
@@ -1976,6 +1904,10 @@ void Game::drawSetup() {
                     if (hover && cfgUiTips) setTip(TR(S::Color), TR(S::TipColor));
                     break;
                 }
+                case SetupDrop::Rules:
+                    drawTextS(font,rulesChoiceName((RulesChoice)i),(int)row.x+6,(int)row.y+2,11,MENU_YELLOW);
+                    if(hover && cfgUiTips)setTip(TR(S::RulesSet),TR(S::TipRulesSet));
+                    break;
                 case SetupDrop::Diff:
                     drawTextS(font, setupDiffLabel(i), (int)row.x + 6, (int)row.y + 2, 11,
                               i >= 2 ? Color{255, 120, 90, 255} : MENU_YELLOW);
@@ -1999,7 +1931,10 @@ void Game::drawSetup() {
     }
 
     // tip：叠在地图下半（半透明），不预留空黑；无 tip 时短状态条
-    if (cfgUiTips && tipTitle && tipBody) {
+    if(!rulesReady){
+        Rectangle error{mon.x,mon.y+mon.height-44.f,mon.width,44.f};DrawRectangleRec(error,Color{30,12,12,230});
+        drawWrapped(font,TR(S::RulesUnavailable),(int)error.x+4,(int)error.y+5,(int)error.width-8,10,Color{255,160,128,255},3);
+    } else if (cfgUiTips && tipTitle && tipBody) {
         float tipH = mon.height * 0.42f;
         Rectangle tipR{mon.x, mon.y + mon.height - tipH, mon.width, tipH};
         DrawRectangleRec(tipR, Color{10, 12, 16, 220});
@@ -2017,12 +1952,17 @@ void Game::drawSetup() {
         std::snprintf(seedLine, sizeof(seedLine), "%s %llu", TR(S::MapSeed), (unsigned long long)previewSeed);
         menuDrawWell(statusBar, false);
         menuScissorUi((int)statusBar.x + 3, (int)statusBar.y + 1, (int)statusBar.width - 6, 21);
-        if (cfgReferenceMap) {
-            drawTextS(font, referenceMapReady ? mapName(7) : TR(S::MsgMapUnavailable),
+        if (cfgReferenceMap || !cfgOriginalMap.empty()) {
+            drawTextS(font, referenceMapReady ? mapName(selectedMap) : TR(S::MsgMapUnavailable),
                       (int)statusBar.x + 4, (int)statusBar.y + 1, 10, MENU_MUTE);
             drawTextS(font, seedLine, (int)statusBar.x + 4, (int)statusBar.y + 12, 9, MENU_MUTE);
         } else drawTextS(font, TextFormat("%s · %s", TR(modeNames[cfgGameMode]), seedLine),
                         (int)statusBar.x + 4, (int)statusBar.y + 4, 10, MENU_MUTE);
         EndScissorMode();
     }
+}
+
+void Game::setSetupMapCustom(bool enabled) {
+    g_setupMapCustom=enabled;
+    if(enabled)seedHistEnsure(previewSeed);
 }

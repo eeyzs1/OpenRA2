@@ -1,0 +1,35 @@
+#pragma once
+namespace NativeAirClearanceReference {
+struct Case {const char* name;int heading;double speed;int floor,next;bool bridge,nextBridge;int building,nextBuilding;bool other,nextOther,enabled;int x,y,result;};
+constexpr Case cases[]={
+    {"heading",0,30.0,0,0,false,false,0,0,false,false,true,25600,25344,0},
+    {"heading",4096,30.0,0,0,false,false,0,0,false,false,true,25856,25344,0},
+    {"heading",8192,30.0,0,0,false,false,0,0,false,false,true,25856,25344,0},
+    {"heading",12288,30.0,0,0,false,false,0,0,false,false,true,25856,25600,0},
+    {"heading",16384,30.0,0,0,false,false,0,0,false,false,true,25856,25600,0},
+    {"heading",20480,30.0,0,0,false,false,0,0,false,false,true,25856,25856,0},
+    {"heading",24576,30.0,0,0,false,false,0,0,false,false,true,25856,25856,0},
+    {"heading",28672,30.0,0,0,false,false,0,0,false,false,true,25600,25856,0},
+    {"heading",32768,30.0,0,0,false,false,0,0,false,false,true,25600,25856,0},
+    {"heading",36864,30.0,0,0,false,false,0,0,false,false,true,25344,25856,0},
+    {"heading",40960,30.0,0,0,false,false,0,0,false,false,true,25344,25856,0},
+    {"heading",45056,30.0,0,0,false,false,0,0,false,false,true,25344,25600,0},
+    {"heading",49152,30.0,0,0,false,false,0,0,false,false,true,25344,25600,0},
+    {"heading",53248,30.0,0,0,false,false,0,0,false,false,true,25344,25344,0},
+    {"heading",57344,30.0,0,0,false,false,0,0,false,false,true,25344,25344,0},
+    {"heading",61440,30.0,0,0,false,false,0,0,false,false,true,25600,25344,0},
+    {"heading-wrap",65535,30.0,0,0,false,false,0,0,false,false,true,25600,25344,0},
+    {"rise",0,30.0,104,312,false,false,0,0,false,false,true,25600,25344,312},
+    {"fall",0,30.0,312,104,false,false,0,0,false,false,true,25600,25344,208},
+    {"odd-fall",0,30.0,313,104,false,false,0,0,false,false,true,25600,25344,208},
+    {"bridge-ahead",0,30.0,0,0,false,true,0,0,false,false,true,25600,25344,208},
+    {"bridge-current",0,30.0,0,0,true,false,0,0,false,false,true,25600,25344,208},
+    {"bridge-both",0,30.0,208,208,true,true,0,0,false,false,true,25600,25344,624},
+    {"building-ahead",0,30.0,0,0,false,false,0,4,false,false,true,25600,25344,416},
+    {"building-current",0,30.0,0,0,false,false,6,0,false,false,true,25600,25344,312},
+    {"building-height-disabled",0,30.0,0,0,false,false,0,4,false,false,false,25600,25344,85},
+    {"other-object-ahead",0,30.0,0,0,false,false,0,0,false,true,true,25600,25344,85},
+    {"stopped-bridge",0,0.0,208,104,true,false,0,0,false,false,true,25600,25600,624},
+    {"stopped-building",0,0.0,104,0,false,false,4,0,false,false,true,25600,25600,520},
+};
+}

@@ -1,10 +1,10 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "game/world_priv.h"
 #include <cstdio>
 #include <filesystem>
 #include <set>
 
-int Game::burstRegression() {
+int GameRegression::burstRegression() {
     int failures=0;
     auto check=[&](bool ok,const char* label){failures+=!ok;std::printf("BURST %s %s\n",ok?"PASS":"FAIL",label);};
     auto reset=[](World& w) {
@@ -94,6 +94,33 @@ int Game::burstRegression() {
         std::printf("BURST_CANCEL scenario=%d started=%d reused=%d emitted=%d expected=%d paused=%d remaining=%d\n",
             scenario,started,reused,emitted,continued?1:0,paused,w.ents[actor].burstRemaining);
     }
+    {
+        World w;reset(w);const EID actor=w.spawnUnit(0,UnitType::Apocalypse,20.5f,20.5f);
+        const EID target=w.spawnUnit(1,UnitType::MCV,24.5f,20.5f);w.ents[actor].turretDir=dirFromVec(4,0);
+        attack(w,actor,target);w.update();
+        const int remaining=w.ents[actor].burstRemaining,delay=w.ents[actor].burstDelay;
+        w.kill(actor,false);w.kill(target,false);
+        const auto roundTrip=[&]() {
+            World restored;FILE* file=std::tmpfile();bool equal=file && w.saveGame(file);
+            if(equal){std::rewind(file);equal=restored.loadGame(file) && w.checksum()==restored.checksum();}
+            if(file)std::fclose(file);
+            for(int frame=0;frame<30 && equal;++frame){w.update();restored.update();equal=w.checksum()==restored.checksum();}
+            return equal;
+        };
+        check(remaining>0 && !w.ents[actor].burstRemaining && w.ents[actor].burstTarget==INVALID_EID && roundTrip(),
+            "retiring a mid-volley attacker without slot reuse leaves an immediately resumable save after its target also dies");
+        // Earlier World writers retained these inert fields on a dead actor.
+        // Preserve the exact historical bytes/checksum when reading that state.
+        auto& retired=w.ents[actor];retired.burstRemaining=remaining;retired.burstDelay=delay;
+        retired.burstOwner=0;retired.burstTarget=target;
+        check(roundTrip(),"a historical dead actor may retain an inert volley referencing a retired in-range entity slot");
+        retired.burstTarget=(EID)w.ents.size()+1;FILE* file=std::tmpfile();World guard=w;
+        guard.map.bldOccRef=&guard.bldOcc;const auto hash=guard.checksum();
+        bool rejected=file && w.saveGame(file);
+        if(rejected){std::rewind(file);rejected=!guard.loadGame(file) && hash==guard.checksum();}
+        if(file)std::fclose(file);
+        check(rejected,"historical dead volleys still reject out-of-range references without changing the destination world");
+    }
     auto& primary=const_cast<UnitDef&>(unitDef(UnitType::Apocalypse)).weapon;
     const WeaponDef original=primary;
     for(int single=0;single<2;++single) {
@@ -123,5 +150,67 @@ int Game::burstRegression() {
     loadRules("review_out/burst-roundtrip.ini");const auto& d=unitDef(UnitType::Apocalypse);
     check(d.weapon.burst==2 && d.elite && d.elite->burst==4 && d.airWeapon.burst==2
         && d.weapon.burstDelayMin==3 && d.weapon.burstDelayMax==5,"rules export and reload preserve burst parameters");
+    {
+        World w;
+        const bool loaded=w.init(64,64,20261031,2,0,{Faction::Soviet,Faction::Allies},0,"maps/skirmish-reference.txt",true,true,
+            "assets/rules/profiles/ra2.ini",{Country::Russia,Country::America});
+        check(loaded,"the timed ground burst fixture loads its rules and map");
+        if(!loaded)return failures;
+        for(EID id=0;id<(EID)w.ents.size();++id)if(w.valid(id))w.kill(id,false);
+        for(auto& cell:w.map.cells)cell=Cell{};
+        for(auto& player:w.players)player.isAI=false;
+        w.cratesEnabled=false;w.crates.clear();
+        w.spawnBuilding(0,BldType::ConYard,3,3,true);
+        w.spawnBuilding(1,BldType::ConYard,50,50,true);
+        const EID gunner=w.spawnUnit(0,UnitType::Apocalypse,20.5f,20.5f);
+        const EID mover=w.spawnUnit(1,UnitType::IFV,21.5f,20.5f);
+        if(!w.valid(gunner) || !w.valid(mover))return failures+1;
+        w.ents[gunner].turretDir=0;
+        auto& target=w.ents[mover];
+        target.dir=target.turretDir=3;target.vetRank=2;target.crateSpeedBoost=300;
+        World::Cmd move{};move.type=World::Cmd::Move;move.ids={mover};move.x=21.5f;move.y=32.5f;
+        w.bindCommand(move);w.applyCmd(1,move);
+        w.map.reveal(0,20,20,18);
+        World::Cmd attackOrder{};attackOrder.type=World::Cmd::Attack;attackOrder.ids={gunner};attackOrder.a=mover;
+        w.bindCommand(attackOrder);w.applyCmd(0,attackOrder);
+        const bool admitted=target.state==UState::Moving && w.ents[gunner].target==mover && w.usesNativeGround(w.ents[gunner]);
+        World replay;
+        bool waited=false,saved=false,exact=true;
+        int first=0,second=0,error=0;
+        for(int elapsed=0;elapsed<90 && !second && w.valid(gunner) && w.valid(mover);++elapsed) {
+            const auto& actor=w.ents[gunner];
+            const auto timed=w.nativeTurretHeading(actor,w.tick+1);
+            const bool continuing=actor.burstRemaining>0;
+            const bool due=continuing && actor.burstDelay<=1;
+            w.presentationEvents.clear();w.update();
+            if(saved) {
+                replay.presentationEvents.clear();replay.update();
+                exact &= w.checksum()==replay.checksum();
+            }
+            for(const auto& event:w.presentationEvents)if(event.kind==PresentationKind::Muzzle && event.entity==gunner) {
+                if(!continuing)first=(int)w.tick;
+                else {
+                    second=(int)w.tick;
+                    const auto wanted=NativeGroundMath::vector(event.targetX-event.x,event.targetY-event.y);
+                    error=std::abs(NativeGroundMath::delta(timed,wanted));
+                }
+            }
+            if(due && !second && w.ents[gunner].burstRemaining==1 && w.ents[gunner].burstDelay==0) {
+                waited=true;
+                if(!saved) {
+                    FILE* snapshot=std::tmpfile();
+                    if(snapshot) {
+                        saved=w.saveGame(snapshot) && std::fseek(snapshot,0,SEEK_SET)==0 && replay.loadGame(snapshot)
+                            && w.checksum()==replay.checksum();
+                        std::fclose(snapshot);
+                    }
+                }
+            }
+        }
+        std::printf("BURST_NATIVE_FACING admitted=%d first=%d second=%d error=%d waited=%d saved=%d replay=%d\n",
+            admitted,first,second,error,waited,saved,exact);
+        check(admitted && first>0 && second>first && target.y>20.5f && error<=8192 && waited && saved && exact,
+            "a timed ground follow-up waits for the real gun angle and replays from the ready burst state");
+    }
     return failures;
 }

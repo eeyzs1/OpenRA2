@@ -3,9 +3,10 @@
 #include <cmath>
 #include <algorithm>
 
-bool World::bldBlocked(int x, int y) const {
+bool World::bldBlocked(int x, int y,int layer) const {
     if (!map.inBounds(x, y)) return true;
-    return bldOcc[cellIdx(x, y)] > 0;
+    if(layer==1)return !map.hasDeck(x,y);
+    return map.cellBlocked(x,y);
 }
 
 EID World::bldAt(int bx, int by) const {
@@ -16,11 +17,13 @@ EID World::bldAt(int bx, int by) const {
 
 void World::captureVisualTarget(PresentationEvent& event,const Ent& entity) const {
     event.visualTarget=entity.isBuilding?VisualTarget::Building:entity.airborne()?VisualTarget::Aircraft
-        :unitDef(entity.utype).isInfantry()?VisualTarget::Infantry:VisualTarget::Vehicle;
+        :unitDef(entity).isInfantry()?VisualTarget::Infantry:VisualTarget::Vehicle;
     event.flightFraction=entity.flightFraction();
     event.magneticHeight=entity.airborne()?0:entity.magneticHeight;
     const int x=(int)std::floor(event.x),y=(int)std::floor(event.y);
-    if(map.inBounds(x,y))event.terrainHeight=map.at(x,y).height;
+    if(map.inBounds(x,y))event.terrainHeight=map.surfaceHeight(x,y,entity.isBuilding?0:entity.navLayer);
+    if(entity.supportAir || (entity.nativeIdentity.definition && (entity.nativeIdentity.definition->nativeRocket || entity.nativeJumpjet.motion.started)))
+        event.nativeAltitudePixels=std::max(0.f,(entity.nativeAltitude/104.f-std::max(0,event.terrainHeight))*16.f);
 }
 
 static bool unitShouldOccupy(const World::Ent& e) {
@@ -47,6 +50,7 @@ void World::rebuildUnitOcc() {
 void World::unitOccSync(EID id) {
     if (id < 0 || id >= (EID)ents.size()) return;
     Ent& e = ents[id];
+    syncNativeCellOrder(e);
     int want = -1;
     if (unitShouldOccupy(e) && map.inBounds((int)e.x, (int)e.y))
         want = cellIdx((int)e.x, (int)e.y);
@@ -121,27 +125,31 @@ void World::airOccSync(EID id) {
     }
 }
 
-EID World::unitAtCell(int x, int y) const {
+EID World::unitAtCell(int x, int y,int layer) const {
     if (!map.inBounds(x, y) || unitOccHead.empty()) return INVALID_EID;
-    return unitOccHead[(size_t)cellIdx(x, y)];
+    for(EID id=unitOccHead[(size_t)cellIdx(x,y)];id!=INVALID_EID;id=ents[id].occNext)
+        if(layer<0 || ents[id].navLayer==layer)return id;
+    return INVALID_EID;
 }
 
 // 脚印格是否被「其他」地面单位占用（格链表，O(同格人数)）
-bool World::groundUnitBlocksCell(int x, int y, EID ignore) const {
+bool World::groundUnitBlocksCell(int x, int y, EID ignore,int layer) const {
     if (!map.inBounds(x, y) || unitOccHead.empty()) return false;
+    if(layer<0)layer=valid(ignore)?movementLayerAt(ents[ignore],x,y):0;
     for (EID id = unitOccHead[(size_t)cellIdx(x, y)]; id != INVALID_EID; id = ents[id].occNext) {
-        if (id == ignore) continue;
+        if (id == ignore || ents[id].navLayer!=layer) continue;
         return true;
     }
     return false;
 }
 
-int World::countInfantryAtCell(int x, int y, EID ignore) const {
+int World::countInfantryAtCell(int x, int y, EID ignore,int layer) const {
     if (!map.inBounds(x, y) || unitOccHead.empty()) return 0;
+    if(layer<0)layer=valid(ignore)?movementLayerAt(ents[ignore],x,y):0;
     int n = 0;
     for (EID id = unitOccHead[(size_t)cellIdx(x, y)]; id != INVALID_EID; id = ents[id].occNext) {
-        if (id == ignore) continue;
-        if (unitDef(ents[id].utype).isInfantry()) n++;
+        if (id == ignore || ents[id].navLayer!=layer) continue;
+        if (unitDef(ents[id]).isInfantry()) n++;
     }
     return n;
 }
@@ -150,17 +158,30 @@ int World::countInfantryAtCell(int x, int y, EID ignore) const {
 // - 车/舰：同格至多 1（友军/敌军、静止/移动一律硬挡，避免永久重叠）
 // - 步兵：同格至多 3
 // - 车可进入有步兵的格（碾压/驶过另判）；步兵不可进入有车/舰的格
-bool World::cellHardBlockedForMove(int x, int y, EID mover) const {
-    if (!valid(mover) || !ents[mover].alive) return groundUnitBlocksCell(x, y, mover);
+bool World::cellHardBlockedForMove(int x, int y, EID mover,int layer) const {
+    const bool alreadyHere=valid(mover) && (int)ents[mover].x==x && (int)ents[mover].y==y;
+    if(nativeGroundEnabled() && !alreadyHere && map.inBounds(x-1,y)) {
+        const EID refinery=bldAt(x-1,y);
+        const int surface=layer<0?(valid(mover)?movementLayerAt(ents[mover],x,y):0):layer;
+        if(valid(refinery) && ents[refinery].btype==BldType::OreRefinery
+            && surface==ents[refinery].navLayer
+            && x==(int)ents[refinery].x+4 && y==(int)ents[refinery].y+1) {
+            const auto ref=entityRef(refinery);
+            for(EID i=0;i<(EID)ents.size();++i)if(i!=mover && ents[i].alive && ents[i].nativeDock.receiver==ref
+                && ents[i].claimsNativeDock())return true;
+        }
+    }
+    if (!valid(mover) || !ents[mover].alive) return groundUnitBlocksCell(x, y, mover,layer);
     if (!map.inBounds(x, y) || unitOccHead.empty()) return false;
     const Ent& self = ents[mover];
-    const bool moverInf = unitDef(self.utype).isInfantry();
+    if(layer<0)layer=movementLayerAt(self,x,y);
+    const bool moverInf = unitDef(self).isInfantry();
     constexpr int kInfStack = 3;
     int otherInf = 0;
     bool hasVehicle = false;
     for (EID id = unitOccHead[(size_t)cellIdx(x, y)]; id != INVALID_EID; id = ents[id].occNext) {
-        if (id == mover) continue;
-        if (unitDef(ents[id].utype).isInfantry()) otherInf++;
+        if (id == mover || ents[id].navLayer!=layer) continue;
+        if (unitDef(ents[id]).isInfantry()) otherInf++;
         else hasVehicle = true;
     }
     if (moverInf) {
@@ -192,6 +213,11 @@ int World::countBlds(int player, BldType t) const {
 
 bool World::modeAllowsBuilding(int player, BldType t) const {
     if (player < 0 || player >= numPlayers || t < BldType::ConYard || t >= BldType::COUNT) return false;
+    if(usesRulesProfile()) {
+        const int index=rulesTypeIndex(player,false,(int)t);if(index<0)return false;
+        const auto& d=*nativeTypes[index];return d.production.techLevel>=0 && d.production.techLevel<=nativeProductionRules.techLevels[player]
+            && sourceProductionModeAllows(d);
+    }
     const BldDef& d = bldDef(t);
     if (d.factionMask == 0) return false;
     if (skirmishMode != SkirmishMode::UnholyAlliance
@@ -206,6 +232,11 @@ bool World::modeAllowsBuilding(int player, BldType t) const {
 
 bool World::modeAllowsUnit(int player, UnitType t) const {
     if (player < 0 || player >= numPlayers || t < UnitType::MCV || t >= UnitType::COUNT) return false;
+    if(usesRulesProfile()) {
+        const int index=rulesTypeIndex(player,true,(int)t);if(index<0)return false;
+        const auto& d=*nativeTypes[index];return d.production.techLevel>=0 && d.production.techLevel<=nativeProductionRules.techLevels[player]
+            && sourceProductionModeAllows(d);
+    }
     const UnitDef& u = unitDef(t);
     if (skirmishMode != SkirmishMode::UnholyAlliance
         && !(u.factionMask & (1 << (int)players[player].faction))) return false;
@@ -239,7 +270,7 @@ void World::ensureMegawealthOilDerricks(int perPlayer) {
         for (int dy = 0; dy < d.h && ok; ++dy)
             for (int dx = 0; dx < d.w; ++dx) {
                 int x = bx + dx, y = by + dy;
-                if (!map.inBounds(x, y) || !map.at(x, y).passable() || map.at(x, y).ore > 0 || bldBlocked(x, y)) {
+                if (!map.inBounds(x, y) || !map.at(x, y).passable() || map.at(x, y).ore > 0 || bldAt(x, y)!=INVALID_EID) {
                     ok = false;
                     break;
                 }
@@ -255,6 +286,7 @@ void World::ensureMegawealthOilDerricks(int perPlayer) {
 }
 
 bool World::prereqMet(int player, const BldDef& d) const {
+    if(usesRulesProfile())return nativeProductionVisible(player,productionSelector(player,false,(int)d.type));
     if (!modeAllowsBuilding(player, d.type)) return false;
     if (!campaignAllowsBuilding(d.type)) return false;
     // 国家限制（RA2 原作：如巨炮仅法国可建）；秘密实验室占领后可解锁（见 capture 处理）
@@ -272,6 +304,7 @@ bool World::prereqMet(int player, const BldDef& d) const {
 }
 
 bool World::unitPrereqMet(int player, const UnitDef& u) const {
+    if(usesRulesProfile())return nativeProductionVisible(player,productionSelector(player,true,(int)u.type));
     if (!modeAllowsUnit(player, u.type)) return false;
     if (!campaignAllowsUnit(u.type)) return false;
     // 国家限制（RA2 原作：如狙击手仅英国、磁能坦克仅苏俄）；秘密实验室解锁亦放行
@@ -295,17 +328,18 @@ bool World::unitPrereqMet(int player, const UnitDef& u) const {
 
 bool World::productionFacilityOperational(const Ent& building) {
     return building.alive && building.isBuilding && !building.selling && building.constructAnim<=0
-        && building.chrono<=0 && building.drainedBy==INVALID_EID;
+        && building.chrono<=0 && building.nativeTemporalHead==INVALID_EID && building.drainedBy==INVALID_EID;
 }
 ProductionFacilityState World::productionFacilities(int player,bool unit,int type) const {
     ProductionFacilityState result;
-    if(player<0 || player>=numPlayers || type<0 || type>=(unit?(int)UnitType::COUNT:(int)BldType::COUNT)) return result;
+    if(usesRulesProfile())type=productionSelector(player,unit,type);
+    if(player<0 || player>=numPlayers || !validProductionType(unit,type)) return result;
     for(const auto& building:ents) {
         if(!building.alive || !building.isBuilding || building.player!=player) continue;
-        if(unit?!isFactoryFor(building.btype,unitDef((UnitType)type)):building.btype!=BldType::ConYard) continue;
+        if(nativeProductionType(type)?!nativeFactorySupports(building,type-NATIVE_PRODUCTION_BASE):unit?!isFactoryFor(building.btype,unitDef((UnitType)type)):building.btype!=BldType::ConYard) continue;
         ++result.present;
         if(productionFacilityOperational(building)) ++result.operational;
-        if(building.chrono>0) ++result.frozen;
+        if(building.chrono>0 || building.nativeTemporalHead!=INVALID_EID) ++result.frozen;
         if(building.drainedBy!=INVALID_EID) ++result.drained;
         if(building.constructAnim>0 && !building.selling) ++result.constructing;
         if(building.selling) ++result.selling;
@@ -314,6 +348,7 @@ ProductionFacilityState World::productionFacilities(int player,bool unit,int typ
 }
 
 bool World::hasFactoryFor(int player, const UnitDef& u) const {
+    if(usesRulesProfile())return productionFacilities(player,true,(int)u.type).present>0;
     for (const Ent& e : ents)
         if (e.alive && e.isBuilding && e.player == player && isFactoryFor(e.btype, u)) return true;
     return false;
@@ -347,8 +382,8 @@ EID World::findNearestEnemy(int player, float x, float y, float maxR, bool inclu
         if (!e.alive || e.player < 0 || !isEnemy(player, e.player)) return;
         if (e.parasiting && e.utype == UnitType::TerrorDrone) return; // 寄生中的机器人不可被索敌（乌贼缠绕仍可被攻击摘除）
         if (e.isBuilding && !includeBlds) return;
-        if(seeker==UnitType::AttackDog && (e.isBuilding || !unitDef(e.utype).isInfantry())) return;
-        if(seeker==UnitType::Magnetron && !e.isBuilding && (unitDef(e.utype).isInfantry() || unitDef(e.utype).isAir())) return;
+        if(seeker==UnitType::AttackDog && (e.isBuilding || !unitDef(e).isInfantry())) return;
+        if(seeker==UnitType::Magnetron && !e.isBuilding && (unitDef(e).isInfantry() || unitDef(e).isAir())) return;
         if (!e.isBuilding) {
             if (e.camouflaged && e.utype != UnitType::Spy) return; // 幻影伪装：无法被自动索敌
             // 间谍（含伪装）：除军犬外无法被自动索敌（RA2 原作：军犬嗅探）
@@ -366,8 +401,12 @@ EID World::findNearestEnemy(int player, float x, float y, float maxR, bool inclu
         if (e.isBuilding && seeker == UnitType::Yuri) return;
         WeaponDef candidate;
         const WeaponDef* filter=w;
-        if(searching && (seeker==UnitType::Magnetron || (!searching->isBuilding && unitDef(searching->utype).hasAirWeapon))) {
+        // Do not repeatedly acquire a target that the attack state will reject
+        // next tick. Buildings have a separate automatic firing policy.
+        if(searching && !searching->isBuilding) {
             if(attackRejection(seekerId,id)!=AttackRejectReason::None) return;
+            candidate=effWeapon(*searching,&e);filter=&candidate;
+        }else if(searching && hasNativeGatling(*searching)) {
             candidate=effWeapon(*searching,&e);filter=&candidate;
         }
         // 武器射界过滤：空中目标需 antiAir，地面目标需 antiGround
@@ -378,18 +417,19 @@ EID World::findNearestEnemy(int player, float x, float y, float maxR, bool inclu
             if (filter->navalOnly) {
                 // 鱼雷类：仅水上目标（舰船或水上建筑）
                 bool onWater = e.isBuilding
-                    ? map.at((int)e.x + bldDef(e.btype).w / 2, (int)e.y + bldDef(e.btype).h / 2).terrain == Terrain::Water
+                    ? map.at((int)e.x + bldDef(e).w / 2, (int)e.y + bldDef(e).h / 2).terrain == Terrain::Water
                     : map.at((int)e.x, (int)e.y).terrain == Terrain::Water;
                 if (!onWater) return;
             }
         }
         float ex = e.x, ey = e.y;
-        if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
+        if (e.isBuilding) { ex += bldDef(e).w / 2.0f; ey += bldDef(e).h / 2.0f; }
+        if(searching && hasNativeC4(*searching))attackTargetPoint(*searching,e,ex,ey);
         float d = distf(x, y, ex, ey);
         // Never defer a shot already in range. At capacity, defer new pursuits
         // until an old failure expires instead of evicting and cycling endlessly.
         float firingRange=filter?(float)filter->range:0;
-        if(e.isBuilding && seeker!=UnitType::COUNT && unitDef(seeker).hasC4()) firingRange=2.5f;
+        if(e.isBuilding && seeker!=UnitType::COUNT && unitDef(seeker).hasC4() && (!searching || !hasNativeGuns(*searching))) firingRange=2.5f;
         if(firingOnly && filter && d>firingRange)return;
         if(searching && filter && d>firingRange) {
             if(failures>=8) return;
@@ -405,8 +445,8 @@ EID World::findNearestEnemy(int player, float x, float y, float maxR, bool inclu
 
     const int cx = (int)x, cy = (int)y;
     const int cellR = (int)std::ceil(maxR) + 1;
-    const bool needGround = !w || w->antiGround || (searching && !searching->isBuilding && unitDef(searching->utype).hasAirWeapon);
-    const bool needAir = !w || w->antiAir || (searching && !searching->isBuilding && unitDef(searching->utype).hasAirWeapon);
+    const bool needGround = !w || w->antiGround || (searching && !searching->isBuilding && unitDef(*searching).hasAirWeapon);
+    const bool needAir = !w || w->antiAir || (searching && !searching->isBuilding && unitDef(*searching).hasAirWeapon);
 
     // 地面单位：格占位环扫
     if (needGround && !unitOccHead.empty()) {
@@ -513,9 +553,20 @@ static const WeaponDef& ifvWeapon(UnitType cargo) {
 
 // 有效武器：部署形态 / IFV 载兵 / 精英军衔 综合
 WeaponDef World::effWeapon(const Ent& e,const Ent* target) const {
-    if (e.isBuilding) return bldDef(e.btype).weapon;
-    const UnitDef& ud = unitDef(e.utype);
+    if(!target && valid(e.target))target=&ents[e.target];
+    WeaponDef source;if(nativeWeapon(e,target,source))return source;
+    if (e.isBuilding) return bldDef(e).weapon;
+    const UnitDef& ud = unitDef(e);
     WeaponDef w = ud.weapon;
+    if(aswEnabled && target) {
+        if(e.utype==UnitType::Destroyer && aircraftSpawnersEnabled && !e.nativeIdentity.definition && !map.native.active() && !usesRulesProfile()
+            && underwaterTarget(*target)) {
+            w.damage=1;w.range=2.f*std::max(map.w,map.h);w.antiGround=true;w.antiAir=false;return w;
+        }
+        if((e.utype==UnitType::ASW && !underwaterTarget(*target)) || (e.utype==UnitType::AircraftCarrier && underwaterTarget(*target))) {
+            w.damage=0;w.range=0;return w;
+        }
+    }
     if(!target && valid(e.target)) target=&ents[e.target];
     const bool buildingBeam=e.utype==UnitType::Magnetron && target && target->isBuilding;
     const bool airWeapon=target && target->airborne() && ud.hasAirWeapon;

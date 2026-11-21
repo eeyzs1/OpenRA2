@@ -16,8 +16,8 @@ std::vector<World::TrafficDebug> World::trafficDebug() const {
                 auto groups=corridor.portGroups;std::sort(groups.begin(),groups.end());
                 row.groups=(int)(std::unique(groups.begin(),groups.end())-groups.begin());
                 for(int cell:corridor.cells)for(EID id=unitOccHead[cell];id!=INVALID_EID;id=ents[id].occNext)
-                    if(ents[id].alive && !ents[id].isBuilding && !unitDef(ents[id].utype).isAir()
-                        && unitDef(ents[id].utype).pathDomain()==gate.domain)++row.occupants;
+                    if(ents[id].alive && !ents[id].isBuilding && !unitDef(ents[id]).isAir()
+                        && unitDef(ents[id]).pathDomain()==gate.domain)++row.occupants;
             }
         }
         result.push_back(row);
@@ -28,12 +28,13 @@ std::vector<World::TrafficDebug> World::trafficDebug() const {
 World::IdleYieldResult World::yieldIdleCorridor(EID requester,EID blocker) {
     if(!valid(requester) || !valid(blocker) || !isAllied(ents[requester].player,ents[blocker].player))
         return IdleYieldResult::NotApplicable;
-    auto idle=[&](const Ent& unit) {
-        const auto& definition=unitDef(unit.utype);
+    auto idle=[&](const Ent& unit,bool waitingAtApron=false) {
+        const auto& definition=unitDef(unit);
         return unit.alive && !unit.isBuilding && !definition.isAir() && !unit.parasiting
-            && unit.state==UState::Idle && !unit.deployed && !unit.radDeployed && !unit.guard
+            && (unit.state==UState::Idle || waitingAtApron) && !unit.deployed && !unit.radDeployed && !unit.guard
             && unit.pathIdx>=(int)unit.path.size() && unit.wps.empty() && !valid(unit.target)
-            && unit.engineerIntent==EngineerIntent::None && !(definition.canHarvet() && unit.autoHarvest)
+            && unit.engineerIntent==EngineerIntent::None
+            && (waitingAtApron || !(definition.canHarvet() && unit.autoHarvest && (!nativeGroundEnabled() || unit.oreLoad>0)))
             && !unit.immobilized()
             && !(valid(unit.parasite) && ents[unit.parasite].utype==UnitType::Squid);
     };
@@ -46,12 +47,33 @@ World::IdleYieldResult World::yieldIdleCorridor(EID requester,EID blocker) {
             || unit.state==UState::Servicing);
     };
     auto& parked=ents[blocker];const auto& lead=ents[requester];
-    const int domain=unitDef(parked.utype).pathDomain(),start=parked.occCell;
-    if(!idle(parked) || start<0)return IdleYieldResult::NotApplicable;
+    const auto receiver=lead.nativeDock.receiver;
+    bool waitingAtApron=false;
+    if(lead.exitingNativeDock() && parked.player==lead.player
+        && parked.utype==UnitType::ChronoMiner && parked.state==UState::HarvestReturn
+        && parked.chronoReturn.phase==ChronoReturnPhase::Waiting && parked.chronoReturn.directBerth
+        && parked.nativeDock.phase==NativeDockPhase::Approach && parked.nativeDock.receiver==receiver && valid(receiver)) {
+        const auto& refinery=ents[receiver.id];
+        waitingAtApron=refinery.player==parked.player && parked.navLayer==refinery.navLayer && lead.navLayer==refinery.navLayer
+            && (int)parked.x==(int)refinery.x+4 && (int)parked.y==(int)refinery.y+1;
+    }
+    const int domain=unitDef(parked).pathDomain(),area=(int)map.cells.size();
+    if(!idle(parked,waitingAtApron) || parked.occCell<0)return IdleYieldResult::NotApplicable;
+    const int start=(int)movementSlot((int)parked.x,(int)parked.y,parked.navLayer);
     if(repathsThisTick>=8) return IdleYieldResult::BudgetWait;
-    std::vector<uint8_t> costs(map.cells.size(),0),landing(map.cells.size(),1),avoid(map.cells.size(),0);
+    std::vector<uint8_t> costs(movementSlotCount(),0),landing(movementSlotCount(),1),avoid(movementSlotCount(),0);
+    int leadX=(int)lead.x,leadY=(int)lead.y,leadLayer=lead.navLayer;
     for(int step=lead.pathIdx;step<(int)lead.path.size();++step) {
-        const auto point=lead.path[step];avoid[(size_t)point.y*map.w+point.x]=1;
+        const auto point=lead.path[step];
+        if(map.hasBridgeDecks())leadLayer=movementStep(lead,leadX,leadY,leadLayer,point.x,point.y);
+        if(leadLayer<0)break;
+        avoid[movementSlot(point.x,point.y,leadLayer)]=1;leadX=point.x;leadY=point.y;
+    }
+    if((lead.exitingNativeDock() || lead.chronoReturn.phase==ChronoReturnPhase::Waiting)
+        && valid(lead.nativeDock.receiver)) {
+        const auto& receiver=ents[lead.nativeDock.receiver.id];
+        const int x=(int)receiver.x+4,y=(int)receiver.y+1;
+        if(map.inBounds(x,y))avoid[movementSlot(x,y,receiver.navLayer)]=1;
     }
     for(size_t index=0;index<ents.size();++index) {
         if((EID)index==blocker) continue;
@@ -59,40 +81,42 @@ World::IdleYieldResult World::yieldIdleCorridor(EID requester,EID blocker) {
         const bool allied=isAllied(parked.player,other.player);
         const bool active=other.alive && !other.isBuilding && moving(other);
         if(active && allied && !other.path.empty()) {
-            const auto goal=other.path.back();landing[(size_t)goal.y*map.w+goal.x]=0;
+            const auto goal=other.path.back();landing[movementSlot(goal.x,goal.y,movementLayerAt(other,goal.x,goal.y))]=0;
         }
-        const int cell=other.occCell;
-        if(cell<0 || cell>=(int)costs.size()) continue;
+        if(other.occCell<0 || other.occCell>=area)continue;
+        const int cell=other.occCell+other.navLayer*area;
         const bool cooperative=allied && (idle(other) || active);
         costs[cell]=std::max(costs[cell],uint8_t{16});
-        if((EID)index==requester || (!cooperative && cellHardBlockedForMove(cell%map.w,cell/map.w,blocker)))
+        if((EID)index==requester || (!cooperative && cellHardBlockedForMove(cell%area%map.w,cell%area/map.w,blocker,other.navLayer)))
             costs[cell]=255;
-        const bool vacating=active && allied && other.path.back()!=Vec2i{cell%map.w,cell/map.w};
+        const bool vacating=active && allied && other.path.back()!=Vec2i{cell%area%map.w,cell%area/map.w};
         if(!vacating || (EID)index==requester) landing[cell]=0;
     }
     // Open parking fields need the same continuous, reserved-goal-aware
     // yielding as narrow lanes; a one-cell teleport can create swap cycles.
     // Find the nearest passing bay without teleporting the parked unit. Idle
     // allies on the route may be asked to yield in turn, forming a legal chain.
-    std::vector<int> search{start};std::vector<uint8_t> seen(map.cells.size(),0);seen[start]=1;
+    std::vector<int> search{start};std::vector<uint8_t> seen(movementSlotCount(),0);seen[start]=1;
     int goal=-1;
     for(size_t at=0;at<search.size() && at<4096;++at) {
-        const int cell=search[at],x=cell%map.w,y=cell/map.w;
-        if(landing[cell] && !avoid[cell] && !narrowMovementCell(x,y,domain)) { goal=cell;break; }
+        const int cell=search[at],x=cell%area%map.w,y=cell%area/map.w,layer=cell/area;
+        if(landing[cell] && !avoid[cell] && !narrowMovementCell(x,y,domain,layer,unitDef(parked).fitsUnderBridge())) { goal=cell;break; }
         for(Vec2i delta:{Vec2i{1,0},Vec2i{-1,0},Vec2i{0,1},Vec2i{0,-1}}) {
             const int nx=x+delta.x,ny=y+delta.y;
-            if(!passableStep(x,y,nx,ny,domain) || bldBlocked(nx,ny)) continue;
-            const int next=ny*map.w+nx;
+            const int surface=movementStep(parked,x,y,layer,nx,ny);
+            if(surface<0 || bldBlocked(nx,ny,surface))continue;
+            const int next=(int)movementSlot(nx,ny,surface);
             if(!seen[next] && costs[next]!=255) { seen[next]=1;search.push_back(next); }
         }
     }
     if(goal<0) return IdleYieldResult::NoPullout;
     std::vector<Vec2i> path;++repathsThisTick;++repathRequests;
-    if(!map.findPath((int)parked.x,(int)parked.y,goal%map.w,goal/map.w,path,20000,domain,&costs)
-        || path.empty() || path.size()>4096 || path.back()!=Vec2i{goal%map.w,goal/map.w}) {
+    if(!map.findPath((int)parked.x,(int)parked.y,goal%area%map.w,goal%area/map.w,path,20000,domain,&costs,parked.navLayer,goal/area,unitDef(parked).fitsUnderBridge(),nativeGateAccess(parked))
+        || path.empty() || path.size()>4096 || path.back()!=Vec2i{goal%area%map.w,goal%area/map.w}) {
         ++repathFailures;return IdleYieldResult::NoPullout;
     }
-    parked.path=std::move(path);parked.pathIdx=0;parked.blockTick=0;parked.state=UState::Moving;
+    parked.path=std::move(path);parked.pathIdx=0;parked.blockTick=0;
+    if(!waitingAtApron)parked.state=UState::Moving;
     return IdleYieldResult::Started;
 }
 
@@ -100,7 +124,22 @@ void World::resetMovementCorridors() {
     for(int domain=0;domain<3;++domain) { movementCorridorLabels[domain].clear();movementCorridors[domain].clear(); }
 }
 
-bool World::narrowMovementCell(int x,int y,int domain) const {
+bool World::narrowMovementCell(int x,int y,int domain,int layer,bool underBridge) const {
+    if(map.hasBridgeDecks()) {
+        if(layer<0)layer=map.preferredLayer(x,y,domain);
+        if(!map.surfacePassable(x,y,domain,layer,true,underBridge))return false;
+        int neighbors=0;
+        for(Vec2i step:{Vec2i{1,0},Vec2i{-1,0},Vec2i{0,1},Vec2i{0,-1}})
+            neighbors+=map.stepLayer(x,y,layer,x+step.x,y+step.y,domain,true,underBridge)>=0;
+        if(neighbors<2)return false;
+        for(int dx:{-1,1})for(int dy:{-1,1}) {
+            const int a=map.stepLayer(x,y,layer,x+dx,y,domain,true,underBridge),b=map.stepLayer(x,y,layer,x,y+dy,domain,true,underBridge);
+            if(a<0 || b<0)continue;
+            const int c=map.stepLayer(x+dx,y,a,x+dx,y+dy,domain,true,underBridge),d=map.stepLayer(x,y+dy,b,x+dx,y+dy,domain,true,underBridge);
+            if(c>=0 && c==d)return false;
+        }
+        return true;
+    }
     auto open=[&](int nx,int ny) { return passableFor(nx,ny,domain) && !bldBlocked(nx,ny); };
     if(!open(x,y)) return false;
     int neighbors=0;
@@ -197,20 +236,49 @@ int World::movementCorridor(int cell,int domain) {
     return index;
 }
 
+void World::releaseReversingLane(EID id) {
+    const auto& unit=ents[id];
+    const int domain=unitDef(unit).pathDomain();
+    const int lane=movementCorridor(cellIdx((int)unit.x,(int)unit.y),domain);
+    if(lane<0)return;
+    auto& corridor=movementCorridors[domain][lane];
+    const int anchor=*std::min_element(corridor.cells.begin(),corridor.cells.end());
+    const auto gate=std::find_if(trafficGates.begin(),trafficGates.end(),[&](const auto& phase) {
+        return phase.domain==domain && phase.anchor==anchor;
+    });
+    if(gate==trafficGates.end() || gate->draining)return;
+    for(int cell:corridor.cells)
+        for(EID other=unitOccHead[cell];other!=INVALID_EID;other=ents[other].occNext)
+            if(other!=id && valid(other))return;
+    // Normal admission will choose the exit from the newly ordered path.
+    trafficGates.erase(gate);
+    corridor.exit=-1;corridor.initialized=false;corridor.opposed=false;
+}
+
 bool World::admitMovementCorridor(Ent& unit,EID id) {
-    if(unitDef(unit.utype).isAir() || unit.pathIdx>=(int)unit.path.size()) return true;
-    const int domain=unitDef(unit.utype).pathDomain();
-    // Cooperative pullouts carry dwell waypoints before resuming the route.
-    // Let that prefix finish even when it briefly points toward the portal;
-    // otherwise admission can freeze a car midway through yielding.
+    if(unitDef(unit).isAir() || unit.pathIdx>=(int)unit.path.size()) return true;
+    const int domain=unitDef(unit).pathDomain();
+    // Let cooperative pullouts reach their waiting bay. Once there, retain
+    // the dwell prefix until this direction is admitted; repeatedly returning
+    // to a closed portal causes expensive pullout/replan loops and blocks exits.
+    bool heldAtPullout=false;int waitingLane=-1;
     for(int step=unit.pathIdx;step+1<(int)unit.path.size();++step) {
         const auto point=unit.path[step],following=unit.path[step+1];
         if(narrowMovementCell(point.x,point.y,domain)) break;
-        if(point.x==following.x && point.y==following.y) return true;
+        if(point.x!=following.x || point.y!=following.y)continue;
+        const bool atBay=std::abs(unit.x-point.x-0.5f)<0.001f && std::abs(unit.y-point.y-0.5f)<0.001f;
+        if(!atBay || unit.path[unit.pathIdx]!=point)return true;
+        heldAtPullout=true;
+        for(int after=step+2;after<(int)unit.path.size();++after) {
+            const auto future=unit.path[after];
+            if(!narrowMovementCell(future.x,future.y,domain))continue;
+            waitingLane=movementCorridor(future.y*map.w+future.x,domain);break;
+        }
+        break;
     }
     const int current=(int)unit.y*map.w+(int)unit.x;
     const auto next=unit.path[unit.pathIdx];
-    int lane=map.inBounds(next.x,next.y)?movementCorridor(next.y*map.w+next.x,domain):-1;
+    int lane=waitingLane>=0?waitingLane:map.inBounds(next.x,next.y)?movementCorridor(next.y*map.w+next.x,domain):-1;
     if(lane<0 && !narrowMovementCell((int)unit.x,(int)unit.y,domain)) {
         // Keep a clear apron on both banks so the exiting column can fan out.
         const int limit=std::min((int)unit.path.size(),unit.pathIdx+6);
@@ -255,7 +323,7 @@ bool World::admitMovementCorridor(Ent& unit,EID id) {
         gate.exit=-1;gate.draining=false;gate.until=0;
     }
     auto phaseTicks=[&](EID leader) {
-        const int delay=(int)std::clamp(unitDef(ents[leader].utype).speed,1,120);
+        const int delay=(int)std::clamp(unitDef(ents[leader]).speed,1,120);
         // Collapse each open junction into one graph vertex. In a tree every
         // exit has a unique crossing route; loops can redistribute traffic
         // during a phase, so retain their conservative component-size window.
@@ -297,7 +365,9 @@ bool World::admitMovementCorridor(Ent& unit,EID id) {
                 if(inside(next) && distance[next]<0){distance[next]=distance[cell]+1;crossing=std::max(crossing,distance[next]);search.push_back(next);}
             }
         }
-        return std::clamp<uint64_t>(std::max(1,crossing)*(uint64_t)delay,90,1000000);
+        // Admission is first requested from the six-cell passing apron, not
+        // from the first lane cell. Include that approach in the green window.
+        return std::clamp<uint64_t>((std::max(1,crossing)+6)*(uint64_t)delay,90,1000000);
     };
     if(!corridor.initialized) {
         corridor.initialized=true;
@@ -322,15 +392,29 @@ bool World::admitMovementCorridor(Ent& unit,EID id) {
             // strands the whole column, even with a free bay at the other port.
             // Only a stalled, reciprocal allied conflict may reconsider it;
             // preserve progressing retreats and protected/special tasks.
-            if(waiting && other.blockTick>=30 && !unitDef(other.utype).isAir() && !other.guard && !other.immobilized()
+            if(waiting && other.blockTick>=30 && !unitDef(other).isAir() && !other.guard && !other.immobilized()
                 && (other.state==UState::Moving || other.state==UState::AttackMoving
                     || other.state==UState::HarvestGo || other.state==UState::HarvestReturn)
                 && (tick+(uint64_t)occupant)%8==0 && repathsThisTick<8) {
-                const EID peer=unitAtCell(next->x,next->y);
-                if(valid(peer) && peer!=occupant && isAllied(other.player,ents[peer].player)
-                    && moving(ents[peer]) && !ents[peer].guard && !ents[peer].immobilized()
-                    && ents[peer].blockTick>=10
-                    && cellIdx(ents[peer].path[ents[peer].pathIdx].x,ents[peer].path[ents[peer].pathIdx].y)==other.occCell) {
+                const Vec2i origin{other.occCell%map.w,other.occCell/map.w};
+                const int nextLayer=movementStep(other,origin.x,origin.y,other.navLayer,next->x,next->y);
+                bool reciprocal=false;
+                if(nextLayer>=0 && cellHardBlockedForMove(next->x,next->y,occupant,nextLayer)) {
+                    // A full infantry cell can contain a dwelling head and
+                    // active waiters which want to step back into this cell.
+                    for(EID peer=unitAtCell(next->x,next->y,nextLayer);peer!=INVALID_EID;peer=ents[peer].occNext) {
+                        const auto& blocker=ents[peer];
+                        if(peer==occupant || blocker.navLayer!=nextLayer || !isAllied(other.player,blocker.player)
+                            || !moving(blocker) || blocker.guard || blocker.immobilized() || blocker.blockTick<10
+                            || blocker.path[blocker.pathIdx]!=origin)continue;
+                        if(movementStep(blocker,next->x,next->y,nextLayer,origin.x,origin.y)==other.navLayer
+                            && cellHardBlockedForMove(origin.x,origin.y,peer,other.navLayer)) {
+                            reciprocal=true;
+                            break;
+                        }
+                    }
+                }
+                if(reciprocal) {
                     std::vector<uint8_t> costs(map.cells.size(),0);
                     for(size_t actor=0;actor<ents.size();++actor) {
                         const auto& obstacle=ents[actor];
@@ -341,7 +425,7 @@ bool World::admitMovementCorridor(Ent& unit,EID id) {
                     }
                     const auto goal=other.path.back();std::vector<Vec2i> alternative;
                     ++repathsThisTick;++repathRequests;
-                    if(map.findPath((int)other.x,(int)other.y,goal.x,goal.y,alternative,20000,domain,&costs)
+                    if(map.findPath((int)other.x,(int)other.y,goal.x,goal.y,alternative,20000,domain,&costs,other.navLayer,movementLayerAt(other,goal.x,goal.y),unitDef(other).fitsUnderBridge(),nativeGateAccess(other))
                         && !alternative.empty() && alternative.size()<=4096 && alternative.back()==goal) {
                         int alternativeExit=-1;
                         for(auto point:alternative)if(!inside(cellIdx(point.x,point.y))){alternativeExit=cellIdx(point.x,point.y);break;}
@@ -382,8 +466,8 @@ bool World::admitMovementCorridor(Ent& unit,EID id) {
                     costs[parked.occCell]=255;
             }
             repathsThisTick+=2;repathRequests+=2;
-            if(!map.findPath((int)other.x,(int)other.y,corridor.exit%map.w,corridor.exit/map.w,retreat,20000,domain,&costs)
-                || !map.findPath(corridor.exit%map.w,corridor.exit/map.w,goal.x,goal.y,resume,20000,domain)
+            if(!map.findPath((int)other.x,(int)other.y,corridor.exit%map.w,corridor.exit/map.w,retreat,20000,domain,&costs,other.navLayer,-1,unitDef(other).fitsUnderBridge(),nativeGateAccess(other))
+                || !map.findPath(corridor.exit%map.w,corridor.exit/map.w,goal.x,goal.y,resume,20000,domain,nullptr,routeEndLayer(other,retreat),movementLayerAt(other,goal.x,goal.y),unitDef(other).fitsUnderBridge(),nativeGateAccess(other))
                 || retreat.size()+resume.size()+30>4096) { ++repathFailures;corridor.opposed=true;continue; }
             retreat.insert(retreat.end(),30,Vec2i{corridor.exit%map.w,corridor.exit/map.w});
             retreat.insert(retreat.end(),resume.begin(),resume.end());
@@ -400,19 +484,30 @@ bool World::admitMovementCorridor(Ent& unit,EID id) {
         for(EID other=unitOccHead[y*map.w+x];other!=INVALID_EID;other=ents[other].occNext) {
             const auto& actor=ents[other];
             if(!moving(actor) || inside((int)actor.y*map.w+(int)actor.x)) continue;
-            const int limit=std::min((int)actor.path.size(),actor.pathIdx+6);
-            bool near=false;
-            for(int step=actor.pathIdx;step<limit;++step) near |= inside(actor.path[step].y*map.w+actor.path[step].x);
+            // Count physical steps, not repeated dwell points, so a waiting
+            // bay remains represented when its direction becomes eligible.
+            bool near=false;int advances=0;Vec2i previous{(int)actor.x,(int)actor.y};
+            for(int step=actor.pathIdx;step<(int)actor.path.size() && advances<8;++step) {
+                const auto point=actor.path[step];
+                if(point!=previous){++advances;previous=point;}
+                near |= inside(point.y*map.w+point.x);
+            }
             if(near && exitFor(actor)>=0) candidates.push_back(other);
         }
     }
     candidates.push_back(id);std::sort(candidates.begin(),candidates.end());
     candidates.erase(std::unique(candidates.begin(),candidates.end()),candidates.end());
+    auto canApproach=[&](EID other) {
+        const auto& actor=ents[other];
+        if(actor.immobilized() || actor.deploying() || actor.guard || actor.pathIdx>=(int)actor.path.size())return false;
+        const auto point=actor.path[actor.pathIdx];
+        return !bldBlocked(point.x,point.y) && !cellHardBlockedForMove(point.x,point.y,other);
+    };
     bool opposing=false,currentWaiting=false;
     for(EID other:candidates) {
         const int exit=exitFor(ents[other]);
         opposing |= gate.exit>=0 && !sameExit(exit,gate.exit);
-        currentWaiting |= sameExit(exit,gate.exit);
+        currentWaiting |= sameExit(exit,gate.exit) && canApproach(other);
     }
     // An empty network need not keep a time slice reserved for a direction
     // with no waiting traffic. Large branched regions otherwise waste entire
@@ -422,9 +517,12 @@ bool World::admitMovementCorridor(Ent& unit,EID id) {
         EID first=INVALID_EID;
         // When draining finishes, serve the other direction before admitting a
         // fresh batch. This latch must survive saves and fractional movement.
-        for(EID other:candidates) {
-            if(gate.draining && opposing && sameExit(exitFor(ents[other]),gate.exit)) continue;
-            if(first==INVALID_EID || ents[other].blockTick>ents[first].blockTick) first=other;
+        for(bool readyOnly:{true,false}) {
+            for(EID other:candidates) {
+                if((readyOnly && !canApproach(other)) || (gate.draining && opposing && sameExit(exitFor(ents[other]),gate.exit)))continue;
+                if(first==INVALID_EID || ents[other].blockTick>ents[first].blockTick)first=other;
+            }
+            if(first!=INVALID_EID)break;
         }
         if(first!=INVALID_EID) {
             gate.exit=exitFor(ents[first]);gate.draining=false;
@@ -441,7 +539,7 @@ bool World::admitMovementCorridor(Ent& unit,EID id) {
         // A waiting car may have been asked to clear the apron. Admission must
         // not freeze its outward pullout or its dwell waypoints.
         const int nextCell=next.y*map.w+next.x;
-        if(!inside(nextCell) && (nextCell==current || distanceToPort(nextCell)>=distanceToPort(current))) return true;
+        if(!heldAtPullout && !inside(nextCell) && (nextCell==current || distanceToPort(nextCell)>=distanceToPort(current))) return true;
         // Admission itself must not strand an opposing unit immediately in
         // front of this waiter. A proven reciprocal swap may leave the apron
         // through an ordinary pullout, then resume the original route.
@@ -456,7 +554,7 @@ bool World::admitMovementCorridor(Ent& unit,EID id) {
             for(int cell:corridor.cells) costs[cell]=255;
             for(size_t actor=0;actor<ents.size();++actor) {
                 const auto& other=ents[actor];
-                if((EID)actor!=id && other.alive && !other.isBuilding && !unitDef(other.utype).isAir()
+                if((EID)actor!=id && other.alive && !other.isBuilding && !unitDef(other).isAir()
                     && map.inBounds((int)other.x,(int)other.y)) costs[(int)other.y*map.w+(int)other.x]=255;
             }
             int pullout=-1;
@@ -473,9 +571,9 @@ bool World::admitMovementCorridor(Ent& unit,EID id) {
             }            if(pullout>=0) {
                 std::vector<Vec2i> retreat,resume;const auto goal=unit.path.back();
                 repathsThisTick+=2;repathRequests+=2;
-                if(map.findPath((int)unit.x,(int)unit.y,pullout%map.w,pullout/map.w,retreat,20000,domain,&costs)
+                if(map.findPath((int)unit.x,(int)unit.y,pullout%map.w,pullout/map.w,retreat,20000,domain,&costs,unit.navLayer,-1,unitDef(unit).fitsUnderBridge(),nativeGateAccess(unit))
                     && !retreat.empty() && retreat.back().x==pullout%map.w && retreat.back().y==pullout/map.w
-                    && map.findPath(pullout%map.w,pullout/map.w,goal.x,goal.y,resume,20000,domain)
+                    && map.findPath(pullout%map.w,pullout/map.w,goal.x,goal.y,resume,20000,domain,nullptr,routeEndLayer(unit,retreat),movementLayerAt(unit,goal.x,goal.y),unitDef(unit).fitsUnderBridge(),nativeGateAccess(unit))
                     && retreat.size()+resume.size()+30<=4096) {
                     retreat.insert(retreat.end(),30,Vec2i{pullout%map.w,pullout/map.w});
                     retreat.insert(retreat.end(),resume.begin(),resume.end());
@@ -485,6 +583,14 @@ bool World::admitMovementCorridor(Ent& unit,EID id) {
             }
         }
         unit.blockTick=std::min(unit.blockTick+1,1000000);return false;
+    }
+    if(heldAtPullout) {
+        // Waiting for permission has already provided the clearance interval.
+        // Do not spend another 30 stationary ticks after the lane turns green.
+        const auto bay=unit.path[unit.pathIdx];
+        while(unit.pathIdx<(int)unit.path.size() && unit.path[unit.pathIdx]==bay)++unit.pathIdx;
+        unit.blockTick=0;
+        return false; // moveAlongPath must fetch the new next node next tick.
     }
     if(inside(next.y*map.w+next.x)) corridor.occupied=true;
     return true;

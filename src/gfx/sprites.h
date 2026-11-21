@@ -10,7 +10,7 @@
 extern const Color HOUSE_COLORS[MAX_PLAYERS];
 
 // 单位动画种类（素材由 tools/ra2pack/gen_assets.py 从 art.ini 序列提取）
-enum class UAnim : uint8_t { Stand, Walk, Fire, Die, Dep, DepFire };
+enum class UAnim : uint8_t { Stand, Walk, Fire, Die, Dep, DepFire, Swim, Tread, WetFire };
 
 // anims.ini: walk/fire/depfire/die=帧数，walkrate/firerate=表现帧间隔，dep=部署站姿。
 struct UnitAnimInfo {
@@ -19,12 +19,15 @@ struct UnitAnimInfo {
     int die = 0;
     int depFire = 0;
     bool dep = false;
+    int swim=0,tread=0,wetFire=0,swimRate=2,treadRate=2,wetFireRate=2;
+    int waterOx=-1,waterOy=-1;
 };
 
 // 外部精灵库：仅加载 assets/sprites（及运行时 VXL），缺失则记错并拒绝启动
 class SpriteBank {
 public:
     void init(); // 需在 InitWindow 之后调用
+    void selectHousePalette(const uint32_t* colors=nullptr);
     int missingCount() const; // init/加载过程中累计的缺失数
     bool assetsOk() const { return missingCount() == 0; }
 
@@ -36,10 +39,14 @@ public:
 
     // frame: SHP walk 0/1, miner empty/full, or native HVA phase (wrapped).
     const Sprite& unitBody(UnitType t, int dir, int frame, int player);
+    bool hasFineFacings(UnitType t) const;
+    const Sprite& unitBodyFacing(UnitType t,int facing,int frame,int player);
+    const Sprite& unitTurretFacing(UnitType t,int facing,int player,int frame=0);
     int unitBodyFrames(UnitType t) const;
     int unitTurretFrames(UnitType t) const;
     const Sprite& unitUnload(UnitType t, int dir, int player);
     const Sprite& unitTurret(UnitType t, int dir, int player, int frame=0);
+    const Sprite& ifvPart(const std::string& root,int turrets,int turret,int dir,int frame,int player,const Color& house);
     bool hasTurret(UnitType t) const;
     const Sprite& unitDeployed(UnitType t,int bodyDir,int turretDir,int player);
     const Sprite& chopperTransform(int phase,int player);
@@ -68,6 +75,7 @@ public:
     int warpFrames(int visual) const; // 0 arrival, 1 departure, 2 erasure; presentation only
     const Sprite& warpEffect(int visual,int frame);
     const Sprite& smoke(int frame);       // 0..5
+    const Sprite& parachute(int frame);   // Original PARACH frames 0..39.
 
     // UI 图标
     const Sprite& iconUnit(UnitType t, int player);
@@ -83,7 +91,10 @@ public:
     bool genAssets(const char* dir);
 
 private:
+    const Sprite& unitBodyImpl(UnitType t,int dir,int frame,int player,bool fine);
+    const Sprite& unitTurretImpl(UnitType t,int dir,int player,int frame,bool fine);
     std::unordered_map<uint64_t, Sprite> cache;
+    std::unordered_map<std::string,uint64_t> ifvKeys;
     Sprite makeSprite(PixBuf&& pb, int ox, int oy);
     bool inited = false;
 
@@ -96,7 +107,7 @@ private:
     Vec2i chopperOrigin_{};
     std::array<int,3> warpFrames_{{10,21,23}};
 
-    const Sprite& finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, int player, bool remapToHouse=true,const Vec2i* groundAnchor=nullptr,bool grounded=false);
+    const Sprite& finishUnitSprite(uint64_t k, PixBuf&& pb, UnitType t, int player, bool remapToHouse=true,const Vec2i* groundAnchor=nullptr,bool grounded=false,bool suppressShadow=false);
     const Sprite& finishBldSprite(uint64_t k, PixBuf&& pb, int groundY, int player,
                                   bool withShadow = true, int footW = 0, int footH = 0);
 };

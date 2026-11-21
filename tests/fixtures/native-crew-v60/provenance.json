@@ -1,0 +1,38 @@
+{
+  "contract": "real World60 / Scene36 / NativeCrew1 snapshots before OpenTransportWeapon implementation",
+  "probeSourceSHA256": "42204ed0491a36e45dd462252257ffca18c2b6eac9a75d38a4dcb58e0616917c",
+  "probeExecutableSHA256": "e92682f371b11417319898a3856323c630dcd4d09d623a2c2d3fafe94af9bd3b",
+  "probeProcess": {
+    "exit": 1,
+    "seconds": 4.436999999976251,
+    "pid": 28460,
+    "executable": "review_out\\crew-weapon-selection-20261118\\probe-before.exe",
+    "executableSHA256": "e92682f371b11417319898a3856323c630dcd4d09d623a2c2d3fafe94af9bd3b",
+    "profile": "review_out\\crew-weapon-selection-20261118\\before\\assets\\rules\\profiles\\yr.ini",
+    "profileSHA256": "4ba3c2768bc78350371bc1cb09c501e1629d43cbec402da4afb5f833925fb14c",
+    "log": "review_out\\crew-weapon-selection-20261118\\probe-before.log"
+  },
+  "files": [
+    {
+      "path": "tests/fixtures/native-crew-v60/GGI-normal-ground-world60.sav",
+      "sha256": "8a6aa198cfaccb2caecaf606d78004dbaba9bbf1a2d5aecfef2325a8dc822ee8",
+      "source": "review_out/crew-weapon-selection-20261118/probe-before/GGI-normal-ground-world60.sav"
+    },
+    {
+      "path": "tests/fixtures/native-crew-v60/E1-elite-ground-world60.sav",
+      "sha256": "05834cb9ff4c4ab5738ccc6865df69a321cd1c1059ba5f5cc96eb7f0b8b04f55",
+      "source": "review_out/crew-weapon-selection-20261118/probe-before/E1-elite-ground-world60.sav"
+    },
+    {
+      "path": "tests/fixtures/native-crew-v60/GHOST-normal-building-world60.sav",
+      "sha256": "4041abbef249b067d97e2aa7b72b9c7d185fa7a3b9b010eb84f98c6d179cef88",
+      "source": "review_out/crew-weapon-selection-20261118/probe-before/GHOST-normal-building-world60.sav"
+    },
+    {
+      "path": "tests/fixtures/native-crew-v60/CLEG-elite-ground-world60.sav",
+      "sha256": "fe5fb24a4ff06dd77d4d51374883513e6112441c252e38750cf148be1abdf3f0",
+      "source": "review_out/crew-weapon-selection-20261118/probe-before/CLEG-elite-ground-world60.sav"
+    }
+  ],
+  "noHeaderRewriting": true
+}

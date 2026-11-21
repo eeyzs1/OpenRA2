@@ -15,11 +15,11 @@ $clientProc = $null
 
 try {
     $hostProc = Start-Process -FilePath $Exe -ArgumentList @("--net-host", "$Frames") `
-        -RedirectStandardOutput $hostOut -RedirectStandardError $hostErr -PassThru
+        -RedirectStandardOutput $hostOut -RedirectStandardError $hostErr -PassThru -WindowStyle Hidden
     $null = $hostProc.Handle
     Start-Sleep -Milliseconds 500
     $clientProc = Start-Process -FilePath $Exe -ArgumentList @("--net-client", "$Frames") `
-        -RedirectStandardOutput $clientOut -RedirectStandardError $clientErr -PassThru
+        -RedirectStandardOutput $clientOut -RedirectStandardError $clientErr -PassThru -WindowStyle Hidden
     $null = $clientProc.Handle
 
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)

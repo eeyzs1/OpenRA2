@@ -1,10 +1,10 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "game/production_work.h"
 #include <array>
 #include <cstdio>
 #include <filesystem>
 
-int Game::factoryStateRegression(const char* outputDir) {
+int GameRegression::factoryStateRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);int failures=0;EID yard=-1;std::array<EID,4> factories{};
     auto check=[&](bool ok,const char* name){failures+=!ok;std::printf("FACTORY_STATE %s %s\n",ok?"PASS":"FAIL",name);};
     const std::array<UnitType,4> types{UnitType::GI,UnitType::Grizzly,UnitType::Intruder,UnitType::Destroyer};

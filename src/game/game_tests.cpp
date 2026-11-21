@@ -1,8 +1,9 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "game/campaign.h"
 #include "game/script.h"
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
+#include "scoped_user_file.h"
 #include <cmath>
 #include <cstring>
 #include <algorithm>
@@ -11,7 +12,9 @@
 #include <cstdio>
 #include <filesystem>
 
-int Game::smokeTest(int frames) {
+int GameRegression::smokeTest(int frames) {
+    // This legacy mechanism fixture includes all four fusion factions and YR abilities.
+    selectRulesChoice(RulesChoice::Fusion);cfgCountry=(int)Country::China;
     int passed = 0, failed = 0;
     auto check = [&](bool ok, const char* name) {
         TraceLog(ok ? LOG_INFO : LOG_ERROR, "SMOKE %s: %s", ok ? "PASS" : "FAIL", name);
@@ -1094,6 +1097,13 @@ int Game::smokeTest(int frames) {
             }
 
             // ---- B5/B6/B7：YuriPrime / Genetic Mutator 矩阵 / Spy Plane·Psychic Reveal ----
+            const auto finishSupport=[](World& sample) {
+                for(int t=0;t<3000;++t) {
+                    const bool falling=std::any_of(sample.ents.begin(),sample.ents.end(),[](const auto& e){return e.alive && e.supportAir==2;});
+                    if(sample.supportMissions.empty() && !falling)break;
+                    sample.update();
+                }
+            };
             bool yuriPrimeOk = false, mutatorMatrixOk = false, spyRevealOk = false;
             {
                 World yr;
@@ -1149,27 +1159,26 @@ int Game::smokeTest(int frames) {
                     (void)dog; (void)gi; (void)hero;
                     mutatorMatrixOk = mutLaunched && !dogAlive && !heroAlive && !giAlive && bruteSpawned;
 
-                    // B7：尤里心灵揭示；苏军侦察机（共用充能槽）
-                    yr.players[0].paradropReady = true;
-                    yr.players[0].paradropCharge = World::PARADROP_TIME;
+                    // B7：独立的尤里心灵揭示与苏军侦察机。
+                    yr.players[0].support[(int)SupportType::PsychicReveal]={World::PARADROP_TIME,true};
                     bool revealSrc = yr.hasPsychicRevealSource(0);
                     int fogX = b.x + 20, fogY = b.y + 1;
                     if (fogX >= yr.map.w - 2) fogX = yr.map.w / 2;
                     if (!yr.map.fog.empty() && fogX < yr.map.w && fogY < yr.map.h)
                         yr.map.fog[0][(size_t)fogY * yr.map.w + fogX] = FOG_UNSEEN;
                     yr.orderPsychicReveal(0, fogX + 0.5f, fogY + 0.5f);
-                    bool revealed = revealSrc && !yr.players[0].paradropReady
+                    bool revealed = revealSrc && !yr.supportReady(0,SupportType::PsychicReveal)
                                  && yr.map.fogAt(0, fogX, fogY) != FOG_UNSEEN;
 
-                    yr.players[1].paradropReady = true;
-                    yr.players[1].paradropCharge = World::PARADROP_TIME;
+                    yr.players[1].support[(int)SupportType::SpyPlane]={World::PARADROP_TIME,true};
                     bool spySrc = yr.hasSpyPlaneSource(1);
                     int stripY = b.y + 4;
                     int stripX = std::min(b.x + 12, yr.map.w - 3);
                     if (!yr.map.fog.empty() && stripX < yr.map.w && stripY < yr.map.h)
                         yr.map.fog[1][(size_t)stripY * yr.map.w + stripX] = FOG_UNSEEN;
                     yr.orderSpyPlane(1, stripX + 0.5f, stripY + 0.5f);
-                    bool spied = spySrc && !yr.players[1].paradropReady
+                    const bool spyAirborne=!yr.supportMissions.empty();finishSupport(yr);
+                    bool spied = spySrc && spyAirborne && yr.supportMissions.empty() && !yr.supportReady(1,SupportType::SpyPlane)
                               && yr.map.fogAt(1, stripX, stripY) != FOG_UNSEEN;
                     spyRevealOk = revealed && spied;
                 }
@@ -1273,22 +1282,24 @@ int Game::smokeTest(int frames) {
                             if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
                         pa.spawnBuilding(0, BldType::AirForceCmd, 10, 10, true);
                         pa.players[0].country = Country::America;
-                        pa.players[0].paradropReady = true;
-                        pa.players[0].paradropCharge = World::PARADROP_TIME;
+                        pa.players[0].support[(int)SupportType::AmericanParadrop]={World::PARADROP_TIME,true};
+                        pa.aiAlliance=true;for(auto& p:pa.players)p.isAI=true;pa.cratesEnabled=false;pa.crates.clear();
                         int before = countInf(pa, 0, UnitType::GI);
                         pa.orderParadrop(0, 20.5f, 20.5f);
-                        bool us8 = countInf(pa, 0, UnitType::GI) - before == 8;
+                        const bool usFlight=!pa.supportMissions.empty();finishSupport(pa);
+                        bool us8 = usFlight && countInf(pa, 0, UnitType::GI) - before == 8;
 
                         World ps;
                         ps.init(48, 48, 0x00330012u, 2, 0, {Faction::Soviet, Faction::Allies}, 0);
                         for (Cell& c : ps.map.cells)
                             if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
                         ps.spawnBuilding(0, BldType::TechAirport, 10, 10, true);
-                        ps.players[0].paradropReady = true;
-                        ps.players[0].paradropCharge = World::PARADROP_TIME;
+                        ps.players[0].support[(int)SupportType::Paradrop]={World::PARADROP_TIME,true};
+                        ps.aiAlliance=true;for(auto& p:ps.players)p.isAI=true;ps.cratesEnabled=false;ps.crates.clear();
                         before = countInf(ps, 0, UnitType::Conscript);
                         ps.orderParadrop(0, 20.5f, 20.5f);
-                        bool sov9 = countInf(ps, 0, UnitType::Conscript) - before == 9;
+                        const bool sovFlight=!ps.supportMissions.empty();finishSupport(ps);
+                        bool sov9 = sovFlight && countInf(ps, 0, UnitType::Conscript) - before == 9;
 
                         World pf;
                         pf.init(48, 48, 0x00330013u, 2, 0, {Faction::Allies, Faction::Soviet}, 0);
@@ -1296,11 +1307,12 @@ int Game::smokeTest(int frames) {
                             if (c.terrain != Terrain::Water) c.terrain = Terrain::Clear;
                         pf.spawnBuilding(0, BldType::TechAirport, 10, 10, true);
                         pf.players[0].country = Country::France;
-                        pf.players[0].paradropReady = true;
-                        pf.players[0].paradropCharge = World::PARADROP_TIME;
+                        pf.players[0].support[(int)SupportType::Paradrop]={World::PARADROP_TIME,true};
+                        pf.aiAlliance=true;for(auto& p:pf.players)p.isAI=true;pf.cratesEnabled=false;pf.crates.clear();
                         before = countInf(pf, 0, UnitType::GI);
                         pf.orderParadrop(0, 20.5f, 20.5f);
-                        bool fr6 = countInf(pf, 0, UnitType::GI) - before == 6;
+                        const bool frFlight=!pf.supportMissions.empty();finishSupport(pf);
+                        bool fr6 = frFlight && countInf(pf, 0, UnitType::GI) - before == 6;
                         paradropCountOk = us8 && sov9 && fr6;
                     }
 
@@ -1525,24 +1537,18 @@ int Game::smokeTest(int frames) {
         check(deterministic, "fixed-seed AI simulations produce identical checksums");
         check(economies && legal, "all four faction AIs establish legal economies without negative funds");
     }
-    // ---- 战役验证：任务表 + 首波增援刷出 ----
+    // Installed content is optional. A missing campaign must not replace the
+    // current skirmish or resurrect the retired prototype campaign catalog.
     {
-        bool tblOk = missionTable().size() >= 32;
-        int officialN = 0;
-        for (const auto& md : missionTable()) if (md.track == 1) officialN++;
-        bool officialOk = officialN >= 24; // RA2 12+12 官方轨最低验收
-        newCampaignGame(0);
-        int before = 0;
-        for (auto& e : world.ents) if (e.alive && e.player == 1 && !e.isBuilding) before++;
-        for (int i = 0; i < 2800; i++) logic(); // 跑过首波（2700 tick）
-        int after = 0;
-        for (auto& e : world.ents) if (e.alive && e.player == 1 && !e.isBuilding) after++;
-        bool waveOk = nextWave >= 1 && after >= before + 2; // 首波 4 单位（途中可能战损，放宽）
-        TraceLog(LOG_INFO, "campaign verify: table=%zu official=%d waveSpawn=%d (p1 units %d -> %d, nextWave=%zu)",
-                 missionTable().size(), officialN, (int)waveOk, before, after, nextWave);
-        check(tblOk, "campaign table contains fusion missions");
-        check(officialOk, "official campaign track has Lone Guardian class missions");
-        check(waveOk, "campaign first reinforcement wave spawns");
+        if(missionTable().empty()) {
+            const auto state=world.checksum();newCampaignGame(0);
+            check(world.checksum()==state && campaignMission<0,"an unavailable campaign preserves the current skirmish");
+            TraceLog(LOG_INFO,"SMOKE CAMPAIGN SKIP: no installed missions; campaign fidelity is not verified");
+        } else {
+            newCampaignGame(0);
+            check(campaignMission==0 && phase==Phase::InGame && world.map.w==missionTable()[0].mapSize,
+                "the first actually installed campaign mission starts");
+        }
     }
     TraceLog(failed == 0 ? LOG_INFO : LOG_ERROR,
              "SMOKE SUMMARY: %s passed=%d failed=%d frames=%d ents=%zu tick=%llu",
@@ -1552,7 +1558,7 @@ int Game::smokeTest(int frames) {
 }
 
 // 战役冒烟测试：开局跑 N 帧，输出实体/触发器/目标状态（校验手工地图加载与触发器运行）
-int Game::campaignSmokeTest(int mission, int frames) {
+int GameRegression::campaignSmokeTest(int mission, int frames) {
     int passed = 0, failed = 0;
     auto check = [&](bool ok, const char* name) {
         TraceLog(ok ? LOG_INFO : LOG_ERROR, "CAMPAIGN SMOKE %s: %s", ok ? "PASS" : "FAIL", name);
@@ -1639,7 +1645,7 @@ int Game::campaignSmokeTest(int mission, int frames) {
     return failed;
 }
 
-int Game::campaignMatrixTest(int frames) {
+int GameRegression::campaignMatrixTest(int frames) {
     int passed = 0, failed = 0;
     auto check = [&](bool ok, int mission, const char* name) {
         TraceLog(ok ? LOG_INFO : LOG_ERROR, "CAMPAIGN MATRIX %s m=%02d: %s",
@@ -1647,10 +1653,10 @@ int Game::campaignMatrixTest(int frames) {
         ok ? ++passed : ++failed;
     };
     const auto& table = missionTable();
-    check(table.size() >= 32, 0, "mission table contains fusion + optional official tracks");
-    int officialN = 0;
-    for (const auto& md : table) if (md.track == 1) officialN++;
-    check(officialN >= 24, 0, "official track lists RA2 Allied+Soviet missions");
+    if(table.empty()) {
+        TraceLog(LOG_INFO,"CAMPAIGN MATRIX SKIP: no campaign content is installed; full campaign fidelity remains unverified");
+        return 77;
+    }
     for (int mission = 0; mission < (int)table.size(); ++mission) {
         const MissionDef& md = table[mission];
         newCampaignGame(mission, false);
@@ -1660,6 +1666,18 @@ int Game::campaignMatrixTest(int frames) {
         check(world.map.w == md.mapSize && world.map.h == md.mapSize, mission, "declared map starts");
         check(world.numPlayers == 1 + (int)md.aiFactions.size(), mission, "declared player matrix starts");
         check(hasPlayerForce, mission, "player has a valid starting force");
+
+        if(!md.nativeScene.empty()) {
+            bool win=false,lose=false;
+            if(world.nativeEventDefinition)for(const auto& trigger:world.nativeEventDefinition->triggers)for(const auto& action:trigger.actions) {
+                win |= action.type==1;lose |= action.type==2;
+            }
+            check(world.nativeEvents.active && ais.empty() && win && lose && !world.cratesEnabled,mission,
+                "native mission owns its authored AI, terminal actions and crate creation");
+            for(int i=0;i<frames && !gameOver;++i)logic();
+            check(world.tick>0 || frames==0,mission,"native startup simulation advances");
+            continue; // Authored failure/victory and a full journey have dedicated native tests.
+        }
 
         bool refsOk = true, hasWin = false, hasLose = false, hasCompleteObj = false;
         for (const Trigger& t : md.triggers) {
@@ -1759,7 +1777,7 @@ int Game::campaignMatrixTest(int frames) {
 }
 
 // 遭遇战截图：固定种子开局 + 预热（AI 与本地玩家发展出建筑/电力/部队），相机对准本地基地后拍全屏
-void Game::debugShot(int warmTicks, const char* file) {
+void GameRegression::debugShot(int warmTicks, const char* file) {
     newGame(20260801);
     // 本地玩家也由 AI 代打（截图需发展出完整基地/电力/部队）
     ais.insert(ais.begin(), SkirmishAI{});
@@ -1821,7 +1839,7 @@ void Game::debugShot(int warmTicks, const char* file) {
 }
 
 // 临时诊断：战役真实渲染耗时（真实窗口+解除帧率上限，分离逻辑/渲染耗时定位"战役卡"）
-void Game::benchCampaign(int mission, int warmTicks, int frames) {
+void GameRegression::benchCampaign(int mission, int warmTicks, int frames) {
     newCampaignGame(mission);
     for (int i = 0; i < warmTicks && !gameOver; i++) logic(); // 预热：让 AI 发展出规模兵力
     int alive = 0;
@@ -1838,7 +1856,12 @@ void Game::benchCampaign(int mission, int warmTicks, int frames) {
            (t2 - t0) * 1000.0 / frames, frames * 2.0 / (t2 - t0));
 }
 
-int Game::playTest() {
+int GameRegression::playTest() {
+    ScopedUserFile settings("settings.ini"),quicksave(QUICKSAVE_PATH);
+    if(!settings.ready() || !quicksave.ready()) {
+        TraceLog(LOG_ERROR,"PLAYTEST: cannot preserve player settings/save; abort before exercising UI writes");
+        return 1;
+    }
     sim.active = true;
     int fails = 0, stepNo = 0;
     auto check = [&](bool ok, const char* name) {
@@ -1870,6 +1893,7 @@ int Game::playTest() {
         sim.pressedR = true; sim.downR = true; frame();
         sim.releasedR = true; sim.downR = false; frame();
     };
+    auto clickOrder = [&](float x,float y) { if(cfgClassicOrders)clickL(x,y);else clickR(x,y); };
     auto dragL = [&](float x1, float y1, float x2, float y2) {
         sim.pos = {x1, y1}; frame();
         sim.pressedL = true; sim.downL = true; frame();
@@ -1896,7 +1920,7 @@ int Game::playTest() {
 
     // ---- 1b 设置页：语言热切换 / 显示模式 / 按键重绑 / 持久化 ----
     // 主菜单右栏：s=1.6875 ox=180；by0=176 bh=34 gap=10 → Settings 行心 (1118, 549)
-    clickUi(556, 325);
+    clickUi(556, missionTable().empty()?281:325);
     check(phase == Phase::Settings, "点击[设置]进设置页");
     frame(2);
     shot("pt_01b_settings.png");
@@ -1948,6 +1972,8 @@ int Game::playTest() {
       clickUi(monitor.x + monitor.width / 2, monitor.y + monitor.height + 51); }
     check(phase == Phase::InGame && campaignMission < 0, "点击[开始游戏]进遭遇战");
     if (phase != Phase::InGame) { sim.active = false; return fails; }
+    check(cfgRules==RulesChoice::RA2 && world.usesRulesProfile() && world.rulesProfileId=="ra2-local-base",
+          "默认菜单开局使用经典RA2来源规则");
     frame(5);
     {
         // 开局提示不得缺字（方框/问号占位）
@@ -2015,8 +2041,8 @@ int Game::playTest() {
     // ---- 7 放置建筑 ----
     clickL(1315, 265); // 就绪后再点图标进入放置模式
     check(placing, "再次点击进入放置模式");
-    BldType pt = placementType;
-    const BldDef& pd = bldDef(pt);
+    const BldDef& pd = nativePlacementType>=0?world.nativeTypes[nativePlacementType-NATIVE_PRODUCTION_BASE]->building:bldDef(placementType);
+    const BldType pt = pd.type;
     int abx = 10, aby = 10;
     for (auto& e : world.ents)
         if (e.alive && e.isBuilding && e.player == 0 && e.btype == BldType::ConYard) { abx = (int)e.x; aby = (int)e.y; break; }
@@ -2025,13 +2051,15 @@ int Game::playTest() {
         for (int dy = -r; dy <= r && pbx < 0; dy++)
             for (int dx = -r; dx <= r && pbx < 0; dx++) {
                 if (std::max(abs(dx), abs(dy)) != r) continue;
-                if (world.canPlace(pt, abx + dx, aby + dy, 0)) { pbx = abx + dx; pby = aby + dy; }
+                const bool legal=nativePlacementType>=0?world.canPlaceNativeBuilding(0,nativePlacementType,abx+dx,aby+dy)
+                    :world.canPlace(pt,abx+dx,aby+dy,0);
+                if (legal) { pbx = abx + dx; pby = aby + dy; }
             }
     check(pbx >= 0, "扫描到可放置位置");
     if (pbx >= 0) {
         int px, py;
         tileToScreen(pbx + pd.w - 1, pby + pd.h - 1, px, py); // 点击东南角格 → bx=tx-(w-1)
-        clickL((float)(px - (int)camX), (float)(py - (int)camY));
+        clickL((px-camX)*camZoom,(py+TILE_H/2-heightScreenY(world.map.at(pbx,pby).height)-camY)*camZoom);
     }
     check(world.countBlds(0, pt) >= 1 && !placing, "左键放置建筑成功");
     shot("pt_04_placed.png");
@@ -2070,13 +2098,13 @@ int Game::playTest() {
             // 记录所选单位起点
             std::vector<std::pair<float, float>> from;
             for (EID id : sel) if (world.valid(id)) from.push_back({world.ents[id].x, world.ents[id].y});
-            clickR((float)(px - (int)camX), (float)(py - (int)camY));
+            clickOrder((float)(px - (int)camX), (float)(py - (int)camY));
             frame(180); // 6 秒逻辑
             float bestMoved = 0;
             for (size_t i = 0; i < sel.size() && i < from.size(); i++)
                 if (world.valid(sel[i]))
                     bestMoved = std::max(bestMoved, distf(from[i].first, from[i].second, world.ents[sel[i]].x, world.ents[sel[i]].y));
-            check(bestMoved > 1.5f, "右键移动单位");
+            check(bestMoved > 1.5f, "当前鼠标方案下令后单位实际移动");
             // 编队设定/召回与攻击移动状态（同一输入路径，避免仅测 World 直调）。
             sim.keysDown.insert(KEY_LEFT_CONTROL);
             sim.keysPressed.insert(KEY_ONE);
@@ -2113,19 +2141,20 @@ int Game::playTest() {
                 && world.ents[i].btype == pt) { pbld = (int)i; break; }
         if (pbld != INVALID_EID) {
             Vector2 bp = bldScreenPos(world.ents[pbld]);
-            const Sprite& ps = g_sprites.building(pt, world.players[0].colorId, false);
+            const Sprite& ps = g_sprites.building(pt, world.players[0].colorId, false,world.players[0].country);
+            const BldDef& actual=bldDef(world.ents[pbld]);
             world.ents[pbld].hp /= 2;
-            world.players[0].money += bldDef(pt).cost;
+            world.players[0].money += actual.cost;
             clickL(1300, 186); // “维修”按钮：穹带左半
             check(sideMode == 1, "点击[维修]进入维修模式");
             clickL(bp.x - ps.ox + ps.tex.width / 2.0f, bp.y - ps.oy + ps.tex.height / 2.0f);
             // RA2：扳手模式是持续维修开关，非一帧回满；推进若干 tick 后应回满并结束
-            check(world.ents[pbld].repairing || world.ents[pbld].hp > bldDef(pt).hp / 2,
+            check(world.ents[pbld].repairing || world.ents[pbld].hp > actual.hp / 2,
                   "维修模式已开启持续维修");
             for (int t = 0; t < 600 && world.ents[pbld].alive
-                           && world.ents[pbld].hp < bldDef(pt).hp; t++)
+                           && world.ents[pbld].hp < actual.hp; t++)
                 logic();
-            check(world.ents[pbld].hp == bldDef(pt).hp && !world.ents[pbld].repairing,
+            check(world.ents[pbld].hp == actual.hp && !world.ents[pbld].repairing,
                   "维修模式恢复建筑生命");
             sideMode = 0; // 显式清零：下面单独测出售模式保持
             Credits money0 = world.players[0].money;
@@ -2168,7 +2197,8 @@ int Game::playTest() {
     menuBtn(4); // Back follows restart
     check(phase == Phase::MainMenu && !showMenu, "点击[返回主菜单]");
 
-    // ---- 11 战役模式 ----
+    // ---- 11 Installed campaign content, or the current campaign-free menu ----
+    if(!missionTable().empty()) {
     clickUi(556, 237); // 主菜单「战役」右栏 sdbtn 中心
     check(phase == Phase::MissionSelect, "点击[战役模式]");
     shot("pt_07_missions.png");
@@ -2184,8 +2214,17 @@ int Game::playTest() {
     check(showMenu, "战役ESC打开菜单");
     menuBtn(4); // Back follows restart
     check(phase == Phase::MainMenu, "战役返回主菜单");
+    } else {
+        check(phase==Phase::MainMenu && campaignMission<0,"未安装战役时没有遗留任务或伪造战役入口");
+        clickUi(556,237);
+        check(phase==Phase::NetLobby,"无战役主菜单第二项正确进入局域网大厅");
+        const Rectangle side=menuShellSide();
+        clickUi(side.x+side.width/2,side.y+side.height-36);
+        check(phase==Phase::MainMenu,"局域网大厅可返回主菜单");
+    }
 
     frame(2);
+    check(settings.restore() && quicksave.restore(),"自动交互测试恢复原设置与快速存档");
     TraceLog(LOG_INFO, "PLAYTEST DONE: %d checks, %d failed", stepNo, fails);
     sim.active = false;
     return fails;
@@ -2193,7 +2232,8 @@ int Game::playTest() {
 
 // 目检截图：虚线笼 / 建造·出售 mk / 地形。输出 tools/visual_audit/out/*.png
 // 用法: ra2.exe --visual-audit（须在仓库根目录运行，以便落盘路径正确）
-int Game::visualAudit() {
+int GameRegression::visualAudit() {
+    selectRulesChoice(RulesChoice::Fusion);cfgCountry=(int)Country::China;
     namespace fs = std::filesystem;
     const fs::path outDir = fs::path("tools") / "visual_audit" / "out";
     fs::create_directories(outDir);

@@ -54,3 +54,14 @@ function OnPlayerDefeated(player)
         ra2.eva(0, "敌方玩家 " .. player .. " 已被歼灭")
     end
 end
+
+local previousSave, previousLoad = OnSave, OnLoad
+function OnSave()
+    local state = previousSave and previousSave() or {}
+    state.example_events = { lowMoneyCd = lowMoneyCd }
+    return state
+end
+function OnLoad(state)
+    if previousLoad then previousLoad(state) end
+    lowMoneyCd = assert(state.example_events).lowMoneyCd
+end

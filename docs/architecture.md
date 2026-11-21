@@ -1,301 +1,184 @@
-# OpenRA2 Architecture
+# OpenRA2 当前架构
 
-Bundled prototype campaigns have been retired. `missionTable()` loads only installed content and returns an empty table when none is present; there is no built-in fallback or campaign generation in `--export-assets`. The menu hides campaigns when empty and groups custom missions by their actual player faction. Mission runtime, triggers and Lua remain available; shipped Lua demos use `.lua.example` and are inactive.
+本页描述2026-11-19收敛后的职责与合同。历史逐批记录原样保存在[旧架构记录](history/architecture-through-2026-11-18.md)，不作为当前版本依据。变更范围及验收见[收敛审查](convergence-review.md)，开发方式见[开发流程](development.md)。
 
-This document is the module map for contributors and AI agents. Fidelity contracts live in `docs/ra2-fidelity.md` and `docs/ra2-ui-fidelity.md`; they do **not** override these boundaries.
+## 运行依赖与执行顺序
 
-## Layers (dependency direction)
+项目使用C++23、raylib 5.5、Lua 5.4.6和CMake。`Game`负责应用流程、输入、任务/AI调度、存档封套和界面；`World`拥有确定性模拟状态及实体生命期。`SkirmishAI`通过已有World指令入口控制单位。原始事件、队伍脚本和生产执行作为World的子系统运行。
 
+```mermaid
+flowchart LR
+  Input[输入 / LAN锁步] --> Command[World::applyCmd]
+  Game[Game应用调度] --> Tick[World::update]
+  Game --> AI[SkirmishAI]
+  AI --> Orders[World指令接口]
+  Command --> Orders
+  Orders --> State[World状态]
+  Tick --> State
+  State --> View[渲染 / HUD / 表现事件]
+  Save[App封套 / World编解码] <--> State
 ```
-core/          RNG, math, INI helpers
-    ↓
-game/          World simulation, data tables, map, AI, campaign, scripts
-    ↓
-gfx/ + sfx/    Presentation assets (sprites, VXL, audio) — read by Game
-    ↓
-Game (app)     Input, UI, render orchestration, net session, CLI tests
-```
-
-- Lower layers must not include higher layers.
-- `World` must not call raylib UI, play SFX, or touch network sockets.
-- `Game` owns presentation and player intent; it issues `World::Cmd` and reads `World` for drawing.
-- Resource rendering maps Ore/Gems to the same native Rough substrate used after depletion. Keep this mapping and the authored variant hash shared with the setup preview. Remaining quantities select cached crystal-cluster density textures; precompute their masks outside the live frame path, retain authored colors and alpha, and never change Cell data or consume World RNG to select a visual variant. Texture/cache state is not simulation state.
-- Cash uses signed 64-bit `Credits` (World v24). Route new ordinary income through `creditIncome`; the configured income cap never reduces an existing balance. Use `changeMoney` for protected asset returns/explicit grants and `transferMoney` for conserved transfers. These helpers reserve numeric headroom for all active production payments. Cancel an order by clearing its payment liability before returning the paid amount, so refunds remain exact at the ledger boundary. Never write an income path as `min(cap, balance + amount)`, which can erase previously refunded credits.
-- Production commands emit `ProductionOrder` receipts after execution. Use the same read-only `productionStartRejection` query in simulation and sidebar admission checks; preserve detailed facility names and current-order money/power status in hover tips. Distinguish queued cancellation from current-order cancellation and report the actual credited refund. A local submission is not a success receipt. AI calls the direct production methods and does not generate player-command feedback. These receipts are presentation-only and neither saved nor hashed.
-- Building placement previews (`placementType` and pending receipt token) belong to `Game`. Opening/canceling a ghost must leave `World::checksum()` unchanged. `PlaceBuilding` validates its type and finite in-map coordinates, executes against the ready paid order, then emits `PlacementOrder`; a blocked attempt preserves the order for retry. The consumer closes only the matching pending preview after success or order invalidation. `Cmd.b` carries an optional UI receipt token without affecting simulation or changing the existing wire format. Retain `Player::placingBld` solely as the historical World save slot; never use it for current input, cursor or ghost rendering.
-- 普通口焰及实际扣血产生 `Muzzle` / `Impact` 表现事件，保存当时的位置、方向目标及受击类型。应用层持有有界、短寿命提示，不通过实体 ID 跟随存活对象，因此槽位复用不会把旧命中效果挂到新单位。已有特殊武器/爆炸效果仍使用原 `World::effects` 路径，尚未整体迁移。
-- 移动指令结果通过 `PresentationKind::MoveOrder` 从 `World::Cmd` 执行端输出，含成功/失败/排队/调整计数及原因。应用层消费时只修改字幕和短时目标标记；事件和标记均不参与存档、模拟校验或随机数序列。内部 AI 普通调动直接调用 `orderMove`，不生成玩家命令提示。
-- 攻击指令通过 `AttackOrder` 输出接受/拒绝数量和首个失败原因；`attackRejection` 是无副作用的能力查询，供命令执行和悬停光标共用。拒绝时保留原指令，接受后才提交目标和路径；攻击寻路使用同一 A* 搜索实际射程内的可达格。
-- 工程师通过 `EngineerOrder` 输出占领/维修的接受、部分接受及拒绝原因。`EngineerIntent` 是模拟状态，禁止因建筑归属变化将维修改成占领或将占领改成维修；`feedbackEngineerTarget` 仅控制延迟提示来源，既不保存也不入校验。右键工程师交互优先于进驻，与悬停光标一致；UI 消费结果不修改 World。
-- `Ent::feedbackAttackTarget` 只记录玩家攻击提示的来源，仅控制是否输出后续失败提示，不能影响寻路、战斗或随机数。它与表现事件一样不保存、不参与 checksum，读档后默认清空；读档仍恢复模拟攻击状态，但不恢复这项短暂 UI 提示来源。
-
-- 登载与进驻共用 `EntryOrder` 结果事件和能力查询，保存状态仍使用 `Boarding + target`，由存活目标类型区分运输载具/建筑。目标生命周期清理防止身份被复用；`feedbackEntryTarget/Kind` 仅控制提示，不存档、不入校验、不参与模拟决策。初始合法性与可达入口成功后才提交订单，后续入口重寻共用每 tick 8 次预算。
-
-- 卸载与撤出共用 `ReleaseOrder`，反馈实际释放、保留和未完成目标数量。局部洪泛从载具格/建筑脚印出发，遵守地形、坡度、占位与拐角约束，限制在原搜索范围内；目标空格必须与出口连通。未放下的乘员保留在原容器；民房最后一人离开后才中立化，供电按实际剩余驻军计算。实体存储使用追加时引用稳定的 `std::deque`；追加仍会使迭代器失效，因此可能生成单位的遍历按实体 ID 执行。
-
-## Hard boundaries
-
-| Concern | Owns | Must not |
-|---------|------|----------|
-| **World** | Deterministic sim: entities, combat, harvest, production, SW, fog, pathing, save blobs, `Cmd` / `applyCmd` / `checksum` | UI, cursors, camera, raylib draw calls, Winsock |
-| **Game** | App phases, input, camera, HUD/menus, rendering, LAN lockstep glue, smoke/CLI harnesses | Embed new combat/economy rules; put sim side effects outside `applyCmd`→`update` |
-| **gfx / sfx** | Asset load/gen, draw helpers | Mutate `World` sim state |
-| **net/** | TCP frame transport | Game rules or checksum logic (those stay on `World` / `Game` session) |
-
-## Lockstep invariants
-
-1. All player intent enters as `World::Cmd`.
-2. Per tick: apply local cmds → apply remote cmds → `World::update()`.
-3. `World::checksum()` must cover **all** sim-affecting state (ents, map ore/fog, players, projectiles, crates, RNG, etc.).
-4. UI / SFX / camera are **not** in the checksum; they must not diverge sim.
-
-## File ownership
-
-### Simulation (`src/game/`)
-
-| File | Role |
-|------|------|
-| `world.h` | `World`, `Ent`, `Cmd` declarations (facade) |
-| `world.cpp` | Init, spawn/kill, thin orchestration |
-| `world_queries.cpp` | Spatial / prereq / visibility queries |
-| `world_orders.cpp` | `order*` / chrono jump |
-| `world_production.cpp` | Queues, place/sell/repair, factory spawn |
-| `world_pathing.cpp` | Movement along path |
-| `world_traffic.cpp` | Derived bent-corridor geometry and persistent directional admission |
-| `world_magnetic.cpp` | Suspended magnetic movement, beam continuity and validated landing/crash |
-| `world_deployment.cpp` | Aggregated deployment results and presentation-only entity replacement provenance |
-| `world_combat.cpp` | Fire, damage, explode, projectiles |
-| `world_harvest.cpp` | Harvester economy loop |
-| `world_service.cpp` | Vehicle service validation, routing, paid repairs and status events |
-| `world_buildings.cpp` | Building tick, garrison fire |
-| `world_superweapons.cpp` | SW launch / update |
-| `world_fog.cpp` | Fog / gap shroud |
-| `world_special.cpp` | Mind control, spy, crates, bombs |
-| `world_save.cpp` | Save/load + ser helpers; prefer keep `applyCmd`/`checksum` nearby |
-| `world_update.cpp` | `update` / `updateUnit` / `updateAircraft` when extracted |
-| `data.*` / `map.*` / `ai.*` / `campaign.*` / `script.*` | Tables, map, AI, missions, Lua |
-
-### Application (`src/game/game*`)
-
-| File | Role |
-|------|------|
-| `game.h` / `game.cpp` | `Game` type, init, `run`, remaining glue |
-| `game_hud.cpp` | Sidebar, bottom bar, minimap chrome |
-| `game_menu.cpp` | Main / setup / mission select |
-| `game_net.cpp` | Issue cmds, lobby, lockstep advance |
-| `game_settings.cpp` / `settings.cpp` | Settings UI vs persistence |
-| `game_editor.cpp` | Map editor |
-| `game_tests.cpp` | Smoke / campaign matrix / play-test / bench |
-| `game_lifecycle_tests.cpp` | Entity retirement/reuse, linked effects, recursive death and restart regressions |
-| `game_entry_tests.cpp` | Boarding/garrison capabilities, ingress routing, capacity races and result feedback |
-| `game_release_tests.cpp` | Exit connectivity, partial release, cargo retention, evacuation and UI feedback |
-| `game_input_sim.cpp` | Sim-mode input wrappers |
-| `game_coords.cpp` | Screen ↔ world math |
-| `game_camera.cpp` | Camera scroll/zoom |
-| `game_save.cpp` | File save/load orchestration |
-| `game_cursor.cpp` | Cursor assets and hover |
-| `game_triggers.cpp` / `game_campaign.cpp` | Campaign triggers / waves |
-| `game_render_world.cpp` | Terrain bake, entity/effect/fog draw |
-| `game_input.cpp` | Selection and order issuing |
-| `game_logic.cpp` | Per-tick app logic (AI tick, EVA, win/lose glue) |
-
-## Checklist: changing sim state
-
-When adding or changing a field that affects gameplay:
-
-1. Update `World::Ent` / `Player` / related structs in `world.h`.
-2. Update `World::checksum()` (same semantic coverage).
-3. Update `saveGame` / `loadGame` (and any `ser*` / `deser*` helpers).
-4. Put logic in the matching `world_*.cpp` — **do not** grow `world.cpp` / `game.cpp` with new systems.
-5. Prefer extending `Cmd` + `applyCmd` for new player intents.
-
-## HUD text and production display
-
-- Persistent rally intent is a dedicated overlay after fog, within the existing battlefield scissor/zoom transform. Draw only the selected, live, locally owned producer's saved point; deselection, clearing, destruction and foreign ownership suppress it. The overlay reads the coordinate and terrain height without querying target occupants or changing fog, so a flag remains visible over unexplored ground while hidden enemies stay concealed. `ra2.rally_visual` checks eight states in both languages at both display sizes with an otherwise identical no-flag frame, plus a no-enemy comparison under unexplored fog. Require green contribution in the cloth area separately from the pole/base marker; the test must not accept an isolated green dot as a complete flag.
-- Fog-mask pixels start opaque. Track which projected pixels have been covered by a map tile, then merge tile alpha using the existing most-obscured-wins rule; visible tiles explicitly contribute alpha zero. Raised tile diamonds can leave projected gaps, which must remain opaque rather than defaulting to visible ground. The rally visual test samples the unknown area below the height-three plateau and requires zero terrain leaks, in addition to unchanged logical fog/World checksum and concealed enemies. This fixes projection gaps without claiming the full original shroud system or terrain-height model is complete.
-- Top-left transient messages use the same UTF-8 wrapping helper as tooltips at fixed readable size 15. Bound the panel to the battlefield width, retain space-delimited words when they fit, and fall back to codepoint boundaries for CJK/overlong tokens. Show at most six lines with an ellipsis on overflow. Round measured width upward rather than shaving fractional glyph width. Campaign objectives start below the resulting message panel instead of a fixed single-line offset. `HudMessageAudit` records the actual rendered lines/bounds when auditing, without changing simulation.
-- Low-power notification handling belongs to Game. Preserve an active command-result message on a power-loss edge, play the alarm immediately, and put one typed power-warning subtitle at the front of the bounded four-entry queue. Evict the last routine subtitle when full. Restoration removes pending power-warning entries by metadata, independent of localized text; generic EVA entries retain their order. With no active message, retain the immediate warning. Subtitle records are transient UI state and are cleared with the existing application-load presentation reset, not serialized into World. Priority tests require a running match, use real rejected Move commands and power-plant loss/restoration, compare 130 World ticks per language, and inspect real message frames at both resolutions.
-- Successful skirmish, campaign and network starts reset notification text, its timer, queued subtitles and the low-power edge detector before adding the new introduction. Application load does the same only after the complete snapshot has validated and committed; a failed load preserves the live notification state. A pending typed power warning resolves its localized text when displayed, while generic EVA text remains literal. Regression checks seed old notifications, exercise real new-game/load calls, preserve notification state across corrupt loads, and switch language while a warning is queued.
-- Command-result rings/crosses project terrain height before applying the existing aircraft lift and camera zoom. `ra2.feedback_visual` compares real frames with and without the feedback layer at 1280×720/1920×1080 in both languages. Six cases cover success, terrain/occupancy rejection, frozen ground and airborne units on a height-three plateau, partial success and a long-message stress case. Verify panel/text containment, preservation of English words, colored marker contribution near an independently derived unit anchor, and unchanged World checksum. Fixed scripted captures do not replace full operation or manual-play acceptance.
-- Sidebar geometry retains the classic two-column layout. Names use 14 logical pixels and UTF-8 safe ellipsis; full names remain in 17-pixel tooltips with 15-pixel body text. `hud_text.h` fits/wraps complete code points. Tooltip rectangles stay inside the battlefield above the bottom toolbar and place sidebar tips to the left; long content is bounded before positioning.
-- Display current unit quotes through `World::unitProductionCost`, including the IndustrialPlant discount. An active order separately displays its locked total and paid amount; destroying a discount facility changes the current quote, not the existing order total. Do not call the legacy two-argument cost/time format with one argument or invent an ETA.
-- The build clock displays accumulated integer work plus its fractional remainder divided by rule build time. Paid/quote division is not a work clock, especially for free orders. Held/blocked indicators remain visible; queue counts occupy a separate top-right area. Missing funds, low power and missing factories have readable tooltip reasons.
-- `ra2.hud_matrix` renders 68 framebuffer captures covering four faction production pages, Chinese/English, eight production conditions and bottom-toolbar hover at 1280×720 and 1920×1080. Auditing records the actual drawn text sizes/rectangles only when enabled by the regression; these application-only fields do not enter World, saves, checksums or RNG. This checks currently displayed pages, not the entire art catalog.
-
-- Dedicated cameo masters are declared by asset manifests and normalized offline; the runtime still loads `icon_unit_<id>.png`. They are opaque fixed-color UI art, not unittem/house-color sprites. HUD regression checks GPU readback against the declared master, including unchanged colors across house IDs; presentation replay must show an actually changed cameo hash while keeping 600 simulation checksums identical.
-
-## Target-dependent weapons
-
-- `World::effWeapon(actor, prospectiveTarget)` selects target-specific weapons before applying veterancy/crate bonuses. Omitted target uses the actor's current live target. Command eligibility, initial attack range/path and firing must pass the prospective target explicitly; an old building target must not leak its secondary weapon into a new vehicle order.
-- Magnetron building attacks use `[SecondaryWeapon.Magnetron]`, separate from the vehicle/ship locomotor beam. Current defaults are 80 damage, range 10 and cooldown 110, calibrated from the local RA2MD/localmd rules; final-patch equivalence is unverified. The Legacy multiplier is building-only, corresponding to the local MagneShake building verses. Elite primary substitution must not overwrite this secondary; ordinary veterancy bonuses still apply.
-- Both Chasing-to-Attacking transitions and sustained Magnetron attacks dispatch through `fireWeapon`. A vehicle/ship gets magneticBy without placeholder shell damage; a building gets the configured instantaneous secondary damage. Infantry is unsupported and aircraft still require AA; direct commands preserve the old intent on rejection, and automatic acquisition excludes incompatible infantry/aircraft for this unit.
-- Beam visuals reuse Effect kind 3 with `aux=1` for a magnetic color subtype; existing aux serialization preserves an active beam without a wire change. Effects are outside the simulation checksum. The beam uses fixed rule-side ticks and presentation never determines fire cadence. Sound currently reuses the Tesla effect rather than claiming original audio fidelity.
-- `ra2.magnetron` checks both ranges, damage/cadence, primary/secondary switching, no placeholder damage to lifted vehicles, rejected-command preservation/events, elite primary isolation, INI overrides and active-beam save/resume. Actual 1280×720 / 1920×1080 captures validate framebuffer dimensions and magnetic pixels near the projected beam while rendering leaves simulation unchanged. The independent presentation matrix also requires actual secondary damage and a magnetic beam before comparing 600 tick traces across audio and art changes.
-
-## AI attack selection
-
-- Count armed combat roles consistently for attack thresholds and army centers; miners, engineers, spies and unarmed transports are not a land attack force. Pure naval units have their own orders and do not satisfy the land threshold.
-- Preserve difficulty/personality base thresholds; reinforcement growth stops after six waves. A failed attack must not raise its own future threshold. Only accepted land orders advance the wave and reset the rally point. Use existing serialized counters; no save schema change is required for these decision rules.
-- Primary, flank, naval and compatibility-fallback targets share the revealed-enemy filter. Choose actual building centers from rule footprints. If a strategic target is incompatible with an actor or its order fails, try the nearest revealed compatible alternative with stable entity-ID ties. World remains responsible for weapon and route validation.
-- Yuri late-game production compares current Lasher/Magnetron counts, aiming for roughly three damage tanks per support tank. Do not select the entire production mix by attack-wave parity: a stalled odd wave otherwise creates unlimited support units while existing damage dealers die.
-- Keep faction AA preferences when legal and armed for AA. Otherwise scan currently legal ground vehicle definitions, choosing the lowest cost with definition-order ties; this includes China’s existing Apocalypse after BattleLab under the fusion rules. Maintain an escort when armor exceeds six and react to currently visible air threats with up to four AA vehicles. Never unlock a unit or bypass faction/prerequisite checks.
-- `ra2.ai_attack` isolates AI decisions with fixed entities, checking rejected waves, compatible alternatives, unseen flank targets, late-wave recovery and four faction AA production choices. Duplicate World/AI states must produce identical decisions. This is mechanism evidence; `ra2.endurance` remains the natural-start economic/combat/save-resume check. Its health output includes damage and wave deltas, unit activity and rally position, so past attacks cannot hide a later stall. `ra2.match_completion` separately requires all twelve natural matches to resolve within 72000 ticks; it stops each match only after resolution and any pending save-replay comparison. Output uses FULL_MATCH rather than ENDURANCE and reports actual ticks separately from the observation limit.
-
-## Ground occupancy and failed movement
-
-- Rally points are bounded map intents; validate finite coordinates before float→int conversion. SetRally `a&1` clears the existing pair to `(-1,-1)`; both the UI (right-click the selected factory itself, or Shift+R) and Lua use the same validation. Restrict the capability to actual producer buildings (barracks, war factory, naval yard, air command and cloning vat); refinery harvesters retain their automatic economy behavior. RallyOrder presentation events report set/clear/rejection, adjusted destinations and unreachable production routes without mutating World on consumption.
-- Route new units through ordinary `orderMove`, including typed terrain, occupied/reserved destinations and endpoint adjustment. Cloned infantry uses the cloning vat's own rally. Limited-ammo aircraft start landed with no rally on newly created air commands; an explicit rally takes off immediately with an airbase retained. Historical saves keep their saved coordinates: old nonnegative air-command rally values now take effect when producing aircraft, including historical defaults; clear the rally to restore parked production. No extra persisted field or layout change is introduced. Validate live producer rally pairs on load and bound new default endpoints at map edges.
-- Harvesters still auto-mine before rally dispatch. Completed orders stay produced even if the rally route fails; the unit is retained at the real mouth and receives a terminal feedback result instead of unbounded retries. Changed rallies affect future units; a stranded existing unit needs a new movement order. These mechanisms are separate from normal-start economic/full-match evidence.
-- Harvester return selection finds a reachable legal position within the existing unloading radius rather than forcing every miner onto one queue cell. Prefer an explicitly chosen receiver only when a route exists; otherwise consider owned refineries/deployed slave miners with legal approaches. Probe routes share the eight-per-tick replan budget. Recheck ownership and static unloading approaches while returning; invalidate destroyed/captured/packed receivers before unloading cargo. Chrono return teleportation chooses an unoccupied legal unloading cell, otherwise retaining a normal return route; explicit return commands synchronize ground occupancy immediately. Loaded rules determine footprints, which can differ from hardcoded default dimensions. `ra2.refinery_recovery` covers alternate facilities, mixed slaves/vehicles, chrono return and receiver destruction/capture during unloading, checking deposit provenance, exact income, occupancy and save/resume.
-- Deploy/RadDeploy commands route through `orderDeployment`, which deduplicates input IDs in stable order, checks eligibility before changing intent, counts deployed/undeployed/expanded/packed actions and reports the first rejected reason. Keep direct low-level deployment methods for AI/tests; `orderDeploy` returns the replacement entity when a unit/yard transforms. Cmd::Deploy accepts all existing deployment-capable types; Cmd::RadDeploy retains mode-only behavior. This extends the existing entry point without changing the command wire format.
-- A DeployOrder presentation event carries tick/sequence, actor/location, aggregate results and accepted source→replacement IDs. The application updates selection only when the source is still selected, preserves rejected selections, and never edits World while consuming events. Pending network commands do not claim success or change selection before execution; a later user selection is retained. The deployment key snapshots the selected IDs once, avoiding vector erasure during range iteration. Unsupported types, immobilization, terrain/occupancy, mind control and disabled repacking have localized outcomes. Mixed success has counts and a reason, rather than an unconditional toggle-success message.
-- `ra2.deployment_feedback` runs eighteen scenarios in both languages, checking exact rejection/partial/success messages, multiple MCVs, overlapping footprints, duplicate IDs, supported slave-miner/V3 modes, yard packing, queued commands and selection changes during the delay. Event consumption must preserve the World checksum; a separately commanded World continues identically for thirty ticks. These scripted interaction fixtures are not manual full-match play.
-- Magnetic height above zero removes a vehicle/ship from ground occupancy immediately on beam contact. Suspended entities use the existing coarse air bucket, while retaining the project's current weapon target category; ground-capable nearest-enemy queries also scan that bucket and apply the usual weapon filter. Formation endpoints do not reserve suspended projections. This allows overflight without treating a lifted body as a physical ground roadblock.
-- `updateMagnetic` maintains the beam only while its Magnetron source remains valid, unfrozen, hostile, targeting the victim and within the configured weapon range. On release, validate terrain/domain, buildings and exclusive ground capacity at the current projection. A legal landing restores indexes and applies existing height×12 falling damage; an invalid projection crashes the victim and any attached parasite, with no relocation or surviving overlap. Keep the existing order for the next tick after landing. Height is limited to 0–12 when reading saves; magnetic beam Effect aux2 snapshots its endpoint height using an existing serialized field, with historical zero default. No new save fields are introduced.
-- `ra2.magnetic_landing` covers eleven fixed scenes, three malformed-save rejections and 1280×720/1920×1080 screenshots. Check real weapon contact, immediate suspended indexes, acquisition, resumed-save indexes and beam height, legal ground/naval drops, building/water/rock/occupied crashes, source death/freeze/ownership change and parasite cleanup. Rendering, selection rectangles, picking and incoming-projectile height share the lift offset. Beam endpoints are firing-time snapshots, not live-tracked attachments; complete original-game collision damage and all mixed special states remain unverified.
-- Process phase sickness and chrono erasure before the aircraft update dispatch, so grounded choppers and flying aircraft do not bypass freeze/decay/removal. Existing accepted movement resumes after the freeze expires. `Ent::immobilized()` additionally identifies magnetic detention for command/pathing checks: reject new Move (including instant chrono travel and yard repacking), deployment and chrono jumps before mutating intent. Move rejection uses the presentation-only Immobilized reason; deployment uses localized EVA feedback. Guard `canDeployMcv` and direct yard packing as well as the command front door. Exclude detained occupants from idle nudging, automatic corridor yielding and crushing; fixed replans respect their occupied cells. Magnetic dragging and safe fall geometry remain a separate unresolved interaction.
-- `ra2.immobilized` covers thirteen fixed scenes, including real chrono weapon contact on a deployed chopper, phase sickness, attempted teleport/deployment/repacking, threshold erasure for a ground unit and chopper, resumed accepted movement, allied nudging and hostile crushing. Save after the rejected command or established freeze; compare each continued simulation tick and verify recovery after the source has withdrawn. Directly assigned timers and the invulnerable weapon-source fixture are mechanism isolation, not natural-match evidence. No new persisted fields are added.
-- `Ent::airborne()` derives current target/index/render height classification from aircraft type, Landed state and SiegeChopper deployment. A deployed chopper remains on the aircraft update branch for its artillery behavior but belongs to the ground index, not the air bucket. Deploy checks land terrain, buildings and exclusive ground occupancy before replacing any intent; multi-selection updates indexes after each accepted deployment, preventing two simultaneous landings in one cell. Timed SiegeChopper transitions reserve descent cells and change target/index domains at touchdown and liftoff; ordinary aircraft Move still synchronizes both indexes immediately. Formation endpoint reservations include grounded aircraft and exclude attached parasites.
-- `ra2.chopper_ground` checks nine deployment scenes: clear terrain, vehicle/infantry/building blockers, water, rock, two aircraft sharing a cell, deployed death and a sealed single-file lane. Validate immediate and restored indexes, ground attack legality/auto-acquisition, rejection preserving the flight command, replay checksums, legal endpoint adjustment, takeoff clearing ground occupancy, resumed flight and vehicle passage after takeoff. This establishes project ground-deployment semantics; it does not claim original-game deployment timing or complete special-weapon interaction coverage.
-- Ordinary replanning derives occupancy from actual ground-index cells, including landed air units and excluding attached parasites. It keeps moving occupants and cooperative idle allies at soft cost 16. Deployed occupants and non-allied occupants with no pending movement are fixed unless the mover can legally crush them. Fixed vehicles seal a cell; an infantry mover is blocked only when fixed infantry exhaust all three slots. Merge costs monotonically so a later crushable/soft occupant cannot overwrite a fixed blocker.
-- Use the same crush eligibility for planning and actual entry: heavy ground vehicles can crush hostile/neutral unarmored infantry only when that infantry is neither invulnerable nor deployed/radiation-deployed. This preserves actual infantry capacity instead of treating every hostile infantry tile as an impassable wall.
-- In a full mixed infantry cell, prefer a cooperative idle ally for yielding rather than blindly waiting on the first hostile entity in the sorted index. Infantry-to-infantry nudges may use adjacent narrow cells when the three-person capacity permits; vehicle pullouts still keep single-file lane cells clear.
-- When an ordinary Move/AttackMove replan selects a nearby endpoint, emit one accepted+adjusted MoveOrder result at that endpoint; this also covers an empty path when the adjusted cell is the current cell. Keep queued waypoints and suppress this feedback for interaction/chase routes or a mandatory corridor-exit prefix. A route sealed by fixed occupants follows the existing Unreachable result, clears its failed queue and stays idle until a new command.
-- `ra2.blockers` isolates fifteen fixed scenes: hostile stationary vehicles, open bypass, deployed ally, invulnerable infantry, legal crush, neutral vehicle, delayed moving enemy, radiation deployment, amphibious/naval water lanes, dynamic endpoint adjustment, legal infantry stacking, full fixed infantry capacity, mixed-cell yielding and a moving host with an attached parasite. Check physical capacity/terrain/buildings, budget and World replay every tick including the quiet and recovery windows; save at tick 201 and compare continued simulation. After a failed route, verify 300 ticks without new requests, remove an obstacle and explicitly reissue the move to prove recovery. These are mechanism fixtures with shields/placement/dwell isolation, not natural-match evidence. New masks and capacity counts are derived, so World/application schemas remain v23/v4.
-
-## Single-file traffic
-
-- Idle allied ground units blocking a narrow corridor can receive an ordinary path to a reachable passing bay. A bounded cardinal search excludes the requester's remaining route, occupied parking cells and allied active endpoints; one A* request shares the eight-per-tick budget. Cooperative occupants remain soft costs so parked chains can move in turn. Guarding, deployed, harvesting and special immobilized occupants are ineligible. A missing bay makes the blocker fixed for the requester's next replan, allowing a bypass or a terminal Unreachable result. No new persisted yield state is introduced; replacement Move/Stop commands act on the ordinary path, and the unit remains in the bay after arrival.
-- `ra2.idle_yield` covers nine fixed scenes: straight/bent corridors, six parked units, a 50-unit group with an allied owner, naval/amphibious lanes, guarding, replacement Move, Stop and no passing bay. For 6000 ticks it checks ground capacity, terrain/buildings, per-tick budget, narrow-lane displacement and replay checksum; save/load occurs during yielding, followed by a 300-tick replay/no-new-repath window. These mechanism fixtures do not prove arbitrary branch networks or infinite traffic.
-- A narrow component joins cardinally connected passable cells without a traversable 2×2 passing bay, including bends. Geometry is derived per tick and invalidated when buildings change. Keep land/water/amphibious domains separate.
-- Admission gates choose a direction with stable entity-ID ties and waiting duration, latch draining when the opposing queue waits, then switch only after the component empties. Mark newly admitted occupants immediately: a cached empty component must not allow a second direction later in the same tick. Units already opposing inside a component retreat through one exit, dwell, then resume their original destination.
-- For admission-window sizing, collapse connected open junction patches into graph vertices and deduplicate undirected edges. A tree uses the maximum cardinal shortest distance from its selected exit to any component cell, multiplied by the leader's existing movement delay. A cyclic network retains the conservative component-cell-count window: shorter cyclic windows regressed the finite loop workload. Keep the existing 90–1000000 tick bounds and occupied-region drain latch. Graph/distance searches derive geometry only, invoke no A*, RNG, persistent state or new snapshot fields. The 200-car tree fixture also enforces bounded consecutive blocking and repath counts; the cyclic fixture guards against a throughput regression. Long loop waits remain unresolved.
-- Equally facing, collinear corridor mouths can share an admission direction when their exterior cells are joined by a continuous, terrain-passable, non-narrow strip without buildings or a climb break. Preserve the selected physical exit for actual retreat paths; compare derived port groups for admission and opposition only. Opposite/ambiguous mouths and broken strips remain independent. Port groups are rebuilt geometry, not saved or hashed. The finite loop fixture guards throughput and longest blocking; additional fixtures break the exterior strip and rotate the whole scene.
-- `trafficDebug()` returns read-only gate/corridor snapshots: domain, anchor, physical exit, remaining admission time, draining/opposed flags, cell/port/group counts and current occupants. It does not initialize caches or alter simulation. The traffic harness checks checksums before/after queries and continues a separately updated replay. End-of-tick occupant counts describe the current index; derived admission flags may describe earlier updates in that tick.
-- Dynamic junction fixtures insert a neutral wall into an unoccupied exterior strip or the inside cell of the currently selected physical exit while four waves are in flight. Remove it after 1000 ticks. Require split/rejoined admission groups, unchanged original destinations, legal continuous occupancy, the shared repath budget and per-tick replay; save before insertion, during closure and after removal. These are controlled geometry mutations, not proof of player placement UI or arbitrary live traffic. The simulation/serialization code is unchanged by adding these fixtures.
-- Keep a six-waypoint approach apron clear. Waiting vehicles can pull out to a reachable free cell before retrying; dwell prefixes must finish even when temporarily pointing toward a portal. Replanning inside a corridor must preserve the first exit and the saved suffix instead of reversing directly toward the final goal. All A* requests share the eight-per-tick budget, including two-leg retreat routes.
-- Move orders reserve existing ground occupants and allied path endpoints, release the replaced group’s old destinations, and assign deterministic free landing cells within eight tiles of formation slots. Infantry capacity remains three and vehicles exclusive. Adjusted endpoints contribute to MoveOrderResult; destinations and retreat routes remain ordinary saved paths, with no asset or audio dependency.
-- Schema v23 appends sorted `(domain, anchor, exit, until, draining)` gates after EVA records. They affect simulation/checksum; the touched flag and geometry caches do not. v6–v22 start with no historical gate phase, deriving a fresh phase on their first update. No old-build checksum equivalence is promised. Validate count, domains, map bounds, deadlines, boolean encoding, key uniqueness and EOF after reading the extension.
-- `ra2.traffic` runs fixed two-/four-bend 50-unit crossings, three continuous waves totaling 150 units, and initial opposing occupants, checking every tick for illegal overlap, budget excess and replay divergence. Save/resume and corrupt-v23 rejection are mechanism tests, not natural match completion evidence. Arrival requires a completed route on the destination bank within six tiles of its endpoint, allowing idle allied pullouts. The continuous case observes 16000 ticks; the other cases observe 8000.
-
-## Persistence boundaries
 
-- World snapshots write schema v29 (`RA2WRLDT`), including launch-time projectile area parameters, pending weapon burst state, fractional projectile weapon range, explicit passenger state and nested infantry-vehicle cargo as well as 64-bit credit balances; production work includes its fractional remainder. Existing World readers also retain their previous schemas; v19 retains exact production work and initializes failed-pursuit lists empty. For older snapshots, pending engineer intent is inferred from the loaded target ownership (own → repair, otherwise → capture), because the old format did not record the original command. Frozen v18/v19/v20/v21/v22 writers exercise actual older binary layouts. v22 appends `UState::Servicing` to the state enum without changing the existing field order. v6–v21 `Moving`/`Idle` vehicles targeting their owned ServiceDepot explicitly migrate to Servicing; old schema tags reject the new state value.
-- ServiceDepot and owned TechOutpost accept ground combat vehicles through `World::Cmd::Service`. MachineShop remains a passive global heal source. Validate capability/ownership/deployment/health and a reachable adjacent approach before replacing an order. `Servicing + target` is simulation state and is serialized/hashed; `feedbackServiceTarget/Status` only gate local presentation events and are neither serialized nor hashed. At the dock, low power and insufficient funds pause rather than cancel; every five ticks costs six credits for up to twelve HP, including the final partial repair. Powered parasite removal is free. Completion, target loss, ownership changes and permanent route failure clear the intent/path. Service replans share the eight-per-tick budget; do not reset a continuing service route on repeated AI requests.
-- Each entity retains at most eight failed pursuits, including source/target cells and an absolute retry tick (180 ticks after failure). This affects automatic acquisition, so the list is serialized, validated and hashed. It never suppresses an in-range shot or an explicit player attack. Movement invalidates the old cell pair, and slot reuse erases references to the previous target.
-- Application saves write v5 (`RA2GAME5`); older application envelopes without scout memory are explicitly rejected. World currently writes v29 (`RA2WRLDT`). Every simulation-affecting AI field, including tactical cooldowns and runtime personality parameters, must be serialized here. World checksum tests alone cannot prove application resume equivalence.
-- Save to a sibling staging file, close successfully, then replace the destination. A failed writer must preserve the previous save.
-- Load into temporary metadata, AI/trigger vectors and World; validate cross-references against the loaded World before committing any live match state.
-- Clear entity routes through `Ent::clearPath()` so the path and cursor reset together. Historical empty paths may carry a stale nonnegative cursor; readers preserve that harmless state for compatibility. Nonempty paths still require a cursor within their length. Negative overkill HP is valid only on dead slots; generated crate kinds share `Crate::KIND_COUNT` with read validation.
-- Ground cell chains and air bucket chains are derived indexes, omitted from saves/checksums. Keep each chain sorted by entity ID during live insertion as well as rebuild. A first-blocker query must not depend on movement history that a save cannot restore. `ra2.state` checks exit/reentry ordering; natural endurance saves World at ticks 9000/18000/27000, copies the current AI state, and compares 300 resumed ticks per checkpoint.
-- Retire entities through `kill` or `consumeEntity`, detaching spatial indexes and invalidating live references before exposing a reusable slot. `allocEnt` repeats reference invalidation for historical snapshots. Death handling uses a value snapshot while recursive effects and Lua callbacks may grow `ents`; the slot enters `freeList` only after callbacks finish. Attached bombs detach at the retired entity's last position, guided projectiles retain that aim point, and direct ballistic shots keep their original aim.
-- Entity storage is append-stable (`std::deque<Ent>`). Simulation traversals that can spawn entities must use IDs, not container iterators. Slots retired inside `World::update` stay unavailable until the tick boundary, so recursive deaths cannot overwrite an outer weapon caller's actor. The entity-update phase snapshots living IDs after production: combat-spawned units first act next tick. Save/load rejects an in-progress tick; transient retirement state is empty at every valid save and is not serialized or hashed. The v23 layout preserves the v22 body and appends traffic gates, with explicit v6–v22 readers and servicing migration; old-build replay checksums are not promised across this simulation change.
-- Timed-bomb updates process the original count using value snapshots and mark detonation before recursive damage. Nuclear deaths may append further bombs; those begin ticking on the next update. `World::init` clears bombs and crates alongside other match state.
-- A* congestion masks use 0–254 as soft cost and 255 as an immovable cell; the starting cell remains escapable. Entry routing derives this mask from current occupancy/deployment, preserving legal three-infantry stacking, and searches for a reachable point within the actual interaction range instead of the occupied target center.
-- `ra2.app_state` checks exact AI state, 1000 resumed ticks, failed-load isolation, failed-save preservation, and baseline v3 application/v18 World compatibility.
+模拟按逻辑tick更新，随机数、指令顺序和实体身份参与确定性约束。显示帧、音频与表现事件不驱动模拟。顺序校验、二进制保存和渲染派生数据各有用途；不要通过复用一个序列化器改变历史校验字节。
 
-## Graphics policy
+生成地图的软迷雾遮罩每六个逻辑tick刷新一次。`bakeFogMask`按固定宽度的菱形扫描行填充遮罩，重叠时取最深一档，未覆盖像素全不透明。地形投影、迷雾不透明度和双线性采样决定实际显示，原生地图继续使用它的地形遮罩缓存。
 
-Three presentation paths exist (procedural sprites, PNG overlays, VXL). Prefer extending the **asset overlay** path for new art; do not add a fourth parallel look system without an architecture update.
+World仍是中央状态对象，许多字段对内部子系统公开。此次分拆建立了职责和写入入口，没有将它改写成ECS，也没有完成所有字段的访问封装。
 
-## Status (rescue complete)
+普通遭遇战和联机入口默认选择RA2来源规则与美国，融合和YR可从规则选择器进入。RA2规则来源为`ra2-local-base`。读档与重开使用保存的规则和国家。RA2新规则通常写World64，离位或等待寻路时的指定回厂使用World65，已经驶往或等候指定精炼厂的武装矿车写World66。新的武装矿车入泊或转向离位状态写World67，运行中的二次宽弯写World68。超时空矿车待传送至泊位或尚未转东就收到离位命令时使用World69，正沿地面路径为同厂出泊矿车让位时写World70，保留第一个卸矿周期的启动帧时写World71，武装矿车等待按定速离位时写World72，等待或正在加速出泊时写World73。活动三次宽弯使用World74。联机协议为LAN95，App封套为11或12。覆盖融合四阵营或早期World格式的回归夹具显式选择融合规则，正常菜单输入回归使用RA2默认开局。
 
-- `game.cpp` / `world.cpp` are thin facades; logic lives in `game_*.cpp` / `world_*.cpp`.
-- Cursor rules enforce layering and subsystem placement (see `.cursor/rules/`).
-- Refactor freeze has been lifted: new features are allowed if they land in the correct subsystem file.
+生成地图的抢地盘出生区由`world_initialization.cpp`在创建初始部队前选择。各家使用实际规则的建造厂脚印，保留可通行的护卫位置与互不重叠的出生区；不改地形、不额外增加单位。Game只应用模式的全图揭示和补给箱选项，不再在World初始化后挪动基地车坐标。普通Battle与作者地图的出生流程不变。
 
-## Tests
+菜单和结算遮罩先接收输入，本帧隐藏HUD不再处理鼠标按键、键盘和侧栏滚轮。帧开始时已经存在的遮罩会占有整帧事件，点击“继续”后也不会把同一个点击传给HUD。该路由状态只属于Game表现层，不进入World、存档或网络命令。
 
-- Headless logic: `ctest` / `tests/logic_tests.cpp`
-- Integration: `ra2.exe --smoke`, `--smoke-campaign`, `--campaign-matrix`, `--play-test`
-- Net: dual-process host/client drivers
+鼠标默认使用经典左键发令、右键取消，可在设置中选择现代右键发令，并写入本机`settings.ini`的`classic_orders`。经典模式的潜在指令在左键松开时判断：大拖动执行框选，小拖动执行已有智能命令；松手落在HUD则取消该次指令并保留选择。友军普通点击仍可切换选择，进入/维修等动作沿用原准入。此路由复用相同World命令，不新增模拟、App保存或LAN字段。
 
-Refactor PRs must keep these green; mechanical moves must not change checksum semantics.
+联机握手安装World后，与普通开局一样准备当前地表、预载本地素材并按新地图钳制相机。首次联机和从其他地图进入联机都重建表现数据；准备地表与绘制开局不改变模拟校验值。
 
-## Local delivery path
+灰熊、犀牛、天启、光棱、幻影、磁能坦克、坦克杀手和盟苏矿车使用32个按需缓存的VXL朝向。车体与独立炮塔共享覆盖所有朝向的物理模型原点；点选使用当前显示姿态的包围盒。Scene45的来源地面车辆使用`native_ground.h`保存两套16位方向计时，`world_native_ground.cpp`由原始ROT、目标角度和逻辑时间推进；90度/ROT5为12原版帧、24项目tick。跨零点和半途改向按实际本地原程序FacingClass的整数除法顺序处理。移动的大转角先原地转向，小转角允许原有轨迹继续；开火沿用既有射界，但判断实际计时角度。Drive的同层同高度直角宽弯已有位置和朝向采样。其他弯道与完整原版射界待进一步校准。渲染只读取角度和上一tick的表现快照；表现快照不保存、不入checksum。旧来源规则继续原有八方向逻辑和显示插值；SHP步兵、特殊来源模型、IFV、飞机与部署动画保留各自绘制路径。
 
-`launch.bat` (also called by `启动游戏.bat`) launches `build/Release/ra2.exe` with the
-repository root as its working directory. A passing `build-verify` executable does
-not update that launch target. Rebuild the canonical Release target after verified
-code changes; compare binary identity when reusing the full verification result,
-and exercise the canonical path for asset loading and replay. Keep the distinction
-between a launcher check, scripted interaction and actual manual play.
+地面车辆已启用计时转向时，首发和连发都使用开火时的16位车头或炮塔角度。续发已就绪而目标超出射界时，下一发继续等候正常瞄准。
 
-- `Game::FogKnowledge` stores only the local viewer's last observed resource/tree cells and foreign building silhouettes, keyed by tile anchor, never by entity ID. Update cells and buildings only with visible tiles; any visible footprint tile reveals a building. Re-observation removes an obsolete silhouette before capturing current actors. Hidden silhouettes freeze owner/color/construction/damage appearance and carry no health bars, selection or live animation. The battlefield and minimap read this same memory. Unexplored shroud suppresses it.
-- A transient `World::presentationEpoch` identifies a newly initialized/loaded world so application memory cannot survive a restart at the same tick/dimensions. Neither this identity nor scout memory is used by simulation, RNG or checksums. A local-viewer change clears memory. Observe after simulation/script updates and before normal rendering.
-- Application v5 stores bounded, validated scout memory before the World blob, and stages it together with metadata and World before committing. Restore its transient identity against the newly loaded World. Save/load under lost vision must preserve the remembered field and radar, including dead-slot reuse; failed loads must leave the live match intact. This is local presentation knowledge, not a new simulation visibility rule or a claim of full original shroud fidelity.
+灰熊、犀牛和幻影的炮口火光使用发射事件记录的炮塔角度与地面高度。独立炮管的末端用和炮塔贴图相同的体素变换投影，与炮塔姿态一同缓存。表现层按事件坐标绘制火光，炮弹和命中由 World 独立结算。
 
-- Hover and smart harvest orders use `observedCell` for mineral presence; unknown shroud never exposes deposits through the cursor. Default terrain cursor checks also read observed terrain rather than hidden changes. The command still enters `World::Cmd`, and arriving at an exhausted remembered patch is resolved by normal harvesting simulation.
-- Point combat effects and projectiles draw only at currently visible world cells; expired/dead effects and retired projectile slots are skipped. Enemy nuclear landing markers require target visibility; a locally commanded strike retains its known target marker. These presentation checks do not alter World effects, projectile flight, damage or saved state. Global launch warnings and positional sound remain separate policies.
-- Tesla/prism/magnetic building beams use `visibleLineIntervals` to split at world cell boundaries. Clip each projected line segment against visible parameter intervals, preserving a visible middle even when both endpoints are hidden, and preserving gaps between separate visible islands. This happens before the ordinary dim explored-fog overlay, so the overlay cannot leave hidden bright beams visible. Effect altitude/color/animation remain presentation details.
+Scene44/Production7引入`HarvesterLoadRate`（支持1..1000个原版帧/阶段）；Scene45/Production8继续该合同。原程序默认2帧，采矿核心经过9阶段取一份矿，对应30 Hz项目默认36 tick。YR仍为Scene43/Production6；旧Scene37/43及缺省旧Scene42保留20 tick。采集方法与计时的隔离调用见`tests/fixtures/ra2-harvest-reference.json`。
 
-- Superweapon submission uses `World::Cmd::LaunchSW`; execution emits `SuperweaponOrder` with the actual rejection reason or transferred count. Game never treats enqueueing a command as a launch confirmation. A stale/empty explicit Chronosphere source list is rejected; only direct AI/script `launchSW(ChronoShift)` uses automatic collection around its sphere. Validate player/type/finite in-map coordinates before indexing player/type arrays or consuming charge.
-- `chronoJump(EID, ...)` checks the unit's movement domain and current cell capacity, immediately synchronizes ground/air indexes, and sets previous position to the destination for discontinuous rendering. Failed landing search preserves the previous unit state/path. Chronosphere source lists exclude immobilized/deployed/attached/air/infantry actors, are deduplicated in stable EID order, and consume one charge only after at least one actual transfer; unchanged units retain their orders on a partial cast. No new saved simulation fields or schema changes are needed. Current application/World schemas are v5/v26.
+Scene45的矿车通过原有合法回厂指令接入`world_native_ground.cpp`：等候可用矿厂，接近+(4,1)，车头朝东(0x4000)后倒车进入+(3,1)泊位，卸完正向驶出。每厂同时只有一个世代绑定的泊位占用；出口保留给当前矿车，耗尽矿区后停在出口的空车通过既有交通让路流程移动。Stop/Move先离开泊位再继续，销毁、易主或外部瞬移清理预约并保留剩余货物。超时空矿车的原有回厂瞬移落在进出点后继续正常停靠，不据此声称完整ChronoLocomotion时序。默认卸矿门槛为15原版帧、30项目tick，每次处理首个非空资源类型的全部数量（矿石先、宝石后），空库存再经过一个周期后离开；精炼器按每类整批数量计算增益。原程序函数调用、坐标/朝向指令和528个角度样本见`tests/fixtures/ra2-ground-reference.json`，不是完整原版对局。
 
-- `Effect::kind==9` uses `ChronoVisual` in the existing `aux` slot: Arrival=0, Departure=1, Erase=2. Emit departure for a jump/miner return and erasure for completed chrono attacks. Existing effect lifetime/phase counters remain independent of presentation metadata; no new fields or schema bump. The current reader rejects unsupported variants.
-- Original WARPIN/WARPOUT/WARPAWAY frames and `anim.pal` are exported by `gen_chrono_fx.py`, preserving every full-canvas offset and palette index (no unit house remap/shadow reinterpretation). PNGs remain local generated assets. `assets/chrono_fx.ini` declares bounded frame counts; source hashes live in `assets/chrono_fx_sources.json`. SpriteBank preloads all declared frames and rejects invalid metadata/missing/corrupt images at startup.
-- Warp effects are depth-sorted ground items in `drawEntities`, not a post-unit overlay. Render only in currently visible cells, lift by the local terrain height, and map the existing effect age to the declared frame count. `tpSick` and `chrono` tint all affected visible units, including body/turret of vehicles and ships; chrono-held buildings tint too. Owned hospital/oil activity reads its paused `bldAnim` clock, not global tick. No rendering consumes simulation RNG or changes a counter.
-- The independent presentation matrix now issues an actual chrono move, observes its departure effect, and replaces the arrival sequence (10 to 3 frames and different source pixels) along with prior unit/building assets. Require every one of the 600 simulation checksums to remain identical across sound off/on/replacement. Visual tests separately check opaque actor occlusion over the ground layer, hidden effects, current snapshot continuation/variant validation, and two display-sized with/without-effect frames.
+盟军超时空矿车与苏军武装矿车的行驶和卸矿姿态共用模型原点、贴图画布与阴影落点。姿态切换时以车体的世界坐标定位，点选读取当前姿态的实际边界。
 
-- Production facility existence and current operation are separate queries. `hasFactoryFor` / prerequisites still admit orders owned by a temporarily disabled facility; `productionFacilityOperational` gates work, speed bonus, unit/aircraft output and cloning. Require alive building, no selling/construction/chrono hold/drain. Build the per-tick operational count with `BldType::COUNT`, not a hard-coded 64. A disabled factory does not halt a separate operational one; apply the existing speed function only to operational matches. Building/defense queues require at least one operational yard.
-- `productionFacilities` is a read-only aggregate for HUD reasons. Show facility-offline/automatic-resume text and a paused badge for active orders (including already paid ready units) rather than reporting a blocked exit. Manual HOLD has priority; temporary facility state never writes `ProdItem::held`. Missing facilities still use the existing missing-factory path. Retain work/remainder/paid and refund normally; thaw resumes automatically. No additional persisted state or schema change.
+计时卸矿在每批入账时核对货款接收方的电力。有效供电达到需求时计入矿石精炼器增益，供电不足时按基础矿价入账。需求为零按足电处理。每批正额入账的逻辑tick发出到账提示，联机客户端按入账玩家编号播放。提示是一次性表现事件，读档后从已保存的批次进度继续卸载。
 
-- Procedural maps finish through `Map::finalizeSkirmishStarts`, isolated in `map_startup.cpp` (also linked into the standalone logic-test target). Coast starts use deterministic mainland slots. Land families 0/2/4/5/6 connect isolated start components by deterministic least-cost routes, preferring existing land and converting only required water cells to bridges/removing blocking rock overlays. Island/archipelago families 1/3 retain sea separation. Do not flatten the map or consume simulation RNG for this pass.
-- Generation-only nearest-start territories, with stable player-order ties, check reachable local stock within a 24-cell box. Top up to 6000 raw mineral units (20 full ordinary ore cells) on existing reachable land, excluding bridges, MCV footprints and initial escorts; preserve water/theatre shape and existing ore stocks. Territory labels never constrain actual harvesting and are not simulation/save fields. Hand-authored maps bypass this procedural pass. Save/load uses the already generated cells, not regeneration.
-- `ra2.generated_map` covers 7 menu sizes × 3 player counts × 7 map types × 3 seeds, real four-faction starting MCV deployment and coast/river setup-to-match terrain equivalence with both display sizes. `ra2.generated_health` records 84 natural five-minute two-AI openings, requiring both players to deploy, earn real mining income, produce and continue a current snapshot for 60 ticks. Combat damage is diagnostic; the test is deliberately not full-match evidence. Sea-crossing AI remains a separate validation scope.
+`world_native_ground_save.cpp`在World63的Crew60后追加`GND1`有界块，保存已初始化单位的两套转向起点、目标、起始帧、时长，以及矿车阶段和矿厂世代引用；这些字段参与checksum。World61/62仍仅用于冻结全局AI，不将63误判为AIGL扩展。旧普通规则继续写World60，旧Scene44/Production7保留旧停靠、卸载及转向；App11/12仍通过暂存World后整体安装，错误扩展或头部组合不能替换活跃游戏。地图Scene42以`RulesBaseVersion=45`选择新RA2行为；地图封套自身不增加App字段。
 
-- Amphibious transport uses weighted passenger sizes (`PassengerSize`, `CargoSizeLimit`, `Cargo`); check both the per-passenger size limit and total actual load at boarding completion. AI also reserves size for incoming boarders. Preserve cargo health, experience, resources, ammo, status timers and nested infantry passengers through release and snapshot/checksum. Tick timed effects recursively while loaded; count nested heroes and mission units recursively. Current cargo records cannot safely retain active entity-linked mind-control or parasite relations, so reject those boarders explicitly instead of clearing their relations. This is a documented compatibility limit. Aircraft-carrier aircraft storage remains a separate mechanic.
+地面矿车在进站格内重发回厂时，若仍在同一移动层上且离格心超过进站容差，返厂路线保留最后一段格内移动。Scene46武装矿车在进站点预约泊位，向西驶入。进入泊位格时请求朝东，在泊心且实际朝东后开始卸矿。触发格与本地RA2 1.08隔离无线电对照一致。对照使用给定格坐标，原版连续行驶轨迹与握手间隔仍待实机测量。
 
-- Corridor admission may request `yieldMovingConflict(..., true)` for a reciprocal swap involving a waiting apron unit: both units must already be blocked, and requests are staggered by tick/stable ID. Normal open-field movement keeps its existing detours. Preserve a lane occupant's pending dwell/pullout prefix rather than rewriting it toward the gate's chosen exit on every update; hold new admissions as opposed traffic while that occupant clears. This uses existing path/gate persistence, with no new World schema or RNG input. The coastal mixed-unit fixture includes rotated allied ownership, stable-ID reversal, fractional positions, saved replay and continuous legal motion.
+地面矿车规划返厂和执行停靠时共用矿厂可用性检查。矿厂被冻结时，已入泊的矿车先驶离原泊位，再携带剩余货物改道至可达的己方矿厂。
 
-- `World::factoryExitCells(factory, unit)` owns physical factory exit geometry. Land factories keep the fixed door; shipyards try the south center first, then cardinal edge-adjacent water cells in stable order. No remote rings or diagonal corner shortcuts are launch cells. `spawnFromFactory` and AI exit clearing consume the same candidates; occupied ports wait or use another free edge, with completed paid orders retained if every edge is sealed. Amphibious ships also launch in water. AI reserves these launch cells when selecting parking destinations, and protected/enemy units are never moved to open them.
-- Natural-match diagnostics distinguish per-category `AI_PRODUCTION` (order, progress/payment, ready/held, queued count, queried facility type and operational count) from aggregate economy health. `AI_TRANSPORT_STATE` records load, incoming boarders, current order and destination. These observations do not mutate World, AI, RNG or saved state; an idle queue's facility type is a representative probe, not a fabricated pending order.
+地面矿车和超时空矿车共用泊位地形检查。进站格和泊位须可通行，两格高差须在地面爬升上限内。矿车到达同一通行层的进站格中心后办理停靠。旧档中已入位的矿车遇到停靠条件不满足时，携货驶出后重新选厂。
 
+矿车持有预约时，再次明确指定同一座仍可用的精炼厂会确认当前回厂任务。待执行的传送和实际停靠均从已有进度继续。超时空矿车等候泊位时，确认同一座精炼厂会记住玩家的选择，并按原计时再次尝试预约。在进站路上重新发出回厂指令可以重新规划路线，在泊位中指定另一座精炼厂时先驶离当前泊位。
 
-- Deployed SiegeChopper presentation uses `SpriteBank::unitDeployed` and `VxlRt::renderDeployed`: project SCHD hull and independently aimed SCHDTUR into one depth buffer. Derive the ground anchor from the hull before merging turret bounds; pass it through sprite finishing and pad the ground shadow to avoid clipping. Drawing and `unitScreenRect` use the same composed pose. Flying SCHP remains on its existing path. These caches never mutate simulation state or consume simulation RNG.
-- `ra2.siege_pose` checks 128 direction/house combinations, actual deployment/fire/undeployment, framebuffer coverage and picking at two resolutions and zoom, selection feedback, and saved replay. The independent presentation matrix modifies SCHDTUR HVA translation through a temporary mod and requires changed pose pixels with identical 600-tick simulation checksums; corrupt SCHD is a controlled asset failure. This covers the static deployed pose, not the complete landing/unfolding/takeoff sequence or deployment timing.
+进站格有车辆时，地面矿车先走常规让路和重寻路流程。路线耗尽后进站格仍被占用时，矿车优先选择可达且进站格空闲的同方矿厂。缺少可用替代路线时，矿车保留原来的回厂任务，继续等候进站。
 
+武装矿车会记住玩家指定的己方精炼厂，并在寻路额度恢复后尝试规划路线。若当前泊位由另一辆矿车预约，它在原处等候并给泊位出口留空，车位腾出后继续进站。该选择在矿车驶出旧泊位后也有效，获得新泊位或失去目标时结束。自动回厂仍按可达性和空闲泊位选择精炼厂。
 
-- Native VXL body/turret HVA phases are distinct SpriteBank cache entries (16-bit phase field). Wrap requested phases by the validated native count; preserve SHP walking and miner empty/full semantics. An existing VXL with invalid required HVA reports a voxel-animation asset failure. Parse HVA dimensions/lengths and reject non-finite matrix values.
-- Project the selected HVA matrix for every named section. Transform lighting and face-culling normals by the affine inverse transpose before facing rotation. Assembly layout bounds include all native phases, cached per hull/facing; every phase shares that canvas and origin, rather than recentring the hull around a changing rotor. Single-frame units retain their static path. Preload all declared body/turret phases.
-- `unitBodyFrame` reads `World::tick / 2` for airborne native bodies; landed aircraft use phase zero. `unitTurretFrame` reads the same presentation cadence only while the existing fire-animation timer is active, so native Gatling barrels rotate during firing and rest afterward. Rendering and body picking use the same phase. Neither phase selector writes a simulation field, changes save data, uses RNG, or controls attack cooldowns. Two ticks per phase is the current presentation choice, not verified original-engine playback timing.
-- `ra2.voxel_animation` covers native Nighthawk/SiegeChopper rotors and Gatling barrels in eight directions, phase looping, house colors, anchor/canvas stability, static vehicles, miner load and SHP separation. Actual-frame checks include landed/airborne and rest/firing states at both display sizes, with pixel checks restricted additionally to the visibly changed rotor/barrel region. The presentation replay also changes native HVA frame counts from two to three in independent processes and requires the same 600 simulation checksums; corrupt, truncated and NaN HVA must fail with exit code 1.
+启用计时停靠的矿车卸完驶离时，从实际离位位置核对旧矿区的采矿路线。旧矿区被隔断时，从矿车所在地查找可达矿点，确定路线后开始下一趟。身边有可采矿点时直接进入采矿流程，找不到矿点时继续按空闲扫描周期重试。
 
+同批固定自然对局暴露了固定翼飞机攻击移动的到达判定不一致：飞行已按0.4格容差到达，保留意图仍要求0.05格，导致侦察航段反复恢复。Scene45沿用飞行控制器已经作出的到达结果完成同一目的地的指令，不改变飞行轨迹、弹药或AI目标信息；历史场景保留原合同。泊位出口预约只约束其所在移动层，不阻挡上层桥面。
 
-- SiegeChopper deployment now uses explicit `UState::DeployLanding/DeployUnfolding/DeployFolding/DeployTakeoff` and the existing persisted/hashed `deployAnim` remaining-work counter. `ChopperLandingTicks` controls descent/ascent, `ChopperDeployTicks` unfolding/folding (defaults 30 each, independently clamped 1..3600 and exported). These are current project timing choices, not original-engine calibration. No art frame count enters simulation.
-- Landing is still an airborne combat target while simultaneously reserving its destination in the ground occupancy index; path costs treat the reservation as fixed. Touchdown enters grounded unfolding. Folding retains the ground cell; liftoff releases it before ascent. Commands reject duplicate deployment/movement/attack while work is active; Stop preserves the transition. Existing freeze and magnetic processing run before phase work, pausing the timer. Destruction removes both indexes; mind-control take/release retains phase and remaining work. Recheck terrain/building/occupancy at touchdown and abort into takeoff if an external change invalidated the landing.
-- Acceptance emits a starting receipt; separate completion receipts follow unfolding/ascent. Busy rejections have localized feedback. Current World v26 adds enum states without changing entity field order; validation rejects non-chopper transition states, nonpositive/oversized remaining work, and inconsistent grounded flags. Existing older reader paths are retained without new conversion work; no old saves were removed.
-- `unitRenderLift` derives descent/ascent height from remaining simulation work. Unfolding/folding now select the native SCHPDEPL body/shadow sequence from remaining simulation work, reversing it for folding. `ChopperDeployFacing` uses the original compass numbering (default 2, east; engine facing 1). Reject incompatible presentation facing by falling back to the static model. Phase screenshots and pixel checks verify the rendered sequence, without claiming original timing or manual-play acceptance. Intermediate-height command/impact markers now consume event-time elevation snapshots; see the elevation contract below.
+同一固定雪地图还暴露了多架慢速飞机重复执行相邻搜图航段。Scene45的普通AI将己方现有侦察目的地传给既有迷雾选区函数，分散新派航段；不保存新的AI状态，不读取隐藏敌人的位置，不改变原始AI或已接受的交战指令。历史规则保留原有选区。
 
+Scene46在有效的履带车辆路径上选取同层、同高度的连续拐角。`world_drive_turn.cpp`用起终点都位于拐角格内的二次曲线连接直线段。弯行按实际弧长扣除速度累积量，换算率在相邻直段的直行与斜行速率之间过渡。车头进入弯道前按ROT对正，行进中的紧弯车头随弧线切线更新。World在每个tick开始时采样车体和炮塔角度，供渲染插值使用。碰撞、地形和交通预约由`moveAlongPath`准入与提交。履带车沿直线段行驶前先对正，剩余角度进入一逻辑tick的ROT转向额度后才平移。等待转向时清空速度累积量。新移动指令从实际坐标重新规划。若新路线仍走原出口，且出口与弯道同层同高，坦克会完成当前弧线，再接上新路线。改走其他出口会结束当前弯行。
 
-- `Ent::flightFraction()` is a read-only presentation query for the existing landing/takeoff work counter. `unitRenderLift` and `World::captureVisualTarget` share that normalized pose. Entity-target deployment/attack/entry/release receipts and muzzle/impact events capture visual class, flight fraction, magnetic height and terrain level when emitted. Use the actual target/container/source passed to the emitter, not the receipt entity ID (which may identify a failed attacker/passenger). No new simulated counter, schema, RNG call or serialized presentation field is introduced.
-- `eventRenderLift` maps captured flight/magnetic elevation to pixels; command feedback also retains the captured terrain level. Muzzle/impact drawing applies both captured terrain and actor elevation, keeping effects at their original position after an entity dies, its slot is reused, or terrain changes. Position-only/synthetic events without a terrain snapshot retain the current-terrain fallback; synthetic Aircraft events default to full altitude. A production message does not overwrite the elevation of an already active marker. Application load clears transient feedback terrain along with the old marker timer.
-- `ra2.elevation_feedback` drives actual deploy/attack/board/unload/damage/fire paths. Check 25%/75% descent/ascent, magnetic lift, a highground building and real ground/aircraft muzzle events, with/without marker images at two sizes. Delayed-delivery fixtures retain one receipt, retire/reuse the original entity slot and lower the old terrain cell before consumption; these are event-contract checks, not natural game progress. Verify marker/spark centers and positive pixel contribution, captured metadata, World checksum isolation, and correct target elevation even when receipt.entity names the failed actor.
+两个正交步在同层同高并且出口可通行时，履带坦克可沿三次曲线从前一格格心驶到后一格格心。车头随弯道进度平滑入弯和出弯，移动量按曲线弧长扣除。原版1.08的两步轨道样本用于校准5度、45度、85度时的位置及整段距离。曲线参数到一半时，坦克在拐角格交接路径节点。两个阶段都在推进前检查单位占位和出泊矿车保留的进出格。已有障碍挡住出口时可走格内紧弯，途中遇到阻挡则按普通交通规则等候或重寻。
 
+弯道按路径和地形规划。出口格被临时占用时，坦克仍可在拐角格内完成曲线并对正车头。进入出口格前会执行普通的碰撞、让路和交通准入，必要时先在弯道末端等待。
 
-- Eight-way directions quantize world-space `atan2(dy, dx)` uniformly, with direction 1 along world +X. VXL projection uses `45 * (direction - 1)` world degrees; do not quantize a uniform screen angle, because isometric axes have unequal screen angles. This affects simulated facing as well as presentation; old-checkpoint natural match outcomes must be rerun.
-- VXL house indices 16..31 retain the actual unit palette brightness (bright to dark), including Python exports and PNG masks. SiegeChopper flight and deployed assembly canvases use the raw VXL world origin; other units retain their existing anchor contract.
-- `chopper_deploy.ini` declares full-canvas dimensions, shared origin, frame count and engine facing. Preload and validate every body/mask pair from the same content root; a mod cannot inherit the base mask for a replacement frame. Frame count, pixels and animation selection never control simulation timing or RNG. The presentation replay changes the native 11 frames to three and requires identical per-tick simulation hashes. This visual pipeline adds no snapshot fields; current format revisions are described in the persistence contract.
+追击途中的定期重算也使用同出口续弯规则。新路线选中原来的同层、同高度出口时，拐角格留在路线首段。已经驶入拐角格的坦克可以继续驶到起弧点。正在弯行的坦克保留当前朝向和行驶进度，完成弧线后接上新路线。
 
+玩家下达停止时，履带车辆结束当前移动和计时转向，分别保留命令执行时的车体和炮塔角度。两个角度沿用现有存档字段，后续指令从实际姿态启动。AI内部暂缓移动沿用其调度策略。
 
-- A cooperative corridor retreat normally retains its selected exit. If it has a future dwell segment, has stalled for at least 30 ticks, and an allied moving peer blocked for at least 10 ticks reciprocally occupies the next cell, admission may reconsider the exit. Search directly to the original final goal using dynamic occupancy costs, accepting only an exact path through a different physical port. Keep fixed, guarded, immobilized and enemy occupants hard blocked; exclude aircraft and special chase/entry/service tasks from this recovery. Commit the new path and deterministic gate direction together. Stagger by tick/entity ID and charge the existing eight-search shared budget. No teleport, new RNG call, persistent field or save conversion.
-- `ra2.moving_yield` includes the three-tank routes captured from an actual unresolved archipelago game, entity-order/partial-position and 180-degree terrain/neutral-building variants, plus frozen-participant controls. Assert original goals, continuous speed, exclusive occupancy, legal terrain/buildings, per-tick replay, shared budget and snapshot continuation. Protection cases assert the frozen participant remains unchanged; other units may legitimately adjust an unreachable goal rather than promising arrival through that frozen cell.
+`World::applyCmd`接收的即时编队移动依据队伍中心到落点的八向航向排出方阵。`orderMove`先沿行进方向划分前后排，再按每排的侧向站位分配落点，同位时用实体编号决定顺序。地形、目的格预约和分层寻路仍会调整实际可到达的位置。AI、作者指令和追加路径点采用各自原有分配。Scene46履带坦克遇到同层同向并有下一步的己方履带车，可边等候边转向，最多等候90逻辑tick后回到原有堵塞处理。存档继续记录实际路径、转向和已等待时间。
 
+单辆履带坦克在窄路弯中收到沿来路返回的指令时，可释放旧的通行方向。玩家在直线段下达沿来路返回的即时移动命令时，也可释放该方向。直线判断使用车体实际坐标到旧路线下一点的方向，坦克已经跨入下一格时仍能识别掉头。释放要求车道内只有这辆坦克、且尚未进入疏散阶段。下一次通行准入根据新路线选取出口，坦克对正车头后开始平移。
 
-- Compact open junctions (at most 64 connected non-lane tiles, touching at least three distinct lane-mouth cells) join the attached lanes' admission region. Keep physical `narrowMovementCell` separate: open junction tiles remain usable as passing bays. A large staging field remains outside admission. Classification revisits open tiles queried before their lane; confirmed outside patches use a separate negative cache label. Never overwrite an already assigned different region, and remove ports absorbed into the completed region. All geometry caches are rebuilt per tick and are absent from persistence/checksums.
-- If the region is empty, no candidate waits for the currently served exit, and another exit has a waiter, drain/handoff immediately instead of reserving an unused full phase. Occupied regions retain their batch/fairness latch. The existing persisted gate fields and shared eight-repath budget remain unchanged. `ra2.junction` exercises four-way crossing and looped layouts, 50-unit batches and four overlapping 50-unit waves, via `World::Cmd`; assert all units reach their opposite staging bank with legal exclusive occupancy, continuous speed, exact replay and two snapshot continuations. These are finite traffic fixtures, not proof about infinite input flow or every network topology.
+窄路内的退让路线被尽头格卡住时，恢复流程检查该步实际通行层的占位单位。找到双方下一步互相硬挡的友军后，可以改用另一出口并继续前往原目的地。步兵满格时会继续检查队首之后的占位者。车辆、步兵和桥面各自按实际通行层校验占位，退让仍使用普通路径和每tick寻路预算。
 
+重发即时编队移动时，使用当前已分配的地面落点核对请求是否匹配同一组合法落点。已经停稳的单位可留在原位，正在行驶的单位须处于相同移动模式、目标层且路线未受阻。修改攻击移动模式、调整到其他落点或覆盖排队命令时，重新走普通移动准入。判定使用存档已有的目标、路径和单位状态。
 
-- Every fixed movement-pressure scenario clones before commands, applies the same commands separately, and compares every simulation tick in both instances. Assert the exact comparison count (5000 for 50 units, 1000 for 200/500), first divergence, both search budgets, initial command equality and a mid-window snapshot continuation with save isolation. A later successful load must not clear an earlier divergence flag. Pressure-window timings cover only the primary World update; replay, occupancy validation and snapshot IO are outside that timer.
+泊位内矿车的编队落点以同层外侧格的连通区域筛选。移动路径从矿车的实际位置生成。矿车先由停靠流程驶到外侧格并释放预约，再沿获准的路径前往编队落点。
 
-- `ra2.combat_pressure_0..3` are fixed mechanism/performance fixtures, not natural matches. Normal-stat paired armies retain 200/500 combatants; reinforced mixed armies refill to 200/500 before each tick and report controller cost separately. Independently spawn and command both Worlds, compare every tick, validate occupancy/budgets and continue after a midpoint snapshot. Rendering benchmarks use a busy real combat snapshot with all actors in view, without advancing simulation; actual-versus-empty pixel regions supplement visibility counts. Report World-update and snapshot-render timings separately. Release enforces the 33.3 ms tick threshold; ASan retains functional checks and explicitly disables performance enforcement. Neither static render timing nor scripted replenishment establishes full-game frame rate or macro AI health.
+单位在目标格内重寻路成功时，`repathUnit`保留抵达格中心的最后一段移动。即使寻路结果没有格间节点，单位也会走完格内位移，再进入到达状态。
 
-- `UnitDef::airWeapon` is optional and selected by the target's actual airborne state in `effWeapon`; ground deployment/transport/elite resolution remains separate. Auto-acquisition for a dual-weapon seeker scans both occupancy indexes and filters each candidate with its selected weapon. The firing-only search used by turret attack-move also checks that candidate's own range; a nearer ground target outside cannon range must not hide a shootable aircraft. `hasAntiAir()` covers both definitions for AI roster accounting. Rule strings owned by the loader use stable deque storage; adding projectile/report keys must not invalidate earlier definitions.
-- Weapon range is a floating point tile distance, retained in configuration exports, projectile snapshots and checksums. World schema v27 (`RA2WRLDR`) writes the explicit float; do not reinterpret old integer bytes as a float. Current snapshot validation rejects nonfinite ranges. This schema change supports current simulation state, and does not expand old-save migration as a project objective. The burst scheduler appends pending state in v28; projectile area settings follow in v29, with fidelity limits described below.
+经典左键已有选中单位时，光标和命令分派通过`pickCommandUnit`判断单位目标。单位显示范围和同层实际占用格参与下令判定，主动选取和Shift加选可使用邻近命中。点击编队旁的空地仍走普通`Move`入口，联机沿用实体编号和世代绑定。
 
-- Weapon bursts for conventional non-air unlimited-ammunition unit projectiles are simulation state. Schedule follow-up shots separately from the ordinary attack cooldown; guard original target, owner, target domain, legal attack state and current range before emitting. Pause pending delay during immobilization; cancel on superseding orders or invalidated references. Run follow-ups before each original active entity update and reacquire the slot afterward, since firing can invoke callbacks. Never dispatch a new volley on the last-shot tick after an already expired cooldown. Pending remaining count, delay, owner, target and airborne category are saved and hashed; reject malformed state on load. Shot count and intra-volley delay are rule data, never art frame counts.
+Scene46的超时空矿车通过`world_harvester_warp.cpp`预约单一泊位。预约绑定矿厂世代与实际落点，可跨越断开的地面路径。泊位 +(3,1) 可用并获准后，矿车在下一移动更新内直接落到泊位格心，保留起跳朝向，随后转东并开始卸矿。外侧格 +(4,1) 有车时仍可落在空闲泊位，卸完后按实际占位等待驶出。实际位移成对发出离场与到达效果，已在同层同坐标的矿车直接对正。落点、车头与已接纳后的节拍来自本地RA2 1.08的无线电、通行与传送函数对照。矿厂销毁、易主或新指令会释放预约，受阻时每12逻辑tick重试。直接落地后收到停止、移动或换厂指令时，矿车转东并先驶出原泊位。
 
-- `WarheadArea` supplies `CellSpread` / `PercentAtMax`; the emitter copies them into the projectile, so later changes to rule settings do not change that projectile's area. Both fields are serialized in v29 and hashed. Negative CellSpread keeps the existing Splash path. Enabled area damage has no extra direct-hit pass; zero/outside damage is not hidden behind the older 1.15-tile direct-hit tolerance. Instant projectile dispatch uses the same area helper; bespoke beam/superweapon handlers remain separate.
-- Area impacts determine recipients and per-cell damage before executing callbacks. Buildings retain individual foundation-cell hits, sorted by entity ID and then distance, to preserve intermediate garrison evacuation; do not merge these into one HP subtraction. A transient area-damage depth also quarantines retired IDs when detonation is called outside `World::update`; nested destruction callbacks cannot spawn a new entity into a still-pending victim slot. The outer batch drains retired IDs at a safe boundary; save/load are rejected during the batch. Births from evacuation or Lua are not retroactively added to the old explosion.
-- The current area metric quantizes XY positions to leptons, computes integer Euclidean distance, and applies linear falloff before armor. It does not yet reproduce the original spherical height and cell-lookup details. Air/ground filtering follows the selected weapon. Only attached terror drones are hidden recipients; attached squid remain exposed. This is a simulation contract and must not depend on sprites, animation frame counts or audio consumption.
-- The independent presentation replay includes commanded ordinary/elite ground Apocalypse volleys and an anti-air volley. It checks real shell/missile counts, launch-time area fields, muzzle cadence and actual falloff damage before accepting a 600-tick comparison. A temporary mod expands the native MTNKTUR HVA from one to two frames and changes the second transform; both frame count and actual sampled pixels must change. Sound off/on and replaced art must preserve every simulation checksum. The audio device is active at zero master volume: this verifies isolation, not sound quality. High-HP immobilized targets keep these mechanism fixtures distinct from natural matches.
+Scene46的武装矿车与超时空矿车新进入泊内卸矿后，首笔整批入账在默认第32逻辑tick。随后每类资源和最后的空载检查各间隔30 tick。原版卸矿任务先检查计时，再推进同帧的阶段，实际首笔在第16原版帧。武装矿车正常卸空且准备返回仍有矿的原矿点时，在站内保留泊位，于空载检查后的第34个逻辑tick启动出泊。这个间隔采用本地原版隔离案例中空载检查到回采目标下达的17帧。原版回采调度含随机延迟，本项目使用该次测得的固定间隔。
+
+武装矿车出泊时用普通Drive计算油门、速度和直行位移。减速距离以记忆矿点为终点。站内只向东驶向外侧格心，每次位移前检查实际占格和碰撞，受阻时丢弃当次位移余量。到达外侧格心后释放预约并按当前地图选路。若接回同一个矿点且同层直行，当步余量和速度可继续用于普通移动。原矿点缺失或采空时会重新找矿。停止、改点或矿厂失效会取消出泊驱动，按撤泊流程离开。原版平地校准使用真实回采寻路和Drive，夹具提供记忆矿点。
+
+直接传送模式下，正在外侧格等候同厂的超时空矿车可以响应出泊矿车的让行请求。它沿普通地面路径驶向可用的空地，让位期间保留目标矿厂世代、货物和重试余量，路径结束后恢复回厂重试。前车到达外侧格并释放泊位后，后车方可传入。无可通行的让位路径时继续等候。
+
+武装矿车还在进站格时可以直接改选精炼厂。占用泊位后，改点同方另一座精炼厂会中止本次卸货并先驶出。尚未朝东的武装矿车先在原位转东再驶离。World保留最后指定的精炼厂世代引用，驶出后按普通地面回厂或超时空回厂流程接近新泊位。已入账的矿石保留，剩余货物由实际停靠的矿厂卸载。停止、指定目标销毁和易主会取消该目的地。
+
+World64在`GND1`后追加`TRV1`，记录当前弧线进度或正在回厂的传送阶段及剩余tick。矿厂身份沿用`GND1`内保存的世代引用。旧存档的传送准备与落地稳定状态继续使用原来外侧 +(4,1) 的落点和保存的计时。嵌入Scene45或以45为基础规则的地图通常写World63，其他旧普通规则写World60。World65在World63或World64数据后追加`DDR1`，按矿车记录离位或等待寻路时的目标精炼厂世代引用。World66沿用`DDR1`的记录布局，并允许武装矿车在进站阶段保留选择。World67用于新的武装矿车入泊阶段或尚未朝东的离位状态，沿用`GND1`和`TRV1`布局，随后写出可为空的`DDR1`。World68在存在活动二次宽弯时使用`TRV1`的第4类记录，保留同一份尾部布局及矿车状态。World69允许`TRV1`第5类的泊位传送记录及超时空矿车在泊位中心尚未转东的离位状态，可以同时保存宽弯。World70要求至少一辆等待直接传送的矿车有活动让位路径，沿用第5类记录和已有地面路径字段。World71要求至少一辆正在卸矿的矿车仍处于最初两个逻辑tick，沿用有符号卸矿计时字段，也可保存宽弯和让位路径。World72要求至少一辆空载武装矿车在泊心朝东等待离位，沿用同一有符号计时字段和尾部布局，可同时保存World71允许的活动状态。历史存档中已经开始的紧弯、进站对正和倒车入泊均按记录继续。读档核对路径、进度、泊位占用、命令阶段和实体身份。运行校验值覆盖轨迹类型与待执行命令。
+
+World73要求至少一辆空载武装矿车在等待或执行Drive出泊。`GND1`记录新的离位阶段，原有移动记录保存油门、半帧和位移余量。World73也容纳World72及更早支持的同时活动状态。World72档按保存的等待计时归零后定速离位，正在定速离位的World64档继续当时的轨迹。
+
+World74要求至少一段活动三次宽弯。TRV1第6类沿用已有弯道字段，类别参与校验值。World74可同时保存加速出泊、超时空回厂和先前支持的活动状态。第4类二次宽弯按原位置、朝向和速度继续，旧头的读取继续验证其对应的记录。
+
+同批雪地图测试发现，残余部队可能留在地面无法到达的高地，空中侦察原先会先飞向所有未探明格。Scene46的武装空中侦察会优先复查已经看过、至少一分钟未观察且与己方地面部队地形不连通的陆地。选区依据己方迷雾、已派航段和地形连通性。
+
+## 模块边界
+
+| 模块 | 负责 | 修改时保持 |
+|---|---|---|
+| `game.cpp`、`game_logic.cpp`、`game_*` | 应用生命周期、模式、UI、AI与任务调度 | 图形/音频初始化与模拟分开，正常UI和测试共享真实应用流程 |
+| `world.cpp`、`world_update.cpp`、`world_*` | 实体、移动、战斗、经济与原始规则子系统 | 实体世代、顺序、占位、失效引用和完整tick不变量 |
+| `world_commands.cpp`、`world_orders.cpp` | 命令路由、身份过滤、动作准入及回执 | AI和用户复用合法性检查，不绕过资金、寻路或保护状态 |
+| `world_ownership.cpp` | 既有实体易主的共同不变量、建筑整批同步 | 保留控制器清理和任务生产时序；创建/解码与易主分开 |
+| `world_checksum.cpp` | 确定性模拟校验 | 保留历史字段顺序、版本条件和持久化/派生数据边界 |
+| `world_save.cpp`、子系统 `*_save.cpp` | World主记录与有界扩展块 | 旧字段顺序、长度限制、身份解析和原子恢复 |
+| `game_save.cpp` | App封套、任务/Lua/AI状态暂存与提交 | 所有部分验证后才替换运行游戏，失败不破坏当前游戏 |
+| `ai.cpp`、`ai_*` | 遭遇战策略、侦察、建设、生产、运输与进攻 | 根据本方可知信息决策，用World指令执行 |
+| `world_native_ai*`、`world_native_teams*` | 原始AI合同、局部/实验全局任务与队伍执行 | 不以局部实现替代完整原版行为，不自动提升实验规则 |
+| `gfx/`、`sfx/` | 资源、实绘与声音 | 渲染不修改模拟或RNG，基础资源缺失明确报错 |
+| `net/` | TCP帧、规则握手、锁步与校验 | 不同模拟协议拒绝混联，延迟命令使用世代身份 |
+
+## 共享原语与政策差异
+
+`actor_state_transfer.h`统一乘员的持久属性捕获与恢复。它不复制坐标、路径、即时所有者或控制器链接；登车、卸载、舰载机和重生调用方仍处理这些上下文，以及既有生命值/经验约束。
+
+`actor_contents.h`按既有顺序访问某玩家的存活根实体、嵌套cargo和garrison，用于运行时计数等只读查询。保存遍历还包含死亡实体槽位，有独立的深度/数量验证，不能替换成这个存活遍历器。
+
+`core/binary_state_io.h`提供有界二进制原语和既有模式的轻量适配器。各子系统仍拥有自己的字段合同、合法性验证和校验过程。共享IO不意味着任意旧版都可以忽略字段或自动迁移。
+
+`production_work.h`提供普通固定工作量以及来源54期付款/进度的执行原语。来源普通队列和关卡AI工厂共享后者与既有`spawnFromFactory`，但调度、暂停、队列容器及价格政策不同：普通队列保存报价，本地关卡任务保留原有价格规则。
+
+`World::changeActorOwner`用于已经存在的实体易主，保持实体世代，清除旧所属方的保留进攻意图，并同步已建立的原始闸门归属投影。调用方仍负责心控链接、返回归属及专用清理；建筑批次在原逻辑边界调用`synchronizeBuildingOwners`。关卡工厂失效任务仍在原生产阶段取消，不能随意提前取消时点。
+
+## 合同与兼容
+
+定义版本、World格式、App封套和LAN协议是不同维度。当前权威位置如下：
+
+| 内容 | 当前写出/选择 | 权威位置与读取边界 |
+|---|---|---|
+| 普通来源规则 | RA2 Scene46 / Production9，YR Scene43 / Production6，共用Crew2 / Temporal1 / Weapons3 / IFV2 | 安装规则包与`world_native_scene.cpp`，作者关卡用Scene16 |
+| 原版遭遇战地图 | Scene42，基础规则显式为37、43、44、45或46 | `native_scene_contract.h`绑定地图id、源hash、nmap字节hash、原始出生点和中立场景物件 |
+| World | RA2新规则64，指定回厂65或66，新入泊或转向离位67，活动二次宽弯68，超时空矿车直达泊位状态69及让位状态70，卸矿启动71，站内等待定速离位72，活动Drive离位73，活动三次宽弯74，Scene45为63，其他普通60，实验全局AI61/62 | `world_save_format.h`集中识别World6–74的69种magic，具体内容组合另行验证 |
+| App | 11；原版遭遇战地图12 | `application_save_format.h`定义6–12封套；原版地图使用App12/MSET2保存地图id，其他入口保持App11/MSET1；6只支持下述已验证组合 |
+| LAN模拟协议 | 95 | `net/net.h`校验双方模拟版本与有效规则 |
+| 实验全局AI | 默认关闭，最新Scene41 | `native_ai_contract.h`的不可变表，见下表 |
+
+| Scene | AI | Events | World | AIGL | 整体房屋控制 | 原版附近格 | 源坐标/查询填充 |
+|---|---|---|---|---|---|---|---|
+| 38 | 2 | 5 | 61 | 1 | 否 | 否 | 否 / 0 |
+| 39 | 3 | 6 | 62 | 2 | 是 | 否 | 否 / 0 |
+| 40 | 4 | 7 | 62 | 2 | 是 | 是 | 否 / 0 |
+| 41 | 5 | 8 | 62 | 2 | 是 | 是 | 是 / 32 |
+
+AI和Events持有不可变合同引用，能力由合同派生；不再同时保存可相互矛盾的可变布尔值。引用本身不进入文件。历史Scene38–40保留原合同，未知混合明确拒绝。实验全局AI没有替换普通策略，完整脚本和时序保真仍有缺口。
+
+原版遭遇战首批仅接入`mp08t2`和`mp15s4`，支持RA2/YR规则的Battle/FFA。`skirmish_map.cpp`加载原始地图元数据，将普通规则和中立场景物件组合为Scene42，保留雪谷的船厂TechLevel覆盖。`World::init`先安装场景物件，再在原始出生点创建正常部队；定义恢复只解析初始物件记录，读档不会重新生成已摧毁的物件。地图复用既有地形、定义和实体字段。App12必须携带匹配的MSET2地图id和Scene42；错误封套、缺失地图或不匹配的规则组合在替换当前游戏前拒绝。重开使用保存的规则/出生点/物件定义和对应原始nmap，校验nmap字节hash。地图预览只读取素材，不更新模拟或RNG。局域网使用程序地图。
+
+原版地图自然对局固定使用`mp08t2/seed922/2方`和`mp15s4/seed923/4方`，普通难度、10000资金、关闭补给箱，观察窗口180000tick。终局World/App与遥测保存在当前构建的`original-skirmish-natural-audit`。用`ra2_regression --original-skirmish-regression <新输出目录> <World或App文件>`只读导出实体与AI记录，供失败定位；这不是自然对局通过证据。空中侦察仅从原版地图的实际存在格选择目的地，排除正方形存储画布中的空白区。
+
+普通AI的空袭优先选择已记录、当前可见且武器兼容的战略建筑；保留已经开火的攻击、追击建筑和返航补弹。目标只来自本方实际视野和记忆，通过既有World指令执行。原始跳跃飞行单位按飞行控制器的到达判定结束对应的攻击移动，再执行后续航段，避免基洛夫停在已到达格反复恢复同一指令。物理飞行速度和轨迹保持原有实现。
+
+普通地面AI在没有当前可见目标、也没有可推进的基础设施目标时执行迷雾搜索。小队保留两支侦察；较大部队按每六个地面战斗单位一个搜索名额、最多八个分区推进，并根据本方已有指令避免重复覆盖同一视野区域。已存在的移动和近距离交战不会被该搜索调度覆盖；隐藏敌人的实际位置不参与选区。
+
+Scene43/NativeProduction6引入原始矿石/宝石单价，后续普通规则继续使用本地来源25/50。CMIN满载普通矿500、宝石1000，HARV分别1000/2000。旧来源快照默认保留35/70；Scene42缺少基础版本按37解释。原始库存估值与房屋入账函数的隔离调用证据在本地`miner-calibration/original-proof.json`；实验Scene38–41继续Production5。采集、停靠与整批收益的后续版本分别见上文；各版本读档不会自动升级。
+
+GAME6支持限定为`mission=-1`、`wave=0`、`localPlayer=0`、无任务触发器/目标/脚本、嵌套World29的遭遇战封套。已用真实用户备份验证读取、App11另存和300tick重复；未知旧档组合继续拒绝。转换不得覆盖原件。实际核验使用`ra2_regression --app-state-test`，并显式提供`OPENRA2_LEGACY_APP_TEST_INPUT`与`OPENRA2_LEGACY_APP_TEST_OUTPUT`。
+
+## 构建与测试隔离
+
+`ra2_runtime`静态库包含产品运行代码；`ra2`链接它提供正常游戏。`BUILD_TESTING=ON`时另建`ra2_regression`和小型纯逻辑测试程序。`RA2_TESTING`只控制回归可执行文件的分派，不进入运行库对象。ON/OFF配置的核心编译输入相同。
+
+诊断方法位于`tests/game_regression.h`的`GameRegression`，利用友元访问执行真实应用流程，相关实现只链接进回归目标。`*_tests.cpp`、`game_regression.cpp`和`game_live_verify.cpp`不进入产品库。产品`ra2.exe`在初始化游戏前拒绝测试标志，测试和截图命令使用`ra2_regression.exe`。
+
+`ra2.ground_control`核对停靠、转向、战斗、生命周期、续档与渲染。`ra2.ground_travel`使用合法指令验收弯行、传送落点与物理停靠，并在运行中保存和逐帧核对回厂及重新采矿。45度弯道用实际位移检验直斜衔接。直线起步、行驶中改向和窄路掉头检查车头角度与实际位移，弯道交接和停止后的姿态分别检查续档。`ra2.group_orders`实跑八个方向的移动和攻击移动，检查不同选中顺序的轨迹及中途续档。`ra2.classic_input`通过鼠标输入复验框选和重发编队命令。联机生产测试通过真实大厅、侧栏与TCP执行建造、暂停、继续、退款、放置和出兵。菜单和输入测试覆盖遮罩、经典及现代控制、联机命令队列和设置保存。接收端和World共用生产类型查询，接受融合枚举与当前来源类型编号。资金、科技及工厂准入在命令执行时判断。LAN95同步武装矿车从卸空等待到加速离泊和直行续驶。
+
+`tests/verify.py`会构建、检查实际执行集合，并记录二进制与代码/配置哈希。完整检查、ASan与构建ON/OFF各自报告；命令和停止条件见[开发流程](development.md)。

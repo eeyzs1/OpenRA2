@@ -1,12 +1,13 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "game/lang.h"
+#include "gfx/sprites.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <limits>
 
-int Game::elevationFeedbackRegression(const char* outputDir) {
+int GameRegression::elevationFeedbackRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);int failures=0;
     struct Restore { GameRules rules;int language;~Restore(){g_gameRules=rules;g_lang=language;} } restore{g_gameRules,g_lang};
     g_gameRules.chopperLandingTicks=40;g_gameRules.chopperDeployTicks=20;
@@ -108,6 +109,148 @@ int Game::elevationFeedbackRegression(const char* outputDir) {
             std::printf("ELEVATION_FRAME %s scenario=%d kind=%d delayed=%d size=%dx%d captured=%d reused=%d isolated=%d height_correct=%d pixels=%d centered=%d lift=%.2f\n",
                 ok?"PASS":"FAIL",scenario,kind,test.delayed,size.x,size.y,captured,reused,isolated,heightCorrect,pixels,centered,lift);
             if(a)UnloadImageColors(a);if(b)UnloadImageColors(b);UnloadImage(with);UnloadImage(without);
+        }
+    }
+    for (UnitType type : {UnitType::Grizzly, UnitType::Rhino, UnitType::MirageTank}) {
+        for (bool west : {false, true}) {
+            const int owner = type == UnitType::Rhino ? 1 : 0;
+            const float sign = west ? -1.f : 1.f;
+            if (!world.init(64, 64, 20261031, 2, 0, {Faction::Allies, Faction::Soviet}, 0,
+                    "maps/skirmish-reference.txt", true, true, "assets/rules/profiles/ra2.ini",
+                    {Country::America, Country::Russia})) return failures + 1;
+            for (EID id = 0; id < (EID)world.ents.size(); ++id) if (world.valid(id)) world.kill(id, false);
+            for (auto& cell : world.map.cells) { cell = Cell{}; cell.height = 3; }
+            for (auto& player : world.players) player.isAI = false;
+            world.cratesEnabled = false;
+            world.crates.clear();
+            world.spawnBuilding(0, BldType::ConYard, 3, 3, true);
+            world.spawnBuilding(1, BldType::ConYard, 50, 50, true);
+            const EID actor = world.spawnUnit(owner, type, 20.5f, 20.5f);
+            const EID target = world.spawnUnit(1 - owner, UnitType::MCV, 20.5f + sign * 4.f, 20.5f - sign * 2.f);
+            if (!world.valid(actor) || !world.valid(target) || !world.usesNativeGround(world.ents[actor])) {
+                std::printf("TANK_MUZZLE FAIL type=%d west=%d missing timed tank or target\n", (int)type, west);
+                ++failures;
+                continue;
+            }
+            auto& initial = world.ents[actor];
+            initial.dir = initial.previousDir = west ? 4 : 0;
+            initial.turretDir = initial.previousTurretDir = west ? 3 : 7;
+            World::Cmd move{};
+            move.type = World::Cmd::Move;
+            move.ids = {actor};
+            move.x = 20.5f + sign * 10.f;
+            move.y = 20.5f - sign * 10.f;
+            move.attackMove = true;
+            world.bindCommand(move);
+            world.applyCmd(owner, move);
+            const bool admitted = world.ents[actor].state == UState::AttackMoving;
+
+            PresentationEvent shot;
+            for (int step = 0; step < 60 && shot.kind != PresentationKind::Muzzle; ++step) {
+                world.presentationEvents.clear();
+                world.update();
+                for (const auto& event : world.presentationEvents) {
+                    if (event.kind == PresentationKind::Muzzle && event.entity == actor) shot = event;
+                }
+            }
+            const auto& gunner = world.ents[actor];
+            const auto heading = world.nativeTurretHeading(gunner, world.tick);
+            const int facing = NativeGroundMath::facing32(heading);
+            const auto targetHeading = NativeGroundMath::vector(shot.targetX - shot.x, shot.targetY - shot.y);
+            const float aimError = std::abs(NativeGroundMath::delta(heading, targetHeading)) * (360.f / 65536.f);
+            const bool rolling = std::hypot(gunner.x - shot.x, gunner.y - shot.y) > .001f;
+            if (shot.kind != PresentationKind::Muzzle || !admitted || !rolling || aimError < 15.f || aimError > 45.f
+                    || (west ? (facing < 13 || facing > 19) : (facing > 3 && facing < 29))) {
+                std::printf("TANK_MUZZLE FAIL type=%d west=%d shot=%d admitted=%d rolling=%d facing=%d aim_error=%.2f\n",
+                    (int)type, west, shot.kind == PresentationKind::Muzzle, admitted, rolling, facing, aimError);
+                ++failures;
+                continue;
+            }
+
+            // Near a horizontal pose the exposed end is the turret image's outermost two columns.
+            const auto& turret = g_sprites.unitTurretFacing(type, facing, world.players[owner].colorId, unitTurretFrame(gunner));
+            Image silhouette = LoadImageFromTexture(turret.tex);
+            Color* shape = LoadImageColors(silhouette);
+            const int edge = west ? turret.visL : turret.visR;
+            Vector2 tip{};
+            int capPixels = 0;
+            if (shape && edge > 0 && edge + 1 < silhouette.width) {
+                for (int x : {edge, edge + (west ? 1 : -1)}) {
+                    for (int y = 0; y < silhouette.height; ++y) {
+                        if (shape[y * silhouette.width + x].a == 0) continue;
+                        tip.x += x + .5f - turret.ox;
+                        tip.y += y + .5f - turret.oy;
+                        ++capPixels;
+                    }
+                }
+            }
+            if (shape) UnloadImageColors(shape);
+            UnloadImage(silhouette);
+            if (capPixels == 0) { ++failures; continue; }
+            tip.x /= capPixels;
+            tip.y /= capPixels;
+
+            localPlayer = owner;
+            shotAtDisplaySize = false;
+            camX = (shot.x - shot.y) * 32 - 500;
+            camY = (shot.x + shot.y) * 16 - 3 * 16 - 340;
+            world.projs.clear();
+            world.effects.clear();
+            for (bool delayed : {false, true}) {
+                bool reused = true;
+                if (delayed) {
+                    world.kill(actor, false);
+                    reused = world.spawnUnit(owner, UnitType::Kirov, 40.5f, 40.5f) == actor;
+                    world.map.at((int)shot.x, (int)shot.y).height = 0;
+                    world.update();
+                }
+                for (auto& fog : world.map.fog) std::fill(fog.begin(), fog.end(), FOG_VISIBLE);
+                fogMaskTick = -1;
+                bakeTerrain();
+                world.presentationEvents.clear();
+                world.presentationEvents.push_back(shot);
+                combatCues.clear();
+                const auto checksum = world.checksum();
+                consumePresentationEvents();
+                const auto name = "tank_muzzle_" + std::to_string((int)type)
+                    + (west ? "_west" : "_east") + (delayed ? "_delayed" : "");
+                const auto withPath = (std::filesystem::path(outputDir) / (name + ".png")).string();
+                shotFile = withPath;
+                render();
+                combatCues.clear();
+                const auto withoutPath = (std::filesystem::path(outputDir) / (name + "_without.png")).string();
+                shotFile = withoutPath;
+                render();
+                Image with = LoadImage(withPath.c_str()), without = LoadImage(withoutPath.c_str());
+                Color* a = LoadImageColors(with), *b = LoadImageColors(without);
+                Vector2 center{};
+                int pixels = 0;
+                if (a && b && with.width == without.width && with.height == without.height
+                        && with.width >= 570 && with.height >= 400) {
+                    for (int y = 280; y < 400; ++y) {
+                        for (int x = 430; x < 570; ++x) {
+                            const auto first = a[y * with.width + x], second = b[y * with.width + x];
+                            if (first.r + first.g + first.b <= second.r + second.g + second.b + 50) continue;
+                            center.x += x + .5f;
+                            center.y += y + .5f;
+                            ++pixels;
+                        }
+                    }
+                }
+                if (a) UnloadImageColors(a);
+                if (b) UnloadImageColors(b);
+                UnloadImage(with);
+                UnloadImage(without);
+                if (pixels > 0) { center.x /= pixels; center.y /= pixels; }
+                const float gap = std::hypot(center.x - (500.f + tip.x), center.y - (340.f + tip.y));
+                const bool isolated = checksum == world.checksum();
+                const bool ok = pixels >= 6 && gap <= 3.f && isolated && reused;
+                failures += !ok;
+                std::printf("TANK_MUZZLE %s type=%d west=%d delayed=%d tick=%llu facing=%d aim_error=%.2f "
+                    "pixels=%d tip=%.2f,%.2f center=%.2f,%.2f gap=%.2f isolated=%d reused=%d\n",
+                    ok ? "PASS" : "FAIL", (int)type, west, delayed, (unsigned long long)shot.tick, facing, aimError,
+                    pixels, 500.f + tip.x, 340.f + tip.y, center.x, center.y, gap, isolated, reused);
+            }
         }
     }
     return failures;

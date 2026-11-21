@@ -1,7 +1,7 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cstdio>
 
-int Game::chopperGroundRegression() {
+int GameRegression::chopperGroundRegression() {
     int failures=0;
     for(int scenario=0;scenario<9;++scenario) {
         World w;w.init(64,64,20261031,2,0,{Faction::Soviet,Faction::Allies},0,"",true);

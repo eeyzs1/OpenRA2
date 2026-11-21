@@ -1,4 +1,4 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cstdio>
 
 namespace {
@@ -119,7 +119,7 @@ int vehicleTransportChecks() {
 }
 }
 
-int Game::aiTransportRegression() {
+int GameRegression::aiTransportRegression() {
     int failures=vehicleTransportChecks();
     const auto& initiate=unitDef(UnitType::Initiate).weapon;
     constexpr float flameVerses[]={1,0.8f,0.8f,0.5f,0.25f,0.25f,0.75f,0.5f,0.25f,1,1};
@@ -141,6 +141,7 @@ int Game::aiTransportRegression() {
         w.spawnBuilding(0,BldType::ConYard,4,4,true);w.spawnBuilding(0,BldType::Barracks,4,10,true);
         w.spawnBuilding(0,BldType::WarFactory,10,4,true);w.spawnBuilding(0,BldType::OreRefinery,4,18,true);
         w.spawnBuilding(0,BldType::NavalYard,22,15,true);
+        for(int power=0;power<3;++power)w.spawnBuilding(0,BldType::PowerPlant,10+power*4,22,true);
         EID miner=w.spawnUnit(0,UnitType::Harvester,8.5f,22.5f);w.ents[miner].autoHarvest=false;
         EID enemy=w.spawnBuilding(1,BldType::ConYard,49,49,true);w.ents[enemy].hp=10000;
         const UnitType tank=faction==0?UnitType::Grizzly:faction==1?UnitType::Rhino:faction==2?UnitType::Type99:UnitType::LasherTank;

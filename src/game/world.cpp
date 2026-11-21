@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <string>
 #include <atomic>
+#include <limits>
 
 uint64_t World::nextPresentationEpoch() {
     static std::atomic<uint64_t> sequence{0};
@@ -16,105 +17,6 @@ uint64_t World::nextPresentationEpoch() {
 
 
 // ===================== 初始化 =====================
-bool World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const std::vector<Faction>& factions, int mapType,
-                 const char* mapFile, bool noStartForce, bool requireMap) {
-    presentationEpoch=nextPresentationEpoch();
-    presentationEvents.clear(); presentationSequence = 0;
-    repathsThisTick = 0; repathRequests = repathFailures = 0; movementReservations.clear(); resetMovementCorridors();
-    std::fill_n(producedUnits, MAX_PLAYERS, 0); std::fill_n(harvestedIncome, MAX_PLAYERS, 0); std::fill_n(combatDamage, MAX_PLAYERS, 0);
-    // 全局状态复位：支持局内"重新开始"不留残局
-    ents.clear();
-    freeList.clear();
-    updateInProgress=false;areaDamageDepth=0;retiredDuringUpdate.clear();trafficGates.clear();
-    projs.clear();
-    effects.clear();
-    nukes.clear();
-    crates.clear();
-    timedBombs.clear();
-    evaQueue.clear();
-    tick = 0;
-    rng = Rng(seed);
-    numPlayers = numHumans + numAI;
-    // P7：手工地图（地形/实体/出生点来自 maps/xxx.txt）；加载失败回退程序生成
-    std::vector<Vec2i> spawns;
-    std::vector<PendingEnt> pend;
-    bool hand = false;
-    std::string resolvedMap;
-    if (mapFile && mapFile[0]) {
-        resolvedMap = contentResolve(mapFile);
-        if (resolvedMap.empty()) resolvedMap = mapFile;
-        hand = loadHandMap(resolvedMap.c_str(), numPlayers, spawns, pend);
-        if (!hand) std::fprintf(stderr, "RA2 hand map failed%s: %s\n", requireMap ? "" : ", fallback to generate", resolvedMap.c_str());
-    }
-    if (requireMap && !hand) return false;
-    if (!hand) map.generate(w, h, seed, numPlayers, spawns, mapType);
-    map.initFog(numPlayers);
-    bldOcc.assign((size_t)map.w * map.h, -1);
-    unitOccHead.assign((size_t)map.w * map.h, INVALID_EID);
-    airBucketW = (map.w + AIR_BUCKET - 1) / AIR_BUCKET;
-    airOccHead.assign((size_t)airBucketW * ((map.h + AIR_BUCKET - 1) / AIR_BUCKET), INVALID_EID);
-    map.bldOccRef = &bldOcc; // 寻路避开建筑占用
-    players.assign(numPlayers, Player{});
-
-    for (int i = 0; i < numPlayers; i++) {
-        Player& p = players[i];
-        p.active = true;
-        p.isAI = i >= numHumans;
-        p.faction = factions[i % factions.size()];
-        p.colorId = i;
-        p.money = 10000;
-        p.name = p.isAI ? ("AI-" + std::to_string(i)) : (g_lang ? "Commander" : "指挥官");
-        if (hand && noStartForce) continue; // 手工突击队地图：开局部队全部由地图文件放置
-        // 出生点：一辆基地车 + 护卫
-        Vec2i sp = spawns[i];
-        EID mcv = spawnUnit(i, UnitType::MCV, (float)sp.x + 0.5f, (float)sp.y + 0.5f);
-        (void)mcv;
-        // 初始护卫：必须在 MCV 展开 4×4 脚印外（脚印= (sp-1)..(sp+2)），否则无法展开建造厂
-        UnitType tankT = p.faction == Faction::Allies ? UnitType::Grizzly
-                       : p.faction == Faction::Soviet ? UnitType::Rhino
-                       : p.faction == Faction::Yuri ? UnitType::LasherTank : UnitType::Type99;
-        spawnUnit(i, tankT, sp.x + 3.5f, sp.y + 1.5f);
-        spawnUnit(i, tankT, sp.x - 2.5f, sp.y + 1.5f);
-        UnitType infT = p.faction == Faction::Allies ? UnitType::GI
-                      : p.faction == Faction::Soviet ? UnitType::Conscript
-                      : p.faction == Faction::Yuri ? UnitType::Initiate : UnitType::PLA;
-        spawnUnit(i, infT, sp.x + 1.5f, sp.y - 2.5f);
-        spawnUnit(i, infT, sp.x + 1.5f, sp.y + 3.5f);
-        map.reveal(i, sp.x, sp.y, 10);
-    }
-    if (hand) {
-        // 地图文件预置实体（建筑/单位；精炼厂附赠矿车与生产放置一致，保障 AI 经济启动）
-        for (const PendingEnt& pe : pend) {
-            if (pe.isBld) {
-                BldType bt = (BldType)pe.typeIdx;
-                EID bid = spawnBuilding(pe.player, bt, pe.x, pe.y, true);
-                if (pe.hpOverride > 0 && valid(bid)) ents[bid].hp = pe.hpOverride;
-                if (bt == BldType::OreRefinery && pe.player >= 0) {
-                    const BldDef& d = bldDef(bt);
-                    for (int r = 1; r < 6; r++) {
-                        int sx = pe.x + d.w / 2, sy = pe.y + d.h + r - 1;
-                        if (map.passable(sx, sy) && !bldBlocked(sx, sy) && unitAtCell(sx, sy) == INVALID_EID) {
-                            spawnUnit(pe.player, harvesterType(players[pe.player].faction), sx + 0.5f, sy + 0.5f);
-                            break;
-                        }
-                    }
-                }
-            } else {
-                EID uid = spawnUnit(pe.player, (UnitType)pe.typeIdx, pe.x + 0.5f, pe.y + 0.5f);
-                if (pe.hpOverride > 0 && valid(uid)) ents[uid].hp = pe.hpOverride;
-                if (pe.guard && valid(uid) && unitDef(ents[uid].utype).weapon.damage > 0)
-                    ents[uid].guard = true;
-            }
-        }
-        // 开局视野：每个玩家以其首个实体为中心揭示（无基地车部队的突击队关卡）
-        for (int i = 0; i < numPlayers; i++)
-            for (auto& e : ents)
-                if (e.alive && e.player == i) { map.reveal(i, (int)e.x, (int)e.y, 10); break; }
-    } else {
-        placeNeutralTechs();
-    }
-    return true;
-}
 
 // ===================== P7：手工地图加载 =====================
 // 文本格式（# 后为注释，指令按序执行）：
@@ -226,6 +128,7 @@ bool World::loadHandMap(const char* path, int numPlayers, std::vector<Vec2i>& sp
             if (sized || sscanf(line, "%*s %d %d", &W, &H) != 2 || W < 32 || H < 32 || W > 256 || H > 256) { bad("size"); break; }
             map.w = W; map.h = H;
             map.cells.assign((size_t)W * H, Cell{});
+            map.native={};
             sized = true;
             // 默认出生点：与 Map::generate 相同的四角 + 边中分布
             spawns.clear();
@@ -326,7 +229,9 @@ void World::placeNeutralTechs() {
     };
     std::vector<Vec2i> placed;
     for (const Want& wnt : wants) {
-        const BldDef& d = bldDef(wnt.t);
+        const int type=usesRulesProfile()?rulesTypeIndex(-1,false,(int)wnt.t):-1;
+        if(usesRulesProfile() && type<0)continue;
+        const BldDef& d = type>=0?nativeTypes[type]->building:bldDef(wnt.t);
         for (int k = 0; k < wnt.n; k++) {
             for (int tries = 0; tries < 200; tries++) {
                 int bx = rng.range(4, map.w - d.w - 4);
@@ -356,17 +261,23 @@ void World::placeNeutralTechs() {
 }
 
 void World::invalidateEntityReferences(EID id) {
+    retireNativeTemporalActor(id);
+    retireCombatIdentity(id);
+    retireSupportActor(id);
     if(id<0 || id>=(EID)ents.size()) return;
+    retireAircraftActor(id);
+    ents[id].attackMove={};ents[id].wps.clear();
     // No allocation in ents here: callers may be retiring a slot from an update.
     const float x=ents[id].x,y=ents[id].y;
+    const EntityRef retired{id,ents[id].generation};
     float tx=x,ty=y;
-    if(ents[id].isBuilding) { tx+=bldDef(ents[id].btype).w/2.0f;ty+=bldDef(ents[id].btype).h/2.0f; }
+    if(ents[id].isBuilding) { tx+=bldDef(ents[id]).w/2.0f;ty+=bldDef(ents[id]).h/2.0f; }
     bool powerChanged=false;
     for(EID i=0;i<(EID)ents.size();++i) {
         auto& unit=ents[i];
         std::erase_if(unit.failedPursuits,[&](const auto& failure) { return failure.target==id; });
-        if(!unit.alive) continue;
         if(unit.burstTarget==id || i==id)unit.cancelBurst();
+        if(!unit.alive) continue;
         if(unit.target==id) {
             if(unit.state==UState::Servicing) { endService(unit,i,ServiceRejectReason::InvalidTarget); }
             if(unit.feedbackEntryTarget==id)
@@ -379,7 +290,10 @@ void World::invalidateEntityReferences(EID id) {
         if(unit.feedbackEngineerTarget==id) unit.feedbackEngineerTarget=INVALID_EID;
         if(unit.feedbackEntryTarget==id) unit.feedbackEntryTarget=INVALID_EID;
         if(unit.airbase==id) unit.airbase=INVALID_EID;
-        if(unit.dockRefinery==id) unit.dockRefinery=INVALID_EID;
+        if(unit.dockRefinery==id) {
+            unit.cancelNativeDockTiming();unit.cancelChronoReturn();unit.dockRefinery=INVALID_EID;unit.nativeDock={};
+        }
+        if(unit.pendingDockRefinery==retired) unit.pendingDockRefinery={};
         if(unit.parasite==id) unit.parasite=INVALID_EID;
         if(unit.parasiteHost==id) {
             unit.parasiteHost=INVALID_EID;unit.parasiting=false;unit.x=x;unit.y=y;
@@ -388,7 +302,8 @@ void World::invalidateEntityReferences(EID id) {
         if(unit.mindTarget==id) unit.mindTarget=INVALID_EID;
         std::erase(unit.mindTargets,id);
         if(unit.mindBy==id) {
-            if(!unit.permaControlled && unit.origPlayer>=0) unit.player=unit.origPlayer;
+            unit.attackMove={};unit.wps.clear();
+            if(!unit.permaControlled && unit.origPlayer>=0) changeActorOwner(i,unit.origPlayer);
             unit.mindBy=INVALID_EID;unit.origPlayer=-1;unit.target=INVALID_EID;
             unit.state=UState::Idle;unit.clearPath();unit.engineerIntent=EngineerIntent::None;
         }
@@ -412,6 +327,8 @@ void World::consumeEntity(EID id) {
     if(!valid(id)) return;
     ents[id].engineerIntent=EngineerIntent::None;ents[id].feedbackEngineerTarget=INVALID_EID;
     ents[id].alive=false;
+    retireNativeRocketActor(id);
+    retireNativeEventActor(id,false);
     unitOccSync(id); airOccSync(id);
     invalidateEntityReferences(id);
     retireEntitySlot(id);
@@ -420,61 +337,98 @@ void World::consumeEntity(EID id) {
 void World::retireEntitySlot(EID id) {
     // An outer weapon/update may still hold the dead entity by reference.
     // Never overwrite that slot until all simulation callbacks have returned.
-    if(updateInProgress || areaDamageDepth>0) retiredDuringUpdate.push_back(id);
+    if(updateInProgress || entityMutationDepth>0 || areaDamageDepth>0) retiredDuringUpdate.push_back(id);
     else freeList.push_back(id);
 }
 
 EID World::allocEnt() {
-    if (!freeList.empty()) {
+    if(nativeCrewRules.enabled && nextCombatActor>=(uint64_t)INT64_MAX)return INVALID_EID;
+    while (!freeList.empty()) {
         int id = freeList.back(); freeList.pop_back();
+        if(ents[id].generation>=MAX_ENTITY_GENERATION)continue;
+        const uint64_t generation=ents[id].generation+1;
         // A reused slot is a new target even when its type and position match.
         invalidateEntityReferences(id); // also handles references in historical snapshots
         ents[id] = Ent{};
         ents[id].alive = true;
+        ents[id].generation=generation;
+        ents[id].combatActor=allocateCombatActor();
         return id;
     }
     ents.push_back(Ent{});
     ents.back().alive = true;
+    ents.back().generation=1;
+    ents.back().combatActor=allocateCombatActor();
     return (int)ents.size() - 1;
 }
 
-EID World::spawnUnit(int player, UnitType t, float x, float y) {
-    EID id = allocEnt();
+EID World::spawnUnit(int player, UnitType t, float x, float y,int sourceType,const NativeActorIdentity* existingIdentity) {
+    if(t==UnitType::NativeVehicle && (sourceType<0 || sourceType>=(int)nativeTypes.size()
+        || !nativeTypes[sourceType]->rulesOnly || !nativeTypes[sourceType]->nativeRocket))return INVALID_EID;
+    if(usesRulesProfile() && sourceType<0)sourceType=rulesTypeIndex(player,true,(int)t);
+    if(sourceType>=0 && (sourceType>=(int)nativeTypes.size() || !nativeTypes[sourceType]->rulesOnly
+        || nativeTypes[sourceType]->isBuilding || nativeTypes[sourceType]->unit.type!=t))return INVALID_EID;
+    if(usesRulesProfile() && sourceType<0)return INVALID_EID;
+    if(existingIdentity && ((t!=UnitType::Hornet && t!=UnitType::ASW && !(supportDeliveryEnabled && unitDef(t).isInfantry())) || existingIdentity->type!=sourceType || sourceType<0
+        || existingIdentity->definition!=nativeTypes[sourceType] || existingIdentity->object.empty()))return INVALID_EID;
+    uint64_t children=0;
+    if(sourceType>=0 && !existingIdentity)for(const auto& d:nativeAircraftDefinitions)if(d.launcher==sourceType)children=d.capacity;
+    if(sourceType>=0 && !existingIdentity && t==UnitType::AircraftCarrier)children=std::max(children,(uint64_t)nativeTypes[sourceType]->unit.cargoCap);
+    if(sourceType>=0 && !existingIdentity && nativeProductionSerial>std::numeric_limits<uint64_t>::max()-1-children)return INVALID_EID;
+    EID id = allocEnt();if(id==INVALID_EID)return INVALID_EID;
     Ent& e = ents[id];
     e.isBuilding = false;
     e.player = player;
     e.utype = t;
+    if(existingIdentity)e.nativeIdentity=*existingIdentity;
+    else if(sourceType>=0)e.nativeIdentity={sourceType,nativeTypes[sourceType],"production:"+std::to_string(player)+":"+std::to_string(nativeProductionSerial++),"",false};
     e.x = x; e.y = y;
     e.px = x; e.py = y; // 渲染插值起点（避免从 (0,0) 拉花）
-    e.hp = unitDef(t).hp;
+    const auto& definition=unitDef(e);
+    e.hp = definition.hp;
     e.dir = rng.range(0, 7);
     e.turretDir = e.dir;
-    if (unitDef(t).isAir()) {
-        e.ammo = unitDef(t).ammo;
+    e.previousDir=e.dir;e.previousTurretDir=e.turretDir;
+    if (definition.isAir()) {
+        e.ammo = definition.ammo;
         e.goalX = x; e.goalY = y;
         e.state = UState::Circling;
     }
     // 航空母舰：出厂自带满编舰载机（RA2 原作：3 架大黄蜂）
-    if (t == UnitType::AircraftCarrier) {
+    const bool initializedAircraft=initializeAircraftSpawner(id);
+    if (t == UnitType::AircraftCarrier && !initializedAircraft) {
         Ent::GarrisonedUnit slot{};
         slot.type = UnitType::Hornet;
-        slot.hp = unitDef(UnitType::Hornet).hp;
-        e.cargo.assign(unitDef(t).cargoCap, slot);
+        const int aircraft=usesRulesProfile()?rulesTypeIndex(player,true,(int)slot.type):-1;
+        slot.hp = aircraft>=0?nativeTypes[aircraft]->unit.hp:unitDef(slot.type).hp;
+        e.cargo.assign(definition.cargoCap, slot);
+        if(aircraft>=0)for(auto& passenger:e.cargo)passenger.nativeIdentity={aircraft,nativeTypes[aircraft],"production:"+std::to_string(player)+":"+std::to_string(nativeProductionSerial++),"",false};
     }
+    initializeCrewIdentities(e);
+    initializeMovementSurface(e);
+    initializeNativeJumpjet(e);
     unitOccSync(id);
     airOccSync(id);
+    initializeNativeLauncher(id);
     return id;
 }
 
-EID World::spawnBuilding(int player, BldType t, int bx, int by, bool free_) {
-    const BldDef& d = bldDef(t);
-    EID id = allocEnt();
+EID World::spawnBuilding(int player, BldType t, int bx, int by, bool free_,int sourceType,int initialHp) {
+    if(usesRulesProfile() && sourceType<0)sourceType=rulesTypeIndex(player,false,(int)t);
+    if(sourceType>=0 && (sourceType>=(int)nativeTypes.size() || !nativeTypes[sourceType]->rulesOnly
+        || !nativeTypes[sourceType]->isBuilding || nativeTypes[sourceType]->building.type!=t))return INVALID_EID;
+    if(usesRulesProfile() && sourceType<0)return INVALID_EID;
+    if(sourceType>=0 && nativeProductionSerial==std::numeric_limits<uint64_t>::max())return INVALID_EID;
+    const BldDef& d = sourceType>=0?nativeTypes[sourceType]->building:bldDef(t);
+    EID id = allocEnt();if(id==INVALID_EID)return INVALID_EID;
     Ent& e = ents[id];
     e.isBuilding = true;
     e.player = player;
     e.btype = t;
+    if(sourceType>=0)e.nativeIdentity={sourceType,nativeTypes[sourceType],"production:"+std::to_string(player)+":"+std::to_string(nativeProductionSerial++),"",false};
     e.x = (float)bx; e.y = (float)by;
-    e.hp = d.hp;
+    // Conversion health must be established before building-complete scripts.
+    e.hp = initialHp<0?d.hp:std::clamp(initialHp,1,d.hp);
     e.rallyX = std::clamp(bx+d.w/2,0,map.w-1);e.rallyY=std::clamp(by+d.h+1,0,map.h-1);
     if(t==BldType::AirForceCmd || t==BldType::OreRefinery) e.rallyX=e.rallyY=-1;
     for (int dy = 0; dy < d.h; dy++)
@@ -490,13 +444,18 @@ EID World::spawnBuilding(int player, BldType t, int bx, int by, bool free_) {
     // 超武建筑落成：向其他玩家发出侦测警告（RA2 原作设定）
     if (bldProvidesSW(t) != SWType::COUNT && tick > 10) {
         for (int p = 0; p < numPlayers; p++)
-            if (p != player) eva(p, formatText(TR(S::EvaDetectEnemySWFmt), bldName(t)));
+            if (p != player) {
+                const auto sw=bldProvidesSW(t);
+                const EvaCue cue=sw==SWType::Nuke?EvaCue::NukeDetected:sw==SWType::Lightning?EvaCue::WeatherDetected:
+                    sw==SWType::IronCurtain?EvaCue::IronDetected:sw==SWType::ChronoShift?EvaCue::ChronoDetected:EvaCue::None;
+                eva(p, formatText(TR(S::EvaDetectEnemySWFmt), bldName(t)),cue);
+            }
     }
     if (g_script.boundTo(this)) g_script.onBuildingComplete(id, player, t);
     return id;
 }
 
-void World::kill(EID id, bool explode) {
+void World::kill(EID id, bool explode,bool scriptedCollapse,bool erased) {
     if (!valid(id)) return;
     Ent e = ents[id]; // death effects/scripts may spawn and reallocate ents
     // 脚本 hook：死亡事件（在 alive 置 false 前捕获类型/玩家）
@@ -511,13 +470,15 @@ void World::kill(EID id, bool explode) {
     airOccSync(id);
     if (e.isBuilding) {
         resetMovementCorridors();
-        const BldDef& d = bldDef(e.btype);
+        const BldDef& d = bldDef(e);
         for (int dy = 0; dy < d.h; dy++)
             for (int dx = 0; dx < d.w; dx++) {
                 int cx = (int)e.x + dx, cy = (int)e.y + dy;
-                if (map.inBounds(cx, cy)) bldOcc[cellIdx(cx, cy)] = -1;
+                if (map.inBounds(cx, cy) && bldOcc[cellIdx(cx, cy)]==id+1) bldOcc[cellIdx(cx, cy)] = -1;
             }
-        if (explode) explodeAt(e.x + d.w / 2.0f, e.y + d.h / 2.0f, 2);
+        retireNativeScenery(e,scriptedCollapse);
+        if (explode && !scriptedCollapse && !(e.nativeIdentity.definition && e.nativeIdentity.definition->kind==1))
+            explodeAt(e.x + d.w / 2.0f, e.y + d.h / 2.0f, 2);
         recomputePower();
         // 驻军随建筑一同阵亡（RA2 原作设定）；出售拆除时驻军同样清空
         e.garrison.clear();
@@ -530,11 +491,11 @@ void World::kill(EID id, bool explode) {
                 if (!o.alive || o.invuln > 0) continue;
                 if (o.airborne()) continue;
                 float ox = o.x, oy = o.y;
-                if (o.isBuilding) { ox += bldDef(o.btype).w / 2.0f; oy += bldDef(o.btype).h / 2.0f; }
+                if (o.isBuilding) { ox += bldDef(o).w / 2.0f; oy += bldDef(o).h / 2.0f; }
                 float dist = distf(ox, oy, cx, cy);
                 if (dist > R) continue;
                 int dmg = (int)(350 * (1.0f - dist / (R + 1.0f)));
-                if (!o.isBuilding && unitDef(o.utype).isInfantry()) dmg = (int)(dmg * 1.6f);
+                if (!o.isBuilding && unitDef(o).isInfantry()) dmg = (int)(dmg * 1.6f);
                 damage((int)i, dmg, deadPlayer);
             }
             for (int wave = 0; wave < 4; wave++) {
@@ -548,17 +509,17 @@ void World::kill(EID id, bool explode) {
         }
     } else {
         // 步兵有序列死亡动画（art.ini Die1）：播放倒地序列；车辆/无素材单位保持爆炸
-        if (unitDef(e.utype).isInfantry()) {
+        if (!erased && unitDef(e).isInfantry()) {
             Effect da; da.kind = 10; da.x = e.x; da.y = e.y;
             da.maxAge = g_gameRules.deathAnimationTicks; // 每相位 2 tick
             da.aux = (int)e.utype; da.aux2 = e.dir;
             da.aux3 = e.player >= 0 ? players[e.player].colorId : -1;
             effects.push_back(da);
-        } else {
-            explodeAt(e.x, e.y, unitDef(e.utype).isInfantry() ? 0 : 1);
+        } else if(!erased && (!e.nativeIdentity.definition || !e.nativeIdentity.definition->nativeRocket)) {
+            explodeAt(e.x, e.y, unitDef(e).isInfantry() ? 0 : 1);
         }
         // 基洛夫空艇被击落：坠毁冲击波（RA2 原作签名机制）
-        if (e.utype == UnitType::Kirov) {
+        if (!erased && e.utype == UnitType::Kirov) {
             explodeAt(e.x, e.y, 2);
             const float R = 3.0f;
             for (size_t i = 0; i < ents.size(); i++) {
@@ -566,7 +527,7 @@ void World::kill(EID id, bool explode) {
                 if (!o.alive || o.invuln > 0) continue;
                 if (o.airborne()) continue;
                 float ox = o.x, oy = o.y;
-                if (o.isBuilding) { ox += bldDef(o.btype).w / 2.0f; oy += bldDef(o.btype).h / 2.0f; }
+                if (o.isBuilding) { ox += bldDef(o).w / 2.0f; oy += bldDef(o).h / 2.0f; }
                 float d = distf(ox, oy, e.x, e.y);
                 if (d > R) continue;
                 damage((int)i, (int)(400 * (1.0f - d / (R + 1.0f))), e.player);
@@ -593,7 +554,8 @@ void World::kill(EID id, bool explode) {
             if (!valid(tid)) continue;
             Ent& t = ents[tid];
             if (t.mindBy == id && !t.permaControlled) {
-                t.player = t.origPlayer;
+                changeActorOwner(tid,t.origPlayer);
+                t.attackMove={};t.wps.clear();
                 t.mindBy = INVALID_EID;
                 t.origPlayer = -1;
                 t.state = UState::Idle; t.target = INVALID_EID; t.clearPath();
@@ -606,6 +568,8 @@ void World::kill(EID id, bool explode) {
     invalidateEntityReferences(id);
     // Publish the slot only after recursive effects and script callbacks finish.
     // 脚本 hook：死亡/被毁事件
+    retireNativeRocketActor(id);
+    retireNativeEventActor(id);
     if (g_script.boundTo(this)) {
         if (wasBld) g_script.onBuildingDestroyed(id, deadPlayer, deadBtype);
         else g_script.onUnitKilled(id, deadPlayer, deadUtype);

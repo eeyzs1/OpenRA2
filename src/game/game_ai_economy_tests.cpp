@@ -1,7 +1,9 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cstdio>
 
-int Game::aiEconomyRegression() {
+int aiBuildOrderRegression();
+
+int GameRegression::aiEconomyRegression() {
     int failures=0;
     for(int faction=0;faction<4;++faction)for(int scenario=0;scenario<7;++scenario) {
         World w;w.init(64,64,20261031,2,0,{(Faction)faction,Faction::Soviet},0,"",true);
@@ -21,7 +23,8 @@ int Game::aiEconomyRegression() {
         const auto tank=faction==0?UnitType::Grizzly:faction==1?UnitType::Rhino:faction==2?UnitType::Type99:UnitType::LasherTank;
         const auto sw=faction==0?BldType::WeatherDevice:faction==3?BldType::PsychicDominator:BldType::NukeSilo;
         auto& p=w.players[0];const int category=unitDef(miner).prodCat();
-        p.money=scenario==4?100:w.unitProductionCost(0,miner)+400;
+        p.money=scenario==4?100:w.unitProductionCost(0,miner)+400
+            +(scenario==5?bldDef(BldType::WarFactory).cost:0);
         bool setup=w.startUnitProd(0,scenario==1?miner:tank);
         if(scenario==1)w.update();
         w.holdUnitProd(0,scenario==1?miner:tank,true);
@@ -50,11 +53,13 @@ int Game::aiEconomyRegression() {
         const Credits capital=p.money+p.defProd.paid+original.paid;
         SkirmishAI bot;bot.reset(0);
         for(int frame=0;frame<15;++frame)bot.update(w);
-        const bool control=scenario==2 || scenario==3 || scenario==5 || scenario==6;
+        const bool control=scenario==2 || scenario==3 || scenario==6;
         const bool freeWorkers=faction==3 && !control;
         bool priority=(control || freeWorkers)?(p.defProd.active && p.defProd.paid==investment.paid && p.unitProd[category].typeIdx==original.typeIdx)
             :(p.unitProd[category].active && p.unitProd[category].typeIdx==(int)miner && !p.unitProd[category].held
                 && p.unitQueue[category].empty() && !p.defProd.active && !p.bldProd.active);
+        if(scenario==5 && faction!=3)priority=p.bldProd.active && p.bldProd.typeIdx==(int)BldType::WarFactory
+            && !p.bldProd.held && !p.defProd.active && !p.unitProd[category].active && p.unitQueue[category].empty();
         if(scenario==1)priority &= p.unitProd[category].progress==original.progress && p.unitProd[category].paid==original.paid;
         Credits remaining=p.money+p.bldProd.paid+p.defProd.paid;
         for(const auto& order:p.unitProd)remaining+=order.paid;
@@ -74,5 +79,27 @@ int Game::aiEconomyRegression() {
         failures+=!ok;
         std::printf("AI_ECONOMY %s faction=%d scenario=%d setup=%d priority=%d conserved=%d replay=%d recovered=%d income=%llu capital=%lld money=%lld\n",ok?"PASS":"FAIL",faction,scenario,setup,priority,conserved,equal,recovered,(unsigned long long)w.harvestedIncome[0],(long long)capital,(long long)p.money);
     }
-    return failures;
+    {
+        World w;w.init(64,64,20261113,2,0,{Faction::Yuri,Faction::Soviet});
+        for(size_t id=0;id<w.ents.size();++id)if(w.ents[id].alive)w.kill((EID)id,false);
+        for(auto& cell:w.map.cells){cell=Cell{};cell.overlay=Overlay::Rock1;}
+        for(auto& player:w.players){player.money=0;player.defeated=false;}
+        w.cratesEnabled=false;
+        const auto& refinery=bldDef(BldType::OreRefinery);
+        for(int dy=0;dy<refinery.h;++dy)for(int dx=0;dx<refinery.w;++dx)w.map.at(16+dx,16+dy)=Cell{};
+        w.spawnBuilding(0,BldType::OreRefinery,16,16,true);
+        // The historical preferred point is clear but separated by rock.
+        w.map.at(17,16+refinery.h+1)=Cell{};
+        w.tick=89;w.update();bool sealed=w.countUnits(0,UnitType::Slave)==0;
+        w.map.at(15,17)=Cell{};EID blocker=w.spawnUnit(0,UnitType::Grizzly,15.5f,17.5f);
+        w.tick=179;w.update();sealed &= w.countUnits(0,UnitType::Slave)==0;
+        w.kill(blocker,false);w.tick=269;w.update();bool spawned=w.countUnits(0,UnitType::Slave)==1;
+        for(const auto& unit:w.ents)if(unit.alive && !unit.isBuilding && unit.utype==UnitType::Slave)
+            spawned &= (int)unit.x==15 && (int)unit.y==17 && w.map.passable(15,17) && !w.bldBlocked(15,17);
+        for(int tick=0;tick<450;++tick)w.update();
+        const bool bounded=w.countUnits(0,UnitType::Slave)==1;
+        const bool ok=sealed && spawned && bounded;failures+=!ok;
+        std::printf("SLAVE_EXIT %s sealed=%d connected=%d bounded=%d\n",ok?"PASS":"FAIL",sealed,spawned,bounded);
+    }
+    return failures+aiBuildOrderRegression();
 }

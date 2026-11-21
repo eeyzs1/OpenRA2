@@ -1,10 +1,10 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <sstream>
 
-int Game::feedbackVisualRegression(const char* outputDir) {
+int GameRegression::feedbackVisualRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);int failures=0;const int savedLanguage=g_lang;
     SetTargetFPS(0);shotAtDisplaySize=true;auditHud=true;
     for(int language=0;language<2;++language) for(int scenario=0;scenario<6;++scenario) {

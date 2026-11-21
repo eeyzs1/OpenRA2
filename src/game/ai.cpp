@@ -7,40 +7,12 @@
 namespace {
 bool combatUnit(const World::Ent& e) {
     if(!e.alive || e.isBuilding || e.utype==UnitType::MCV || e.utype==UnitType::Engineer || e.utype==UnitType::Spy) return false;
-    const auto& def=unitDef(e.utype);
+    if(e.utype==UnitType::Nighthawk && e.nativeJumpjet.motion.started && e.nativeIdentity.definition
+        && e.nativeIdentity.definition->jumpjet.version>=2)return false;
+    const auto& def=unitDef(e);
     return !def.canHarvet() && (def.weapon.damage>0 || def.isPsychic() || def.hasC4() || e.utype==UnitType::AircraftCarrier);
 }
 
-Vec2i scoutGoal(const World& world,const World::Ent& ship) {
-    const int sx=(int)ship.x,sy=(int)ship.y;
-    if(!world.map.inBounds(sx,sy)) return {-1,-1};
-    std::vector<uint8_t> visited(world.map.cells.size(),0);
-    std::vector<Vec2i> frontier{{sx,sy}};
-    visited[world.cellIdx(sx,sy)]=1;
-    constexpr Vec2i directions[]={{1,0},{0,1},{-1,0},{0,-1},{1,1},{-1,1},{-1,-1},{1,-1}};
-    const int domain=unitDef(ship.utype).pathDomain();
-    auto open=[&](int x,int y){return world.passableFor(x,y,domain) && !world.bldBlocked(x,y);};
-    for(size_t head=0;head<frontier.size();++head) {
-        const auto cell=frontier[head];
-        if(open(cell.x,cell.y) && world.map.fogAt(ship.player,cell.x,cell.y)==FOG_UNSEEN) return cell;
-        for(auto d:directions) {
-            const int x=cell.x+d.x,y=cell.y+d.y;
-            if(!open(x,y) || !world.map.climbOk(cell.x,cell.y,x,y,domain)
-                || (d.x && d.y && (!open(cell.x+d.x,cell.y) || !open(cell.x,cell.y+d.y)
-                    || !world.map.climbOk(cell.x,cell.y,x,cell.y,domain)
-                    || !world.map.climbOk(cell.x,cell.y,cell.x,y,domain)))) continue;
-            auto& seen=visited[world.cellIdx(x,y)];if(seen)continue;
-            seen=1;frontier.push_back({x,y});
-        }
-    }
-    return {-1,-1};
-}
-
-int plannedUnits(const World& world,int player,UnitType type) {
-    const auto& p=world.players[player];const int category=unitDef(type).prodCat();
-    return world.countUnits(player,type)+(p.unitProd[category].active && p.unitProd[category].typeIdx==(int)type)
-        +(int)std::count(p.unitQueue[category].begin(),p.unitQueue[category].end(),(int)type);
-}
 }
 
 // ===================== 初始化 =====================
@@ -60,6 +32,7 @@ void SkirmishAI::reset(int p) {
     expandTimer = 0;
     defenseCheckTimer = 0;
     lastAttacker = INVALID_EID;
+    scoutMapW=scoutMapH=0;scoutObserved.clear();knownBuildings.clear();
     pcfg = AIPersonalityConfig{};
     initPersonality();
 }
@@ -151,7 +124,9 @@ void SkirmishAI::update(World& w) {
     Player& p = w.players[player];
     if (!p.active || p.defeated) return;
     // Lua AI hook：脚本返回 true 则跳过内置 AI（用户可完全接管 AI 决策）
-    if (g_script.boundTo(&w) && g_script.onAiThink(player)) return;
+    const bool scriptOwns=g_script.boundTo(&w) && g_script.onAiThink(player);
+    if(w.nativeAIRules.isGlobal())w.configureNativeSkirmishAI(player,(int)difficulty,!scriptOwns);
+    if(scriptOwns)return;
 
     // 逐帧递减的冷却计时（不受思考间隔门控，保证真实时间精度）
     if (expandTimer > 0) expandTimer--;
@@ -161,23 +136,20 @@ void SkirmishAI::update(World& w) {
     // 思考间隔按难度分级
     if (++thinkTimer < thinkInterval()) return;
     thinkTimer = 0;
+    observeBattlefield(w);
 
-    // 基地车立即展开（仅当基地丢失时重建；扩张用 MCV 由 doExpansion 处理移动与部署）
-    for (size_t i = 0; i < w.ents.size(); i++) {
-        World::Ent& e = w.ents[i];
-        if (!e.alive || e.isBuilding || e.player != player || e.utype != UnitType::MCV) continue;
-        if (e.state != UState::Idle) continue;  // 不展开移动中的 MCV
-        if (!w.hasBld(player, BldType::ConYard)) w.orderDeploy((int)i);
-    }
+    recoverConstruction(w);
 
-    const bool recovering=recoverEconomy(w);
+    const bool recovering=recoverEconomy(w) || recoverFactoryProduction(w);
+    const bool sourceArmy=w.nativeSkirmishAIActive(player);
+    if(sourceArmy)w.nativeAI.houses[player].production=!recovering;
     if(!recovering)doBuildOrder(w);
     if(!recovering)doProduction(w);
 
     // 建筑/防御生产就绪后直接放置（RA2 双队列）
     auto tryReady = [&](ProdItem& pr) {
         if (!pr.active || !pr.ready) return;
-        BldType t = (BldType)pr.typeIdx;
+        BldType t = w.nativeProductionType(pr.typeIdx)?w.nativeTypes[pr.typeIdx-NATIVE_PRODUCTION_BASE]->building.type:(BldType)pr.typeIdx;
         if (tryPlaceBld(w, t)) {
             navalFail = 0;
         } else if (t == BldType::NavalYard && ++navalFail > 40) {
@@ -189,12 +161,10 @@ void SkirmishAI::update(World& w) {
     tryReady(p.bldProd);
     tryReady(p.defProd);
 
-    doEngineers(w);
-    doAttack(w);
+    if(!sourceArmy){doEngineers(w);doAttack(w);}
     doSuperWeapon(w);
     doSupport(w);
-    doTactics(w);
-    doTransports(w);
+    if(!sourceArmy){doTactics(w);doTransports(w);}
     if(!recovering)doExpansion(w);
     clearFactoryExits(w);
 }
@@ -230,7 +200,8 @@ bool SkirmishAI::navalSiteAvailable(World& w) {
 }
 
 bool SkirmishAI::tryPlaceBld(World& w, BldType t) {
-    const BldDef& d = bldDef(t);
+    const int source=w.usesRulesProfile()?w.rulesTypeIndex(player,false,(int)t):-1;
+    const BldDef& d = source>=0?w.nativeTypes[source]->building:bldDef(t);
     // 船厂须建于水面：全图扫描 3x3 水域（离基地越近越好）
     if (t == BldType::NavalYard) {
         int ccx = w.map.w / 2, ccy = w.map.h / 2;
@@ -244,6 +215,7 @@ bool SkirmishAI::tryPlaceBld(World& w, BldType t) {
             for (int x = 0; x + d.w <= w.map.w; x++) {
                 if (w.map.at(x, y).terrain != Terrain::Water) continue;  // 粗筛
                 if (!w.canPlace(t, x, y, player)) continue;
+                if (!constructionSitePreservesExits(w,d,x,y)) continue;
                 float dist = distf((float)x, (float)y, (float)ccx, (float)ccy);
                 if (dist < best) { best = dist; bx = x; by = y; }
             }
@@ -254,7 +226,7 @@ bool SkirmishAI::tryPlaceBld(World& w, BldType t) {
     int ccx = -1, ccy = -1, yardW = 3, yardH = 3;
     for (const World::Ent& e : w.ents)
         if (e.alive && e.isBuilding && e.player == player && e.btype == BldType::ConYard) {
-            const BldDef& yd = bldDef(e.btype);
+            const BldDef& yd = bldDef(e);
             yardW = yd.w; yardH = yd.h;
             ccx = (int)e.x + yardW / 2;
             ccy = (int)e.y + yardH / 2;
@@ -268,13 +240,34 @@ bool SkirmishAI::tryPlaceBld(World& w, BldType t) {
         for (const World::Ent& e : w.ents) {
             if (!e.alive || !e.isBuilding || e.player != player) continue;
             if (e.btype == BldType::Wall) continue;
-            const BldDef& ed = bldDef(e.btype);
+            const BldDef& ed = bldDef(e);
             int sepX = std::max(0, std::max(bx - ((int)e.x + ed.w), (int)e.x - (bx + d.w)));
             int sepY = std::max(0, std::max(by - ((int)e.y + ed.h), (int)e.y - (by + d.h)));
             if (std::max(sepX, sepY) < gap) return true;
         }
         return false;
     };
+    const EID air=airDefenseConstructionTarget(w);
+    if(w.valid(air)) {
+        World::Ent trial;trial.alive=trial.isBuilding=true;trial.player=player;trial.btype=t;
+        if(source>=0){trial.nativeIdentity.type=source;trial.nativeIdentity.definition=w.nativeTypes[source];}
+        const auto weapon=w.effWeapon(trial,&w.ents[air]);
+        if(weapon.damage>0 && weapon.antiAir){
+            Vec2f asset{(float)ccx,(float)ccy};float nearest=10.f;
+            for(const auto& e:w.ents)if(e.alive && e.isBuilding && e.player==player && !e.selling){
+                const auto& b=bldDef(e);const Vec2f center{e.x+b.w/2.f,e.y+b.h/2.f};
+                const float distance=distf(center.x,center.y,w.ents[air].x,w.ents[air].y);
+                if(distance<nearest){nearest=distance;asset=center;}}
+            Vec2i site{-1,-1};float best=1e9f;
+            for(int y=std::max(0,(int)asset.y-8);y+d.h<=w.map.h && y<=(int)asset.y+8;++y)
+                for(int x=std::max(0,(int)asset.x-8);x+d.w<=w.map.w && x<=(int)asset.x+8;++x){
+                    if(!w.canPlace(t,x,y,player) || tooClose(x,y) || !constructionSitePreservesExits(w,d,x,y))continue;
+                    if(distf(x+d.w/2.f,y+d.h/2.f,w.ents[air].x,w.ents[air].y)>weapon.range)continue;
+                    const float score=distf(x+d.w/2.f,y+d.h/2.f,asset.x,asset.y);
+                    if(score<best){best=score;site={x,y};}}
+            if(site.x>=0)return w.placeBuilding(player,t,site.x,site.y);
+        }
+    }
     // 从建造厂外缘开始螺旋，避免塞进紧贴西北角
     int startR = std::max(2, (std::max(yardW, yardH) + 1) / 2);
     for (int r = startR; r <= 18; r++)
@@ -284,6 +277,7 @@ bool SkirmishAI::tryPlaceBld(World& w, BldType t) {
                 int bx = ccx + dx - d.w / 2, by = ccy + dy - d.h / 2;
                 if (!w.canPlace(t, bx, by, player)) continue;
                 if (tooClose(bx, by)) continue;
+                if (!constructionSitePreservesExits(w,d,bx,by)) continue;
                 return w.placeBuilding(player, t, bx, by);
             }
     // 回退：间距放宽仍放不下时允许贴边（保证能落成）
@@ -293,408 +287,13 @@ bool SkirmishAI::tryPlaceBld(World& w, BldType t) {
                 if (std::max(abs(dx), abs(dy)) != r) continue;
                 int bx = ccx + dx - d.w / 2, by = ccy + dy - d.h / 2;
                 if (!w.canPlace(t, bx, by, player)) continue;
+                if (!constructionSitePreservesExits(w,d,bx,by)) continue;
                 return w.placeBuilding(player, t, bx, by);
             }
     return false;
 }
 
-// ===================== 建造序列（人格驱动） =====================
-void SkirmishAI::doBuildOrder(World& w) {
-    Player& p = w.players[player];
-    // RA2 双队列：建筑队列忙时仍可开防御，反之亦然
-    bool naval = detectWater(w);
-
-    // 阵营差异化建筑类型
-    BldType powerT    = p.faction == Faction::Allies ? BldType::PowerPlant
-                      : p.faction == Faction::Yuri   ? BldType::BioReactor
-                      : BldType::TeslaReactor;
-    BldType defT      = p.faction == Faction::Allies ? BldType::Pillbox
-                      : p.faction == Faction::Yuri   ? BldType::GatlingCannon
-                      : BldType::SentryGun;
-    BldType advDefT   = p.faction == Faction::Allies ? BldType::PrismTower
-                      : p.faction == Faction::Yuri   ? BldType::PsychicTower
-                      : BldType::TeslaCoil;
-    BldType bigPowerT = p.faction == Faction::Allies ? BldType::PowerPlant
-                      : p.faction == Faction::Yuri   ? BldType::BioReactor
-                      : BldType::NuclearReactor;
-    // 尤里超武1：心灵控制仪（替代盟军天气控制器/苏军核弹井）
-    BldType swT  = p.faction == Faction::Allies ? BldType::WeatherDevice
-                 : p.faction == Faction::Yuri   ? BldType::PsychicDominator
-                 : BldType::NukeSilo;
-    // 超武2 阵营替换：尤里基因突变器（映射到 IronCurtain SW）
-    BldType sw2T = p.faction == Faction::Yuri ? BldType::GeneticMutator : BldType::IronCurtain;
-
-    // 电力不足优先补电
-    if (p.powerMade - p.powerUsed < 30 && w.hasBld(player, BldType::ConYard) && !p.bldProd.active) {
-        BldType want = w.hasBld(player, BldType::BattleLab) ? bigPowerT : powerT;
-        if (w.prereqMet(player, bldDef(want)) && p.money >= bldDef(want).cost) {
-            w.startBldProd(player, want);
-            return;
-        }
-    }
-
-    auto queueFree = [&](BldType t) {
-        return !(isDefenseBld(t) ? p.defProd.active : p.bldProd.active);
-    };
-
-    // 用户自定义建造序列（rules.ini [AIBuild.<Faction>] BuildOrder=...）
-    const AIBuildConfig& aiCfg = g_aiBuild[(int)p.faction];
-    if (aiCfg.enabled && !aiCfg.buildOrder.empty()) {
-        for (const std::string& name : aiCfg.buildOrder) {
-            BldType t;
-            if (!bldTypeByName(name.c_str(), t)) continue;
-            if (!queueFree(t)) continue;
-            const BldDef& d = bldDef(t);
-            if (!w.modeAllowsBuilding(player, t)) continue;
-            if (t == BldType::NavalYard && (!naval || !navalSiteAvailable(w))) continue;
-            int want = (t == BldType::OreRefinery) ? 2 : 1;
-            if (w.countBlds(player, t) >= want) continue;
-            if (!w.prereqMet(player, d)) continue;
-            if (p.money < d.cost + 300) continue;
-            w.startBldProd(player, t);
-            return;
-        }
-        return;  // 自定义序列遍历完毕，不回退到内置序列
-    }
-
-    // ---- 人格驱动的内置建造序列 ----
-    bool skipNuclearReactor = false, skipServiceDepot = false, skipLateTech = false;
-    bool skipNavalYard = false, skipBattleLab = false;
-    int refineryWant = 2;
-    // 防御建筑数量按 defensePriority 缩放（base=2）
-    int defWant = (int)(2 * pcfg.defensePriority);
-    if (defWant < 1) defWant = 1;
-    if (defWant > 4) defWant = 4;
-    // 科技冲刺：高 techRush 时 BattleLab 前置（在船厂/防御之前）；低 techRush 时延后
-    bool battleLabEarly = (pcfg.techRush >= 1.5f);
-    if (pcfg.techRush < 0.5f) skipBattleLab = true;  // 极慢科技：延后高科
-
-    switch (personality) {
-        case AIPersonality::Rusher:
-            skipNuclearReactor = true;
-            refineryWant = 1;        // 跳过第二矿厂
-            skipServiceDepot = true;
-            skipLateTech = true;     // 跳过复制中心/裂缝/间谍卫星/心灵探测器/碉堡
-            skipBattleLab = false;   // Rusher 仍建高科（出英雄/特种单位）
-            defWant = 2;             // 建造 2 个防御
-            break;
-        case AIPersonality::Turtler:
-            defWant = 3;             // 3 个防御
-            battleLabEarly = true;   // 高科前置（在船厂之前）
-            break;
-        case AIPersonality::Steamroller:
-            refineryWant = 3;        // 早建 2、3 号矿厂
-            defWant = 1;             // 少建防御
-            break;
-        case AIPersonality::Technician:
-            skipNavalYard = true;    // 跳过船厂
-            skipLateTech = true;     // 跳过额外防御/杂项
-            defWant = 1;             // 跳过额外防御
-            battleLabEarly = true;   // 极速冲高科
-            break;
-        default: break;  // Balanced：保持默认
-    }
-
-    // 高科前置（Turtler/Technician）：在船厂/防御之前尝试建造 BattleLab
-    if (battleLabEarly && !skipBattleLab && !w.hasBld(player, BldType::BattleLab) && queueFree(BldType::BattleLab)) {
-        const BldDef& d = bldDef(BldType::BattleLab);
-        if ((d.factionMask & (1 << (int)p.faction)) && w.prereqMet(player, d) && p.money >= d.cost + 300) {
-            w.startBldProd(player, BldType::BattleLab);
-            return;
-        }
-    }
-
-    // 基础建造序列：电厂→矿厂→兵营→重工→矿厂→矿厂→雷达→船厂→防御→空指→高科防御→高科→...
-    // 第 2 个 OreRefinery 为 2 号矿厂；第 3 个 OreRefinery（Steamroller 早建）
-    static const BldType order[] = {
-        BldType::TeslaReactor,  // 苏系电厂（中国也是）；盟军在下文替换
-        BldType::OreRefinery,
-        BldType::Barracks,
-        BldType::WarFactory,
-        BldType::OreRefinery,   // 第二矿厂
-        BldType::OreRefinery,   // 第三矿厂（仅 Steamroller 会建；其他人格 want<=2 跳过）
-        BldType::Radar,
-        BldType::NavalYard,     // 海军船厂（仅水域图，前置=重工）
-        BldType::SentryGun,
-        BldType::AirForceCmd,   // 空指部：解锁战机
-        BldType::TeslaCoil,
-        BldType::BattleLab,
-        BldType::ServiceDepot,   // 维修厂（通用，前置=重工，自动修理车辆）
-        BldType::RobotControl,   // 机器人指挥中心（盟，遥控坦克前置）
-        BldType::Grinder,        // 回收炉（尤里专属，前置=重工，回收单位换钱；其他阵营自动跳过）
-        BldType::CloningVat,     // 复制中心（尤里；其他阵营 factionMask 自动跳过）
-        BldType::GapGenerator,   // 裂缝产生器（盟，苏军自动跳过）
-        BldType::SpySat,         // 间谍卫星（盟）
-        BldType::PsychicSensor,  // 心灵探测器（苏）
-        BldType::BattleBunker,   // 战斗碉堡（苏）
-        BldType::TankBunker,     // 坦克碉堡（苏）
-        BldType::NuclearReactor,
-        BldType::NukeSilo,      // 超武1：核弹井（盟替换为天气控制器，尤里替换为心灵控制仪）
-        BldType::TeslaCoil,
-        BldType::IronCurtain,   // 超武2：铁幕（盟军无；尤里替换为基因突变器）
-    };
-    for (BldType t : order) {
-        BldType rt = t;
-        if (t == BldType::TeslaReactor) rt = powerT;
-        if (t == BldType::SentryGun) rt = defT;
-        if (t == BldType::TeslaCoil) rt = advDefT;
-        if (t == BldType::NuclearReactor) rt = bigPowerT;
-        if (t == BldType::NukeSilo) rt = swT;
-        if (t == BldType::IronCurtain) rt = sw2T;
-
-        // 人格跳过
-        if (t == BldType::NuclearReactor && skipNuclearReactor) continue;
-        if (t == BldType::ServiceDepot && skipServiceDepot) continue;
-        if (t == BldType::NavalYard && (skipNavalYard || !naval || !navalSiteAvailable(w))) continue;
-        if (t == BldType::BattleLab && skipBattleLab) continue;
-        bool isLateTech = (t == BldType::Grinder || t == BldType::CloningVat || t == BldType::GapGenerator
-                        || t == BldType::SpySat || t == BldType::PsychicSensor
-                        || t == BldType::BattleBunker || t == BldType::TankBunker
-                        || t == BldType::RobotControl);
-        if (isLateTech && skipLateTech) continue;
-
-        const BldDef& d = bldDef(rt);
-        if (!w.modeAllowsBuilding(player, rt)) continue;
-        if (!queueFree(rt)) continue;
-        // 已建够数量则跳过；防御建筑允许 defWant 个，矿厂允许 refineryWant 个
-        int want;
-        if (rt == defT || rt == advDefT) want = defWant;
-        else if (rt == BldType::OreRefinery) want = refineryWant;
-        else want = 1;
-        if (w.countBlds(player, rt) >= want) continue;
-        if (!w.prereqMet(player, d)) continue;
-        if (p.money < d.cost + 300) continue;  // 留点余钱
-        w.startBldProd(player, rt);
-        return;
-    }
-}
-
 // ===================== 单位生产 =====================
-void SkirmishAI::doProduction(World& w) {
-    Player& p = w.players[player];
-
-    // 攒钱建关键建筑：高科/超武造价高，建造序列未完成前暂停暴兵
-    const AIBuildConfig& aiCfg = g_aiBuild[(int)p.faction];
-    // 尤里超武1：心灵控制仪（替代盟军天气控制器/苏军核弹井）
-    BldType swT = p.faction == Faction::Allies ? BldType::WeatherDevice
-                : p.faction == Faction::Yuri   ? BldType::PsychicDominator
-                : BldType::NukeSilo;
-    // Turtler 攒钱更激进（为超武留更多余钱）
-    int swSaveMargin = (personality == AIPersonality::Turtler) ? 1200 : 500;
-    bool saveMoney = false;
-    if (aiCfg.saveForSuperWeapon && w.hasBld(player, BldType::WarFactory) && !p.bldProd.active) {
-        if (!w.hasBld(player, BldType::BattleLab) && w.prereqMet(player, bldDef(BldType::BattleLab))
-            && p.money < bldDef(BldType::BattleLab).cost + 300) saveMoney = true;
-        if (w.hasBld(player, BldType::BattleLab) && !w.hasBld(player, swT)
-            && p.money < bldDef(swT).cost + swSaveMargin) saveMoney = true;
-    }
-
-    // ---- 车辆队列（类别1）：采矿车优先（经济命脉），其次主战坦克 ----
-    if (w.hasBld(player, BldType::WarFactory) && w.unitQueuedCount(player, 1) < 2) {
-        // 基地重建：建造厂被毁但有重工 → 补基地车
-        if (!w.hasBld(player, BldType::ConYard)) {
-            if (w.unitPrereqMet(player, unitDef(UnitType::MCV))) w.startUnitProd(player, UnitType::MCV);
-            return;
-        }
-        int harvesters = plannedUnits(w,player,harvesterType(p.faction));
-        // 采矿车目标按 econFocus 缩放
-        int harvBase = aiCfg.enabled ? aiCfg.harvesterTarget : 3;
-        int harvTarget = (int)(harvBase * pcfg.econFocus);
-        if (harvTarget < 1) harvTarget = 1;
-        if (w.skirmishMode != SkirmishMode::Megawealth
-            && w.hasBld(player, BldType::OreRefinery) && harvesters < harvTarget) {
-            w.startUnitProd(player, harvesterType(p.faction));
-        } else if (!saveMoney) {
-            // 混编部队：陆军 >6 坦克且 0 防空车辆时补 AA 护航
-            UnitType aaT = (p.faction == Faction::Soviet) ? UnitType::FlakTrack
-                        : (p.faction == Faction::Allies) ? UnitType::IFV
-                        : (p.faction == Faction::Yuri)   ? UnitType::GatlingTank
-                        : UnitType::COUNT;
-            // Fusion factions and mods may have a different legal AA roster.
-            if(aaT==UnitType::COUNT || !unitDef(aaT).hasAntiAir()
-                || !w.unitPrereqMet(player,unitDef(aaT))) {
-                aaT=UnitType::COUNT;
-                for(int type=0;type<(int)UnitType::COUNT;++type) {
-                    const auto& candidate=unitDef((UnitType)type);
-                    if(candidate.isAir() || candidate.isNaval() || candidate.isInfantry() || candidate.canHarvet()
-                        || !candidate.hasAntiAir() || !w.unitPrereqMet(player,candidate)) continue;
-                    if(aaT==UnitType::COUNT || candidate.cost<unitDef(aaT).cost) aaT=(UnitType)type;
-                }
-            }
-            bool producedAA = false;
-            if (aaT != UnitType::COUNT) {
-                int tanks = 0, aa = 0, airThreats=0;
-                for (const World::Ent& e : w.ents) {
-                    if(e.alive && !e.isBuilding && w.isEnemy(player,e.player) && e.airborne() && w.map.fogAt(player,(int)e.x,(int)e.y)==FOG_VISIBLE) ++airThreats;
-                    if (!e.alive || e.isBuilding || e.player != player) continue;
-                    const UnitDef& ud = unitDef(e.utype);
-                    if (ud.canHarvet() || ud.isAir() || ud.isNaval() || ud.isInfantry()) continue;
-                    if (ud.hasAntiAir()) aa++;
-                    else tanks++;
-                }
-                const int wanted=std::clamp(airThreats,1,4);
-                if ((tanks > 6 || airThreats>0) && aa < wanted && w.unitPrereqMet(player, unitDef(aaT))) {
-                    w.startUnitProd(player, aaT);
-                    producedAA = true;
-                }
-            }
-            if (!producedAA) {
-                bool late = w.hasBld(player, BldType::BattleLab);
-                UnitType want;
-                if (late) {
-                    // 困难 AI 掺入特殊重单位（盟军光棱/苏军基洛夫/尤里主脑）
-                    if ((difficulty == AIDiff::Hard || difficulty == AIDiff::Brutal) && attackWave % 3 == 2) {
-                        UnitType sp = p.faction == Faction::Allies ? UnitType::PrismTank
-                                    : p.faction == Faction::Soviet ? UnitType::Kirov
-                                    : p.faction == Faction::Yuri ? UnitType::MasterMind
-                                    : UnitType::Kirov;
-                        if (w.unitPrereqMet(player, unitDef(sp))) { w.startUnitProd(player, sp); return; }
-                    }
-                    // 国家特色战车（RA2 原作：德国坦克杀手/苏俄磁能/利比亚自爆卡车；尤里无国家特色）
-                    UnitType csp = UnitType::COUNT;
-                    switch (p.country) {
-                        case Country::Germany: csp = UnitType::TankDestroyer; break;
-                        case Country::Russia:  csp = UnitType::TeslaTank; break;
-                        case Country::Libya:   csp = UnitType::DemoTruck; break;
-                        default: break;
-                    }
-                    if (csp != UnitType::COUNT && attackWave % 2 == 1 && w.countUnits(player, csp) < 6
-                        && w.unitPrereqMet(player, unitDef(csp))) { w.startUnitProd(player, csp); return; }
-                    // 阵营主战坦克：盟军光棱/苏军天启·磁能/中国99式/尤里狂风·磁电
-                    if (p.faction == Faction::Allies) {
-                        want = UnitType::PrismTank;
-                    } else if (p.faction == Faction::Soviet) {
-                        want = attackWave % 2 ? UnitType::Apocalypse : UnitType::TeslaTank;
-                    } else if (p.faction == Faction::Yuri) {
-                        // Keep damage dealers even when the attack-wave counter
-                        // stalls: a frozen odd wave must not produce only support.
-                        const int lashers=w.countUnits(player,UnitType::LasherTank);
-                        const int magnets=w.countUnits(player,UnitType::Magnetron);
-                        want = magnets<std::max(1,lashers/3)?UnitType::Magnetron:UnitType::LasherTank;
-                    } else {
-                        want = UnitType::Type99;
-                    }
-                    // 前置不满足回退到基础主战坦克
-                    if (!w.unitPrereqMet(player, unitDef(want))) {
-                        if (p.faction == Faction::Allies) want = UnitType::Grizzly;
-                        else if (p.faction == Faction::Soviet) want = UnitType::Rhino;
-                        else if (p.faction == Faction::Yuri) want = UnitType::LasherTank;
-                        else want = UnitType::Type99;
-                    }
-                } else {
-                    // 中期国家特色（德国坦克杀手前置=雷达即可）
-                    if (p.country == Country::Germany && attackWave % 2 == 1
-                        && w.countUnits(player, UnitType::TankDestroyer) < 4
-                        && w.unitPrereqMet(player, unitDef(UnitType::TankDestroyer))) {
-                        w.startUnitProd(player, UnitType::TankDestroyer);
-                        return;
-                    }
-                    // 阵营基础主战坦克
-                    if (p.faction == Faction::Allies) want = UnitType::Grizzly;
-                    else if (p.faction == Faction::Soviet) want = UnitType::Rhino;
-                    else if (p.faction == Faction::Yuri) want = UnitType::LasherTank;
-                    else want = UnitType::Type99;
-                }
-                w.startUnitProd(player, want);
-            }
-        }
-    }
-    // ---- 海军队列（类别3）：有船厂后维持舰队规模（战斗舰 4 + 运输船 1）----
-    if (w.hasBld(player, BldType::NavalYard) && w.unitQueuedCount(player, 3) < 2) {
-        // 阵营主战舰艇：盟军驱逐舰/苏军台风潜艇/中华神盾舰/尤里雷鸣潜艇
-        UnitType shipT = UnitType::Destroyer;
-        if (p.faction == Faction::Allies) shipT = UnitType::Destroyer;
-        else if (p.faction == Faction::Soviet) shipT = UnitType::Typhoon;
-        else if (p.faction == Faction::Yuri) shipT = UnitType::Boomer;
-        else shipT = UnitType::Aegis;
-        const UnitType strikeT=p.faction==Faction::Allies?UnitType::AircraftCarrier
-            :p.faction==Faction::Soviet?UnitType::Dreadnought:p.faction==Faction::Yuri?UnitType::Boomer:UnitType::COUNT;
-        // One escort first, then legal bombardment hulls. A submarine/AA-only
-        // fleet cannot finish an enemy base, and an empty transport cannot raid it.
-        if(plannedUnits(w,player,shipT)<1 && w.unitPrereqMet(player,unitDef(shipT))) {
-            w.startUnitProd(player, shipT);
-        } else if(plannedUnits(w,player,UnitType::AmphTransport)<1 && w.hasBld(player,BldType::Barracks)
-            && w.unitPrereqMet(player,unitDef(UnitType::AmphTransport)) && needsTransport(w)) {
-            w.startUnitProd(player,UnitType::AmphTransport);
-        } else if(strikeT!=UnitType::COUNT && plannedUnits(w,player,strikeT)<2
-            && w.unitPrereqMet(player,unitDef(strikeT))) {
-            w.startUnitProd(player,strikeT);
-        } else if(plannedUnits(w,player,shipT)<4 && w.unitPrereqMet(player,unitDef(shipT))) {
-            w.startUnitProd(player,shipT);
-        } else if(plannedUnits(w,player,UnitType::AmphTransport)<1
-            && w.unitPrereqMet(player,unitDef(UnitType::AmphTransport))) {
-            w.startUnitProd(player,UnitType::AmphTransport);
-        }
-    }
-    // ---- 空军队列（类别2）：有空指部后维持 2 架（韩国黑鹰/盟军入侵者/苏军米格/中国基洛夫/尤里飞碟）----
-    if (w.hasBld(player, BldType::AirForceCmd) && w.unitQueuedCount(player, 2) < 2) {
-        UnitType airT;
-        if (p.country == Country::Korea) airT = UnitType::BlackEagle;
-        else if (p.faction == Faction::Allies) airT = UnitType::Intruder;
-        else if (p.faction == Faction::Soviet) airT = UnitType::MiG;
-        else if (p.faction == Faction::Yuri) airT = UnitType::FloatingDisc;
-        else airT = UnitType::Kirov;
-        if (plannedUnits(w,player,airT) < 2 && w.unitPrereqMet(player, unitDef(airT)))
-            w.startUnitProd(player, airT);
-    }
-    // ---- 步兵队列（类别0）：前期暴兵 + 适量工程师/特殊步兵 ----
-    if (w.hasBld(player, BldType::Barracks) && w.unitQueuedCount(player, 0) < 2) {
-        // 工程师：维持 1~2 名（占领中立建筑/修复用）
-        int engs = w.countUnits(player, UnitType::Engineer);
-        int engineerTarget = w.skirmishMode == SkirmishMode::Megawealth ? 3 : 1;
-        if (engs < engineerTarget && p.money > 700) {
-            w.startUnitProd(player, UnitType::Engineer);
-        } else if (!saveMoney) {
-            // 阵营基础步兵：盟军美国大兵/苏军动员兵/中国解放军/尤里新兵
-            // Rusher 产更多步兵（ratio 15）；其他人格 ratio 10
-            int infRatio = (personality == AIPersonality::Rusher) ? 15 : 10;
-            UnitType inf;
-            if (p.faction == Faction::Allies) inf = UnitType::GI;
-            else if (p.faction == Faction::Soviet) inf = UnitType::Conscript;
-            else if (p.faction == Faction::Yuri) inf = UnitType::Initiate;
-            else inf = UnitType::PLA;
-            if (w.countUnits(player, inf) < infRatio) w.startUnitProd(player, inf);
-        }
-        // 特殊步兵（高科后，困难 AI 更积极；国家特色步兵优先：英狙击/古巴恐怖分子/伊辐射工兵；尤里无国家特色）
-        if (p.money > 1500 && w.unitQueuedCount(player, 0) < 1) {
-            UnitType csp = UnitType::COUNT;
-            switch (p.country) {
-                case Country::UK:   csp = UnitType::Sniper; break;
-                case Country::Cuba: csp = UnitType::Terrorist; break;
-                case Country::Iraq: csp = UnitType::Desolator; break;
-                default: break;
-            }
-            if (csp != UnitType::COUNT && w.countUnits(player, csp) < 3
-                && w.unitPrereqMet(player, unitDef(csp))) {
-                w.startUnitProd(player, csp);
-            } else if (w.hasBld(player, BldType::BattleLab)) {
-                int roll = (attackWave + (int)(w.tick / 900)) % ((difficulty == AIDiff::Hard || difficulty == AIDiff::Brutal) ? 3 : 5);
-                UnitType sp = UnitType::COUNT;
-                if (roll == 0) {
-                    // 阵营英雄/特种步兵：盟军谭雅/苏军尤里/中国辐射工兵/尤里狂兽人
-                    if (p.faction == Faction::Allies) sp = UnitType::Tanya;
-                    else if (p.faction == Faction::Soviet) sp = UnitType::Boris; // YR：苏军英雄鲍里斯（尤里归 FY）
-                    else if (p.faction == Faction::Yuri) sp = UnitType::Brute;
-                    else sp = UnitType::Desolator;
-                } else if (roll == 1 && p.faction == Faction::Allies) {
-                    sp = UnitType::Spy;  // 盟军间谍：渗透偷钱/断电
-                } else if (roll == 1 && p.faction == Faction::Yuri) {
-                    sp = UnitType::Virus;  // 尤里病毒狙击手：远程反步兵
-                } else if (roll == 2 && p.faction == Faction::Allies) {
-                    sp = UnitType::NavySEAL;  // 海豹部队：两栖 C4 突击
-                } else if (roll == 2 && p.faction == Faction::Soviet) {
-                    sp = UnitType::CrazyIvan;
-                } else if (roll == 2 && p.faction == Faction::Yuri) {
-                    sp = UnitType::Brute;  // 狂兽人：近战重甲反车辆
-                }
-                if (sp != UnitType::COUNT && w.unitPrereqMet(player, unitDef(sp))
-                    && w.countUnits(player, sp) < 2)
-                    w.startUnitProd(player, sp);
-            }
-        }
-    }
-}
-
 // ===================== 进攻（集结点 + 多路进攻） =====================
 void SkirmishAI::doAttack(World& w) {
     int threshold = attackThreshold();
@@ -708,7 +307,7 @@ void SkirmishAI::doAttack(World& w) {
         const World::Ent& e = w.ents[i];
         if (e.player != player || !combatUnit(e) || e.state==UState::Boarding || e.state==UState::Servicing) continue;
         if(std::find(airDefenders.begin(),airDefenders.end(),(EID)i)!=airDefenders.end())continue;
-        const UnitDef& ud = unitDef(e.utype);
+        const UnitDef& ud = unitDef(e);
         if (ud.canHarvet()) continue;
         if (ud.isAir()) airIds.push_back((int)i);
         else if (ud.isNaval() && !ud.isAmphib()) navyIds.push_back((int)i);
@@ -721,10 +320,9 @@ void SkirmishAI::doAttack(World& w) {
         for(EID id:armyIds){sx+=(int)w.ents[id].x;sy+=(int)w.ents[id].y;}
         ac={sx/(int)armyIds.size(),sy/(int)armyIds.size()};
     }
-    const int army=(int)armyIds.size();
     auto center=[&](const World::Ent& e) {
-        return Vec2f{e.x+(e.isBuilding?bldDef(e.btype).w/2.0f:0),
-                       e.y+(e.isBuilding?bldDef(e.btype).h/2.0f:0)};
+        return Vec2f{e.x+(e.isBuilding?bldDef(e).w/2.0f:0),
+                       e.y+(e.isBuilding?bldDef(e).h/2.0f:0)};
     };
     auto visibleEnemy=[&](const World::Ent& e) {
         if(!e.alive || !w.isEnemy(player,e.player)) return false;
@@ -758,7 +356,8 @@ void SkirmishAI::doAttack(World& w) {
         return accepted;
     };
 
-    // 找敌方（人类优先）建筑或单位
+    // Nearby visible contacts remain the tactical fallback. Ground waves use
+    // remembered infrastructure when a physical approach is available.
     EID targetB = INVALID_EID;
     float bd = 1e9f;
     for (size_t i = 0; i < w.ents.size(); i++) {
@@ -769,25 +368,43 @@ void SkirmishAI::doAttack(World& w) {
         if (d < bd) { bd = d; targetB = (int)i; }
     }
 
-    // Scout from the player's fog, without consulting unseen enemy entities.
-    // Keep return/rearm and existing attack orders intact. No additional RNG or
-    // persistent timers are needed: movement and fog record exploration progress.
+    const auto objectives=assaultObjectives(w,ac);
+    // Reacquire previously observed bases and revisit stale explored regions.
+    // Memory offers movement destinations, never a hidden live attack target.
     int airAttacks=0;
+    std::vector<Vec2i> airSurvey;
+    if(w.nativeProductionRules.version>=8)for(EID id:airIds) {
+        const auto& unit=w.ents[id];
+        if(unit.attackMove.active)airSurvey.push_back({(int)unit.attackMove.x,(int)unit.attackMove.y});
+    }
     for(EID id:airIds) {
-        const auto& e=w.ents[id];const auto& def=unitDef(e.utype);
+        const auto& e=w.ents[id];const auto& def=unitDef(e);
         const bool readyOnPad=e.state==UState::Landed && def.ammo>0 && e.ammo>=def.ammo;
         if(e.utype==UnitType::Hornet || e.state==UState::Returning || (e.state==UState::Landed && !readyOnPad) || e.immobilized()
             || (def.ammo>0 && e.ammo<=0)) continue;
-        if((e.state==UState::Chasing || e.state==UState::Attacking) && w.valid(e.target)) continue;
-        if(targetB!=INVALID_EID && issueAttack({id},targetB)>0) { ++airAttacks;continue; }
-        if(e.state!=UState::Idle && e.state!=UState::Circling && !readyOnPad) continue;
-        Vec2i scout{-1,-1};float nearest=std::numeric_limits<float>::max();
-        for(int y=0;y<w.map.h;++y)for(int x=0;x<w.map.w;++x) {
-            if(w.map.fogAt(player,x,y)!=FOG_UNSEEN) continue;
-            float dx=x+0.5f-e.x,dy=y+0.5f-e.y;float distance=dx*dx+dy*dy;
-            if(distance<nearest) { nearest=distance;scout={x,y}; }
+        EID structure=INVALID_EID;
+        for(const auto& objective:objectives) {
+            const EID candidate=w.bldAt(objective.x,objective.y);if(!w.valid(candidate))continue;
+            const auto& building=w.ents[candidate];
+            if(building.player==objective.owner && building.btype==objective.type && building.x==objective.x && building.y==objective.y
+                && buildingVisible(w,building) && w.attackRejection(id,candidate)==AttackRejectReason::None){structure=candidate;break;}
         }
-        if(scout.x>=0) w.orderMove({id},scout.x+0.5f,scout.y+0.5f,false);
+        if((e.state==UState::Chasing || e.state==UState::Attacking) && w.valid(e.target)) {
+            // Retain actual fire and strategic pursuit. A bomber chasing a
+            // mobile decoy can instead begin a visible infrastructure raid.
+            if(e.state==UState::Chasing && !w.ents[e.target].isBuilding && structure!=INVALID_EID)
+                airAttacks+=w.orderAttack({id},structure).accepted>0;
+            continue;
+        }
+        const EID preferred=structure!=INVALID_EID?structure:targetB;
+        if(preferred!=INVALID_EID && issueAttack({id},preferred)>0) { ++airAttacks;continue; }
+        if(e.state!=UState::Idle && e.state!=UState::Circling && !readyOnPad) continue;
+        const auto scout=scoutDestination(w,e,airSurvey);
+        if(scout.x>=0) {
+            const bool probe=w.nativeSceneVersion>=36 && w.effWeapon(e).damage>0;
+            if(w.orderMove({id},scout.x+0.5f,scout.y+0.5f,probe).accepted && w.nativeProductionRules.version>=8)
+                airSurvey.push_back({(int)w.ents[id].goalX,(int)w.ents[id].goalY});
+        }
     }
     if(airAttacks>0 && attackWave<std::numeric_limits<int>::max()) ++attackWave;
 
@@ -800,39 +417,31 @@ void SkirmishAI::doAttack(World& w) {
         if((ship.state==UState::Chasing || ship.state==UState::Attacking) && w.valid(ship.target))continue;
         if(targetB!=INVALID_EID && issueAttack({id},targetB)>0){++navalAttacks;continue;}
         if(ship.state!=UState::Idle)continue;
-        const auto scout=scoutGoal(w,ship);
+        const auto scout=scoutDestination(w,ship);
         if(scout.x>=0)w.orderMove({id},scout.x+0.5f,scout.y+0.5f,false);
     }
     if(navalAttacks>0 && attackWave<std::numeric_limits<int>::max())++attackWave;
 
-    // Without a known target a ground-only AI must explore, rather than
-    // wait forever at a rally point inferred from unseen enemy entities.
-    if (targetB == INVALID_EID) {
-        int scouts=0;
-        for(EID id:armyIds)if(w.ents[id].state==UState::Moving || w.ents[id].state==UState::AttackMoving)++scouts;
-        for(EID id:armyIds) {
-            if(scouts>=2)break;
-            const auto& unit=w.ents[id];
-            if(unit.state!=UState::Idle || unit.guard || unit.deployed || unit.radDeployed
-                || unit.immobilized() || unit.deploying())continue;
-            const auto goal=scoutGoal(w,unit);
-            if(goal.x<0)continue;
-            if(w.orderMove({id},goal.x+0.5f,goal.y+0.5f,true).accepted && ++scouts>=2)break;
-        }
+    if (targetB == INVALID_EID && objectives.empty()) {
+        scoutGround(w,armyIds);
         return;
     }
     if(armyIds.empty())return;
+    const int army=(int)armyIds.size();
 
     if (rallyPoint.x<0 || rallyPoint.y<0) {
         // Put the rendezvous on a real approach path from an existing soldier.
         // A geometric midpoint can be inside a lake, cliff or sealed courtyard.
         const auto& anchor=w.ents[armyIds.front()];
         rallyPoint={(int)anchor.x,(int)anchor.y};
-        const auto destination=center(w.ents[targetB]);
+        const auto destination=objectives.empty()?center(w.ents[targetB]):Vec2f{objectives.front().x+0.5f,objectives.front().y+0.5f};
         std::vector<Vec2i> route;
-        if(w.map.findPathToRange((int)anchor.x,(int)anchor.y,destination.x,destination.y,
-            3.0f,route,20000,unitDef(anchor.utype).pathDomain()) && !route.empty())
+        const bool found=w.map.findPathToRange((int)anchor.x,(int)anchor.y,destination.x,destination.y,
+            3.0f,route,20000,unitDef(anchor).pathDomain(),nullptr,anchor.navLayer,-1,-1,
+            unitDef(anchor).fitsUnderBridge(),w.nativeGateAccess(anchor));
+        if(found && !route.empty())
             rallyPoint=route[std::min<size_t>(route.size()/3,11)];
+        if(!found && targetB==INVALID_EID){scoutGround(w,armyIds);return;}
         rallyCheckTimer=900;
     }
     int gathered=0;
@@ -840,7 +449,7 @@ void SkirmishAI::doAttack(World& w) {
     for(EID id:armyIds) {
         const auto& unit=w.ents[id];
         if(distf(unit.x,unit.y,rallyPoint.x+0.5f,rallyPoint.y+0.5f)<8.0f)++gathered;
-        else if(unit.state==UState::Idle && !unit.guard && !unit.deployed && !unit.radDeployed
+        else if(unit.state==UState::Idle && !unit.attackMove.active && !unit.guard && !unit.deployed && !unit.radDeployed
             && !unit.immobilized() && !unit.deploying())idleArmy.push_back(id);
     }
     if((army<threshold || gathered<std::min(army,std::max(1,pcfg.rallySize))) && rallyCheckTimer>0) {
@@ -855,7 +464,11 @@ void SkirmishAI::doAttack(World& w) {
     // 困难/残暴：多路进攻（分两组从不同方向夹击）
     bool multiVector = (difficulty == AIDiff::Hard || difficulty == AIDiff::Brutal);
     int accepted=0;
-    if (multiVector && (int)armyIds.size() >= 12) {
+    if(issueAssault(w,armyIds,objectives,ac,accepted)) {
+        // The accepted attack-move owns the destination through local combat.
+    } else if(targetB==INVALID_EID) {
+        scoutGround(w,armyIds);return;
+    } else if (multiVector && (int)armyIds.size() >= 12) {
         std::vector<EID> g1, g2;
         for (size_t i = 0; i < armyIds.size(); i++) {
             (i % 2 == 0 ? g1 : g2).push_back(armyIds[i]);
@@ -904,12 +517,15 @@ void SkirmishAI::doTactics(World& w) {
             if (atk.state != UState::Attacking) continue;
             EID tgt = atk.target;
             if (tgt == INVALID_EID || !w.valid(tgt)) continue;
+            const auto& enemy=w.ents[tgt];
+            if(!w.isEnemy(player,enemy.player) || (enemy.isBuilding?!buildingVisible(w,enemy)
+                :w.map.fogAt(player,(int)enemy.x,(int)enemy.y)!=FOG_VISIBLE))continue;
             // 收集附近空闲 AI 单位协助攻击
             std::vector<EID> idle;
             for (size_t j = 0; j < w.ents.size(); j++) {
                 World::Ent& u = w.ents[j];
                 if (!u.alive || u.isBuilding || u.player != player) continue;
-                if (u.state != UState::Idle) continue;
+                if (u.state != UState::Idle || u.attackMove.active) continue;
                 if (distf(u.x, u.y, atk.x, atk.y) > 6.0f) continue;
                 idle.push_back((int)j);
                 if ((int)idle.size() >= 4) break;
@@ -928,7 +544,7 @@ void SkirmishAI::doTactics(World& w) {
         for (size_t i = 0; i < w.ents.size(); i++) {
             World::Ent& e = w.ents[i];
             if (!e.alive || e.isBuilding || e.player != player) continue;
-            const UnitDef& ud = unitDef(e.utype);
+            const UnitDef& ud = unitDef(e);
             if (ud.isInfantry() || ud.isAir() || ud.isNaval() || ud.canHarvet()) continue;
             if (e.hp >= ud.hp * 30 / 100) continue;
             if (e.state != UState::Attacking && e.state != UState::Chasing) continue;
@@ -948,6 +564,7 @@ void SkirmishAI::doTactics(World& w) {
         for (size_t i = 0; i < w.ents.size(); i++) {
             const World::Ent& e = w.ents[i];
             if (!e.alive || e.isBuilding || !w.isEnemy(player, e.player)) continue;
+            if(w.map.fogAt(player,(int)e.x,(int)e.y)!=FOG_VISIBLE)continue;
             float d = distf(e.x, e.y, bcx, bcy);
             if (d < 10.0f && d < bd) { bd = d; threat = (int)i; }
         }
@@ -986,7 +603,7 @@ void SkirmishAI::doExpansion(World& w) {
 
     // 已有 2 个建造厂则不再扩张
     int conYards = w.countBlds(player, BldType::ConYard);
-    if (conYards >= 2) return;
+    if (conYards == 0 || conYards >= 2) return;
 
     // 资金不足或无重工时短冷却重试
     if (p.money < 3000 || !w.hasBld(player, BldType::WarFactory)) {
@@ -995,7 +612,8 @@ void SkirmishAI::doExpansion(World& w) {
     }
 
     // 生产 MCV（队列空闲时）
-    if (w.unitQueuedCount(player, 1) < 2 && w.unitPrereqMet(player, unitDef(UnitType::MCV))) {
+    if (!constructionVehiclePlanned(w) && w.unitQueuedCount(player, 1) < 2
+        && w.unitPrereqMet(player, unitDef(UnitType::MCV))) {
         w.startUnitProd(player, UnitType::MCV);
     }
 
@@ -1017,23 +635,25 @@ void SkirmishAI::doExpansion(World& w) {
             if (e.state != UState::Idle) continue;
             // 空闲 MCV：远离基地（已到矿场）则展开；在基地则派往矿场
             if (distf(e.x, e.y, bcx, bcy) > 15.0f) {
-                w.orderDeploy((int)i);  // 抵达矿场，展开
+                deployConstructionVehicle(w,(EID)i);
             } else if (fx >= 0) {
                 w.orderMove({ (int)i }, (float)fx + 0.5f, (float)fy + 0.5f, false);
             }
+            break;
         }
     }
 }
 
 // ===================== 工程师行为（沿用原实现 + 人格门控） =====================
 void SkirmishAI::doEngineers(World& w) {
-    if (!pcfg.useEngineers && w.skirmishMode != SkirmishMode::Megawealth) return;  // Megawealth 必须占领油井
+    const bool engineers=pcfg.useEngineers || w.skirmishMode==SkirmishMode::Megawealth;
+    if (!engineers && !pcfg.useSpies) return;
     // 收集空闲工程师与间谍
     std::vector<EID> idleEngs, idleSpies;
     for (size_t i = 0; i < w.ents.size(); i++) {
         const World::Ent& e = w.ents[i];
         if (!e.alive || e.isBuilding || e.player != player) continue;
-        if (e.utype == UnitType::Engineer && e.state == UState::Idle) idleEngs.push_back((int)i);
+        if (engineers && e.utype == UnitType::Engineer && e.state == UState::Idle) idleEngs.push_back((int)i);
         if (e.utype == UnitType::Spy && e.state == UState::Idle) idleSpies.push_back((int)i);
     }
     // 工程师：优先占领中立科技建筑（player=-1），其次修复己方受损建筑
@@ -1044,7 +664,8 @@ void SkirmishAI::doEngineers(World& w) {
             const World::Ent& b = w.ents[i];
             if (!b.alive || !b.isBuilding) continue;
             if (b.player != -1) continue;  // 中立
-            if (!bldDef(b.btype).capturable) continue;
+            if (!buildingVisible(w,b)) continue;
+            if (!bldDef(b).capturable) continue;
             float d = distf(w.ents[eng].x, w.ents[eng].y, b.x, b.y);
             if (d < bd) { bd = d; best = (int)i; }
         }
@@ -1055,7 +676,7 @@ void SkirmishAI::doEngineers(World& w) {
         for (size_t i = 0; i < w.ents.size(); i++) {
             const World::Ent& b = w.ents[i];
             if (!b.alive || !b.isBuilding || b.player != player) continue;
-            const BldDef& bd2 = bldDef(b.btype);
+            const BldDef& bd2 = bldDef(b);
             if (b.hp < bd2.hp * 2 / 3 && bd2.cost > bestCost) { bestCost = bd2.cost; dmg = (int)i; }
         }
         if (dmg != INVALID_EID) w.orderRepair({ eng }, dmg);
@@ -1068,12 +689,20 @@ void SkirmishAI::doEngineers(World& w) {
         for (size_t i = 0; i < w.ents.size(); i++) {
             const World::Ent& b = w.ents[i];
             if (!b.alive || !b.isBuilding || !w.isEnemy(player, b.player)) continue;
+            if (!buildingVisible(w,b)) continue;
             if (b.btype != BldType::OreRefinery && b.btype != BldType::PowerPlant
                 && b.btype != BldType::TeslaReactor) continue;
+            if(w.attackRejection(spy,(EID)i)!=AttackRejectReason::None)continue;
             float d = distf(w.ents[spy].x, w.ents[spy].y, b.x, b.y);
             if (d < bd) { bd = d; best = (int)i; }
         }
-        if (best != INVALID_EID) w.orderAttack({ spy }, best);  // 无武器单位 orderAttack → 渗透目标（判定在 updateUnit）
+        if (best != INVALID_EID) w.orderAttack({ spy }, best);
+        else {
+            // Reacquire remembered installations by movement. Only current
+            // observation above may resolve a live entity as an infiltration target.
+            const auto destination=scoutDestination(w,w.ents[spy]);
+            if(destination.x>=0)w.orderMove({spy},destination.x+.5f,destination.y+.5f,false);
+        }
     }
 }
 
@@ -1101,18 +730,17 @@ void SkirmishAI::doSuperWeapon(World& w) {
         } else {
             // 核弹/闪电：炸敌方建筑密集区（优先建造厂/高科）
             float bestScore = -1, bx = 0, by = 0;
-            for (size_t j = 0; j < w.ents.size(); j++) {
-                const World::Ent& e = w.ents[j];
-                if (!e.alive || !e.isBuilding || e.player < 0 || e.player == player) continue;
-                const BldDef& bd = bldDef(e.btype);
+            for (const KnownBuilding& e : knownBuildings) {
+                if (!w.isEnemy(player,e.owner)) continue;
+                const BldDef& bd = bldDef(e.type);
                 float cx = e.x + bd.w / 2.0f, cy = e.y + bd.h / 2.0f;
                 // 评分：高价值建筑 + 周围敌建筑密度
                 float score = bd.cost / 500.0f;
-                if (e.btype == BldType::ConYard) score += 6;
-                if (e.btype == BldType::BattleLab) score += 3;
-                for (const World::Ent& o : w.ents) {
-                    if (!o.alive || !o.isBuilding || o.player != e.player) continue;
-                    const BldDef& od = bldDef(o.btype);
+                if (e.type == BldType::ConYard) score += 6;
+                if (e.type == BldType::BattleLab) score += 3;
+                for (const KnownBuilding& o : knownBuildings) {
+                    if (o.owner != e.owner) continue;
+                    const BldDef& od = bldDef(o.type);
                     if (distf(cx, cy, o.x + od.w / 2.0f, o.y + od.h / 2.0f) < 6.0f) score += 1.0f;
                 }
                 if (score > bestScore) { bestScore = score; bx = cx; by = cy; }
@@ -1131,14 +759,14 @@ void SkirmishAI::doSupport(World& w) {
         for (size_t bi = 0; bi < w.ents.size(); ++bi) {
             const World::Ent& b = w.ents[bi];
             if (!b.alive || !b.isBuilding || b.player != player || b.btype != BldType::BioReactor
-                || (int)b.garrison.size() >= bldDef(b.btype).garrisonCap) continue;
+                || (int)b.garrison.size() >= bldDef(b).garrisonCap) continue;
             std::vector<EID> occupants;
             for (size_t ui = 0; ui < w.ents.size(); ++ui) {
                 const World::Ent& u = w.ents[ui];
                 if (!u.alive || u.isBuilding || u.player != player || u.state != UState::Idle
                     || u.utype != UnitType::Initiate) continue;
                 occupants.push_back((int)ui);
-                if ((int)occupants.size() >= bldDef(b.btype).garrisonCap - (int)b.garrison.size()) break;
+                if ((int)occupants.size() >= bldDef(b).garrisonCap - (int)b.garrison.size()) break;
             }
             if (!occupants.empty()) w.orderGarrison(occupants, (int)bi);
         }
@@ -1151,7 +779,7 @@ void SkirmishAI::doSupport(World& w) {
             for (size_t i = 0; i < w.ents.size(); ++i) {
                 const World::Ent& u = w.ents[i];
                 if (!u.alive || u.isBuilding || u.player != player || u.state != UState::Idle) continue;
-                const UnitDef& ud = unitDef(u.utype);
+                const UnitDef& ud = unitDef(u);
                 if (ud.isAir() || ud.isNaval() || ud.canHarvet() || isHero(u.utype)) continue;
                 if (u.hp < ud.hp / 4) recycle.push_back((int)i);
                 if (recycle.size() >= 2) break;
@@ -1160,7 +788,8 @@ void SkirmishAI::doSupport(World& w) {
         }
     }
     // 1. 支援能力（伞兵 / 侦察机 / 心灵揭示）：对敌建造厂附近释放
-    if (p.paradropReady) {
+    if(w.independentSupportEnabled)doIndependentSupport(w);
+    else if (p.paradropReady) {
         float bx = -1, by = -1;
         for (const World::Ent& e : w.ents)
             if (e.alive && e.isBuilding && e.player >= 0 && w.isEnemy(player, e.player)
@@ -1200,7 +829,7 @@ void SkirmishAI::doSupport(World& w) {
         for (size_t i = 0; i < w.ents.size(); i++) {
             World::Ent& e = w.ents[i];
             if (!e.alive || e.isBuilding || e.player != player) continue;
-            const UnitDef& ud = unitDef(e.utype);
+            const UnitDef& ud = unitDef(e);
             if (ud.isInfantry() || ud.isAir() || ud.pathDomain() != 0 || ud.canHarvet()) continue;
             bool needFix = e.hp < ud.hp * 55 / 100 || e.parasite != INVALID_EID;
             if (!needFix) continue;
@@ -1220,19 +849,19 @@ void SkirmishAI::doSupport(World& w) {
             for (size_t i = 0; i < w.ents.size(); i++) {
                 World::Ent& b = w.ents[i];
                 if (!b.alive || !b.isBuilding) continue;
-                int gdom = garrisonDomain(b.btype);
-                if (gdom == 0 || (int)b.garrison.size() >= bldDef(b.btype).garrisonCap) continue;
+                int gdom = w.buildingEntryDomain(b);
+                if (gdom == 0 || (int)b.garrison.size() >= bldDef(b).garrisonCap) continue;
                 if (b.player >= 0 && b.player != player) continue;  // 只填己方或中立碉堡
                 if (distf(b.x, b.y, bcx, bcy) > 24.0f) continue;   // 只填基地附近
                 std::vector<EID> idle;
                 for (size_t j = 0; j < w.ents.size(); j++) {
                     World::Ent& u = w.ents[j];
-                    if (!u.alive || u.isBuilding || u.player != player || u.state != UState::Idle) continue;
-                    const UnitDef& ud = unitDef(u.utype);
+                    if (!u.alive || u.isBuilding || u.player != player || u.state != UState::Idle || u.attackMove.active) continue;
+                    const UnitDef& ud = unitDef(u);
                     bool fit = (gdom == 1 && ud.isInfantry() && u.utype != UnitType::Engineer)
                             || (gdom == 2 && !ud.isInfantry() && !ud.isAir() && ud.pathDomain() == 0 && !ud.canHarvet());
-                    if (fit) idle.push_back((int)j);
-                    if ((int)idle.size() >= bldDef(b.btype).garrisonCap - (int)b.garrison.size()) break;
+                    if (fit && w.entryRejection((EID)j,(EID)i,EntryKind::Garrison)==EntryRejectReason::None)idle.push_back((int)j);
+                    if ((int)idle.size() >= bldDef(b).garrisonCap - (int)b.garrison.size()) break;
                 }
                 if (!idle.empty()) w.orderGarrison(idle, (int)i);
             }

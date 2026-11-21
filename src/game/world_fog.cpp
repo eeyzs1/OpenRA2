@@ -3,7 +3,7 @@
 #include <algorithm>
 
 void World::updateFog(int player) {
-    map.clearVisible(player);
+    if(!nativeEvents.active || !nativeEventDefinition || nativeEventDefinition->fogOfWar)map.clearVisible(player);
     // 间谍渗透雷达 或 间谍卫星（RA2 原作：建成后全图常亮，被毁后恢复战争迷雾）
     if (players[player].revealTimer > 0 || hasBld(player, BldType::SpySat)) {
         for (int y = 0; y < map.h; y++)
@@ -16,15 +16,21 @@ void World::updateFog(int player) {
         int sight;
         int cx, cy;
         if (e.isBuilding) {
-            sight = bldDef(e.btype).sight;
-            cx = (int)e.x + bldDef(e.btype).w / 2;
-            cy = (int)e.y + bldDef(e.btype).h / 2;
+            sight = bldDef(e).sight;
+            cx = (int)e.x + bldDef(e).w / 2;
+            cy = (int)e.y + bldDef(e).h / 2;
         } else {
-            sight = unitDef(e.utype).sight;
+            sight = unitDef(e).sight;
             cx = (int)e.x; cy = (int)e.y;
         }
         map.reveal(player, cx, cy, sight);
     }
+    if(supportDeliveryEnabled)for(const auto& mission:supportMissions)
+        if(mission.type==SupportType::SpyPlane && valid(mission.aircraft)) {
+            const auto& e=ents[mission.aircraft.id];const auto& rules=supportDeliveryRules();
+            if(e.player==player && distf(e.x,e.y,mission.x,mission.y)<=rules.spyRange)
+                map.reveal(player,(int)e.x,(int)e.y,rules.spyRadius);
+        }
 }
 
 // 裂缝产生器（RA2 原作）：黑幕半径内敌军迷雾打回不可见（间谍卫星也无法穿透；低电时失效）

@@ -1,8 +1,9 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <algorithm>
+#include <array>
 #include <cstdio>
 
-int Game::movingYieldRegression() {
+int GameRegression::movingYieldRegression() {
     int failures=0;
     for(int domain=0;domain<3;++domain)for(int rotated=0;rotated<2;++rotated)for(int offset=0;offset<2;++offset)for(int queued=0;queued<2;++queued)for(int waiting=0;waiting<3;++waiting) {
         World w;w.init(64,64,20261031,2,0,{Faction::Allies,Faction::Soviet},0,"",true);
@@ -211,6 +212,112 @@ int Game::movingYieldRegression() {
         }
         const bool ok=(protection?protectedStable:arrived>=0) && legal && smooth && equal && budget && saved && orders;failures+=!ok;
         std::printf("COASTAL_THREE_YIELD %s rotated=%d reversed=%d partial=%d protection=%d protected=%d orders=%d arrived=%d legal=%d smooth=%d replay=%d budget=%d saved=%d a=%.2f,%.2f block=%d b=%.2f,%.2f block=%d c=%.2f,%.2f block=%d\n",ok?"PASS":"FAIL",rotated,reversed,partial,protection,protectedStable,orders,arrived,legal,smooth,equal,budget,saved,w.ents[a].x,w.ents[a].y,w.ents[a].blockTick,w.ents[b].x,w.ents[b].y,w.ents[b].blockTick,w.ents[c].x,w.ents[c].y,w.ents[c].blockTick);
+    }
+    // Snow Valley at tick 180000 has three infantry on either side of the
+    // bend at (155,140). Recreate the admitted retreat and the full dead-end
+    // stack, with a room at the other port and no later orders or combat.
+    for(bool masked:{false,true}) {
+        World w;
+        if(!w.init(64,64,20261031,2,0,{Faction::Allies,Faction::Soviet},0,"",true))return failures+1;
+        for(EID id=0;id<(EID)w.ents.size();++id)if(w.valid(id))w.kill(id,false);
+        for(auto& cell:w.map.cells){cell=Cell{};cell.overlay=Overlay::Rock1;}
+        const auto clear=[&](int x0,int y0,int x1,int y1) {
+            for(int y=y0;y<=y1;++y)for(int x=x0;x<=x1;++x)w.map.at(x,y)=Cell{};
+        };
+        const Vec2i laneCell{12,20},deadEnd{13,20},firstOpenStep{12,21};
+        clear(12,20,13,20);clear(12,21,12,24);clear(9,25,15,29);
+        clear(40,40,53,47);
+        w.cratesEnabled=false;
+        for(auto& player:w.players){player.money=0;player.defeated=false;player.isAI=false;}
+        w.spawnBuilding(0,BldType::PowerPlant,41,41,true);
+        w.spawnBuilding(1,BldType::TeslaReactor,50,41,true);
+        std::array<EID,6> ids{};
+        for(int n=0;n<(int)ids.size();++n) {
+            ids[n]=w.spawnUnit(0,UnitType::GI,9.5f+n,29.5f);
+            if(!w.valid(ids[n]))return failures+1;
+        }
+        std::sort(ids.begin(),ids.end());
+        const EID requester=ids[1],dwelling=ids[masked?3:4],reciprocal=ids[masked?4:3];
+        for(int n=0;n<(int)ids.size();++n) {
+            auto& actor=w.ents[ids[n]];
+            const auto cell=n<3?laneCell:deadEnd;
+            actor.x=actor.px=cell.x+(ids[n]==reciprocal?.40234375f:.5f);
+            actor.y=actor.py=cell.y+.5f;
+        }
+        w.orderGuard({ids[0],ids[2],ids[5]});
+        w.rebuildUnitOcc();
+        const Vec2i requestGoal{10,27},reciprocalGoal{12,28},dwellGoal{14,27};
+        auto& approach=w.ents[requester];
+        auto& peer=w.ents[reciprocal];
+        auto& head=w.ents[dwelling];
+        std::vector<Vec2i> retreatTail,alternate;
+        const bool routes=w.map.findPath(deadEnd.x,deadEnd.y,requestGoal.x,requestGoal.y,retreatTail)
+            && !retreatTail.empty() && retreatTail.front()==laneCell && retreatTail.back()==requestGoal
+            && w.map.findPath(deadEnd.x,deadEnd.y,reciprocalGoal.x,reciprocalGoal.y,peer.path)
+            && !peer.path.empty() && peer.path.front()==laneCell && peer.path.back()==reciprocalGoal
+            && w.map.findPath(deadEnd.x,deadEnd.y,dwellGoal.x,dwellGoal.y,head.path)
+            && !head.path.empty() && head.path.front()==laneCell && head.path.back()==dwellGoal
+            && w.map.findPath(laneCell.x,laneCell.y,requestGoal.x,requestGoal.y,alternate)
+            && !alternate.empty() && alternate.front()==firstOpenStep && alternate.back()==requestGoal;
+        if(!routes)return failures+1;
+        approach.path.assign(30,deadEnd);
+        approach.path.insert(approach.path.end(),retreatTail.begin(),retreatTail.end());
+        head.path.insert(head.path.begin(),30,deadEnd);
+        for(EID id:{requester,reciprocal,dwelling})w.ents[id].state=UState::AttackMoving;
+        approach.blockTick=30;peer.blockTick=head.blockTick=12;
+        const auto atHead=w.unitAtCell(deadEnd.x,deadEnd.y,0);
+        const bool full=w.countInfantryAtCell(deadEnd.x,deadEnd.y,INVALID_EID,0)==3
+            && w.countInfantryAtCell(laneCell.x,laneCell.y,INVALID_EID,0)==3
+            && w.cellHardBlockedForMove(deadEnd.x,deadEnd.y,requester,0)
+            && w.cellHardBlockedForMove(laneCell.x,laneCell.y,reciprocal,0);
+        const bool staged=routes && full && atHead==(masked?dwelling:reciprocal)
+            && head.path.front()==deadEnd && peer.path.front()==laneCell;
+        World replay;
+        FILE* file=tmpfile();bool saved=file && w.saveGame(file);
+        if(file){std::rewind(file);saved=saved && replay.loadGame(file);std::fclose(file);}
+        bool exact=saved && w.checksum()==replay.checksum()
+            && replay.unitAtCell(deadEnd.x,deadEnd.y,0)==atHead;
+        bool legal=true,continuous=true,goals=true,budget=true;
+        int rerouted=-1,finished=-1;
+        const float speed=1.f/std::max(1,unitDef(UnitType::GI).speed)+.0001f;
+        for(int frame=1;frame<=500;++frame) {
+            std::array<Vec2f,6> before{};
+            for(size_t n=0;n<ids.size();++n)before[n]={w.ents[ids[n]].x,w.ents[ids[n]].y};
+            w.update();
+            if(exact){replay.update();exact=w.checksum()==replay.checksum();}
+            budget &= w.repathsThisTick<=8;
+            if(rerouted<0 && !approach.path.empty() && approach.path.front()==firstOpenStep)rerouted=frame;
+            for(size_t n=0;n<ids.size();++n) {
+                const auto& actor=w.ents[ids[n]];
+                const int x=(int)actor.x,y=(int)actor.y;
+                legal &= w.valid(ids[n]) && actor.navLayer==0 && actor.occCell==w.cellIdx(x,y)
+                    && w.passableFor(x,y,0,actor.navLayer) && !w.bldBlocked(x,y,actor.navLayer)
+                    && w.countInfantryAtCell(x,y,INVALID_EID,actor.navLayer)<=3;
+                continuous &= distf(before[n].x,before[n].y,actor.x,actor.y)<=speed;
+            }
+            const auto staysOnOrder=[](const World::Ent& actor,Vec2i goal) {
+                return actor.path.empty() || actor.path.back()==goal;
+            };
+            goals &= staysOnOrder(approach,requestGoal) && staysOnOrder(peer,reciprocalGoal)
+                && staysOnOrder(head,dwellGoal);
+            const auto reached=[](const World::Ent& actor,Vec2i goal) {
+                return distf(actor.x,actor.y,goal.x+.5f,goal.y+.5f)<.05f;
+            };
+            if(reached(approach,requestGoal) && reached(peer,reciprocalGoal) && reached(head,dwellGoal)) {
+                finished=frame;
+                break;
+            }
+            w.presentationEvents.clear();replay.presentationEvents.clear();
+            w.evaQueue.clear();replay.evaQueue.clear();
+        }
+        // The existing eight-tick reconsideration must run before the
+        // separate ordinary 45-tick blockage threshold can choose a route.
+        const bool relieved=rerouted>0 && rerouted<=8 && finished>0;
+        const bool ok=staged && relieved && legal && continuous && goals && budget && exact;
+        failures+=!ok;
+        std::printf("STACKED_INFANTRY_YIELD %s masked=%d full=%d head=%d reciprocal=%d routes=%d "
+            "rerouted=%d finished=%d legal=%d continuous=%d goals=%d budget=%d saved=%d replay=%d\n",
+            ok?"PASS":"FAIL",masked,full,atHead,reciprocal,routes,rerouted,finished,legal,continuous,goals,budget,saved,exact);
     }
     for(int control=0;control<4;++control) {
         World w;w.init(64,64,20261031,2,0,{Faction::Allies,Faction::Soviet},0,"",true);

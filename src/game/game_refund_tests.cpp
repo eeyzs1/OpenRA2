@@ -1,9 +1,9 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cstdio>
 #include <filesystem>
 #include <limits>
 
-int Game::refundRegression(const char* outputDir) {
+int GameRegression::refundRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);int failures=0;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("REFUND %s %s\n",ok?"PASS":"FAIL",name); };
     World w;w.init(64,64,20261031,2,0,{Faction::Allies,Faction::Soviet},0,"maps/skirmish-reference.txt",true);

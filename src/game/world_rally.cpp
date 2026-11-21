@@ -23,7 +23,7 @@ void World::emitRallyResult(int player,const RallyOrderResult& result,float x,fl
         event.x=(int)x+0.5f;event.y=(int)y+0.5f;event.positional=true;
     } else if(valid(event.entity)) {
         const auto& unit=ents[event.entity];event.x=unit.x;event.y=unit.y;event.positional=true;
-        if(unit.isBuilding) { event.x+=bldDef(unit.btype).w/2.0f;event.y+=bldDef(unit.btype).h/2.0f; }
+        if(unit.isBuilding) { event.x+=bldDef(unit).w/2.0f;event.y+=bldDef(unit).h/2.0f; }
         else if(unit.airborne()) event.visualTarget=VisualTarget::Aircraft;
     }
     if(presentationEvents.size()>=4096) presentationEvents.pop_front();

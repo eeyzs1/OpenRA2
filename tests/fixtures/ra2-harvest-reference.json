@@ -1,0 +1,130 @@
+{
+  "scope": "Actual local RA2 constructor defaults block, shared StageClass update block, MissionHarvest phase gate and full Harvesting method. Cell lookup, ore-cell decrement/type and below-capacity load-ratio callbacks supplied by fixture; arrival/movement/mission scheduling/unload are excluded. No original game entrypoint runs.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "probeSourceSHA256": "61dc1421e5fc0151a062abe5fbfafa9f9c44327eb885a38952e1c4c7c01ffaa3",
+  "logSHA256": "6c40a81a3947e174a383162e9b672175ca155ad6485dc14229e86004023c45a6",
+  "functions": {
+    "defaultsBlock": "0x6422ba..0x6424c3",
+    "stageUpdateBlock": "0x6c7e56..0x6c7eb3",
+    "harvestGate": "0x7028c9..0x70291d",
+    "harvesting": "0x7013a0",
+    "rulesLoadRateOffset": "0x1180",
+    "stageThreshold": 9,
+    "frameCounter": "0xa40d2c"
+  },
+  "defaultLoadRate": 2,
+  "stagesPerPickup": 9,
+  "projectTicksPerOriginalFrame": 2,
+  "answers": [
+    {
+      "rate": 2,
+      "capacity": 20,
+      "resource": 0,
+      "pickups": 20,
+      "firstFrame": 18,
+      "lastFrame": 360,
+      "periodFrames": 18
+    },
+    {
+      "rate": 2,
+      "capacity": 20,
+      "resource": 1,
+      "pickups": 20,
+      "firstFrame": 18,
+      "lastFrame": 360,
+      "periodFrames": 18
+    },
+    {
+      "rate": 2,
+      "capacity": 40,
+      "resource": 0,
+      "pickups": 40,
+      "firstFrame": 18,
+      "lastFrame": 720,
+      "periodFrames": 18
+    },
+    {
+      "rate": 2,
+      "capacity": 40,
+      "resource": 1,
+      "pickups": 40,
+      "firstFrame": 18,
+      "lastFrame": 720,
+      "periodFrames": 18
+    },
+    {
+      "rate": 3,
+      "capacity": 20,
+      "resource": 0,
+      "pickups": 20,
+      "firstFrame": 27,
+      "lastFrame": 540,
+      "periodFrames": 27
+    },
+    {
+      "rate": 3,
+      "capacity": 20,
+      "resource": 1,
+      "pickups": 20,
+      "firstFrame": 27,
+      "lastFrame": 540,
+      "periodFrames": 27
+    },
+    {
+      "rate": 3,
+      "capacity": 40,
+      "resource": 0,
+      "pickups": 40,
+      "firstFrame": 27,
+      "lastFrame": 1080,
+      "periodFrames": 27
+    },
+    {
+      "rate": 3,
+      "capacity": 40,
+      "resource": 1,
+      "pickups": 40,
+      "firstFrame": 27,
+      "lastFrame": 1080,
+      "periodFrames": 27
+    },
+    {
+      "rate": 5,
+      "capacity": 20,
+      "resource": 0,
+      "pickups": 20,
+      "firstFrame": 45,
+      "lastFrame": 900,
+      "periodFrames": 45
+    },
+    {
+      "rate": 5,
+      "capacity": 20,
+      "resource": 1,
+      "pickups": 20,
+      "firstFrame": 45,
+      "lastFrame": 900,
+      "periodFrames": 45
+    },
+    {
+      "rate": 5,
+      "capacity": 40,
+      "resource": 0,
+      "pickups": 40,
+      "firstFrame": 45,
+      "lastFrame": 1800,
+      "periodFrames": 45
+    },
+    {
+      "rate": 5,
+      "capacity": 40,
+      "resource": 1,
+      "pickups": 40,
+      "firstFrame": 45,
+      "lastFrame": 1800,
+      "periodFrames": 45
+    }
+  ],
+  "evidence": "review_out/ra2-fidelity-20261119-harvest/original-proof.json",
+  "limits": "Isolated in-position, continuously scheduled original harvesting core; not an original full match, approach, mission scheduler or unloading timing comparison."
+}

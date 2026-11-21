@@ -44,11 +44,20 @@ void Game::ensureBriefArt(const MissionDef& md) {
 
 void Game::newCampaignGame(int mission, bool prepareRender) {
     if (mission < 0 || mission >= (int)missionTable().size()) return;
+    const MissionDef& md = missionTable()[mission];
+    World native;
+    if (!md.nativeScene.empty()) {
+        const auto scene=contentResolve(md.nativeScene.c_str());
+        if (scene.empty() || !native.init(64,64,37ull+mission*977,1,0,{md.playerFaction},0,md.mapFile.c_str(),true,true)
+            || !native.loadNativeScene(scene.c_str()) || !native.startNativeEvents(campaignDifficulty)) {
+            TraceLog(LOG_ERROR,"CAMPAIGN: original scene failed: %s",md.nativeScene.c_str());
+            message(TR(S::CampaignUnavailable));return;
+        }
+    }
     g_script.shutdown();
     resetMatchInteraction();
     localPlayer = 0;
     netGame = false;
-    const MissionDef& md = missionTable()[mission];
     campaignMission = mission;
     pendingMission = mission;
     nextWave = 0;
@@ -61,6 +70,13 @@ void Game::newCampaignGame(int mission, bool prepareRender) {
         const auto& o0 = md.objectives[0];
         objectiveText = (g_lang && !o0.textEn.empty()) ? o0.textEn : o0.text;
     }
+    if (!md.nativeScene.empty()) {
+        world=std::move(native);world.map.bldOccRef=&world.bldOcc;
+        world.cratesEnabled=false; // Authored crates are created by the original actions.
+        localPlayer=world.nativeEventDefinition->playerHouse;
+        ais.clear(); // The source graph owns house production, teams and diplomacy.
+        resetNotifications();
+    } else {
     std::vector<Faction> factions;
     factions.push_back(md.playerFaction);
     for (Faction f : md.aiFactions) factions.push_back(f);
@@ -106,24 +122,26 @@ void Game::newCampaignGame(int mission, bool prepareRender) {
         ais[i].personality = (md.objective == 1) ? AIPersonality::Rusher : AIPersonality::Turtler;
         ais[i].initPersonality();
     }
+    }
     sel.clear();
     selBuilding = INVALID_EID;
     clearPlacement();
     gameOver = victory = false;
     camZoom = 1.0f;
     for (auto& e : world.ents)
-        if (e.alive && !e.isBuilding && e.player == 0) {
+        if (e.alive && !e.isBuilding && e.player == localPlayer) {
             int sx, sy;
             tileToScreen((int)e.x, (int)e.y, sx, sy);
             camX = (float)sx - (SCREEN_W - sidebarW) / 2.0f;
             camY = (float)sy - SCREEN_H / 2.0f;
             break;
         }
-    message(missionBrief(mission));
+    message(md.nativeScene.empty()?missionBrief(mission):objectiveText);
     phase = Phase::InGame;
     if (prepareRender) {
         bakeTerrain();
         g_sprites.preloadMatch(localPlayer);
+        preloadNativeMissionSpeech();
         g_script.init(&world, 1, mission);
         g_script.onGameStart();
     }

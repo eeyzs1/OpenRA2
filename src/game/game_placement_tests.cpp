@@ -1,9 +1,10 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <cstdio>
 #include <filesystem>
 #include <limits>
 
-int Game::placementRegression(const char* outputDir) {
+int GameRegression::placementRegression(const char* outputDir) {
+    selectRulesChoice(RulesChoice::Fusion); // Keep the original enum-based placement fixture.
     std::filesystem::create_directories(outputDir);
     int failures=0;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("PLACEMENT %s %s\n",ok?"PASS":"FAIL",name); };
@@ -77,10 +78,10 @@ int Game::placementRegression(const char* outputDir) {
     if(peerOk) { rewind(peerFile);peerOk=peer.loadGame(peerFile); }if(peerFile) fclose(peerFile);
     clickSite(site);before=world.checksum();
     deferred.b=999;peer.applyCmd(0,deferred);
-    check(placing && placementPending && !world.players[0].bldProd.active && world.countBlds(0,BldType::PowerPlant)==1 &&
+    check(!placing && !placementPending && !world.players[0].bldProd.active && world.countBlds(0,BldType::PowerPlant)==1 &&
           world.players[0].money==money && peerOk && world.checksum()==peer.checksum(),
           "retry places exactly once and UI request tokens do not alter deterministic simulation");
-    const auto receipt=world.presentationEvents.back();consumePresentationEvents();
+    const auto receipt=peer.presentationEvents.back();
     check(!placing && placementType==BldType::COUNT && !placementPending && !moveFeedbackRejected &&
           msg==TR(S::MsgBuildingPlaced) && world.checksum()==before && receipt.tick==world.tick &&
           receipt.entity>=0 && world.valid(receipt.entity),

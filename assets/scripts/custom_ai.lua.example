@@ -268,3 +268,14 @@ function OnPlayerDefeated(player)
     -- 玩家被歼灭
     thinkCooldown[player] = nil
 end
+
+local previousSave, previousLoad = OnSave, OnLoad
+function OnSave()
+    local state = previousSave and previousSave() or {}
+    state.custom_ai = { thinkCooldown = thinkCooldown }
+    return state
+end
+function OnLoad(state)
+    if previousLoad then previousLoad(state) end
+    thinkCooldown = assert(state.custom_ai).thinkCooldown
+end

@@ -1,4 +1,5 @@
 #include "game/data.h"
+#include "game/native_weapon_types.h"
 #include "core/ini.h"
 #include "core/content.h"
 #include "raylib.h"
@@ -25,6 +26,10 @@ static constexpr int kSwMin = 30 * 60;
 
 // 武器预设
 static WeaponDef withWH(WeaponDef w, WeaponDef::Warhead h) { w.warhead = h; return w; }
+static WeaponDef wASWBomb() {
+    auto w=withWH(WeaponDef{50,6,3,false,true,"missile",0,1,1,false,0},WeaponDef::Warhead::AP);
+    w.projectile="DepthCharge";w.report="OspreyAttack";w.speedLeptons=76;return w;
+}
 static WeaponDef withReport(WeaponDef w, const char* r) { w.report = r; return w; }
 static WeaponDef wNone() { return WeaponDef{0, 0, 0, false, false, "shell", 1, 1, 1}; }
 static WeaponDef wRifle() { return withWH(WeaponDef{15, 4, 20, false, true, "bullet", 1.0f, 0.5f, 0.4f}, WeaponDef::Warhead::SmallArms); }
@@ -230,6 +235,10 @@ static UnitDef g_units[(int)UnitType::COUNT] = {
     // YR：尤里英雄；渗透苏军实验室解锁的超时空伊文
     {UnitType::YuriPrime,  "尤里首脑",   1500, 300, 150, 10, 9, Armor::Flak, MoveType::Infantry, wYuriPrimeMC(), FY, BldType::BattleLab},
     {UnitType::ChronoIvan, "超时空伊文", 1750, 240, 100, 12, 8, Armor::None, MoveType::Infantry, wIvanBomb(), ALLF, BldType::BattleLab},
+    {UnitType::NativeVehicle,"原始载具",0,0,1,12,0,Armor::Light,MoveType::Vehicle,wNone(),0,BldType::COUNT},
+    {UnitType::ASW,"反潜机",0,0,30,3,2,Armor::Light,MoveType::Air,wASWBomb(),0,BldType::COUNT,1},
+    {UnitType::CargoPlane,"运输机",0,0,400,15,0,Armor::Light,MoveType::Air,wNone(),0,BldType::COUNT},
+    {UnitType::SpyPlane,"侦察机",0,0,400,15,0,Armor::Light,MoveType::Air,wNone(),0,BldType::COUNT},
 };
 
 // ===================== 建筑表 =====================
@@ -315,6 +324,19 @@ SWType bldProvidesSW(BldType t) {
 }
 
 const UnitDef& unitDef(UnitType t) { return g_units[(int)t]; }
+bool UnitDef::fitsUnderBridge() const {
+    if(bridgeClearance>=0)return bridgeClearance!=0;
+    // Explicit TooBigToFitUnderBridge flags from the original RA2 rules.ini.
+    // Native source definitions override this baseline, including false values.
+    switch(type) {
+    case UnitType::Grizzly:case UnitType::Rhino:case UnitType::IFV:case UnitType::PrismTank:
+    case UnitType::TeslaTank:case UnitType::MirageTank:case UnitType::V3Launcher:case UnitType::TankDestroyer:
+    case UnitType::Nighthawk:case UnitType::Destroyer:case UnitType::Typhoon:case UnitType::Aegis:
+    case UnitType::Dreadnought:case UnitType::AircraftCarrier:case UnitType::AmphTransport:case UnitType::Squid:
+    case UnitType::LasherTank:return false;
+    default:return true;
+    }
+}
 const BldDef& bldDef(BldType t) { return g_blds[(int)t]; }
 
 bool unitHasTurret(UnitType t) {
@@ -386,7 +408,7 @@ static const char* kUnitKey[(int)UnitType::COUNT] = {
     "Initiate", "Brute", "Virus", "LasherTank", "GatlingTank", "Magnetron", "MasterMind", "FloatingDisc", "Boomer",
     "Boris", "SiegeChopper", "ChaosDrone",
     "Slave", "SlaveMiner",
-    "YuriPrime", "ChronoIvan",
+    "YuriPrime", "ChronoIvan", "NativeVehicle", "ASW", "CargoPlane", "SpyPlane",
 };
 static const char* kBldKey[(int)BldType::COUNT] = {
     "ConYard", "PowerPlant", "TeslaReactor", "NuclearReactor",
@@ -682,6 +704,7 @@ void loadRules(const char* path) {
             if ((v = sec.get("Cargo"))) d.cargoCap = std::clamp(Ini::toInt(v, d.cargoCap),0,64);
             if ((v = sec.get("PassengerSize"))) d.passengerSize = std::clamp(Ini::toInt(v,d.passengerSize),1,64);
             if ((v = sec.get("CargoSizeLimit"))) d.cargoSizeLimit = std::clamp(Ini::toInt(v,d.cargoSizeLimit),1,64);
+            if ((v=sec.get("TooBigToFitUnderBridge")))d.bridgeClearance=Ini::toBool(v,!d.fitsUnderBridge())?0:1;
             if ((v = sec.get("Country"))) { if (!countryByName(v, d.countryReq)) warn("Country"); }
             loadWeaponKeys(sec, "Weapon", d.weapon, g_unitProjStr[(int)ut]);
             if ((v=sec.get("HasAirWeapon"))) d.hasAirWeapon=Ini::toBool(v,d.hasAirWeapon);
@@ -767,6 +790,12 @@ void loadRules(const char* path) {
             if ((v = sec.get("BuildingAnimationTicks"))) g_gameRules.buildingAnimationTicks = std::clamp(Ini::toInt(v, 40), 1, 3600);
             if ((v = sec.get("FireAnimationTicks"))) g_gameRules.fireAnimationTicks = std::clamp(Ini::toInt(v, 12), 1, 3600);
             if ((v = sec.get("ChopperLandingTicks"))) g_gameRules.chopperLandingTicks = std::clamp(Ini::toInt(v, 30), 1, 3600);
+            if ((v = sec.get("CarrierRegenerateTicks"))) g_gameRules.carrierRegenerateTicks = std::clamp(Ini::toInt(v, 1200), 0, 1800000);
+            if ((v = sec.get("DestroyerRegenerateTicks"))) g_gameRules.destroyerRegenerateTicks = std::clamp(Ini::toInt(v,800),0,1800000);
+            if ((v = sec.get("DestroyerReloadTicks"))) g_gameRules.destroyerReloadTicks = std::clamp(Ini::toInt(v,300),0,1800000);
+            if ((v = sec.get("DestroyerLaunchDelayTicks"))) g_gameRules.destroyerLaunchDelayTicks = std::clamp(Ini::toInt(v,40),0,1800000);
+            if ((v = sec.get("CarrierReloadTicks"))) g_gameRules.carrierReloadTicks = std::clamp(Ini::toInt(v, 300), 0, 1800000);
+            if ((v = sec.get("CarrierLaunchDelayTicks"))) g_gameRules.carrierLaunchDelayTicks = std::clamp(Ini::toInt(v, 40), 0, 1800000);
             if ((v = sec.get("ChopperDeployTicks"))) g_gameRules.chopperDeployTicks = std::clamp(Ini::toInt(v, 30), 1, 3600);
             if ((v = sec.get("ChopperDeployFacing"))) g_gameRules.chopperDeployFacing = std::clamp(Ini::toInt(v, 2), 0, 7);
             if ((v = sec.get("DeathAnimationTicks"))) g_gameRules.deathAnimationTicks = std::clamp(Ini::toInt(v, 20), 1, 3600);
@@ -1122,6 +1151,8 @@ void exportRules(const char* path) {
             g_gameRules.veteranRatio, g_gameRules.veteranismDmgBonus[0] * 100,
             g_gameRules.veteranismDmgBonus[1] * 100, g_gameRules.veteranismDmgBonus[2] * 100);
     fprintf(f,"ChopperLandingTicks=%d\nChopperDeployTicks=%d\n",g_gameRules.chopperLandingTicks,g_gameRules.chopperDeployTicks);
+    fprintf(f,"CarrierRegenerateTicks=%d\nCarrierReloadTicks=%d\nCarrierLaunchDelayTicks=%d\n",g_gameRules.carrierRegenerateTicks,g_gameRules.carrierReloadTicks,g_gameRules.carrierLaunchDelayTicks);
+    fprintf(f,"DestroyerRegenerateTicks=%d\nDestroyerReloadTicks=%d\nDestroyerLaunchDelayTicks=%d\n",g_gameRules.destroyerRegenerateTicks,g_gameRules.destroyerReloadTicks,g_gameRules.destroyerLaunchDelayTicks);
     fprintf(f,"ChopperDeployFacing=%d\n",g_gameRules.chopperDeployFacing);
     fprintf(f, "VeteranArmorBonus=%g,%g,%g\nVeteranSpeedBonus=%g,%g,%g\nVeteranRofBonus=%g,%g,%g\n",
             g_gameRules.veteranArmorBonus[0] * 100, g_gameRules.veteranArmorBonus[1] * 100, g_gameRules.veteranArmorBonus[2] * 100,
@@ -1330,6 +1361,7 @@ const ProjectileDef& projectileDef(const char* name) {
 }
 
 const ProjectileDef& projectileForWeapon(const WeaponDef& w) {
+    if(w.nativeSource && w.nativeSource->projectile)return w.nativeSource->projectile->motion;
     if (w.projectile && w.projectile[0])
         return projectileDef(w.projectile);
     const char* tag = w.projSprite ? w.projSprite : "shell";
@@ -1338,4 +1370,13 @@ const ProjectileDef& projectileForWeapon(const WeaponDef& w) {
         return projectileDef(it->second.c_str());
     // 标签即弹道名
     return projectileDef(tag);
+}
+
+ProjectileRulesSnapshot projectileRulesSnapshot() {
+    ensureCannonFallback();ProjectileRulesSnapshot out;out.fallback=g_projCannonFallback;
+    for(const auto& [key,index]:g_projIndex)out.definitions.emplace_back(key,g_projOwned[index].def);
+    for(const auto& bridge:g_projBridge)out.bridges.push_back(bridge);
+    const auto byKey=[](const auto& a,const auto& b){return a.first<b.first;};
+    std::sort(out.definitions.begin(),out.definitions.end(),byKey);std::sort(out.bridges.begin(),out.bridges.end(),byKey);
+    return out;
 }

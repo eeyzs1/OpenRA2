@@ -1,8 +1,8 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <array>
 #include <cstdio>
 
-int Game::aiFactoryExitRegression() {
+int GameRegression::aiFactoryExitRegression() {
     int failures=0;
     const std::array<UnitType,4> tanks{UnitType::Grizzly,UnitType::Rhino,UnitType::Type99,UnitType::LasherTank};
     const std::array<UnitType,4> infantry{UnitType::GI,UnitType::Conscript,UnitType::PLA,UnitType::Initiate};
@@ -53,6 +53,10 @@ int Game::aiFactoryExitRegression() {
             return w.spawnBuilding(0,type,x,y,true);
         };
         building(BldType::ConYard,4,4);building(BldType::Radar,10,4);building(BldType::BattleLab,15,4);
+        // Keep a functioning economic baseline: this fixture exercises exit
+        // clearing, not emergency liquidation after losing the last collector.
+        building(BldType::OreRefinery,4,32);w.map.at(3,40)=Cell{};
+        const EID collector=w.spawnUnit(0,UnitType::Harvester,3.5f,40.5f);w.ents[collector].autoHarvest=false;
         for(int power=0;power<6;++power)building(BldType::PowerPlant,4+power*4,12);
         if(kind!=1)building(BldType::Barracks,8,18);
         const auto factoryType=kind==0?BldType::WarFactory:kind==1?BldType::Barracks:BldType::NavalYard;

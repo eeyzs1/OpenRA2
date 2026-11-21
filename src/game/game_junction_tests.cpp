@@ -1,10 +1,10 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <algorithm>
 #include <cstdio>
 
 // Four opposed streams share a real junction. A second layout adds a loop;
 // batches continue entering while earlier traffic is still in the network.
-int Game::junctionRegression(int scenarioFilter) {
+int GameRegression::junctionRegression(int scenarioFilter) {
     if(scenarioFilter < -1 || scenarioFilter > 7)return 1;
     int failures=0;
     for(int scenario=0;scenario<(scenarioFilter<0?4:8);++scenario) {
@@ -83,8 +83,15 @@ int Game::junctionRegression(int scenarioFilter) {
                 w.kill(obstacle,false);replay.kill(obstacle,false);removed=true;
                 dynamicLegal &= !w.valid(obstacle) && !replay.valid(obstacle);
             }
-            std::vector<Vec2f> before;
-            for(EID id:units)before.push_back({w.ents[id].x,w.ents[id].y});
+            struct PreviousMove {Vec2f position;Vec2i next,goal;int blocked;};
+            std::vector<PreviousMove> before;
+            before.reserve(units.size());
+            for(EID id:units) {
+                const auto& unit=w.ents[id];
+                const bool active=unit.state==UState::Moving && unit.pathIdx<(int)unit.path.size();
+                before.push_back({{unit.x,unit.y},active?unit.path[unit.pathIdx]:Vec2i{-1,-1},
+                    active?unit.path.back():Vec2i{-1,-1},unit.blockTick});
+            }
             w.update();replay.update();equal &= w.checksum()==replay.checksum();budget &= w.repathsThisTick<=8;
             if(dynamic && obstacleTick>=0) {
                 const auto hash=w.checksum();
@@ -97,13 +104,23 @@ int Game::junctionRegression(int scenarioFilter) {
             std::vector<EID> occupied(w.map.cells.size(),INVALID_EID);arrived=0;
             for(size_t index=0;index<units.size();++index) {
                 const auto& e=w.ents[units[index]];const int x=(int)e.x,y=(int)e.y;
-                smooth &= distf(before[index].x,before[index].y,e.x,e.y)<=1.f/unitDef(e.utype).speed+0.0001f;
+                const auto& previous=before[index];
+                const float moved=distf(previous.position.x,previous.position.y,e.x,e.y);
+                smooth &= moved<=1.f/unitDef(e.utype).speed+0.0001f;
+                if(previous.next.x>=0 && e.state==UState::Idle && e.path.empty()) {
+                    std::vector<Vec2i> terrain;
+                    const bool reachable=w.map.findPath(x,y,previous.goal.x,previous.goal.y,terrain,20000,0)
+                        && (terrain.empty()?Vec2i{x,y}:terrain.back())==previous.goal;
+                    std::printf("JUNCTION_ORDER_LOST tick=%llu actor=%d xy=%.3f,%.3f next=%d,%d goal=%d,%d blocked=%d occupant=%d wall=%d reachable=%d repaths=%d\n",
+                        (unsigned long long)w.tick,units[index],e.x,e.y,previous.next.x,previous.next.y,previous.goal.x,previous.goal.y,
+                        previous.blocked,w.unitAtCell(previous.next.x,previous.next.y),w.bldAt(previous.next.x,previous.next.y),reachable,w.repathsThisTick);
+                }
                 legal &= w.valid(units[index]) && w.map.inBounds(x,y) && w.passableFor(x,y,0) && !w.bldBlocked(x,y);
                 if(w.map.inBounds(x,y)){
                     const int cell=w.cellIdx(x,y);legal &= e.occCell==cell && occupied[cell]==INVALID_EID;occupied[cell]=units[index];
                 }
                 maxBlock=std::max(maxBlock,e.blockTick);
-                if(e.blockTick>0 && e.pathIdx<(int)e.path.size() && distf(before[index].x,before[index].y,e.x,e.y)<0.00001f) {
+                if(e.blockTick>0 && e.pathIdx<(int)e.path.size() && moved<0.00001f) {
                     const auto next=e.path[e.pathIdx];
                     if(w.unitAtCell(next.x,next.y)==INVALID_EID)++clearWait;else ++occupiedWait;
                 }
@@ -111,7 +128,7 @@ int Game::junctionRegression(int scenarioFilter) {
                 if(!e.path.empty()){const auto goal=e.path.back();goals &= atBank(goal.x+0.5f,goal.y+0.5f,destinations[index]);}
                 arrived+=e.state==UState::Idle && !e.path.empty() && e.pathIdx==(int)e.path.size() && atBank(e.x,e.y,destinations[index]);
             }
-            if(scenario==3 && (frame+1)%1000==0 && w.valid(worst)) {
+            if((scenario==2 || scenario==3) && (frame+1)%1000==0 && w.valid(worst)) {
                 const auto& e=w.ents[worst];const auto next=e.pathIdx<(int)e.path.size()?e.path[e.pathIdx]:Vec2i{-1,-1};
                 const EID peer=w.map.inBounds(next.x,next.y)?w.unitAtCell(next.x,next.y):INVALID_EID;
                 std::printf("JUNCTION_QUEUE tick=%llu arrived=%d worst=%d pos=%.2f,%.2f blocked=%d next=%d,%d peer=%d clear_wait=%llu occupied_wait=%llu\n",

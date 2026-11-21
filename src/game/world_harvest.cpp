@@ -24,10 +24,12 @@ void refineryDockCenter(const World::Ent& b, float& cx, float& cy) {
     cx = b.x + 3.5f;
     cy = b.y + 1.5f;
 }
-bool unloadApproach(const World& world,float x,float y) {
+bool unloadApproach(const World& world,float x,float y,int height) {
     for(int dy=-1;dy<=1;++dy) for(int dx=-1;dx<=1;++dx) {
         const int tx=(int)x+dx,ty=(int)y+dy;
-        if(world.passableFor(tx,ty,0) && !world.bldBlocked(tx,ty) && distf(tx+0.5f,ty+0.5f,x,y)<1.9f) return true;
+        const int layer=world.map.preferredLayer(tx,ty,0);
+        if(world.passableFor(tx,ty,0,layer) && !world.bldBlocked(tx,ty,layer) && distf(tx+0.5f,ty+0.5f,x,y)<1.9f
+            && (!world.map.hasBridgeDecks() || abs(world.map.surfaceHeight(tx,ty,layer)-height)<=MAP_MAX_CLIMB))return true;
     }
     return false;
 }
@@ -85,14 +87,15 @@ bool World::findNearestReachableOre(int sx, int sy, int maxR, Vec2i& out) const 
 }
 
 void World::beginHarvesterReturn(Ent& e, EID mover, EID preferredRef, bool avoidOccupied) {
+    if(beginNativeHarvesterReturn(e,mover,preferredRef))return;
     EID ref=INVALID_EID;float best=1e9f;std::vector<Vec2i> route;
     std::vector<uint8_t> congestion;
     if(avoidOccupied) {
-        congestion.assign(map.cells.size(),0);
+        congestion.assign(movementSlotCount(),0);
         for(const auto& unit:ents) {
             if(unit.occCell<0 || unit.occCell>=(int)congestion.size())continue;
             const int x=unit.occCell%map.w,y=unit.occCell/map.w;
-            if(cellHardBlockedForMove(x,y,mover))congestion[unit.occCell]=255;
+            if(cellHardBlockedForMove(x,y,mover,unit.navLayer))congestion[movementSlot(x,y,unit.navLayer)]=255;
         }
     }
     auto consider=[&](EID id) {
@@ -103,9 +106,10 @@ void World::beginHarvesterReturn(Ent& e, EID mover, EID preferredRef, bool avoid
         else if(!receiver.isBuilding && receiver.utype==UnitType::SlaveMiner && receiver.deployed) { x=receiver.x;y=receiver.y; }
         else return;
         const float distance=distf(e.x,e.y,x,y);if(distance>=best) return;
-        if(!unloadApproach(*this,x,y) || repathsThisTick>=8) return;
+        const int height=actorSurfaceHeight(receiver);
+        if(!unloadApproach(*this,x,y,height) || repathsThisTick>=8) return;
         std::vector<Vec2i> path;++repathsThisTick;++repathRequests;
-        if(!map.findPathToRange((int)e.x,(int)e.y,x,y,1.9f,path,20000,0,avoidOccupied?&congestion:nullptr)) { ++repathFailures;return; }
+        if(!map.findPathToRange((int)e.x,(int)e.y,x,y,1.9f,path,20000,0,avoidOccupied?&congestion:nullptr,e.navLayer,-1,height,unitDef(e).fitsUnderBridge(),nativeGateAccess(e))) { ++repathFailures;return; }
         ref=id;best=distance;route=std::move(path);
     };
     if(valid(preferredRef)) consider(preferredRef);
@@ -123,12 +127,16 @@ void World::beginHarvesterReturn(Ent& e, EID mover, EID preferredRef, bool avoid
             for(int dy=-radius;dy<=radius && !placed;++dy) for(int dx=-radius;dx<=radius && !placed;++dx) {
                 if(std::max(abs(dx),abs(dy))!=radius) continue;
                 int tx=qx+dx,ty=qy+dy;
-                if(passableFor(tx,ty,0) && !bldBlocked(tx,ty) && unitAtCell(tx,ty)==INVALID_EID
-                    && distf(tx+0.5f,ty+0.5f,cx,cy)<1.9f) { x=tx+0.5f;y=ty+0.5f;placed=true; }
+                const int layer=map.preferredLayer(tx,ty,0);
+                if(passableFor(tx,ty,0,layer) && !bldBlocked(tx,ty,layer) && unitAtCell(tx,ty,layer)==INVALID_EID
+                    && distf(tx+0.5f,ty+0.5f,cx,cy)<1.9f
+                    && (!map.hasBridgeDecks() || abs(map.surfaceHeight(tx,ty,layer)-actorSurfaceHeight(receiver))<=MAP_MAX_CLIMB))
+                    { x=tx+0.5f;y=ty+0.5f;placed=true; }
             }
         if(placed) {
             Effect departure;departure.kind=9;departure.aux=(int)ChronoVisual::Departure;departure.x=e.x;departure.y=e.y;departure.maxAge=20;effects.push_back(departure);
-            e.x=x;e.y=y;Effect arrival;arrival.kind=9;arrival.x=x;arrival.y=y;arrival.maxAge=20;effects.push_back(arrival);
+            e.x=e.px=x;e.y=e.py=y;initializeMovementSurface(e);unitOccSync(mover);
+            Effect arrival;arrival.kind=9;arrival.x=x;arrival.y=y;arrival.maxAge=20;effects.push_back(arrival);
             emitSoundAt(Sfx::Tesla,x,y);e.clearPath();e.state=UState::HarvestUnload;e.digTimer=0;return;
         }
     }
@@ -137,7 +145,17 @@ void World::beginHarvesterReturn(Ent& e, EID mover, EID preferredRef, bool avoid
 
 void World::updateHarvester(Ent& e, EID id) {
     const int CAP = harvesterCapacity(e.utype);
+    if(usesNativeGround(e) && (e.state==UState::HarvestReturn || e.state==UState::HarvestUnload)) {
+        // A receiver lost between updates must re-enter the calibrated dock
+        // controller, never fall through to historical range-based cashout.
+        if(e.nativeDock.phase==NativeDockPhase::None)beginNativeHarvesterReturn(e,id,e.dockRefinery);
+        return;
+    }
     auto beginReturnToRefinery = [&]() { beginHarvesterReturn(e,id); };
+    if(nativeTravelEnabled() && e.utype==UnitType::ChronoMiner && e.oreLoad>=CAP) {
+        beginReturnToRefinery();
+        return;
+    }
 
     switch (e.state) {
         case UState::HarvestGo: {
@@ -147,7 +165,7 @@ void World::updateHarvester(Ent& e, EID id) {
                 if (findNearestReachableOre((int)e.x, (int)e.y, kTiberiumFarScan, ore)) {
                     e.oreCell = ore;
                     std::vector<Vec2i> path;
-                    if (map.findPath((int)e.x, (int)e.y, ore.x, ore.y, path)) {
+                    if (map.findPath((int)e.x,(int)e.y,ore.x,ore.y,path,20000,0,nullptr,e.navLayer,-1,unitDef(e).fitsUnderBridge(),nativeGateAccess(e))) {
                         e.path = std::move(path); e.pathIdx = 0;
                     } else if (e.oreLoad > 0) {
                         beginReturnToRefinery();
@@ -165,7 +183,7 @@ void World::updateHarvester(Ent& e, EID id) {
                 enterDig(*this, e, e.oreCell.x, e.oreCell.y);
             } else if (e.path.empty() || e.pathIdx >= (int)e.path.size()) {
                 std::vector<Vec2i> path;
-                if (map.findPath((int)e.x, (int)e.y, e.oreCell.x, e.oreCell.y, path)) {
+                if (map.findPath((int)e.x,(int)e.y,e.oreCell.x,e.oreCell.y,path,20000,0,nullptr,e.navLayer,-1,unitDef(e).fitsUnderBridge(),nativeGateAccess(e))) {
                     if (path.empty()) {
                         if (canDigOre(e.x, e.y, e.oreCell.x, e.oreCell.y)) {
                             enterDig(*this, e, e.oreCell.x, e.oreCell.y);
@@ -176,7 +194,7 @@ void World::updateHarvester(Ent& e, EID id) {
                                     int ax = e.oreCell.x + dx, ay = e.oreCell.y + dy;
                                     if (!map.passable(ax, ay) || bldBlocked(ax, ay)) continue;
                                     std::vector<Vec2i> ap;
-                                    if (map.findPath((int)e.x, (int)e.y, ax, ay, ap) && !ap.empty()) {
+                                    if (map.findPath((int)e.x,(int)e.y,ax,ay,ap,20000,0,nullptr,e.navLayer,-1,unitDef(e).fitsUnderBridge(),nativeGateAccess(e)) && !ap.empty()) {
                                         e.path = std::move(ap); e.pathIdx = 0;
                                         stepped = true;
                                     }
@@ -204,7 +222,7 @@ void World::updateHarvester(Ent& e, EID id) {
                         if (canDigOre(e.x, e.y, alt.x, alt.y)) {
                             enterDig(*this, e, alt.x, alt.y);
                             rerouted = true;
-                        } else if (map.findPath((int)e.x, (int)e.y, alt.x, alt.y, path)) {
+                        } else if (map.findPath((int)e.x,(int)e.y,alt.x,alt.y,path,20000,0,nullptr,e.navLayer,-1,unitDef(e).fitsUnderBridge(),nativeGateAccess(e))) {
                             e.path = std::move(path); e.pathIdx = 0;
                             rerouted = true;
                         }
@@ -228,7 +246,10 @@ void World::updateHarvester(Ent& e, EID id) {
                 dust.y = e.oreCell.y + 0.5f + (rng.unit() - 0.5f) * 0.6f;
                 dust.maxAge = 14; effects.push_back(dust);
             }
-            if (++e.digTimer >= 20) {
+            // Local RA2 StageClass advances nine mining stages at LoadRate
+            // original frames each. One original frame spans two logic ticks.
+            const int pickupTicks=nativeProductionRules.version>=7?18*nativeProductionRules.harvesterLoadRate:20;
+            if (++e.digTimer >= pickupTicks) {
                 e.digTimer = 0;
                 bool gems = map.at(e.oreCell.x, e.oreCell.y).terrain == Terrain::Gems;
                 int got = map.harvestAt(e.oreCell.x, e.oreCell.y, 1);
@@ -264,7 +285,7 @@ void World::updateHarvester(Ent& e, EID id) {
             if(usable) {
                 const auto& receiver=ents[e.dockRefinery];usable=harvestReceiver(receiver,e.player);
                 if(receiver.isBuilding && receiver.btype==BldType::OreRefinery) {
-                    float x,y;refineryDockCenter(receiver,x,y);usable &= unloadApproach(*this,x,y);
+                    float x,y;refineryDockCenter(receiver,x,y);usable &= unloadApproach(*this,x,y,actorSurfaceHeight(receiver));
                 } else usable &= !receiver.isBuilding && receiver.utype==UnitType::SlaveMiner && receiver.deployed;
             }
             if (!usable) {
@@ -283,6 +304,7 @@ void World::updateHarvester(Ent& e, EID id) {
             else { dockX = (int)b.x; dockY = (int)b.y; }
             bool atDock = distf(e.x, e.y, dx, dy) < 2.0f
                        || besideCell(e.x, e.y, dockX, dockY);
+            atDock &= !map.hasBridgeDecks() || abs(actorSurfaceHeight(e)-actorSurfaceHeight(b))<=MAP_MAX_CLIMB;
             if (atDock) {
                 e.state = UState::HarvestUnload;
                 e.digTimer = 0;
@@ -292,7 +314,8 @@ void World::updateHarvester(Ent& e, EID id) {
             break;
         }
         case UState::HarvestUnload: {
-            if(!valid(e.dockRefinery) || !harvestReceiver(ents[e.dockRefinery],e.player)) {
+            if(!valid(e.dockRefinery) || !harvestReceiver(ents[e.dockRefinery],e.player)
+                || (map.hasBridgeDecks() && abs(actorSurfaceHeight(e)-actorSurfaceHeight(ents[e.dockRefinery]))>MAP_MAX_CLIMB)) {
                 beginReturnToRefinery();break;
             }
             if (valid(e.dockRefinery) && tick % 6 == (uint64_t)(id % 6)) {
@@ -314,41 +337,54 @@ void World::updateHarvester(Ent& e, EID id) {
                 for (int i = 0; i < take; i++) {
                     bool gems = e.gemLoad > 0;
                     if (gems) e.gemLoad--;
-                    int income = oreIncomeWithPurifier(oreUnitValue(gems), hasBld(e.player, BldType::OrePurifier));
+                    const int value=gems?nativeProductionRules.gemValue:nativeProductionRules.oreValue;
+                    int income = oreIncomeWithPurifier(value, hasBld(e.player, BldType::OrePurifier));
                     harvestedIncome[e.player] += creditIncome(e.player,income);
                 }
                 e.oreLoad -= take;
             }
             if (e.oreLoad <= 0) {
-                if (e.player == 0) emitSound(Sfx::Cash, 0.55f);
-                e.dockRefinery = INVALID_EID;
-                Vec2i ore = e.oreCell;
-                bool haveOre = ore.x >= 0 && map.inBounds(ore.x, ore.y) && map.at(ore.x, ore.y).ore > 0;
-                if (haveOre) {
-                    std::vector<Vec2i> probe;
-                    if (!canDigOre(e.x, e.y, ore.x, ore.y)
-                        && !map.findPath((int)e.x, (int)e.y, ore.x, ore.y, probe))
-                        haveOre = false;
-                }
-                if (!haveOre && ore.x >= 0)
-                    haveOre = findNearestReachableOre(ore.x, ore.y, kTiberiumNearScan, ore);
-                if (!haveOre)
-                    haveOre = findNearestReachableOre((int)e.x, (int)e.y, kTiberiumFarScan, ore);
-                if (haveOre && e.autoHarvest) {
-                    e.oreCell = ore;
-                    std::vector<Vec2i> path;
-                    if (map.findPath((int)e.x, (int)e.y, ore.x, ore.y, path)) {
-                        e.path = std::move(path); e.pathIdx = 0;
-                    } else {
-                        e.clearPath(); e.pathIdx = 0;
-                    }
-                    e.state = UState::HarvestGo;
-                } else {
-                    e.state = UState::Idle;
-                }
+                finishHarvesterUnload(e);
             }
             break;
         }
         default: break;
     }
+}
+
+void World::finishHarvesterUnload(Ent& e) {
+    const bool timedGround = usesNativeGround(e);
+    if (!timedGround && e.player == 0) emitSound(Sfx::Cash, 0.55f);
+    e.dockRefinery = INVALID_EID;
+    Vec2i ore = e.oreCell;
+    std::vector<Vec2i> path;
+    const auto planRoute = [&] {
+        return map.findPath((int)e.x,(int)e.y,ore.x,ore.y,path,20000,0,nullptr,e.navLayer,-1,
+            unitDef(e).fitsUnderBridge(),nativeGateAccess(e));
+    };
+    bool haveOre = ore.x >= 0 && map.inBounds(ore.x, ore.y) && map.at(ore.x, ore.y).ore > 0;
+    if (haveOre && !canDigOre(e.x, e.y, ore.x, ore.y)) haveOre = planRoute();
+    if (!haveOre && ore.x >= 0 && !(nativeTravelEnabled() && e.utype==UnitType::ChronoMiner)) {
+        haveOre = findNearestReachableOre(ore.x, ore.y, kTiberiumNearScan, ore);
+        // The old field's neighbors can be cut off from the refinery too.
+        if (haveOre && timedGround)
+            haveOre = ore != e.oreCell && (canDigOre(e.x, e.y, ore.x, ore.y) || planRoute());
+    }
+    if (!haveOre)
+        haveOre = findNearestReachableOre((int)e.x, (int)e.y, kTiberiumFarScan, ore);
+    if (haveOre && e.autoHarvest) {
+        const bool routed = !path.empty() || planRoute();
+        if (routed || !timedGround || canDigOre(e.x, e.y, ore.x, ore.y)) {
+            e.oreCell = ore;
+            if (routed) {
+                e.path = std::move(path);
+                e.pathIdx = 0;
+            } else {
+                e.clearPath();
+            }
+            e.state = UState::HarvestGo;
+            return;
+        }
+    }
+    e.state = UState::Idle;
 }

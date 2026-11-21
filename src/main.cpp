@@ -1,4 +1,10 @@
 #include "game/game.h"
+#ifdef RA2_TESTING
+#include "game_regression.h"
+using GameApplication=GameRegression;
+#else
+using GameApplication=Game;
+#endif
 #include "game/campaign.h"
 #include "game/data.h"
 #include "gfx/sprites.h"
@@ -213,7 +219,18 @@ int main(int argc, char** argv) {
     if (liveVerify) windowed = true;
     // 测试/截图等非交互模式：隐藏窗口；live-verify 必须可见才能打真实鼠标
     static const char* kTestFlags[] = {
-        "--smoke", "--smoke-campaign", "--campaign-matrix", "--live-verify", "--ai-economy-regression", "--ai-transport-regression", "--ai-factory-exit-regression", "--ai-air-defense-regression", "--moving-yield-regression", "--junction-regression", "--combat-pressure-regression", "--apocalypse-regression", "--burst-regression", "--splash-regression",
+        "--ai-construction-regression",
+        "--native-script-control-regression",
+        "--native-production-regression",
+        "--native-ai-regression",
+        "--native-global-ai-regression",
+        "--native-global-app-regression",
+        "--native-house-leader-regression",
+        "--native-nearby-regression",
+        "--native-nearby-runtime-regression",
+        "--native-source-coordinate-regression",
+        "--native-crate-regression",
+        "--smoke", "--smoke-campaign", "--campaign-matrix", "--live-verify", "--ai-economy-regression", "--ai-transport-regression", "--ai-air-transport-regression", "--ai-factory-exit-regression", "--ai-air-defense-regression", "--moving-yield-regression", "--junction-regression", "--combat-pressure-regression", "--apocalypse-regression", "--burst-regression", "--splash-regression",
         "--play-test", "--visual-audit", "--bench-campaign", "--menu-shot",
         "--generated-match", "--generated-map-structure", "--generated-map-health", "--factory-state-regression", "--chrono-visual-regression", "--superweapon-regression", "--fog-feedback-regression", "--fog-knowledge-regression", "--terrain-visual-regression", "--refund-regression", "--production-feedback-regression", "--placement-regression", "--reference-map-regression", "--gui-review", "--shot", "--state-test", "--app-state-test", "--visual-regression", "--animation-regression", "--attack-regression", "--engineer-regression", "--lifecycle-regression", "--entry-regression", "--release-regression", "--instant-combat-regression", "--service-regression", "--hud-regression", "--skirmish-regression", "--movement-regression", "--traffic-regression", "--blocker-regression", "--idle-yield-regression", "--chopper-ground-regression", "--immobilized-regression", "--deployment-feedback-regression", "--rally-regression", "--rally-visual-regression", "--refinery-recovery-regression", "--feedback-visual-regression", "--magnetic-landing-regression", "--ai-attack-regression", "--magnetron-regression", "--economy-regression", "--presentation-replay", "--net-host", "--net-client",
         "--siege-pose-regression",
@@ -221,13 +238,50 @@ int main(int argc, char** argv) {
         "--chopper-transition-regression",
         "--elevation-feedback-regression",
         "--content-check",
+        "--net-protocol-regression",
+        "--net-production-regression",
+        "--modal-input-regression",
+        "--classic-input-regression",
+        "--original-skirmish-regression", "--original-skirmish-natural",
+        "--ai-scouting-regression", "--ground-control-regression", "--ground-travel-regression",
+        "--entity-identity-regression",
+        "--rules-profile-regression", "--source-match-regression", "--source-mode-regression", "--source-economy-regression", "--source-support-regression", "--support-delivery-regression", "--source-crate-regression", "--native-gatling-regression", "--rules-consistency-regression",
+        "--rules-selection-regression",
+        "--rules-spawner-regression",
+        "--aircraft-spawner-regression",
+        "--asw-spawner-regression",
+        "--group-order-regression",
+        "--campaign-save-regression",
+        "--unit-voice-regression",
+        "--native-audio-regression", "--native-condition-regression", "--native-playthrough-regression", "--native-motion-regression", "--native-movement-regression", "--native-flight-regression", "--native-jumpjet-regression", "--air-ground-regression", "--air-production-regression", "--attack-move-regression",
+        "--native-map-regression",
+        "--native-scene-regression",
+        "--native-bridge-regression",
+        "--native-bridge-repair-regression",
+        "--native-gate-regression",
+        "--native-event-regression",
+        "--native-team-regression",
+        "--native-team-orders-regression",
+        "--native-team-attack-regression",
+        "--native-weapon-regression", "--native-weapon-actions-regression", "--native-shrapnel-regression", "--native-ifv-regression", "--native-temporal-regression", "--native-crew-regression",
+        "--native-rocket-regression",
+        "--native-v3-regression",
+        "--native-mission-regression",
+        "--native-campaign-regression",
+        "--native-demolition-regression",
     };
     bool testMode = false;
     if (!liveVerify) {
         for (const char* f : kTestFlags)
             if (findFlag(f) >= 0) { testMode = true; break; }
     }
-    Game game;
+#ifndef RA2_TESTING
+    if(testMode || liveVerify) {
+        fprintf(stderr,"Regression and diagnostic commands require ra2_regression.\n");
+        return 2;
+    }
+#endif
+    GameApplication game;
     game.init(windowed, testMode);
     if (!game.assetsOk()) {
         fprintf(stderr, "FATAL: required assets missing — game will not start. See SPRITE-MISSING/SFX-MISSING/GUI-MISSING above.\n");
@@ -241,6 +295,7 @@ int main(int argc, char** argv) {
         game.shutdown();
         return 1;
     }
+#ifdef RA2_TESTING
     // 用户内容自检：打印 mods / 任务数 / 关键单位数值，便于确认 userdata 与 CSV 是否生效
     if (findFlag("--content-check") >= 0) {
         int fails = 0;
@@ -375,7 +430,7 @@ int main(int argc, char** argv) {
             TraceLog(LOG_ERROR, "CAMPAIGN MATRIX EXCEPTION: unknown exception");
         }
         game.shutdown();
-        return fails == 0 ? 0 : 1;
+        return fails==77?77:fails==0?0:1;
     }
     if (liveVerify) {
         int fails = game.liveVerify();
@@ -535,6 +590,195 @@ int main(int argc, char** argv) {
         int failures=game.referenceMapRegression(i+1<argc?argv[i+1]:"review_out/reference-map");
         game.shutdown();return failures==0?0:1;
     }
+    if(findFlag("--native-map-regression")>=0) {
+        const int i=findFlag("--native-map-regression");
+        const int failures=game.nativeMapRegression(i+1<argc?argv[i+1]:"review_out/native-map");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-scene-regression")>=0) {
+        const int i=findFlag("--native-scene-regression");
+        const int failures=game.nativeSceneRegression(i+1<argc?argv[i+1]:"review_out/native-scene");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-bridge-regression")>=0) {
+        const int i=findFlag("--native-bridge-regression");
+        const int failures=game.nativeBridgeRegression(i+1<argc?argv[i+1]:"review_out/native-bridge");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-event-regression")>=0) {
+        const int i=findFlag("--native-event-regression");
+        const int failures=game.nativeEventRegression(i+1<argc?argv[i+1]:"review_out/native-events");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-team-regression")>=0) {
+        const int i=findFlag("--native-team-regression");
+        const int failures=game.nativeTeamRegression(i+1<argc?argv[i+1]:"review_out/native-teams");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-team-orders-regression")>=0) {
+        const int i=findFlag("--native-team-orders-regression");
+        const int failures=game.nativeTeamOrdersRegression(i+1<argc?argv[i+1]:"review_out/native-team-orders");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-team-attack-regression")>=0) {
+        const int i=findFlag("--native-team-attack-regression");
+        const int failures=game.nativeTeamAttackRegression(i+1<argc?argv[i+1]:"review_out/native-team-attack");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(int at=findFlag("--native-weapon-actions-regression");at>=0) {
+        const int failures=game.nativeWeaponActionsRegression(at+1<argc?argv[at+1]:"review_out/native-weapon-actions");
+        game.shutdown();return failures?1:0;
+    }
+    if(int at=findFlag("--native-shrapnel-regression");at>=0) {
+        const int failures=game.nativeShrapnelRegression(at+1<argc?argv[at+1]:"review_out/native-shrapnel");
+        game.shutdown();return failures?1:0;
+    }
+    if(int at=findFlag("--native-ifv-regression");at>=0) {
+        const int failures=game.nativeIFVRegression(at+1<argc?argv[at+1]:"review_out/native-ifv");
+        game.shutdown();return failures?1:0;
+    }
+    if(int at=findFlag("--native-crew-regression");at>=0) {
+        const int failures=game.nativeCrewRegression(at+1<argc?argv[at+1]:"review_out/native-crew");
+        game.shutdown();return failures?1:0;
+    }
+    if(int at=findFlag("--native-temporal-regression");at>=0) {
+        const int failures=game.nativeTemporalRegression(at+1<argc?argv[at+1]:"review_out/native-temporal");
+        game.shutdown();return failures?1:0;
+    }
+    if(findFlag("--native-weapon-regression")>=0) {
+        const int i=findFlag("--native-weapon-regression");
+        const int failures=game.nativeWeaponRegression(i+1<argc?argv[i+1]:"review_out/native-weapons");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-rocket-regression")>=0) {
+        const int i=findFlag("--native-rocket-regression");
+        const int failures=game.nativeRocketRegression(i+1<argc?argv[i+1]:"review_out/native-rockets");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-v3-regression")>=0) {
+        const int i=findFlag("--native-v3-regression");
+        const int failures=game.nativeV3Regression(i+1<argc?argv[i+1]:"review_out/native-v3");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-campaign-regression")>=0) {
+        const int i=findFlag("--native-campaign-regression");
+        const int failures=game.nativeCampaignRegression(i+1<argc?argv[i+1]:"review_out/native-campaign");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-mission-regression")>=0) {
+        const int i=findFlag("--native-mission-regression");
+        const int failures=game.nativeMissionRegression(i+1<argc?argv[i+1]:"review_out/native-mission");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-demolition-regression")>=0) {
+        const int i=findFlag("--native-demolition-regression");
+        const int failures=game.nativeDemolitionRegression(i+1<argc?argv[i+1]:"review_out/native-demolition");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-script-control-regression")>=0) {
+        const int i=findFlag("--native-script-control-regression");
+        const int failures=game.nativeScriptControlRegression(i+1<argc?argv[i+1]:"review_out/native-script-control");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-source-coordinate-regression")>=0) {
+        const int i=findFlag("--native-source-coordinate-regression");
+        const int failures=game.nativeSourceCoordinateRegression(i+1<argc?argv[i+1]:"review_out/native-global-ai");
+        game.shutdown();return failures==77?77:failures?1:0;
+    }
+    if(findFlag("--native-nearby-runtime-regression")>=0) {
+        const int i=findFlag("--native-nearby-runtime-regression");
+        const int failures=game.nativeNearbyRuntimeRegression(i+1<argc?argv[i+1]:"review_out/native-global-ai");
+        game.shutdown();return failures==77?77:failures?1:0;
+    }
+    if(findFlag("--native-nearby-regression")>=0) {
+        const int failures=game.nativeNearbyRegression();
+        game.shutdown();return failures?1:0;
+    }
+    if(findFlag("--native-house-leader-regression")>=0) {
+        const int i=findFlag("--native-house-leader-regression");
+        const int failures=game.nativeHouseLeaderRegression(i+1<argc?argv[i+1]:"review_out/native-global-ai");
+        game.shutdown();return failures==77?77:failures?1:0;
+    }
+    if(findFlag("--native-global-app-regression")>=0) {
+        const int i=findFlag("--native-global-app-regression");
+        const int failures=game.nativeGlobalAppRegression(i+1<argc?argv[i+1]:"review_out/native-global-ai");
+        game.shutdown();return failures==77?77:failures?1:0;
+    }
+    if(findFlag("--native-global-ai-regression")>=0) {
+        const int i=findFlag("--native-global-ai-regression");
+        const int failures=game.nativeGlobalAIRegression(i+1<argc?argv[i+1]:"review_out/native-global-ai");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-ai-regression")>=0) {
+        const int i=findFlag("--native-ai-regression");
+        const int failures=game.nativeAIRegression(i+1<argc?argv[i+1]:"review_out/native-ai");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-crate-regression")>=0) {
+        const int i=findFlag("--native-crate-regression");
+        const int failures=game.nativeCrateRegression(i+1<argc?argv[i+1]:"review_out/native-crates");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-condition-regression")>=0) {
+        const int i=findFlag("--native-condition-regression");
+        const int failures=game.nativeConditionRegression(i+1<argc?argv[i+1]:"review_out/native-conditions");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-playthrough-regression")>=0) {
+        const int i=findFlag("--native-playthrough-regression");
+        const int failures=game.nativePlaythroughRegression(i+1<argc?argv[i+1]:"review_out/native-playthrough");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-motion-regression")>=0) {
+        const int i=findFlag("--native-motion-regression");
+        const int failures=game.nativeMotionRegression(i+1<argc?argv[i+1]:"review_out/native-motion");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-movement-regression")>=0) {
+        const int i=findFlag("--native-movement-regression");
+        const int failures=game.nativeMovementRegression(i+1<argc?argv[i+1]:"review_out/native-movement");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-flight-regression")>=0) {
+        const int i=findFlag("--native-flight-regression");
+        const int failures=game.nativeFlightRegression(i+1<argc?argv[i+1]:"review_out/native-flight");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--native-jumpjet-regression")>=0) {
+        const int i=findFlag("--native-jumpjet-regression");
+        const int failures=game.nativeJumpjetRegression(i+1<argc?argv[i+1]:"review_out/native-jumpjet");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--air-ground-regression")>=0) {
+        const int i=findFlag("--air-ground-regression");
+        const int failures=game.airGroundRegression(i+1<argc?argv[i+1]:"review_out/air-ground");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--air-production-regression")>=0) {
+        const int i=findFlag("--air-production-regression");
+        const int failures=game.airProductionRegression(i+1<argc?argv[i+1]:"review_out/air-production");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--attack-move-regression")>=0) {
+        const int i=findFlag("--attack-move-regression");
+        const int failures=game.attackMoveRegression(i+1<argc?argv[i+1]:"review_out/attack-move");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--native-production-regression")>=0) {
+        const int i=findFlag("--native-production-regression");
+        const int failures=game.nativeProductionRegression(i+1<argc?argv[i+1]:"review_out/native-production");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-gate-regression")>=0) {
+        const int i=findFlag("--native-gate-regression");
+        const int failures=game.nativeGateRegression(i+1<argc?argv[i+1]:"review_out/native-gates");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
+    if(findFlag("--native-bridge-repair-regression")>=0) {
+        const int i=findFlag("--native-bridge-repair-regression");
+        const int failures=game.nativeBridgeRepairRegression(i+1<argc?argv[i+1]:"review_out/native-bridge-repair");
+        game.shutdown();return failures==0?0:failures==77?77:1;
+    }
     if(findFlag("--entry-regression")>=0) {
         int failures=game.entryRegression();game.shutdown();return failures==0?0:1;
     }
@@ -547,11 +791,19 @@ int main(int argc, char** argv) {
     if(findFlag("--ai-transport-regression")>=0) {
         int failures=game.aiTransportRegression();game.shutdown();return failures==0?0:1;
     }
+    if(findFlag("--ai-air-transport-regression")>=0) {
+        const int i=findFlag("--ai-air-transport-regression");
+        int failures=game.aiAirTransportRegression(i+1<argc?argv[i+1]:"review_out/ai-air-transport");game.shutdown();return failures==0?0:1;
+    }
     if(findFlag("--ai-factory-exit-regression")>=0) {
         int failures=game.aiFactoryExitRegression();game.shutdown();return failures==0?0:1;
     }
     if(findFlag("--ai-economy-regression")>=0) {
         int failures=game.aiEconomyRegression();game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--ai-construction-regression")>=0) {
+        const int i=findFlag("--ai-construction-regression");
+        int failures=game.aiConstructionRegression(i+1<argc?argv[i+1]:"review_out/ai-construction");game.shutdown();return failures==0?0:1;
     }
     if(findFlag("--ai-air-defense-regression")>=0) {
         int failures=game.aiAirDefenseRegression();game.shutdown();return failures==0?0:1;
@@ -624,24 +876,124 @@ int main(int argc, char** argv) {
     if (findFlag("--app-state-test") >= 0) {
         int failures=game.appPersistenceTest();game.shutdown();return failures==0?0:1;
     }
+    if(findFlag("--campaign-save-regression")>=0) {
+        int failures=game.campaignSaveRegression();game.shutdown();return failures?1:0;
+    }
+    if(findFlag("--unit-voice-regression")>=0) {
+        int failures=game.unitVoiceRegression();game.shutdown();return failures?1:0;
+    }
+    if(findFlag("--native-audio-regression")>=0) {
+        int failures=game.nativeAudioRegression();game.shutdown();return failures?1:0;
+    }
+    if(findFlag("--net-protocol-regression")>=0) {
+        int result=game.netProtocolRegression();game.shutdown();return result?1:0;
+    }
+    if(int at=findFlag("--net-production-regression");at>=0) {
+        int result=game.netProductionRegression(flagStr(at,1,"review_out/net-production"));game.shutdown();return result?1:0;
+    }
+    if(int at=findFlag("--modal-input-regression");at>=0) {
+        int result=game.modalInputRegression(flagStr(at,1,"review_out/modal-input"));game.shutdown();return result?1:0;
+    }
+    if(int at=findFlag("--classic-input-regression");at>=0) {
+        int result=game.classicInputRegression(flagStr(at,1,"review_out/classic-input"));game.shutdown();return result?1:0;
+    }
+    if(int at=findFlag("--original-skirmish-regression");at>=0) {
+        int result=game.originalSkirmishRegression(flagStr(at,1,"review_out/original-skirmish"),flagStr(at,2,nullptr));game.shutdown();return result?1:0;
+    }
+    if(int at=findFlag("--original-skirmish-natural");at>=0) {
+        int result=game.originalSkirmishNaturalRegression(flagStr(at,1,"review_out/original-natural"),flagInt(at,2,0));game.shutdown();return result?1:0;
+    }
+    if(findFlag("--ai-scouting-regression")>=0) {
+        int result=game.aiScoutingRegression();game.shutdown();return result?1:0;
+    }
+    if(findFlag("--entity-identity-regression")>=0) {
+        int result=game.entityIdentityRegression();game.shutdown();return result?1:0;
+    }
+    if(findFlag("--aircraft-spawner-regression")>=0) {
+        const int at=findFlag("--aircraft-spawner-regression");
+        int result=game.aircraftSpawnerRegression(at+1<argc?argv[at+1]:"review_out/aircraft-spawners");game.shutdown();return result==77?77:result?1:0;
+    }
+    if(findFlag("--asw-spawner-regression")>=0) {
+        const int at=findFlag("--asw-spawner-regression");
+        int result=game.aswSpawnerRegression(at+1<argc?argv[at+1]:"review_out/asw-spawners");game.shutdown();return result==77?77:result?1:0;
+    }
+    if(findFlag("--rules-spawner-regression")>=0) {
+        const int at=findFlag("--rules-spawner-regression");
+        int result=game.rulesSpawnerRegression(at+1<argc?argv[at+1]:"review_out/rules-spawners");game.shutdown();return result==77?77:result?1:0;
+    }
+    if(int at=findFlag("--rules-consistency-regression");at>=0) {
+        int result=game.rulesConsistencyRegression(at+1<argc?argv[at+1]:"review_out/rules-consistency");game.shutdown();return result?1:0;
+    }
+    if(findFlag("--rules-profile-regression")>=0) {
+        const int at=findFlag("--rules-profile-regression");
+        int result=game.rulesProfileRegression(at+1<argc?argv[at+1]:"review_out/rules-profile");game.shutdown();return result==77?77:result?1:0;
+    }
+    if(int at=findFlag("--source-match-regression");at>=0) {
+        int failures=game.sourceMatchRegression(at+1<argc?argv[at+1]:"review_out/source-match",
+            (std::max)(1,flagInt(at,2,36000)),flagInt(at,3,-1),flagInt(at,4,-1));
+        game.shutdown();return failures==0?0:1;
+    }
+    if(int at=findFlag("--source-mode-regression");at>=0) {
+        int failures=game.sourceModeRegression(at+1<argc?argv[at+1]:"review_out/source-modes");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(int at=findFlag("--ground-travel-regression");at>=0) {
+        const int failures=game.groundTravelRegression(at+1<argc?argv[at+1]:"review_out/ground-travel");
+        game.shutdown();return failures?1:0;
+    }
+    if(int at=findFlag("--ground-control-regression");at>=0) {
+        const int failures=game.groundControlRegression(at+1<argc?argv[at+1]:"review_out/ground-control");
+        game.shutdown();return failures?1:0;
+    }
+    if(int at=findFlag("--source-economy-regression");at>=0) {
+        int failures=game.sourceEconomyRegression(at+1<argc?argv[at+1]:"review_out/source-economy");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(int at=findFlag("--support-delivery-regression");at>=0) {
+        int failures=game.supportDeliveryRegression(at+1<argc?argv[at+1]:"review_out/support-delivery");
+        game.shutdown();return failures?1:0;
+    }
+    if(int at=findFlag("--source-support-regression");at>=0) {
+        int failures=game.sourceSupportRegression(at+1<argc?argv[at+1]:"review_out/source-support");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(int at=findFlag("--source-crate-regression");at>=0) {
+        int failures=game.sourceCrateRegression(at+1<argc?argv[at+1]:"review_out/source-crates");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(int at=findFlag("--native-gatling-regression");at>=0) {
+        int failures=game.nativeGatlingRegression(at+1<argc?argv[at+1]:"review_out/native-gatling");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(findFlag("--rules-selection-regression")>=0) {
+        const int at=findFlag("--rules-selection-regression");int result=game.rulesSelectionRegression(at+1<argc?argv[at+1]:"review_out/rules-selection");game.shutdown();return result==77?77:result?1:0;
+    }
+    if(findFlag("--group-order-regression")>=0) {
+        int result=game.groupOrderRegression();game.shutdown();return result?1:0;
+    }
     if (findFlag("--state-test") >= 0) {
         int failures = game.statePersistenceTest();
         game.shutdown();
         return failures == 0 ? 0 : 1;
     }
     // P8 联机双进程自测：先起 --net-host，再起 --net-client；两端日志比对校验和
+    const auto netRules=[&](){const int at=findFlag("--ruleset");if(at<0)return RulesChoice::Fusion;
+        if(at+1>=argc)return RulesChoice::COUNT;const std::string value=argv[at+1];
+        return value=="fusion"?RulesChoice::Fusion:value=="ra2"?RulesChoice::RA2:value=="yr"?RulesChoice::YR:RulesChoice::COUNT;};
+    const auto netCountry=[&](){const int at=findFlag("--net-country");return at<0?0:flagInt(at,1,-1);};
     if (int fi = findFlag("--net-host"); fi >= 0) {
         int frames = flagInt(fi, 1, 900);
-        int rc = game.netSelfTestDriver(0, frames);
+        const auto choice=netRules();const int country=netCountry();int rc=choice==RulesChoice::COUNT || country<0 || country>(int)Country::COUNT?2:game.netSelfTestDriver(0,frames,choice,country);
         game.shutdown();
         return rc;
     }
     if (int fi = findFlag("--net-client"); fi >= 0) {
         int frames = flagInt(fi, 1, 900);
-        int rc = game.netSelfTestDriver(1, frames);
+        const auto choice=netRules();const int country=netCountry();int rc=choice==RulesChoice::COUNT || country<0 || country>(int)Country::COUNT?2:game.netSelfTestDriver(1,frames,choice,country);
         game.shutdown();
         return rc;
     }
+#endif
     game.run();
     game.shutdown();
     return 0;

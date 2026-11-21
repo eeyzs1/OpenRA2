@@ -1,0 +1,38 @@
+{
+  "originalSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "entryPointExecuted": false,
+  "independentYRExecuted": false,
+  "batch": "review_out/native-source-coordinates-20261118",
+  "compiledOriginalCases": {
+    "coordinates": 368,
+    "housePipeline": 336,
+    "nearbyPipeline": 336
+  },
+  "additionalResearchCases": {
+    "dimensionCalls": 88,
+    "defaultCellConstructor": 1
+  },
+  "files": {
+    "native-source-coordinates-ra2.csv": {
+      "rows": 368,
+      "sha256": "76b4a3e4e86dad4d9372153e73c6ae0bcc2673e82f0f94f29e025722e6e1093a"
+    },
+    "native-source-house-ra2.csv": {
+      "rows": 336,
+      "sha256": "0372d2cf919d313f20b40b385d911190da048e21bd000060b83d8dbf6be62ab3"
+    },
+    "native-source-nearby-ra2.csv": {
+      "rows": 336,
+      "sha256": "aaf386404aeb16f423dd7af5cafd1acb184bc6a2adeeb7e06ce7006c048d58e8"
+    }
+  },
+  "scope": "Complete original House weighted center through center write, real Building.GetCoords/dimensions, Nearby, usability, footprint, IsClearToMove, projection and Map.GetCell execute. Only owner-adjusted GetCost is a disclosed synthetic virtual. Flat sparse maps/cells/building occupancies are explicit input data, using the actual default Cell snapshot. No full map initialization or original game entry point. Scene40 comparison swaps only the coordinate virtual to actual Object.GetCoords and sets invalid-cell land3; it is a model, not a current executable failure.",
+  "baselineCurrentScene40FidelityGatePassed": false,
+  "baselineActualDifferencesPerBuild": 472,
+  "baselineRowsPerBuild": 912,
+  "housePipelineSources": [
+    "cell-house-pipeline.json:252",
+    "cell-house-edge-calibration.json:84"
+  ],
+  "sourceHouseOutsideCanvasCases": 2
+}

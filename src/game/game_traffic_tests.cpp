@@ -1,8 +1,9 @@
-#include "game/game.h"
+#include "game_regression.h"
+#include "world_save_sections.h"
 #include <cstdio>
 #include <cstring>
 
-int Game::trafficRegression(int scenarioFilter) {
+int GameRegression::trafficRegression(int scenarioFilter) {
     if(scenarioFilter < -1 || scenarioFilter > 3) return 1;
     int failures=0;
     for(int scenario=0;scenario<4;++scenario) {
@@ -79,7 +80,18 @@ int Game::trafficRegression(int scenarioFilter) {
                     fclose(file);
                 }
                 uint32_t count=0;
-                if(bytes.size()>=25) std::memcpy(&count,bytes.data()+bytes.size()-25,4);
+                size_t suffix=0;
+                // Locate the traffic record before the actual current native
+                // extensions, rather than assuming a historical marker count.
+                if(FILE* tail=tmpfile()) {
+                    const auto modern=locateWorldSaveSection(bytes,WorldSaveSection::AttackMove);
+                    if(modern && w.writeNativeActors(tail) && w.writeBridgeState(tail) && w.writeNativeGateState(tail)
+                        && w.writeNativeEventState(tail) && w.writeNativeRocketState(tail) && w.writeNativeProductionState(tail)
+                        && w.writeNativeAIState(tail) && w.writeNativeCrateState(tail) && w.writeNativeConditionState(tail))
+                        suffix=(size_t)ftell(tail)+bytes.size()-modern->offset;
+                    fclose(tail);
+                }
+                if(suffix && bytes.size()>=suffix+25)std::memcpy(&count,bytes.data()+bytes.size()-suffix-25,4);
                 integrity &= count==1;
                 auto loads=[](const std::vector<uint8_t>& data) {
                     FILE* file=tmpfile();World restored;bool ok=false;
@@ -88,7 +100,7 @@ int Game::trafficRegression(int scenarioFilter) {
                 };
                 if(count==1) {
                     integrity &= loads(bytes);
-                    const size_t record=bytes.size()-21;
+                    const size_t record=bytes.size()-suffix-21;
                     auto rejects=[&](size_t offset,const auto& value) {
                         auto corrupt=bytes;std::memcpy(corrupt.data()+record+offset,&value,sizeof(value));
                         integrity &= !loads(corrupt);
@@ -96,7 +108,7 @@ int Game::trafficRegression(int scenarioFilter) {
                     rejects(0,int32_t{3});rejects(4,int32_t{96*96});rejects(8,int32_t{-1});
                     rejects(12,uint64_t{w.tick+1000001});rejects(20,uint8_t{2});
                     auto duplicate=bytes;uint32_t two=2;std::memcpy(duplicate.data()+record-4,&two,4);
-                    duplicate.insert(duplicate.end(),bytes.begin()+record,bytes.end());integrity &= !loads(duplicate);
+                    duplicate.insert(duplicate.end()-suffix,bytes.begin()+record,bytes.end()-suffix);integrity &= !loads(duplicate);
                     auto trailing=bytes;trailing.push_back(0);integrity &= !loads(trailing);
                     auto oldTag=bytes;oldTag[7]='M';integrity &= !loads(oldTag);
                 }

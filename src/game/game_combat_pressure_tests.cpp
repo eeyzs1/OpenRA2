@@ -1,4 +1,4 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "sfx/sound.h"
 #include <algorithm>
 #include <chrono>
@@ -20,7 +20,7 @@ int aliveUnits(const World& w,int player=-1) {
 }
 }
 
-int Game::combatPressureRegression(int scenarioFilter,const char* outputDir) {
+int GameRegression::combatPressureRegression(int scenarioFilter,const char* outputDir) {
     if(scenarioFilter < -1 || scenarioFilter > 3)return 1;
     int failures=0;g_sfx.setMasterVol(0);
     std::filesystem::create_directories(outputDir);

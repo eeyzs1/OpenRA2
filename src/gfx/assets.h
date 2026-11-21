@@ -108,6 +108,9 @@ inline const char* unitAssetName(UnitType t) {
         case UnitType::RobotTank: return "robottank";
         case UnitType::BattleFortress: return "battlefortress";
         case UnitType::Hornet: return "hornet";
+        case UnitType::ASW: return "asw";
+        case UnitType::CargoPlane: return "cargoplane";
+        case UnitType::SpyPlane: return "spyplane";
         case UnitType::NavySEAL: return "navyseal";
         case UnitType::Yuri: return "yuri";
         case UnitType::ChronoCommando: return "chronocommando";
@@ -129,6 +132,7 @@ inline const char* unitAssetName(UnitType t) {
         case UnitType::SlaveMiner: return "slaveminer";
         case UnitType::YuriPrime: return "yuriprime";
         case UnitType::ChronoIvan: return "chronoivan";
+        case UnitType::NativeVehicle: return "nativevehicle";
         default: return "unknown";
     }
 }

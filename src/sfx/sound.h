@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include "sfx/music.h"
 
 // 音效系统：仅加载 assets/sfx/ 外部音频；缺失则记错并拒绝启动（无程序合成回退）
 #include "game/presentation_events.h"
@@ -25,8 +26,10 @@ public:
     void initBgm();
     void updateBgm();            // 每帧调用驱动音乐流
     void toggleBgm();
-    bool bgmEnabled() const { return bgmOn; }
-    bool bgmReady() const { return bgmOk; }
+    bool bgmEnabled() const { return music.enabled(); }
+    bool bgmReady() const { return music.ready(); }
+    void setMusicScene(MusicScene scene) { music.setScene(scene); }
+    NativeMusicPlayer& musicPlayer(){return music;}
 
     // 主音量 0..1（音效+音乐；选项界面热更新，无需重启）
     void setMasterVol(float v);
@@ -45,16 +48,7 @@ private:
     int missingAssets = 0;
     float masterVol = 1.0f;
 
-    Music bgm{};
-    bool bgmOk = false;
-    bool bgmOn = true;
-    // 外部 BGM 的 WAV 字节（若从内存加载时使用）
-    std::vector<unsigned char> bgmMem;
-    // 外部音乐播放列表（assets/music/）；空则拒绝启动
-    std::vector<std::string> bgmFiles;
-    int bgmIdx = -1;
-    bool bgmFromFiles = false;
-    void playBgmTrack(int idx);
+    NativeMusicPlayer music;
 };
 
 extern SoundBank g_sfx;

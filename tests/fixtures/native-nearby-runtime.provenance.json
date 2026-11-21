@@ -1,0 +1,35 @@
+{
+  "originalSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "entryPointExecuted": false,
+  "independentYRExecuted": false,
+  "batch": "review_out/native-nearby-runtime-20261118",
+  "originalCases": {
+    "clearance": 2785,
+    "predicate": 2304,
+    "bridgeExpression": 576,
+    "frameIncrement": 9
+  },
+  "scope": "Original cell-clearance and extra predicate bodies, bridge-bit expression block and pre-work frame-increment block. Non-minus-one zone requests and object WhatAmI getters have disclosed substitutes; the common Nearby caller has zone=-1. This is not full original map initialization, source loop scheduling or independent YR.",
+  "files": {
+    "native-nearby-costs-ra2.csv": {
+      "rows": 864,
+      "sha256": "6813c3929678bc9367679f8cb94b1a4143635ca7ef6a8fcb8bc8670a1443aa4d"
+    },
+    "native-nearby-clearance-ra2.csv": {
+      "rows": 2785,
+      "sha256": "ff92067eb47ab81165a7d614e1dfe574835ef69dbd606dc61b53f3efc2788166"
+    },
+    "native-nearby-burrow-ra2.csv": {
+      "rows": 2304,
+      "sha256": "2f0f60a21b66657434e5e315224a208e603e4bf89c318c8ae808f190a7e56f04"
+    },
+    "native-nearby-bridge-flags-ra2.csv": {
+      "rows": 576,
+      "sha256": "27f9b71b14170fe323227ea629a157b023871c8bf97413885240e1cab96f11d5"
+    },
+    "native-nearby-frame-ra2.csv": {
+      "rows": 9,
+      "sha256": "2dd74152ace6c9d25e34a9195354f64228b1c24c1615382b918be281f7c3ae99"
+    }
+  }
+}

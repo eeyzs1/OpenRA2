@@ -1,9 +1,13 @@
 #include "game/game.h"
 #include <cmath>
 
-void Game::updateCamera() {
+void Game::updateCamera(float frameSeconds) {
     int viewW = SCREEN_W - sidebarW;
-    float sp = camSpeed * gameSpeed / camZoom;
+    const float elapsed=frameSeconds<0 ? GetFrameTime() : frameSeconds;
+    // Camera speed is measured in pixels per second, independent of simulation
+    // speed. Bound a stalled frame so returning to the window cannot fling it.
+    const float dt=std::isfinite(elapsed)?std::clamp(elapsed,0.f,0.1f):0.f;
+    float sp = camSpeed * 60.f * dt / camZoom;
     if (kDown(KEY_LEFT)) camX -= sp;
     if (kDown(KEY_RIGHT)) camX += sp;
     if (kDown(KEY_UP)) camY -= sp;
@@ -12,7 +16,7 @@ void Game::updateCamera() {
     // 开局短时禁止边缘卷轴：从菜单点「开始」后鼠标常在侧栏/边缘，否则镜头瞬间被拖离基地车
     if (camEdgeLock > 0) {
         camEdgeLock--;
-    } else {
+    } else if((sim.active || IsWindowFocused()) && m.x>=0 && m.y>=0 && m.x<SCREEN_W && m.y<SCREEN_H) {
         if (m.x < 4) camX -= sp;
         if (m.x > SCREEN_W - 4) camX += sp;
         if (m.y < 4) camY -= sp;

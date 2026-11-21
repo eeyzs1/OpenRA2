@@ -1,8 +1,8 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include <array>
 #include <cstdio>
 
-int Game::aiAirDefenseRegression() {
+int GameRegression::aiAirDefenseRegression() {
     int failures=0;
     const std::array<UnitType,4> aa{UnitType::IFV,UnitType::FlakTrack,UnitType::Apocalypse,UnitType::GatlingTank};
     for(int faction=0;faction<4;++faction)for(int scenario=0;scenario<11;++scenario) {

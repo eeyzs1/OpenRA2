@@ -131,6 +131,36 @@ static bool loadMissionFile(const char* path, MissionDef& md) {
     md.objective = Ini::toInt(g->get("Objective"), 0);
     md.objectiveTick = Ini::toInt(g->get("ObjectiveTick"), 0);
     if ((v = g->get("MapFile"))) md.mapFile = v;
+    if ((v = g->get("NativeScene"))) md.nativeScene = v;
+    if ((v = g->get("NativeTextFile"))) md.nativeTextFile = v;
+    if (!md.nativeScene.empty()) {
+        // Install an entry only when its real content is present. A missing
+        // original scene must never silently start a generated skirmish.
+        if (md.mapFile.empty() || contentResolve(md.nativeScene.c_str()).empty()
+            || contentResolve(md.mapFile.c_str()).empty()) return false;
+        if (!md.nativeTextFile.empty()) {
+            const auto textPath=contentResolve(md.nativeTextFile.c_str());Ini texts;
+            if (textPath.empty() || !texts.load(textPath.c_str())) return false;
+            if (const auto* section=texts.find("Text")) md.nativeTexts=section->kv;
+            if (md.nativeTexts.empty()) return false;
+            for(auto& [key,text]:md.nativeTexts) {
+                std::string decoded;
+                for(size_t i=0;i<text.size();++i) {
+                    if(text[i]=='\\' && i+1<text.size()) {
+                        const char code=text[++i];decoded+=code=='n'?'\n':code=='s'?';':code=='h'?'#':code;
+                    } else decoded+=text[i];
+                }
+                text=std::move(decoded);
+            }
+            auto sourceText=[&](const char* field,std::string& destination) {
+                const char* label=g->get(field);if(!label)return true;std::string key=label;
+                for(char& c:key)if(c>='A' && c<='Z')c+='a'-'A';
+                for(const auto& entry:md.nativeTexts)if(entry.first==key){destination=entry.second;return true;}
+                return false;
+            };
+            if(!sourceText("NativeNameKey",md.name) || !sourceText("NativeBriefKey",md.brief))return false;
+        }
+    }
     md.noStartForce = Ini::toBool(g->get("NoStartForce"), false);
     md.track = Ini::toInt(g->get("Track"), 0); // 0=融合 1=官方
     if ((v = g->get("LineId"))) md.lineId = v;
@@ -166,6 +196,8 @@ static bool loadMissionFile(const char* path, MissionDef& md) {
             if ((v = sec.get("TextEn"))) o.textEn = v;
             o.primary = Ini::toBool(sec.get("Primary"), true);
             o.gateWin = Ini::toBool(sec.get("GateWin"), o.primary);
+            if ((v = sec.get("NativeCompleteTrigger"))) o.nativeCompleteTrigger=v;
+            o.nativeCompleteOnVictory=Ini::toBool(sec.get("NativeCompleteOnVictory"),false);
             if (!o.text.empty()) md.objectives.push_back(std::move(o));
         } else if (sec.name.rfind("Trig.", 0) == 0) {
             Trigger t;

@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <optional>
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -99,6 +100,7 @@ struct Sprite {
     // 不透明内容包围盒（纹理像素坐标，含 finishBldSprite 的 6/4 边距）
     // 用于选中虚线笼：宽/高贴合可见建筑，而非整幅透明画布
     int visL = 0, visT = 0, visR = 0, visB = 0;
+    std::optional<Vector2> barrelTip; // Screen offset from the vehicle's physical origin.
     bool valid() const { return tex.id != 0; }
     int visW() const { return std::max(1, visR - visL + 1); }
     int visH() const { return std::max(1, visB - visT + 1); }

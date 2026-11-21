@@ -18,12 +18,12 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"设置", "Settings"},
     {"随机", "Random"},
     // 主菜单
-    {"共和国之辉", "OPENRA2"},
+    {"红色警戒2", "OPENRA2"},
     {"COMMAND & CONQUER · OPENRA2 复刻", "COMMAND & CONQUER · OPENRA2 REMAKE"},
     {"遭遇战", "Skirmish"},
     {"战役模式", "Campaign"},
     {"退出游戏", "Exit Game"},
-    {"程序生成 3D 预渲染素材 · 盟军 / 苏联 / 中国", "Procedural 3D pre-rendered assets · Allies / Soviet / China"},
+    {"经典 RA2 · 遭遇战与原版任务", "Classic RA2 · Skirmish and original missions"},
     {"地图编辑器", "Map Editor"},
     // 战役选择
     {"任务 %d", "Mission %d"},
@@ -97,8 +97,8 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"歼灭所有敌军", "Eliminate all enemies"},
     {"已选 %d 单位", "%d units selected"},
     {"载员 %d/%d  %s 卸载", "Cargo %d/%d  %s to unload"},
-    {"左键选择/框选 右键移动/攻击(点己方运输船=登船) A+右键攻击移动 ESC菜单 · 按键可在设置中修改",
-     "LMB select/box  RMB move/attack (click own transport=board)  A+RMB attack-move  ESC menu · keys in Settings"},
+    {"选择/框选部队后向地面或目标下令 · A 攻击移动 · ESC菜单 · 鼠标方案可在设置中修改",
+     "Select units, then give ground or target orders · A attack-move · ESC menu · mouse scheme in Settings"},
     {"雷达离线", "RADAR OFFLINE"},
     {"已暂停", "PAUSED"},
     {"胜 利", "VICTORY"},
@@ -139,7 +139,7 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"步兵进驻建筑", "Infantry garrisoning"},
     {"驻军已撤出", "Garrison evacuated"},
     {"车辆前往维修厂", "Moving to service depot"},
-    {"路径点模式：右键追加途径点", "Waypoint mode: right-click to append waypoints"},
+    {"路径点模式：向地面下令以追加途径点", "Waypoint mode: give ground orders to append waypoints"},
     {"路径点模式关闭", "Waypoint mode off"},
     {"伞兵", "Paradrop"},
     {"选择伞兵空降点（右键取消）", "Select paradrop zone (right-click to cancel)"},
@@ -337,7 +337,7 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"目标已属于己方或盟友", "Target already belongs to your side or an ally"},
     {"只能维修己方建筑", "Engineers can only repair your own buildings"},
     {"该建筑不能占领", "This building cannot be captured"},
-    {"建筑无需维修", "Building does not need repairs"},
+    {"目标无需维修", "Target does not need repairs"},
     {"工程师无法到达该建筑", "Engineer cannot reach this building"},
     {"工程师的建筑目标已失效", "Engineer's building target is no longer valid"},
     {"登载指令已确认", "Boarding order confirmed"},
@@ -354,6 +354,8 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"已撤出 %d 个单位", "Evacuated %d units"},
     {"已移出 %d 个单位，%d 个仍留在目标内", "%d units released; %d remain inside"},
     {"出口受阻，%d 个单位仍留在目标内", "Exit blocked; %d units remain inside"},
+    {"正在降落，随后卸载 %d 个单位", "Landing to unload %d units"},
+    {"正在等待出口，%d 个单位仍在运输工具内", "Waiting for an exit; %d units remain aboard"},
     {"已移出 %d 个单位，%d 个目标未完成：%s", "%d units released; %d targets incomplete: %s"},
     {"目标没有乘员或驻军", "Target has no passengers or occupants"},
     {"目标不支持卸载或撤出", "Target does not support unloading or evacuation"},
@@ -435,6 +437,37 @@ static const char* TBL[(int)S::COUNT][2] = {
     {"建筑正在出售，无法执行指令", "Building is being sold"},
     {"建筑尚未完成，无法维修", "Building is still under construction"},
     {"尚未安装战役", "No campaigns installed"},
+    {"单位就绪", "Unit ready"},
+    {"建造完成", "Construction complete"},
+    {"资金不足", "Insufficient funds"},
+    {"工程师正在前往修复桥梁", "Engineer moving to repair the bridge"},
+    {"桥梁已修复", "Bridge repaired"},
+    {"相连桥梁完整，无需修复", "The connected bridge does not need repairs"},
+    {"小屋没有相连的可修复桥梁", "No repairable bridge is connected to this hut"},
+    {"桥梁位置受阻，无法修复", "The bridge is obstructed and cannot be repaired"},
+    {"双方游戏规则不同，请使用相同规则与 Mod 后重连", "Game rules differ. Use the same rules and mods, then reconnect"},
+    {"双方游戏版本不同，请更新到相同版本后重连", "Game versions differ. Update both games, then reconnect"},
+    {"规则、素材或数值不可用，请检查安装与 Mod 后重连", "Rules, assets or values are invalid. Check the installation and mods, then reconnect"},
+    {"联机握手失败，请重新连接", "Handshake failed. Reconnect to the game"},
+    {"正在确认双方游戏规则…", "Confirming game rules..."},
+    {"游戏规则", "Rules"},
+    {"融合扩展", "Fusion"},
+    {"红警2基础", "Red Alert 2 base"},
+    {"尤里基础", "Yuri base"},
+    {"规则包或配套素材不可用", "Rules package or assets unavailable"},
+    {"规则决定可选国家、单位、武器和生产数据；基础规则仍在完善", "Rules determine available countries, units, weapons and production. Base-rule fidelity is still being improved"},
+    {"双方选择的规则不同，请选择相同规则后重连", "Different rules selected. Choose the same rules, then reconnect"},
+    {"间谍渗透：敌方电力已瘫痪", "Spy: enemy power sabotaged"},
+    {"间谍渗透：敌方雷达资料已清除", "Spy: enemy radar shrouded"},
+    {"间谍渗透：新车辆直接晋升老兵", "Spy: new vehicles start as veterans"},
+    {"间谍渗透：已取得科技资料", "Spy: technology acquired"},
+    {"美国伞兵", "American Paradrop"},
+    {"鼠标指令", "Mouse orders"},
+    {"左键下令（原版）", "Left click (classic)"},
+    {"右键下令", "Right click"},
+    {"湖泊之战（2）", "Little Big Lake (2)"},
+    {"雪谷（2–4）", "Snow Valley (2–4)"},
+    {"原版遭遇战地图；保留原始地形、矿区和出生点", "Original skirmish map with original terrain, ore and starting points"},
 };
 
 const char* TR(S id) {
@@ -509,7 +542,7 @@ static const char* kSKey[(int)S::COUNT] = {
     "MsgNotCapturable","MsgRepairFullHealth","MsgEngineerUnreachable","MsgEngineerInvalid",
     "MsgBoardAccepted","MsgGarrisonAccepted","MsgEntryPartial","MsgEntryUnsupported","MsgEntryOwner","MsgEntryIncompatible",
     "MsgEntryFull","MsgEntryDeployed","MsgEntryUnreachable","MsgEntryInvalid",
-    "MsgUnloadDone","MsgUngarrisonDone","MsgReleasePartial","MsgReleaseBlocked","MsgReleaseSomeTargets",
+    "MsgUnloadDone","MsgUngarrisonDone","MsgReleasePartial","MsgReleaseBlocked","MsgReleaseLanding","MsgReleaseWaiting","MsgReleaseSomeTargets",
     "MsgReleaseEmpty","MsgReleaseUnsupported","MsgReleaseInvalid",
     "MsgServiceAccepted","MsgServicePartial","MsgServiceUnsupported","MsgServiceOwner","MsgServiceIncompatible",
     "MsgServiceFull","MsgServiceDeployed","MsgServiceUnreachable","MsgServiceInvalid","MsgServiceWorking",
@@ -529,6 +562,14 @@ static const char* kSKey[(int)S::COUNT] = {
     "MsgDeployStarting","MsgUndeployStarting","MsgDeployBusy",
     "MsgRepairStarted","MsgRepairStopped","MsgBuildingInvalid","MsgBuildingOwner","MsgBuildingSelling","MsgBuildingConstructing",
     "CampaignUnavailable",
+    "EvaUnitReady","EvaConstructionComplete","EvaInsufficientFunds",
+    "MsgBridgeRepairAccepted","MsgBridgeRestored","MsgBridgeIntact","MsgBridgeUnavailable","MsgBridgeBlocked",
+    "NetRulesMismatch","NetVersionMismatch","NetInvalidRules","NetHandshakeFailed","NetCheckingRules",
+    "RulesSet","RulesFusion","RulesRA2","RulesYR","RulesUnavailable","TipRulesSet","NetProfileMismatch",
+    "SpySourcePower","SpySourceRadar","SpySourceVehicles","SpySourceTechnology",
+    "AmericanParadrop",
+    "MouseOrders","ClassicMouseOrders","ModernMouseOrders",
+    "MapLittleBigLake","MapSnowValley","TipOriginalSkirmish",
 };
 
 static int sKeyByName(const char* s) {
@@ -572,7 +613,7 @@ static const char* UNIT_EN[(int)UnitType::COUNT] = {
     "Magnetron", "Master Mind", "Floating Disc", "Boomer",
     "Boris", "Siege Chopper", "Chaos Drone",
     "Slave", "Slave Miner",
-    "Yuri Prime", "Chrono Ivan",
+    "Yuri Prime", "Chrono Ivan", "Native vehicle", "Osprey", "Cargo Plane", "Spy Plane",
 };
 
 static const char* BLD_EN[(int)BldType::COUNT] = {
@@ -853,13 +894,16 @@ void appendAllFontText(std::string& out) {
         out += md.name; out += md.brief;
         out += md.nameEn; out += md.briefEn;
         for (const Trigger& t : md.triggers) { out += t.msg; out += t.msgEn; }
+        for (const auto& o : md.objectives) { out += o.text; out += o.textEn; }
+        for (const auto& [key,text] : md.nativeTexts) out += text;
     }
     // 窗口标题 / 遭遇战难度下拉（硬编码文案）与杂项
-    out += "OpenRA2 - 共和国之辉 复刻";
+    out += "OpenRA2 - 红色警戒2 复刻";
     out += "简单普通困难残酷";
     out += "EasyNormalHardBrutal";
     out += "主菜单";
     // 开局提示 + 常用全角标点（ini 覆盖后仍须进字模，避免缺字方框）
     out += "找到基地车，按D键展开！";
     out += "，。！？、；：“”‘’（）【】…—";
+    out += "●○·";
 }

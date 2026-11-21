@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+#include <optional>
+#include <utility>
+#include "core/sha256.h"
 #include "core/util.h"
 
 // ===================== 阵营 =====================
@@ -118,6 +121,10 @@ enum class UnitType : uint8_t {
     // ---- YR 补洞：英雄 / 渗透 ----
     YuriPrime,                   // 尤里首脑（英雄；远程心控，可控建筑）
     ChronoIvan,                  // 超时空伊文（渗透苏军实验室；炸弹+超时空机动）
+    NativeVehicle,               // unbuildable carrier for an authored native vehicle definition
+    ASW,                         // destroyer-launched Osprey; not directly buildable
+    CargoPlane,                  // support transport; never player-built
+    SpyPlane,                    // support reconnaissance aircraft
     COUNT
 };
 
@@ -192,6 +199,7 @@ SWType bldProvidesSW(BldType t);
 // SpeedLeptons：原作 leptons/帧（1 格=256）；Arcing 强制 50。
 // OpenRA2@30fps：cells/tick = leptons/512（对齐原作 15fps 墙钟位移）。
 struct WeaponDef;
+struct NativeWeaponData;
 
 struct ProjectileDef {
     const char* name = "Cannon";
@@ -233,6 +241,10 @@ struct WeaponDef {
     int speedLeptons = -1;       // <0 用弹道默认；武器 Speed（leptons/帧）
     float cellSpread = -1; // resolved at launch; <0 retains legacy Splash behavior
     float percentAtMax = 1;
+    const float* nativeVerses=nullptr; // immutable source definition, reconstructed on load
+    int nativeType=-1; // source index retained by launched projectiles
+    int nativeSlot=-1; // -1 legacy launcher profile; 0..3 original conventional slot
+    const NativeWeaponData* nativeSource=nullptr; // immutable Scene32 catalog; reconstructed from the saved source
 };
 
 // ===================== 单位定义 =====================
@@ -265,6 +277,8 @@ struct UnitDef {
     int cargoSizeLimit = 2; // largest passenger; amphibious transport=6
     bool hasAirWeapon = false;
     WeaponDef airWeapon; // target is airborne; otherwise use weapon/elite
+    int8_t bridgeClearance=-1; // -1 core reference; 0 too large; 1 fits below a high bridge
+    bool fitsUnderBridge() const;
     bool hasAntiAir() const { return (weapon.antiAir && weapon.damage>0)
         || (hasAirWeapon && airWeapon.antiAir && airWeapon.damage>0); }
     int transportSize() const {
@@ -332,6 +346,21 @@ struct BldDef {
 const UnitDef& unitDef(UnitType t);
 const BldDef& bldDef(BldType t);
 
+// Authored actors keep immutable definitions; ordinary actors retain the
+// existing tables. Looking up an actor must not discard its original type.
+template<class A> requires requires(const A& a){a.nativeIdentity.definition;a.utype;}
+const UnitDef& unitDef(const A& a) {
+    return a.nativeIdentity.definition?a.nativeIdentity.definition->unit:unitDef(a.utype);
+}
+template<class A> requires requires(const A& a){a.nativeIdentity.definition;a.type;}
+const UnitDef& unitDef(const A& a) {
+    return a.nativeIdentity.definition?a.nativeIdentity.definition->unit:unitDef(a.type);
+}
+template<class A> requires requires(const A& a){a.nativeIdentity.definition;a.btype;}
+const BldDef& bldDef(const A& a) {
+    return a.nativeIdentity.definition?a.nativeIdentity.definition->building:bldDef(a.btype);
+}
+
 // 独立炮塔（车体朝移动方向、炮塔朝目标）：模拟层边走边打用，勿依赖 gfx
 bool unitHasTurret(UnitType t);
 
@@ -343,6 +372,17 @@ void loadProjectiles(const char* path);
 // 内容根叠加载：按 contentResolveStack 顺序依次 patch（后写覆盖）
 void loadRulesFromContent();
 void loadProjectilesFromContent();
+
+// Effective lookup tables after all content overlays; excludes shadowed entries.
+struct ProjectileRulesSnapshot {
+    std::vector<std::pair<std::string,ProjectileDef>> definitions;
+    std::vector<std::pair<std::string,std::string>> bridges;
+    ProjectileDef fallback;
+};
+ProjectileRulesSnapshot projectileRulesSnapshot();
+// Human LAN simulation catalog only. No presentation paths, Lua/AI configuration
+// or standalone variants (replace variants are already in the effective tables).
+std::optional<Sha256Digest> simulationRulesFingerprint();
 
 // 自定义单位变体（rules.ini [Unit.XXX] 带 Base= 键；或 units.csv）
 // 变体复用基础类型的全部游戏逻辑，仅覆盖数值；可通过 Lua / 战役 / 地图名调用
@@ -398,6 +438,10 @@ struct GameRules {
     int chopperLandingTicks = 30; // mirrored for takeoff; independent of art frames
     int chopperDeployTicks = 30;  // unfold/fold duration
     int chopperDeployFacing = 2; // original AudioVisual.DeployDir: N=0, NE=1, E=2
+    int carrierRegenerateTicks = 1200;
+    int carrierReloadTicks = 300;
+    int carrierLaunchDelayTicks = 40;
+    int destroyerRegenerateTicks = 800,destroyerReloadTicks = 300,destroyerLaunchDelayTicks = 40;
     float lowPowerSpeedFactor = 0.5f; // 低电时生产速度系数
     float veteranismDmgBonus[3] = {1.0f, 1.1f, 1.3f}; // 新兵/老兵/精英伤害加成
     float veteranArmorBonus[3] = {1.0f, 0.8f, 0.6f};  // 承伤倍率
@@ -454,13 +498,14 @@ inline bool canGarrisonCivHouse(UnitType t) {
 
 // Legacy 武器继续读取 VsInf/VsVeh/VsBld；显式 Warhead 则按目标装甲矩阵结算。
 inline float weaponVsArmor(const WeaponDef& w, Armor armor, bool infantry, bool building) {
+    if(w.nativeVerses)return w.nativeVerses[std::clamp((int)armor,0,10)];
     if (w.warhead == WeaponDef::Warhead::Legacy)
         return building ? w.vsBuilding : (infantry ? w.vsInfantry : w.vsVehicle);
     int wi = (int)w.warhead, ai = std::clamp((int)armor, 0, (int)Armor::COUNT - 1);
     return g_gameRules.warheadVerses[wi][ai];
 }
 
-// 核心经规则统一入口：宝石为普通矿的 2 倍；矿石精炼器提高 25% 收益；
+// 融合规则矿价默认值：宝石为普通矿的 2 倍；矿石精炼器提高 25% 收益；
 // 工业工厂仅降低战车工厂车辆造价 25%，绝不改变生产速度。
 inline int oreUnitValue(bool gems) {
     return gems ? 70 : 35;
@@ -580,6 +625,7 @@ inline bool psychicImmune(UnitType t) {
         case UnitType::SlaveMiner: case UnitType::Slave:
         case UnitType::Tanya: case UnitType::BattleFortress:
         case UnitType::Boris: case UnitType::ChaosDrone:
+        case UnitType::ASW:
             return true;
         default: return false;
     }

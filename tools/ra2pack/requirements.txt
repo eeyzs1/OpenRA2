@@ -1,0 +1,4 @@
+Pillow>=10
+pycryptodome>=3.20
+# Native IsoMapPack5 blocks, MIT-licensed LZO1X implementation.
+lzokay==2.1.0

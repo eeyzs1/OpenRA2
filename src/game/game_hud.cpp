@@ -908,7 +908,7 @@ std::vector<UnitType> Game::tabUnits() const {
 }
 
 void Game::drawHUD() {
-    if(auditHud) { hudItems.clear();hudTip=HudTipAudit{};hudMessage=HudMessageAudit{}; }
+    if(auditHud) { hudItems.clear();supportHudItems.clear();hudTip=HudTipAudit{};hudMessage=HudMessageAudit{}; }
     int sbX = SCREEN_W - sidebarW;
     Player& me = world.players[localPlayer];
     const int style = guiStyleOf(me.faction);
@@ -1112,26 +1112,32 @@ void Game::drawHUD() {
 
     // ===================== 生产 cameo 网格 =====================
     struct GItem { uint8_t kind; int idx; };
-    GItem items[128];
+    GItem items[512+(int)SWType::COUNT+SUPPORT_COUNT];
     int nItems = 0;
     if (uiTab == 1) {
         for (int i = 0; i < (int)SWType::COUNT; i++) {
-            const SWDef& sd = swDef((SWType)i);
-            if (!world.modeAllowsBuilding(localPlayer, sd.fromBld)) continue;
-            if (!world.hasBld(localPlayer, sd.fromBld)) continue;
+            if (!world.swAvailable(localPlayer,(SWType)i,true)) continue;
             items[nItems++] = {2, i};
         }
-        if (world.hasParadropSource(localPlayer)
+        if(world.independentSupportEnabled) {
+            for(int i=0;i<SUPPORT_COUNT;++i)if(world.hasSupportSource(localPlayer,(SupportType)i))items[nItems++]={3,i};
+        } else if (world.hasParadropSource(localPlayer)
             || world.hasSpyPlaneSource(localPlayer)
             || world.hasPsychicRevealSource(localPlayer))
             items[nItems++] = {3, 0};
     }
-    if (uiTab <= 1) {
+    if(world.nativeProductionRules.available) {
+        for(int selector:nativeProductionPalette())items[nItems++]={4,selector};
+    } else if (uiTab <= 1) {
         for (BldType t : tabBuildings()) items[nItems++] = {0, (int)t};
     } else {
         for (UnitType t : tabUnits()) items[nItems++] = {1, (int)t};
     }
 
+    const int paletteScrollMax=std::max(0,(nItems+cols-1)/cols-visRows);
+    if(!suppressUiInput && CheckCollisionPointRec(mousePos(),{(float)CX,(float)gridY,(float)CW,(float)(gridBottom-gridY)}))
+        uiScroll-=(int)GetMouseWheelMove();
+    uiScroll=std::clamp(uiScroll,0,paletteScrollMax);
     int startRow = uiScroll;
     int idx = startRow * cols;
     int drawn = 0;
@@ -1184,25 +1190,34 @@ void Game::drawHUD() {
 
             if (it.kind == 2 || it.kind == 3) { // ---- 超武 / 支援（伞兵/侦察机/心灵揭示）cameo ----
                 bool isPara = it.kind == 3;
-                bool ready = isPara ? me.paradropReady : me.swReady[it.idx];
-                bool targeting = isPara ? targetingParadrop : (targetingSW == (SWType)it.idx);
-                const bool paraSrc = isPara && world.hasParadropSource(localPlayer);
-                const bool spySrc = isPara && !paraSrc && world.hasSpyPlaneSource(localPlayer);
+                const bool separate=isPara && world.independentSupportEnabled;
+                const auto support=separate?(SupportType)it.idx:world.hasParadropSource(localPlayer)?SupportType::Paradrop:
+                    world.hasSpyPlaneSource(localPlayer)?SupportType::SpyPlane:SupportType::PsychicReveal;
+                bool ready = isPara ? separate?world.supportReady(localPlayer,support):me.paradropReady : me.swReady[it.idx];
+                const bool suspended=isPara ? separate && !world.nativeTemporalAbilityOnline(localPlayer,1u<<(int)support,true)
+                    : !world.swAvailable(localPlayer,(SWType)it.idx);
+                ready=ready && !suspended;
+                bool targeting = isPara ? targetingParadrop && (!separate || targetingSupport==support) : (targetingSW == (SWType)it.idx);
+                const bool paraSrc = isPara && (support==SupportType::Paradrop || support==SupportType::AmericanParadrop);
+                const bool spySrc = isPara && support==SupportType::SpyPlane;
                 slotShell(r, ready, false, targeting);
                 if (!orig) // 贴图槽已含深色底；程序化槽需补底
                     DrawRectangle((int)r.x + 2, (int)r.y + 2, (int)r.width - 4, (int)r.height - 16,
                                   Color{22, 26, 34, 255});
                 if (isPara) {
-                    if (paraSrc) paradropGlyph(r);
+                    const auto& icon=supportPowerIcon(support);
+                    if(icon.tex.id)DrawTexturePro(icon.tex,{0,0,(float)icon.tex.width,(float)icon.tex.height},r,{0,0},0,WHITE);
+                    else if (paraSrc) paradropGlyph(r);
                     else if (spySrc) spyPlaneGlyph(r);
                     else psychicRevealGlyph(r);
                 } else swGlyph(it.idx, r, ready ? Color{255, 120, 90, 255} : Color{150, 90, 80, 255});
-                int chargeT = isPara ? World::PARADROP_TIME : swDef((SWType)it.idx).chargeTime;
-                int charge = isPara ? me.paradropCharge : me.swCharge[it.idx];
+                int chargeT = isPara ? separate?world.supportRule(support).rechargeTicks:World::PARADROP_TIME : swDef((SWType)it.idx).chargeTime;
+                int charge = isPara ? separate?world.supportCharge(localPlayer,support):me.paradropCharge : me.swCharge[it.idx];
+                if(auditHud && isPara)supportHudItems.push_back({support,r,ready,charge});
                 if (!ready) {
                     veil(r, (float)charge / chargeT);
                     int secs = (chargeT - charge) / LOGIC_FPS;
-                    const char* ct = TextFormat("%d:%02d", secs / 60, secs % 60);
+                    const char* ct = suspended?TR(S::Paused):TextFormat("%d:%02d", secs / 60, secs % 60);
                     drawTextS(font, ct, (int)(r.x + r.width / 2 - MeasureTextEx(font, ct, 14, 1).x / 2),
                               (int)(r.y + r.height / 2 - 12), 14, WHITE);
                 } else if ((world.tick / 15) % 2) {
@@ -1212,19 +1227,22 @@ void Game::drawHUD() {
                               Color{160, 255, 160, 255});
                 }
                 const char* nm = !isPara ? swName((SWType)it.idx)
+                               : separate && support==SupportType::AmericanParadrop ? TR(S::AmericanParadrop)
                                : paraSrc ? TR(S::Paradrop)
                                : spySrc ? TR(S::SpyPlane) : TR(S::PsychicReveal);
                 nameStrip(r, nm, ready);
                 if (hov) {
                     if (!tipSet) {
                         tipSet = true; tipName = nm; tipPos = mousePos();
-                        if (ready) tipSub = TR(S::ClickTarget);
+                        if(suspended)tipSub=TR(S::Paused);
+                        else if (ready) tipSub = TR(S::ClickTarget);
                         else tipSub = TextFormat("%d:%02d", (chargeT - charge) / LOGIC_FPS / 60,
                                                  ((chargeT - charge) / LOGIC_FPS) % 60);
                     }
                     if (ready && mPressed(MOUSE_LEFT_BUTTON)) {
                         if (isPara) {
-                            targetingParadrop = !targetingParadrop;
+                            targetingParadrop = !targeting;
+                            targetingSupport=targetingParadrop && separate?support:SupportType::COUNT;
                             targetingSW = SWType::COUNT;
                             if (targetingParadrop) {
                                 message(paraSrc ? TR(S::MsgParadropTarget)
@@ -1235,6 +1253,7 @@ void Game::drawHUD() {
                             targetingSW = targeting ? SWType::COUNT : (SWType)it.idx;
                             chronoSourceSel.clear();
                             targetingParadrop = false;
+                            targetingSupport = SupportType::COUNT;
                             if (targetingSW != SWType::COUNT) message(TR(S::MsgSelectTargetSW));
                         }
                         g_sfx.play(Sfx::Click, 0.6f);
@@ -1243,13 +1262,17 @@ void Game::drawHUD() {
                 continue;
             }
 
+            if(it.kind==4) {
+                drawNativeProductionItem(it.idx,r,orig?g_orig.gclock:nullptr,orig?g_orig.gclockN:0);
+                continue;
+            }
             // ---- 建筑/单位 cameo ----
             bool isUnit = it.kind == 1;
             int typeIdx = it.idx;
             const Sprite& icon = isUnit ? g_sprites.iconUnit((UnitType)typeIdx, me.colorId)
                                         : g_sprites.iconBld((BldType)typeIdx, me.colorId);
             const char* name = isUnit ? unitName((UnitType)typeIdx) : bldName((BldType)typeIdx);
-            int cost = isUnit ? world.unitProductionCost(localPlayer,(UnitType)typeIdx) : bldDef((BldType)typeIdx).cost;
+            int cost = isUnit ? world.unitProductionCost(localPlayer,(UnitType)typeIdx) : world.buildingProductionCost(localPlayer,(BldType)typeIdx);
             ProdItem& prod = isUnit ? me.unitProd[unitDef((UnitType)typeIdx).prodCat()]
                                     : (isDefenseBld((BldType)typeIdx) ? me.defProd : me.bldProd);
             bool canBuild = false, readyThis = false, activeThis = false;
@@ -1492,6 +1515,7 @@ void Game::drawHUD() {
             if (g.empty()) return;
             sel = g;
             selBuilding = INVALID_EID;
+            rememberSelection();
             double now = GetTime();
             if (lastGroupKey == n && now - lastGroupTap < 0.5) {
                 float cx = 0, cy = 0;
@@ -1583,7 +1607,7 @@ void Game::drawHUD() {
                                         continue;
                                     more.push_back((int)ei);
                                 }
-                                if (!more.empty()) sel = std::move(more);
+                                if (!more.empty()) {sel=std::move(more);rememberSelection();}
                                 message(TR(S::MsgSelSameType));
                             }
                             break;
@@ -1607,13 +1631,14 @@ void Game::drawHUD() {
         // 超武计时（右侧红字；就绪绿闪）
         for (int i = 0; i < (int)SWType::COUNT; i++) {
             const SWDef& sd = swDef((SWType)i);
-            if (!world.modeAllowsBuilding(localPlayer, sd.fromBld)) continue;
-            if (!world.hasBld(localPlayer, sd.fromBld)) continue;
+            if (!world.swAvailable(localPlayer,(SWType)i,true)) continue;
             const char* nm = swName((SWType)i);
             char tb[64];
             const char* txt;
             Color tc;
-            if (me.swReady[i]) {
+            if(!world.swAvailable(localPlayer,(SWType)i)) {
+                snprintf(tb,sizeof tb,"%s %s",nm,TR(S::Paused));txt=tb;tc=Color{150,152,158,255};
+            } else if (me.swReady[i]) {
                 snprintf(tb, sizeof tb, "%s %s", nm, TR(S::Ready));
                 txt = tb;
                 tc = (world.tick / 15) % 2 ? Color{140, 255, 140, 255} : Color{60, 160, 60, 255};
@@ -1759,6 +1784,10 @@ void Game::drawGameMenuOverlay() {
     Rectangle side = menuShellSide();
 
     int cx = (int)(content.x + content.width / 2);
+    if(campaignMission<0){
+        const auto active=world.usesRulesProfile()?((world.rulesProfileId.starts_with("yr-") || world.rulesCountryAllowed(Country::Yuri))?RulesChoice::YR:RulesChoice::RA2):RulesChoice::Fusion;
+        drawTextS(font,TextFormat("%s: %s",TR(S::RulesSet),rulesChoiceName(active)),(int)content.x+14,26,12,Color{224,204,158,255});
+    }
     // 左区留给 Allied eagle 底图；少写大标题，贴近原作暂停屏
     if (gameOver) {
         const char* t = victory ? TR(S::Victory) : TR(S::Defeat);
@@ -1769,8 +1798,7 @@ void Game::drawGameMenuOverlay() {
     Vector2 mm = menuUiFromCanvas(mousePos());
     bool mpr = mPressed(MOUSE_LEFT_BUTTON);
     auto restart = [&]() {
-        if (campaignMission >= 0) newCampaignGame(campaignMission);
-        else newGame((uint64_t)time(nullptr));
+        restartCurrentMatch();
         showMenu = false;
     };
     // 侧栏列表：等分槽（非结算时不再顶部重复「继续」——仅底栏保留）
@@ -1847,18 +1875,19 @@ void Game::updateMinimap() {
             DrawRectangle((int)(x * sc), (int)(y * sc), (int)sc + 1, (int)sc + 1, col);
         }
     for(const auto& [key,b]:fogKnowledge.buildings) {
-        if(b.player<0 || buildingVisible(b.x,b.y,b.type) || !buildingExplored(b)) continue;
-        Color col=HOUSE_COLORS[b.color];col.r/=2;col.g/=2;col.b/=2;
+        if(b.player<0 || buildingVisible(b.x,b.y,b.type,b.nativeType) || !buildingExplored(b)) continue;
+        Color col=radarHouseColor(b.player,b.color);col.r/=2;col.g/=2;col.b/=2;
         DrawRectangle((int)(b.x*sc)-1,(int)(b.y*sc)-1,4,4,col);
     }
     for (const World::Ent& e : world.ents) {
         if (!e.alive || e.player < 0) continue;
         FogState fs = world.map.fogAt(localPlayer, (int)e.x, (int)e.y);
-        if (e.player != localPlayer && (e.isBuilding?!buildingVisible((int)e.x,(int)e.y,e.btype):fs!=FOG_VISIBLE)) continue;
-        Color col = HOUSE_COLORS[world.players[e.player].colorId];
+        if (e.player != localPlayer && (e.isBuilding?!buildingVisible((int)e.x,(int)e.y,e.btype,e.nativeIdentity.type):fs!=FOG_VISIBLE)) continue;
+        Color col = radarHouseColor(e.player,world.players[e.player].colorId);
         if (e.isBuilding) DrawRectangle((int)(e.x * sc) - 1, (int)(e.y * sc) - 1, 4, 4, col);
         else DrawRectangle((int)(e.x * sc), (int)(e.y * sc), 2, 2, col);
     }
+    drawNativeSceneryRadar(sc);
     EndTextureMode();
 }
 

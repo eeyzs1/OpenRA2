@@ -11,15 +11,19 @@
 #include <unordered_set>
 #include <climits>
 
-EID Game::pickUnit(int mx, int my) const {
+EID Game::pickUnit(int mx, int my, UnitHit hit) const {
     // 屏幕坐标 → 未缩放视口坐标（与 unitScreenRect / rlScalef 一致）
     float vx = (float)mx / camZoom, vy = (float)my / camZoom;
+    float clickX,clickY;screenToWorld(mx,my,clickX,clickY);int hitX,hitY,hitLayer;
+    surfaceAt(clickX,clickY,hitX,hitY,&hitLayer);
+    auto occluded=[&](const World::Ent& actor){return hitLayer==1 && actor.navLayer==0 && !actor.airborne()
+        && actor.magneticHeight==0 && world.actorSurfaceHeight(actor)<observedDeckHeight(hitX,hitY);};
     EID best = INVALID_EID;
     float bestDist = 1e30f;
     float bestArea = 1e30f;
     for (size_t i = 0; i < world.ents.size(); i++) {
         const World::Ent& e = world.ents[i];
-        if (!e.alive || e.isBuilding) continue;
+        if (!e.alive || e.isBuilding || occluded(e) || (e.player==localPlayer && world.managedAircraft((EID)i)) || (e.nativeIdentity.definition && !e.nativeIdentity.definition->selectable)) continue;
         if (e.player != localPlayer && world.map.fogAt(localPlayer,(int)e.x,(int)e.y)!=FOG_VISIBLE) continue;
         Rectangle r = unitScreenRect(e);
         // 轻度放宽命中；过大 padding 会让步兵抢掉基地车等大贴图中心点击
@@ -28,17 +32,20 @@ EID Game::pickUnit(int mx, int my) const {
         Rectangle rb = r;
         rb.x -= 8.0f; rb.y -= 8.0f; rb.width += 16.0f; rb.height += 16.0f;
         Vector2 p = unitScreenPos(e);
-        const UnitDef& ud = unitDef(e.utype);
+        const UnitDef& ud = unitDef(e);
         p.y -= unitRenderLift(e);
         bool inBox = (vx >= rb.x && vx < rb.x + rb.width && vy >= rb.y && vy < rb.y + rb.height)
                   || ((float)mx >= rs.x && (float)mx < rs.x + rs.width
                       && (float)my >= rs.y && (float)my < rs.y + rs.height);
+        const bool onCell=hit==UnitHit::Direct && !e.airborne() && e.navLayer==hitLayer
+            && (int)e.x==hitX && (int)e.y==hitY;
+        if(hit==UnitHit::Direct && !inBox && !onCell)continue;
         float footR = ud.isInfantry() ? 48.0f : 72.0f;
         float dFoot = distf(p.x, p.y, vx, vy);
         // 贴图中心（身子）也易点中
         float cx = r.x + r.width * 0.5f, cy = r.y + r.height * 0.5f;
         float dBody = distf(cx, cy, vx, vy);
-        if (!inBox && dFoot > footR && dBody > footR) continue;
+        if (!inBox && !onCell && dFoot > footR && dBody > footR) continue;
         // 框内命中优先，但仍按距脚/身排序，避免重叠时乱抢
         float d = std::min(dFoot, dBody);
         if (inBox) d *= 0.35f;
@@ -49,17 +56,17 @@ EID Game::pickUnit(int mx, int my) const {
             best = (int)i;
         }
     }
-    if (best != INVALID_EID) return best;
+    if (best != INVALID_EID || hit==UnitHit::Direct) return best;
 
     // 贴图命中失败：瓦片邻格己方单位（与 unitScreenPos 北尖约定一致）
     float wx, wy;
     screenToWorld(mx, my, wx, wy);
     int tx, ty;
-    screenToTile(wx, wy, tx, ty);
+    surfaceAt(wx,wy,tx,ty);
     bestDist = 1e30f;
     for (size_t i = 0; i < world.ents.size(); i++) {
         const World::Ent& e = world.ents[i];
-        if (!e.alive || e.isBuilding || e.player != localPlayer) continue;
+        if (!e.alive || e.isBuilding || e.player != localPlayer || world.managedAircraft((EID)i) || occluded(e) || (e.nativeIdentity.definition && !e.nativeIdentity.definition->selectable)) continue;
         int ex = (int)floorf(e.x), ey = (int)floorf(e.y);
         int dx = ex - tx, dy = ey - ty;
         if (dx < -1 || dx > 1 || dy < -1 || dy > 1) continue;
@@ -78,7 +85,7 @@ EID Game::pickUnit(int mx, int my) const {
     best = INVALID_EID;
     for (size_t i = 0; i < world.ents.size(); i++) {
         const World::Ent& e = world.ents[i];
-        if (!e.alive || e.isBuilding || e.player != localPlayer) continue;
+        if (!e.alive || e.isBuilding || e.player != localPlayer || world.managedAircraft((EID)i) || occluded(e) || (e.nativeIdentity.definition && !e.nativeIdentity.definition->selectable)) continue;
         Vector2 p = unitScreenPos(e);
         float d = distf(p.x, p.y, vx, vy);
         if (d < bestDist) {
@@ -89,20 +96,26 @@ EID Game::pickUnit(int mx, int my) const {
     return best;
 }
 
+EID Game::pickCommandUnit(int mx, int my) const {
+    const bool classic=cfgClassicOrders && !sel.empty() && !kDown(KEY_LEFT_SHIFT) && !kDown(KEY_RIGHT_SHIFT);
+    return pickUnit(mx,my,classic?UnitHit::Direct:UnitHit::Nearby);
+}
+
 EID Game::pickBuilding(int mx, int my) const {
     float vx = (float)mx / camZoom, vy = (float)my / camZoom;
     float wx, wy;
     screenToWorld(mx, my, wx, wy);
     int tx, ty;
-    screenToTile(wx, wy, tx, ty);
+    surfaceAt(wx,wy,tx,ty);
 
     EID best = INVALID_EID;
     float bestScore = 1e30f;
     for (size_t i = 0; i < world.ents.size(); i++) {
         const World::Ent& e = world.ents[i];
         if (!e.alive || !e.isBuilding) continue;
-        if (e.player != localPlayer && !buildingVisible((int)e.x,(int)e.y,e.btype)) continue;
-        const BldDef& d = bldDef(e.btype);
+        if(e.nativeIdentity.definition && !e.nativeIdentity.definition->selectable)continue;
+        if (e.player != localPlayer && !buildingVisible((int)e.x,(int)e.y,e.btype,e.nativeIdentity.type)) continue;
+        const BldDef& d = bldDef(e);
         int bx = (int)e.x, by = (int)e.y;
         bool footHit = (tx >= bx && tx < bx + d.w && ty >= by && ty < by + d.h);
 
@@ -118,9 +131,11 @@ EID Game::pickBuilding(int mx, int my) const {
         else
             cid = -1;
         Vector2 p = bldScreenPos(e);
-        const Sprite& s = g_sprites.building(e.btype, cid, false, bldCountry);
-        float x0 = p.x - s.ox + 6, y0 = p.y - s.oy + 4;
-        float x1 = x0 + (float)(s.tex.width - 14), y1 = y0 + (float)(s.tex.height - 10);
+        const bool nativeArt=e.nativeIdentity.definition && !e.nativeIdentity.definition->rulesOnly;
+        const Sprite& s = nativeArt?nativeActorSprite(e):g_sprites.building(e.btype, cid, false, bldCountry);
+        float x0 = p.x-s.ox+(nativeArt?s.visL:6),y0=p.y-s.oy+(nativeArt?s.visT:4);
+        float x1=nativeArt?p.x-s.ox+s.visR+1:x0+(float)(s.tex.width-14);
+        float y1=nativeArt?p.y-s.oy+s.visB+1:y0+(float)(s.tex.height-10);
         bool sprHit = (vx >= x0 && vx <= x1 && vy >= y0 && vy <= y1);
         if (!footHit && !sprHit) continue;
 
@@ -138,32 +153,41 @@ EID Game::pickBuilding(int mx, int my) const {
 }
 
 void Game::doSelect(int mx, int my, bool additive) {
+    const EID u=additive?pickUnit(mx,my):pickCommandUnit(mx,my);
+    auto previous=sel;if(world.valid(selBuilding))previous.push_back(selBuilding);
     if (!additive) { sel.clear(); selBuilding = INVALID_EID; }
-    EID u = pickUnit(mx, my);
     if (u != INVALID_EID) {
         if (world.ents[u].player == localPlayer) {
             if(std::find(sel.begin(),sel.end(),u)==sel.end())sel.push_back(u);
+            reportNativeSelection({u},previous);
+            voiceSelection({u});
         }
+        rememberSelection();
         return;
     }
     EID b = pickBuilding(mx, my);
     if (b != INVALID_EID && world.ents[b].player == localPlayer) {
         selBuilding = b;
+        reportNativeSelection({b},previous);
+        rememberSelection();
         return;
     }
+    rememberSelection();
 }
 
 void Game::doBoxSelect(Rectangle r, bool additive) {
+    const auto previous=sel;
     if (!additive) { sel.clear(); selBuilding = INVALID_EID; }
     // 屏幕框 → 未缩放视口框
     Rectangle vr{r.x / camZoom, r.y / camZoom, r.width / camZoom, r.height / camZoom};
     for (size_t i = 0; i < world.ents.size(); i++) {
         const World::Ent& e = world.ents[i];
-        if (!e.alive || e.isBuilding || e.player != localPlayer) continue;
+        if (!e.alive || e.isBuilding || e.player != localPlayer || world.managedAircraft((EID)i) || (e.nativeIdentity.definition && !e.nativeIdentity.definition->selectable)) continue;
         Rectangle ur = unitScreenRect(e);
         if (CheckCollisionRecs(vr, ur) && std::find(sel.begin(),sel.end(),(EID)i)==sel.end())
             sel.push_back((int)i);
     }
+    rememberSelection();reportNativeSelection(sel,previous);voiceSelection(sel);
 }
 
 void Game::cmdDeploySel() {
@@ -186,12 +210,12 @@ void Game::cmdDeploySel() {
 void Game::issueSmartOrder(int mx, int my) {
     float wx, wy;
     screenToWorld(mx, my, wx, wy);
-    int tx, ty;
-    screenToTile(wx, wy, tx, ty);
+    int tx,ty,layer;
+    surfaceAt(wx,wy,tx,ty,&layer);
     if (!world.map.inBounds(tx, ty)) return;
 
     // 目标：敌人 → 攻击；矿 → 采矿；否则移动
-    EID eu = pickUnit(mx, my);
+    EID eu = pickCommandUnit(mx, my);
     EID eb = pickBuilding(mx, my);
     EID enemy = INVALID_EID;
     if (eu != INVALID_EID && world.isEnemy(localPlayer, world.ents[eu].player)) enemy = eu;
@@ -200,30 +224,34 @@ void Game::issueSmartOrder(int mx, int my) {
         enemy = eb;
     }
 
+    const EID repairTarget=eu!=INVALID_EID?eu:eb;
+    if(world.nativeRepairIntent(sel,repairTarget)) {
+        World::Cmd cmd;cmd.type=World::Cmd::Attack;cmd.ids=sel;cmd.a=repairTarget;issueCmd(cmd);return;
+    }
     bool hasEngineer = false, hasHarvester = false, hasSpy = false;
     for (EID id : sel) {
         if (!world.valid(id)) continue;
         if (world.ents[id].utype == UnitType::Engineer) hasEngineer = true;
         if (world.ents[id].utype == UnitType::Spy) hasSpy = true;
-        if (unitDef(world.ents[id].utype).canHarvet()) hasHarvester = true;
+        if (unitDef(world.ents[id]).canHarvet()) hasHarvester = true;
     }
 
     // Engineer interactions take priority over garrisoning, matching the cursor.
     // Other units follow the building's garrison rules before ordinary attacks.
     if (eb != INVALID_EID) {
         const World::Ent& b = world.ents[eb];
-        const BldDef& bd = bldDef(b.btype);
         if(hasEngineer) {
             std::vector<EID> engineers;
             for(EID id:sel) if(world.valid(id) && !world.ents[id].isBuilding && world.ents[id].player==localPlayer
                 && world.ents[id].utype==UnitType::Engineer) engineers.push_back(id);
-            const auto intent=b.player==localPlayer?EngineerIntent::Repair:EngineerIntent::Capture;
-            if(!engineers.empty() && world.engineerRejection(engineers.front(),eb,intent)==EngineerRejectReason::None) {
-                World::Cmd cmd;cmd.type=intent==EngineerIntent::Repair?World::Cmd::Repair:World::Cmd::Capture;
-                cmd.ids=std::move(engineers);cmd.a=eb;issueCmd(cmd);return;
+            const bool bridgeHut=b.nativeIdentity.definition && b.nativeIdentity.definition->bridgeRepairHut;
+            const auto intent=bridgeHut?EngineerIntent::RepairBridge:b.player==localPlayer?EngineerIntent::Repair:EngineerIntent::Capture;
+            if(!engineers.empty() && (bridgeHut || world.engineerRejection(engineers.front(),eb,intent)==EngineerRejectReason::None)) {
+                World::Cmd cmd;cmd.type=intent==EngineerIntent::Capture?World::Cmd::Capture:World::Cmd::Repair;
+                cmd.ids=std::move(engineers);cmd.a=eb;cmd.b=bridgeHut?1:0;issueCmd(cmd);return;
             }
         }
-        if(bd.garrisonCap>0 && (b.player==localPlayer || b.player<0)) {
+        if(world.buildingEntryDomain(b)>0 && (b.player==localPlayer || b.player<0)) {
             World::Cmd cmd;cmd.type=World::Cmd::Garrison;cmd.ids=sel;cmd.a=eb;issueCmd(cmd);return;
         }
         // 间谍渗透敌方建筑
@@ -243,7 +271,7 @@ void Game::issueSmartOrder(int mx, int my) {
     }
 
     if (enemy != INVALID_EID) {
-        if (hasEngineer && world.ents[enemy].isBuilding && bldDef(world.ents[enemy].btype).capturable) {
+        if (hasEngineer && world.ents[enemy].isBuilding && bldDef(world.ents[enemy]).capturable) {
             std::vector<EID> engs;
             for (EID id : sel) if (world.valid(id) && world.ents[id].utype == UnitType::Engineer) engs.push_back(id);
             World::Cmd c; c.type = World::Cmd::Capture; c.ids = engs; c.a = enemy;
@@ -256,7 +284,7 @@ void Game::issueSmartOrder(int mx, int my) {
     }
     // Friendly passenger carrier: simulation reports compatibility and capacity.
     if (eu != INVALID_EID && world.ents[eu].player == localPlayer && !world.ents[eu].isBuilding
-        && unitDef(world.ents[eu].utype).cargoCap > 0 && !sel.empty()) {
+        && unitDef(world.ents[eu]).cargoCap > 0 && !sel.empty()) {
         World::Cmd c;c.type=World::Cmd::Board;c.ids=sel;c.a=eu;issueCmd(c);return;
     }
     // 友军建筑：矿车右键精炼厂 → 回厂卸货；工程师交互已在进驻之前处理。
@@ -266,7 +294,7 @@ void Game::issueSmartOrder(int mx, int my) {
             std::vector<EID> harv;
             for (EID id : sel) {
                 if (!world.valid(id) || world.ents[id].isBuilding) continue;
-                if (unitDef(world.ents[id].utype).canHarvet()) harv.push_back(id);
+                if (unitDef(world.ents[id]).canHarvet()) harv.push_back(id);
             }
             if (!harv.empty()) {
                 World::Cmd c; c.type = World::Cmd::ReturnHarvester; c.ids = harv; c.a = eb;
@@ -282,19 +310,21 @@ void Game::issueSmartOrder(int mx, int my) {
         std::vector<EID> rest;
         for (EID id : sel) {
             if (!world.valid(id)) continue;
-            if (unitDef(world.ents[id].utype).canHarvet()) harv.push_back(id);
+            if (unitDef(world.ents[id]).canHarvet()) harv.push_back(id);
             else rest.push_back(id);
         }
         World::Cmd c; c.type = World::Cmd::Harvest; c.ids = harv; c.a = tx; c.b = ty;
         issueCmd(c);
         if (!rest.empty()) {
             World::Cmd mc; mc.type = World::Cmd::Move; mc.ids = rest;
+            mc.b=world.map.native.active()?layer+1:0;
             mc.x = (float)tx; mc.y = (float)ty; mc.attackMove = kDown(KEY_A);
             issueCmd(mc);
         }
         return;
     }
     World::Cmd mc; mc.type = World::Cmd::Move; mc.ids = sel;
+    mc.b=world.map.native.active()?layer+1:0;
     mc.x = (float)tx; mc.y = (float)ty; mc.attackMove = kDown(KEY_A);
     issueCmd(mc);
 }
@@ -306,10 +336,17 @@ void Game::message(const std::string& m) {
 
 
 void Game::handleInput() {
+    pruneInteractionReferences();
+    if(world.nativeEvents.active && world.nativeEvents.inputLocked && !showMenu && !gameOver) {
+        if(kPressed(KEY_ESCAPE))showMenu=true;
+        dragging=dragPressSelected=dragOrderCandidate=false;return;
+    }
     updateCamera();
     Vector2 mouse = mousePos();
     bool overUI = mouse.x > SCREEN_W - sidebarW
                || mouse.y >= SCREEN_H - BOTTOM_BAR_H; // 底栏点击不可穿透到框选/取消选中
+    if(showMenu || gameOver || placing || sideMode || targetingSW!=SWType::COUNT || targetingParadrop)
+        dragging=dragPressSelected=dragOrderCandidate=false;
     updateHoverCursor((int)mouse.x, (int)mouse.y);
     if (showMenu || gameOver) {
         // 菜单点击在 render 中处理（立即模式）
@@ -324,7 +361,7 @@ void Game::handleInput() {
             return;
         }
         if (mPressed(MOUSE_LEFT_BUTTON) && !overUI) {
-            float wx,wy;screenToWorld((int)mouse.x,(int)mouse.y,wx,wy);int tx,ty;screenToTile(wx,wy,tx,ty);
+            float wx,wy;screenToWorld((int)mouse.x,(int)mouse.y,wx,wy);int tx,ty;surfaceAt(wx,wy,tx,ty);
             const SWType type=targetingSW;
             if(type==SWType::ChronoShift && chronoSourceSel.empty()
                 && world.superweaponRejection(localPlayer,(int)type,tx+0.5f,ty+0.5f)==SuperweaponRejectReason::None) {
@@ -346,20 +383,22 @@ void Game::handleInput() {
     if (targetingParadrop) {
         if (mPressed(MOUSE_RIGHT_BUTTON) || kPressed(KEY_ESCAPE)) {
             targetingParadrop = false;
+            targetingSupport = SupportType::COUNT;
             return;
         }
         if (mPressed(MOUSE_LEFT_BUTTON) && !overUI) {
             float wx, wy;
             screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
             int tx, ty;
-            screenToTile(wx, wy, tx, ty);
+            surfaceAt(wx,wy,tx,ty);
             if (world.map.inBounds(tx, ty)) {
-                if (world.players[localPlayer].paradropReady) {
-                    World::Cmd c; c.type = World::Cmd::Paradrop;
-                    c.x = tx + 0.5f; c.y = ty + 0.5f;
-                    issueCmd(c);
-                }
+                World::Cmd c; c.type = World::Cmd::Paradrop;
+                const auto type=targetingSupport==SupportType::COUNT?world.preferredParadrop(localPlayer):targetingSupport;
+                c.a=world.independentSupportEnabled?(int)type+1:0;
+                c.x = tx + 0.5f; c.y = ty + 0.5f;
+                issueCmd(c);
                 targetingParadrop = false;
+                targetingSupport = SupportType::COUNT;
             }
         }
         return;
@@ -391,9 +430,10 @@ void Game::handleInput() {
             clearPlacement();
             return;
         }
-        if(placementType==BldType::COUNT || !world.bldQueueFor(localPlayer,placementType).active ||
-            !world.bldQueueFor(localPlayer,placementType).ready ||
-            world.bldQueueFor(localPlayer,placementType).typeIdx!=(int)placementType) {
+        const int selector=nativePlacementType>=0?nativePlacementType:(int)placementType;
+        if(!world.validProductionType(false,selector) || !world.productionItem(localPlayer,false,selector).active ||
+            !world.productionItem(localPlayer,false,selector).ready ||
+            world.productionItem(localPlayer,false,selector).typeIdx!=selector) {
             clearPlacement();message(TR(S::MsgPlacementNotReady));return;
         }
         if(placementPending) return;
@@ -401,15 +441,15 @@ void Game::handleInput() {
             float wx, wy;
             screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
             int tx, ty;
-            screenToTile(wx, wy, tx, ty);
+            surfaceAt(wx,wy,tx,ty);
             BldType t = placementType;
-            const BldDef& d = bldDef(t);
+            const BldDef& d = nativePlacementType>=0?world.nativeTypes[nativePlacementType-NATIVE_PRODUCTION_BASE]->building:bldDef(t);
             // 光标对准占地东南角格（与幽灵锚点一致，避免中心格导致大幅偏移）
             int bx = tx - (d.w - 1), by = ty - (d.h - 1);
             if(bx<0 || by<0 || bx>=world.map.w || by>=world.map.h) {
                 message(TR(S::MsgCannotPlace));return;
             }
-            World::Cmd c; c.type = World::Cmd::PlaceBuilding; c.a = (int)t;
+            World::Cmd c; c.type = World::Cmd::PlaceBuilding; c.a = selector;
             c.x = (float)bx; c.y = (float)by;
             if(placementRequestSerial==INT_MAX) placementRequestSerial=0;
             placementPending=c.b=++placementRequestSerial;
@@ -418,22 +458,24 @@ void Game::handleInput() {
         return;
     }
 
-    // 框选/点选：LMB 只负责选择（移动/攻击一律 RMB）
+    // Classic orders wait for release so an existing selection can still box-select.
     bool cancelledBoxDrag = false;
+    bool classicOrderReleased = false;
     auto hitLocalAt = [&](int x, int y) -> bool {
-        EID u = pickUnit(x, y);
+        EID u = pickCommandUnit(x, y);
         if (u != INVALID_EID && world.ents[u].player == localPlayer) return true;
         EID b = pickBuilding(x, y);
         return b != INVALID_EID && world.ents[b].player == localPlayer;
     };
     if (!overUI && mPressed(MOUSE_LEFT_BUTTON)) {
+        dragOrderCandidate=false;
         // 已选 + Deploy 光标：点自身或空地 → 展开（RA2；勿被点选逻辑吃掉）
         if (!sel.empty() && cursorKind == CursorKind::Deploy) {
             int px = (int)mouse.x, py = (int)mouse.y;
-            EID u = pickUnit(px, py);
+            EID u = pickCommandUnit(px, py);
             bool onSelected = (u != INVALID_EID
                 && std::find(sel.begin(), sel.end(), u) != sel.end());
-            if (onSelected || !hitLocalAt(px, py)) {
+            if (onSelected || (!cfgClassicOrders && !hitLocalAt(px, py))) {
                 cmdDeploySel();
                 dragging = false;
                 dragPressSelected = false;
@@ -456,7 +498,21 @@ void Game::handleInput() {
         dragPressSelected = false;
         // 按下即点选：实机微抖/松手偏移时仍能选中
         int px = (int)mouse.x, py = (int)mouse.y;
-        if (hitLocalAt(px, py)) {
+        const bool localHit=hitLocalAt(px,py);
+        bool contextual=cursorKind==CursorKind::Enter || cursorKind==CursorKind::Repair;
+        if(cfgClassicOrders && cursorKind==CursorKind::NoMove && !sel.empty()) {
+            const EID unit=pickCommandUnit(px,py),building=pickBuilding(px,py);
+            const bool transport=world.valid(unit) && world.ents[unit].player==localPlayer && unitDef(world.ents[unit]).cargoCap>0;
+            const bool facility=world.valid(building) && world.ents[building].player==localPlayer && world.buildingEntryDomain(world.ents[building])>0;
+            if(transport || facility)for(EID id:sel) {
+                const auto reason=world.entryRejection(id,transport?unit:building,transport?EntryKind::Board:EntryKind::Garrison);
+                contextual |= reason==EntryRejectReason::None || reason==EntryRejectReason::Full
+                    || reason==EntryRejectReason::Unreachable || reason==EntryRejectReason::Deployed;
+            }
+        }
+        dragOrderCandidate=cfgClassicOrders && !kDown(KEY_LEFT_SHIFT) && !kDown(KEY_RIGHT_SHIFT)
+            && ((!sel.empty() && (!localHit || contextual)) || (world.valid(selBuilding) && !localHit));
+        if (!dragOrderCandidate && localHit) {
             doSelect(px, py, kDown(KEY_LEFT_SHIFT));
             dragPressSelected = true;
         }
@@ -475,6 +531,8 @@ void Game::handleInput() {
 
             if (realBox) {
                 doBoxSelect(r, add);
+            } else if(dragOrderCandidate) {
+                classicOrderReleased=!overUI;
             } else if (dragPressSelected) {
                 // 已在按下时选中：保持，不触发 Deploy/清选
             } else {
@@ -499,20 +557,22 @@ void Game::handleInput() {
         } else {
             cancelledBoxDrag = true;
         }
-        dragging = false;
-        dragPressSelected = false;
+        dragging = dragPressSelected = dragOrderCandidate = false;
     }
     if (!overUI) {
-        // 右键指令
-        if (mPressed(MOUSE_RIGHT_BUTTON) && !dragging && !cancelledBoxDrag) {
+        if(cfgClassicOrders && mPressed(MOUSE_RIGHT_BUTTON) && !dragging && !cancelledBoxDrag) {
+            sel.clear();selBuilding=INVALID_EID;waypointLatch=false;rememberSelection();
+        }
+        if ((classicOrderReleased || (!cfgClassicOrders && mPressed(MOUSE_RIGHT_BUTTON))) && !dragging && !cancelledBoxDrag) {
             if (!sel.empty()) {
                 if (waypointLatch) { // 路径点模式：追加到队列而非替换目标
                     float wx, wy;
                     screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
-                    int tx, ty;
-                    screenToTile(wx, wy, tx, ty);
+                    int tx,ty,layer;
+                    surfaceAt(wx,wy,tx,ty,&layer);
                     if (world.map.inBounds(tx, ty)) {
                         World::Cmd c; c.type = World::Cmd::Move; c.ids = sel;
+                        c.b=world.map.native.active()?layer+1:0;
                         c.x = (float)tx; c.y = (float)ty; c.a = 1; // a&1=路径点追加
                         issueCmd(c);
                     }
@@ -527,7 +587,7 @@ void Game::handleInput() {
                 float wx, wy;
                 screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
                 int tx, ty;
-                screenToTile(wx, wy, tx, ty);
+                surfaceAt(wx,wy,tx,ty);
                 if (world.map.inBounds(tx, ty) && world.map.passable(tx, ty)) {
                     EID cy = selBuilding;
                     World::Cmd c; c.type = World::Cmd::Move; c.ids.push_back(cy);
@@ -541,7 +601,7 @@ void Game::handleInput() {
                 float wx, wy;
                 screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
                 int tx, ty;
-                screenToTile(wx, wy, tx, ty);
+                surfaceAt(wx,wy,tx,ty);
                 if (world.map.inBounds(tx, ty)) {
                     World::Cmd c; c.type = World::Cmd::SetRally; c.ids.push_back(selBuilding);
                     c.x = (float)tx; c.y = (float)ty;
@@ -562,7 +622,7 @@ void Game::handleInput() {
         }
         // 选中建筑有驻军：撤出全部驻军（RA2 原作同键）
         if (world.valid(selBuilding) && world.ents[selBuilding].isBuilding
-            && world.ents[selBuilding].player==localPlayer && bldDef(world.ents[selBuilding].btype).garrisonCap>0) {
+            && world.ents[selBuilding].player==localPlayer && bldDef(world.ents[selBuilding]).garrisonCap>0) {
             World::Cmd c; c.type = World::Cmd::Ungarrison; c.ids.push_back(selBuilding);
             issueCmd(c);
         }
@@ -588,6 +648,7 @@ void Game::handleInput() {
     }
     // 选择同类（RA2 原作键位）
     if (ka(KA_SameType) && !sel.empty()) {
+        const auto previous=sel;
         bool types[(int)UnitType::COUNT] = {};
         for (EID id : sel)
             if (world.valid(id) && !world.ents[id].isBuilding) types[(int)world.ents[id].utype] = true;
@@ -599,6 +660,7 @@ void Game::handleInput() {
         }
         message(TR(S::MsgSelSameType));
         g_sfx.play(Sfx::Click, 0.6f);
+        reportNativeSelection(sel,previous,true);voiceSelection(sel);
     }
     // 编队：Ctrl+数字设定 / 数字召回 / 双击数字跳转视角
     {
@@ -610,6 +672,7 @@ void Game::handleInput() {
                 groups[n].erase(std::remove_if(groups[n].begin(), groups[n].end(), [&](EID id) {
                     return !world.valid(id) || world.ents[id].isBuilding || world.ents[id].player!=localPlayer;
                 }), groups[n].end());
+                groupGenerations[n]=selectionGenerations;
                 message(TextFormat(TR(S::MsgGroupSetFmt), n, (int)groups[n].size()));
                 g_sfx.play(Sfx::Click, 0.6f);
             } else {
@@ -618,8 +681,9 @@ void Game::handleInput() {
                     return !world.valid(id) || world.ents[id].isBuilding || world.ents[id].player!=localPlayer;
                 }), g.end());
                 if (g.empty()) continue;
-                sel = g;
+                const auto previous=sel;sel = g;
                 selBuilding = INVALID_EID;
+                rememberSelection();reportNativeSelection(sel,previous);voiceSelection(sel);
                 double now = GetTime();
                 if (lastGroupKey == n && now - lastGroupTap < 0.5) {
                     // 双击：视角跳到编队重心
@@ -685,7 +749,7 @@ void Game::handleInput() {
         float wx, wy;
         screenToWorld((int)mouse.x, (int)mouse.y, wx, wy);
         int tx, ty;
-        screenToTile(wx, wy, tx, ty);
+        surfaceAt(wx,wy,tx,ty);
         World::Cmd c; c.type = World::Cmd::SetRally; c.ids.push_back(selBuilding);
         c.x = (float)tx; c.y = (float)ty;
         c.a=(kDown(KEY_LEFT_SHIFT) || kDown(KEY_RIGHT_SHIFT))?1:0;

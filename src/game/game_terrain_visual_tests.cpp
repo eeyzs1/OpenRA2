@@ -1,10 +1,10 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "gfx/sprites.h"
 #include "gfx/terrain_material.h"
 #include <cstdio>
 #include <filesystem>
 
-int Game::terrainVisualRegression(const char* outputDir) {
+int GameRegression::terrainVisualRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);int failures=0;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("TERRAIN %s %s\n",ok?"PASS":"FAIL",name); };
     SetTargetFPS(0);localPlayer=0;selectReferenceMap();newGame(20261031);

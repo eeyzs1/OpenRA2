@@ -18,7 +18,7 @@ void SkirmishAI::clearFactoryExits(World& w) {
     }
     auto freeLanding=[&](EID mover,int cell,EID released=INVALID_EID) {
         if(mouths[cell])return false;
-        const bool infantry=unitDef(w.ents[mover].utype).isInfantry();
+        const bool infantry=unitDef(w.ents[mover]).isInfantry();
         int reserved=0;
         for(size_t id=0;id<w.ents.size();++id) {
             const auto& unit=w.ents[id];
@@ -26,12 +26,12 @@ void SkirmishAI::clearFactoryExits(World& w) {
             const bool present=unit.occCell==cell;
             const bool incoming=(EID)id!=released && unit.pathIdx<(int)unit.path.size() && w.isAllied(player,unit.player)
                 && w.cellIdx(unit.path.back().x,unit.path.back().y)==cell;
-            if(present || incoming)reserved+=infantry && unitDef(unit.utype).isInfantry()?1:3;
+            if(present || incoming)reserved+=infantry && unitDef(unit).isInfantry()?1:3;
         }
         return reserved<(infantry?3:1);
     };
     auto step=[&](EID mover,int from,int to) {
-        const int domain=unitDef(w.ents[mover].utype).pathDomain();
+        const int domain=unitDef(w.ents[mover]).pathDomain();
         const int x=from%w.map.w,y=from/w.map.w,nx=to%w.map.w,ny=to/w.map.w;
         if(std::abs(nx-x)>1 || std::abs(ny-y)>1)return false;
         auto open=[&](int tx,int ty){return w.passableFor(tx,ty,domain) && !w.bldBlocked(tx,ty);};
@@ -73,9 +73,11 @@ void SkirmishAI::clearFactoryExits(World& w) {
         if(!World::productionFacilityOperational(factory) || factory.player!=player)continue;
         const UnitDef* waiting=nullptr;
         for(const auto& order:w.players[player].unitProd) {
-            if(!order.active || !order.ready || order.typeIdx<0 || order.typeIdx>=(int)UnitType::COUNT)continue;
-            const auto& unit=unitDef((UnitType)order.typeIdx);
-            if(isFactoryFor(factory.btype,unit) && !(unit.isAir() && unit.ammo>0)){waiting=&unit;break;}
+            if(!order.active || !order.ready || !w.validProductionType(true,order.typeIdx))continue;
+            const bool source=w.nativeProductionType(order.typeIdx);
+            const auto& unit=source?w.nativeTypes[order.typeIdx-NATIVE_PRODUCTION_BASE]->unit:unitDef((UnitType)order.typeIdx);
+            const bool supports=source?w.nativeFactorySupports(factory,order.typeIdx-NATIVE_PRODUCTION_BASE):isFactoryFor(factory.btype,unit);
+            if(supports && !(unit.isAir() && unit.ammo>0)){waiting=&unit;break;}
         }
         if(!waiting)continue;
         for(auto exit:w.factoryExitCells((EID)factoryId,*waiting)) {

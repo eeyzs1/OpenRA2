@@ -7,9 +7,29 @@
 #include <cstring>
 #include <algorithm>
 
-bool World::swAvailable(int player, SWType t) const {
+bool World::swAvailable(int player, SWType t,bool allowFrozen) const {
     if ((unsigned)t>=(unsigned)SWType::COUNT || !superweaponsEnabled || player < 0 || player >= numPlayers || players[player].defeated) return false;
-    return hasBld(player, swDef(t).fromBld);
+    if(nativeProductionRules.economy && !(nativeProductionRules.superweaponMask&(1u<<(int)t)))return false;
+    for(const auto& building:ents) {
+        if(building.player!=player || !building.alive || !building.isBuilding || building.selling || building.constructAnim>0)continue;
+        if(!allowFrozen && building.nativeTemporalHead!=INVALID_EID)continue;
+        if(nativeProductionRules.economy) {
+            if(building.nativeIdentity.definition && (building.nativeIdentity.definition->production.superweaponMask&(1u<<(int)t)))return true;
+        } else if(building.btype==swDef(t).fromBld)return true;
+    }
+    return false;
+}
+
+void World::syncSuperweaponSources() {
+    syncSupportSources();
+    for(int player=0;player<numPlayers;++player) {
+        auto& house=players[player];
+        for(int i=0;i<(int)SWType::COUNT;++i)if((house.swReady[i] || house.swCharge[i]) && !swAvailable(player,(SWType)i,true)) {
+                house.swReady[i]=false;house.swCharge[i]=0;
+        }
+        if(!independentSupportEnabled && (house.paradropReady || house.paradropCharge) && !hasParadropSource(player)
+            && !hasSpyPlaneSource(player) && !hasPsychicRevealSource(player)) {house.paradropReady=false;house.paradropCharge=0;}
+    }
 }
 
 SuperweaponRejectReason World::superweaponRejection(int player,int type,float x,float y) const {
@@ -22,7 +42,7 @@ SuperweaponRejectReason World::superweaponRejection(int player,int type,float x,
 bool World::chronoSourceEligible(int player,EID id) const {
     if(!valid(id)) return false;
     const auto& e=ents[id];if(e.isBuilding || e.player!=player || e.immobilized() || e.parasiting || e.radDeployed) return false;
-    const auto& u=unitDef(e.utype);return !u.isAir() && !u.isInfantry();
+    const auto& u=unitDef(e);return !u.isAir() && !u.isInfantry();
 }
 
 bool World::launchSW(int player, SWType t, float tx, float ty) {
@@ -46,7 +66,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
             n.tx = tx; n.ty = ty;
             n.timer = 75; // 2.5 秒落地
             nukes.push_back(n);
-            evaAll(TR(S::EvaNukeLaunched));
+            evaAll(TR(S::EvaNukeLaunched),EvaCue::NukeLaunched);
             emitSound(Sfx::NukeLaunch, 0.9f);
             break;
         }
@@ -54,19 +74,20 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
             p.stormTimer = 30 * 14; // 持续 14 秒
             p.stormX = tx; p.stormY = ty;
             p.stormBoltCd = 0;
-            evaAll(TR(S::EvaStormComing));
+            evaAll(TR(S::EvaStormComing),EvaCue::StormCreated);
             emitSoundAt(Sfx::Storm, tx, ty);
             break;
         }
         case SWType::IronCurtain: {
+            evaAll(formatText(TR(S::MsgSWLaunchedFmt),swName(t)),EvaCue::IronActivated);
             // 目标点 3 格内己方单位/建筑无敌（官方 ~750@15fps → 1500@30fps）；步兵无法承受铁幕能量直接死亡
             for (size_t i = 0; i < ents.size(); i++) {
                 Ent& e = ents[i];
-                if (!e.alive) continue;
+                if (!e.alive || e.nativeTemporalHead!=INVALID_EID) continue;
                 float ex = e.x, ey = e.y;
-                if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
+                if (e.isBuilding) { ex += bldDef(e).w / 2.0f; ey += bldDef(e).h / 2.0f; }
                 if (distf(ex, ey, tx, ty) > 3.0f) continue;
-                if (!e.isBuilding && unitDef(e.utype).isInfantry()) { kill((int)i); continue; }
+                if (!e.isBuilding && unitDef(e).isInfantry()) { kill((int)i); continue; }
                 if (e.player == player) e.invuln = 1500;
             }
             emitSoundAt(Sfx::IronCurtain, tx, ty);
@@ -82,7 +103,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
             for (size_t i = 0; i < ents.size(); i++) {
                 Ent& e = ents[i];
                 if (!e.alive || e.isBuilding) continue;
-                if (!unitDef(e.utype).isInfantry()) continue;
+                if (!unitDef(e).isInfantry()) continue;
                 if (distf(e.x, e.y, tx, ty) > 5.0f) continue;
                 UnitType ut = e.utype;
                 bool killOnly = isHero(ut) || ut == UnitType::AttackDog || ut == UnitType::Slave
@@ -106,7 +127,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
                 Ent& e = ents[i];
                 if (!e.alive) continue;
                 float ex = e.x, ey = e.y;
-                if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
+                if (e.isBuilding) { ex += bldDef(e).w / 2.0f; ey += bldDef(e).h / 2.0f; }
                 if (distf(ex, ey, tx, ty) > 5.0f) continue;
                 if (e.player != player && e.player >= 0 && isEnemy(player, e.player)
                     && !e.isBuilding && !psychicImmune(e.utype) && !e.permaControlled) {
@@ -116,7 +137,7 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
                         controller.mindTargets.erase(std::remove(controller.mindTargets.begin(), controller.mindTargets.end(), (EID)i),
                                                      controller.mindTargets.end());
                     }
-                    e.player = player;
+                    changeActorOwner((EID)i,player);
                     e.mindBy = INVALID_EID;
                     e.origPlayer = -1;
                     e.permaControlled = true;
@@ -136,8 +157,8 @@ bool World::launchSW(int player, SWType t, float tx, float ty) {
                 Ent& e = ents[i];
                 if (!e.alive || !e.isBuilding || e.player < 0) continue;
                 if (!isAllied(player, e.player)) continue;
-                float ex = e.x + bldDef(e.btype).w / 2.0f;
-                float ey = e.y + bldDef(e.btype).h / 2.0f;
+                float ex = e.x + bldDef(e).w / 2.0f;
+                float ey = e.y + bldDef(e).h / 2.0f;
                 if (distf(ex, ey, tx, ty) > 4.0f) continue;
                 e.invuln = 1000; // 覆盖已有铁幕保护
             }
@@ -164,7 +185,7 @@ bool World::launchChronoShift(int player,const std::vector<EID>& selected,float 
     if(!moved) return false;
     if(transferred) *transferred=moved;
     Player& p=players[player];p.swReady[(int)SWType::ChronoShift]=false;p.swCharge[(int)SWType::ChronoShift]=0;
-    eva(player,TR(S::EvaChronoStart));if (g_script.boundTo(this)) g_script.onSuperWeapon(player,SWType::ChronoShift,tx,ty);
+    eva(player,TR(S::EvaChronoStart),EvaCue::ChronoActivated);if (g_script.boundTo(this)) g_script.onSuperWeapon(player,SWType::ChronoShift,tx,ty);
     return true;
 }
 
@@ -175,12 +196,15 @@ void World::updateSW() {
         Player& p = players[pi];
         if (!p.active || p.defeated) continue;
         for (int i = 0; i < (int)SWType::COUNT; i++) {
+            if (!swAvailable(pi, (SWType)i,true)) { p.swCharge[i] = 0;p.swReady[i]=false;continue; }
+            if (!nativeTemporalBeams.empty() && !swAvailable(pi, (SWType)i))continue;
             if (p.swReady[i]) continue;
-            if (!swAvailable(pi, (SWType)i)) { p.swCharge[i] = 0; continue; } // 建筑被毁清空
             if (p.lowPower()) continue; // 低电暂停充能
             if (++p.swCharge[i] >= swDef((SWType)i).chargeTime) {
                 p.swReady[i] = true;
-                eva(pi, formatText(TR(S::EvaSWReadyFmt), swName((SWType)i)));
+                const EvaCue cue=i==(int)SWType::Nuke?EvaCue::NukeReady:i==(int)SWType::Lightning?EvaCue::StormReady:
+                    i==(int)SWType::IronCurtain?EvaCue::IronReady:i==(int)SWType::ChronoShift?EvaCue::ChronoReady:EvaCue::None;
+                eva(pi, formatText(TR(S::EvaSWReadyFmt), swName((SWType)i)),cue);
                 if (pi == 0) emitSound(Sfx::SWReady, 0.85f);
             }
         }
@@ -197,12 +221,12 @@ void World::updateSW() {
             Ent& e = ents[i];
             if (!e.alive) continue;
             float ex = e.x, ey = e.y;
-            if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
+            if (e.isBuilding) { ex += bldDef(e).w / 2.0f; ey += bldDef(e).h / 2.0f; }
             float d = distf(ex, ey, n.tx, n.ty);
             if (d > R) continue;
             int dmg = (int)(1000 * (1.0f - d / (R + 1.0f)));
             // 核爆辐射尘：半径内步兵直接致死（RA2 原作设定）
-            if (!e.isBuilding && unitDef(e.utype).isInfantry()) dmg = 10000;
+            if (!e.isBuilding && unitDef(e).isInfantry()) dmg = 10000;
             // 铁幕单位免疫
             if (e.invuln > 0) continue;
             damage((int)i, dmg, n.player);
@@ -241,7 +265,7 @@ void World::updateSW() {
             if (!e.alive) continue;
             if (e.airborne()) continue; // 打不到空中
             float ex = e.x, ey = e.y;
-            if (e.isBuilding) { ex += bldDef(e.btype).w / 2.0f; ey += bldDef(e.btype).h / 2.0f; }
+            if (e.isBuilding) { ex += bldDef(e).w / 2.0f; ey += bldDef(e).h / 2.0f; }
             if (distf(ex, ey, bx, by) > 1.6f) continue;
             if (e.invuln > 0) continue;
             damage((int)i, 130, pi);
@@ -264,7 +288,7 @@ int World::chronoShiftUnits(const std::vector<EID>& sel, float tx, float ty) {
         if (!valid(id)) continue;
         Ent& e = ents[id];
         if (e.isBuilding) continue;
-        const UnitDef& ud = unitDef(e.utype);
+        const UnitDef& ud = unitDef(e);
         if (ud.isAir()) continue;
         if (ud.isInfantry()) { anyInf = true; kill(id); continue; } // 原作设定：传送步兵即死
         if(chronoJump(id, tx, ty)) ++moved;

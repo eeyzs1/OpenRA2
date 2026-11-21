@@ -40,3 +40,15 @@ function OnAiThink(player)
 
     return true  -- 脚本接管，跳过内置 AI
 end
+
+-- Chain persistence hooks so multiple enabled examples retain their own locals.
+local previousSave, previousLoad = OnSave, OnLoad
+function OnSave()
+    local state = previousSave and previousSave() or {}
+    state.example_ai = { thinkCd = thinkCd }
+    return state
+end
+function OnLoad(state)
+    if previousLoad then previousLoad(state) end
+    thinkCd = assert(state.example_ai).thinkCd
+end

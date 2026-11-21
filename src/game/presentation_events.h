@@ -2,6 +2,17 @@
 #include <cstdint>
 #include <vector>
 
+// Event-time unit identities, independent of later death, capture or slot reuse.
+// They describe accepted orders only and never enter simulation snapshots/hashes.
+struct OrderActor {
+    int unitType=-1,faction=-1;
+    bool operator==(const OrderActor&) const = default;
+};
+inline void addOrderActor(std::vector<OrderActor>& actors,int type,int faction) {
+    for(const auto& actor:actors)if(actor.unitType==type && actor.faction==faction)return;
+    actors.push_back({type,faction});
+}
+
 enum class Sfx : uint8_t {
     Shot = 0,   // 步枪
     Cannon,     // 坦克炮
@@ -35,7 +46,7 @@ enum class Sfx : uint8_t {
     COUNT
 };
 
-enum class PresentationKind : uint8_t { Sound, MoveOrder, Muzzle, Impact, AttackOrder, EngineerOrder, EntryOrder, ReleaseOrder, ServiceOrder, DeployOrder, RallyOrder, PlacementOrder, ProductionOrder, SuperweaponOrder, BuildingOrder };
+enum class PresentationKind : uint8_t { Sound, MoveOrder, Muzzle, Impact, AttackOrder, EngineerOrder, EntryOrder, ReleaseOrder, ServiceOrder, DeployOrder, RallyOrder, PlacementOrder, ProductionOrder, SuperweaponOrder, BuildingOrder, HarvestOrder };
 enum class BuildingAction : uint8_t { Sell, Repair };
 enum class BuildingRejectReason : uint8_t { None, InvalidTarget, WrongOwner, Selling, ConstructionYard, FullHealth, Constructing };
 struct BuildingOrderResult {
@@ -72,7 +83,7 @@ struct RallyOrderResult {
     RallyRejectReason reason=RallyRejectReason::None;
 };
 enum class DeployRejectReason : uint8_t { None, Unsupported, Immobilized, Blocked, Controlled, RepackingDisabled, InvalidTarget, Busy };
-struct DeployChange { int source=-1,replacement=-1;bool building=false; };
+struct DeployChange { int source=-1,replacement=-1;bool building=false;uint64_t sourceGeneration=0,replacementGeneration=0; };
 struct DeployOrderResult {
     int accepted=0,rejected=0,deployed=0,undeployed=0,expanded=0,packed=0;
     int deploying=0,undeploying=0;
@@ -89,10 +100,11 @@ struct ServiceOrderResult {
 };
 
 enum class ReleaseKind : uint8_t { Unload, Ungarrison };
-enum class ReleaseRejectReason : uint8_t { None, InvalidTarget, Unsupported, Empty, Blocked };
+enum class ReleaseRejectReason : uint8_t { None, InvalidTarget, Unsupported, Empty, Blocked, Immobilized };
 struct ReleaseOrderResult {
     int released=0,remaining=0,rejected=0,failedEntity=-1;
     ReleaseRejectReason reason=ReleaseRejectReason::None;
+    int pending=0;
 };
 enum class EntryKind : uint8_t { Board, Garrison };
 enum class EntryRejectReason : uint8_t { None, InvalidTarget, Unsupported, WrongOwner, Incompatible, Full, Deployed, Unreachable };
@@ -100,16 +112,19 @@ struct EntryOrderResult {
     int accepted=0,rejected=0,failedEntity=-1;
     EntryRejectReason reason=EntryRejectReason::None;
 };
-enum class EngineerIntent : uint8_t { None, Capture, Repair };
-enum class EngineerRejectReason : uint8_t { None, InvalidTarget, NoEngineer, CaptureOwner, RepairOwner, NotCapturable, FullHealth, Unreachable };
+enum class EngineerIntent : uint8_t { None, Capture, Repair, RepairBridge };
+enum class EngineerRejectReason : uint8_t { None, InvalidTarget, NoEngineer, CaptureOwner, RepairOwner, NotCapturable, FullHealth, Unreachable, NoBridge, BridgeIntact, BridgeBlocked };
 struct EngineerOrderResult {
     int accepted=0,rejected=0,failedEntity=-1;
     EngineerRejectReason reason=EngineerRejectReason::None;
 };
-enum class AttackRejectReason : uint8_t { None, InvalidTarget, NoWeapon, NoAntiAir, NoAntiGround, NavalOnly, Ineffective, Unsupported, Deployed, Unreachable, Busy };
+enum class AttackRejectReason : uint8_t { None, InvalidTarget, NoWeapon, NoAntiAir, NoAntiGround, NavalOnly, Ineffective, Unsupported, Deployed, Unreachable, Busy, FullHealth };
 struct AttackOrderResult {
     int accepted=0,rejected=0,failedEntity=-1;
     AttackRejectReason reason=AttackRejectReason::None;
+    std::vector<OrderActor> actors;
+    std::vector<int> acceptedUnits; // Immediate command receipt, before any entity slot can be reused.
+    bool healing=false;
 };
 enum class ChronoVisual : uint8_t { Arrival, Departure, Erase };
 
@@ -119,6 +134,9 @@ struct MoveOrderResult {
     int accepted = 0, rejected = 0, queued = 0, adjusted = 0;
     MoveRejectReason reason = MoveRejectReason::None;
     int failedEntity = -1;
+    std::vector<OrderActor> actors;
+    std::vector<int> acceptedUnits; // Includes queued orders; independent of presentation collection.
+    bool attackMove=false;
 };
 
 // Presentation-only stream; neither serialized nor hashed. Consumers never mutate World.
@@ -150,8 +168,13 @@ struct PresentationEvent {
     // Event-time elevation, independent of later entity reuse or terrain changes.
     // Uncaptured synthetic events retain the previous full-altitude/default-ground policy.
     float flightFraction = 1;
+    float nativeAltitudePixels = -1;
     int magneticHeight = 0, terrainHeight = -1;
     float targetX = 0, targetY = 0;
     int damage = 0;
     bool lethal = false;
+    std::vector<OrderActor> harvestActors;
+    // Timed turret pose at emission. The renderer resolves the model's barrel end.
+    int muzzleUnitType = -1;
+    uint16_t muzzleHeading = 0;
 };

@@ -19,11 +19,13 @@ bool World::updateMagnetic(Ent& unit,EID id) {
     unit.magneticBy=INVALID_EID;unit.magneticHeight=0;
     if(height==0) return false;
     const int x=(int)unit.x,y=(int)unit.y;
-    if(!passableFor(x,y,unitDef(unit.utype).pathDomain()) || bldBlocked(x,y) || cellHardBlockedForMove(x,y,id)) {
+    const int layer=map.preferredLayer(x,y,unitDef(unit).pathDomain());
+    if(!movementPassable(unit,x,y,layer) || bldBlocked(x,y,layer) || cellHardBlockedForMove(x,y,id,layer)) {
         // A crash must not eject a parasite into an illegal ground cell.
         if(valid(unit.parasite)) kill(unit.parasite,false);
         kill(id);return true;
     }
+    unit.navLayer=unit.previousNavLayer=unit.goalLayer=(uint8_t)layer;
     unitOccSync(id);airOccSync(id);
     damage(id,height*12,-1);
     return true; // Resume the retained order on the next simulation tick.

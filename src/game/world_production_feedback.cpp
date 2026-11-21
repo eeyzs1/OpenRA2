@@ -2,8 +2,14 @@
 #include <algorithm>
 
 ProductionRejectReason World::productionStartRejection(int player,bool unit,int type) const {
+    if(usesRulesProfile()) {
+        const int selector=productionSelector(player,unit,type);
+        return selector<0?ProductionRejectReason::Unavailable:nativeProductionRejection(player,unit,selector);
+    }
+    if(nativeProductionType(type))return nativeProductionRejection(player,unit,type);
     if(player<0 || player>=numPlayers || type<0 || type>=(unit?(int)UnitType::COUNT:(int)BldType::COUNT))
         return ProductionRejectReason::InvalidType;
+    if(nativeProductionRules.available)return ProductionRejectReason::Unavailable;
     const auto& p=players[player];
     if(unit) {
         const auto t=(UnitType)type;const auto& def=unitDef(t);const int cat=def.prodCat();
@@ -34,6 +40,15 @@ ProductionRejectReason World::productionStartRejection(int player,bool unit,int 
 
 void World::applyProductionCommand(int player,const Cmd& command) {
     if(player<0 || player>=numPlayers) return;
+    if(command.type==Cmd::CancelBldProd && command.a==(int)BldType::COUNT) {
+        const int selector=players[player].bldProd.active?players[player].bldProd.typeIdx:players[player].defProd.typeIdx;
+        if(nativeProductionType(selector)){auto native=command;native.a=selector;applyNativeProductionCommand(player,native);return;}
+    }
+    if(command.a>=NATIVE_PRODUCTION_BASE){applyNativeProductionCommand(player,command);return;}
+    if(usesRulesProfile()) {
+        const bool unit=command.type==Cmd::StartUnitProd || command.type==Cmd::CancelUnitProd || command.type==Cmd::HoldUnitProd;
+        auto source=command;source.a=productionSelector(player,unit,command.a);applyNativeProductionCommand(player,source);return;
+    }
     ProductionOrderResult result;result.type=command.a;
     result.unit=command.type==Cmd::StartUnitProd || command.type==Cmd::CancelUnitProd || command.type==Cmd::HoldUnitProd;
     result.action=command.type==Cmd::CancelUnitProd || command.type==Cmd::CancelBldProd?ProductionAction::Cancel:
@@ -85,7 +100,7 @@ void World::applyProductionCommand(int player,const Cmd& command) {
         const bool producer=result.unit?result.type>=0 && result.type<(int)UnitType::COUNT && isFactoryFor(e.btype,unitDef((UnitType)result.type)):
             e.btype==BldType::ConYard;
         if(!producer) continue;
-        event.entity=id;event.x=e.x+bldDef(e.btype).w/2.f;event.y=e.y+bldDef(e.btype).h/2.f;event.positional=true;break;
+        event.entity=id;event.x=e.x+bldDef(e).w/2.f;event.y=e.y+bldDef(e).h/2.f;event.positional=true;break;
     }
     if(presentationEvents.size()>=4096) presentationEvents.pop_front();
     presentationEvents.push_back(event);

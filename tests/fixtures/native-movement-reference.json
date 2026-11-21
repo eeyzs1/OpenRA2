@@ -1,0 +1,395 @@
+{
+  "scope": "isolated actual original INI scalar parser/current-speed function; FASTER/type/CRC/cache bookkeeping stubbed; original CRT floating-point initializer called; not a whole-game movement trace",
+  "original_exe_sha256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "probe_exe_sha256": "d27d3d04c94b0e77e01eb88ff403a7ab4195f9024fad48768eddb1ce0711b1ce",
+  "log_sha256": "595104e625619f4864f43a0891f9e99dc2e14147864b0ae59e68bf2aa623cb31",
+  "control_word": "0x0e7f",
+  "functions": {
+    "ini_float": "0x50e3a0",
+    "current_speed": "0x4c9b10",
+    "float_initializer": "0x782146"
+  },
+  "scalar": {
+    "1.2": {
+      "double_bits": "3ff3333340000000",
+      "stored_float_bits": "3f99999a",
+      "max10_faster_speed": 12
+    },
+    "0.01": {
+      "double_bits": "3f847ae140000000",
+      "stored_float_bits": "3c23d70a",
+      "max10_faster_speed": 0
+    },
+    "0.03": {
+      "double_bits": "3f9eb851e0000000",
+      "stored_float_bits": "3cf5c28f",
+      "max10_faster_speed": 0
+    },
+    "0.02": {
+      "double_bits": "3f947ae140000000",
+      "stored_float_bits": "3ca3d70a",
+      "max10_faster_speed": 0
+    },
+    "0.002": {
+      "double_bits": "3f60624de0000000",
+      "stored_float_bits": "3b03126f",
+      "max10_faster_speed": 0
+    },
+    "7E+1%": {
+      "double_bits": "3fe6666666666666",
+      "stored_float_bits": "3f333333",
+      "max10_faster_speed": 6
+    },
+    "8E+1%": {
+      "double_bits": "3fe9999999999999",
+      "stored_float_bits": "3f4ccccc",
+      "max10_faster_speed": 7
+    },
+    "5E+1%": {
+      "double_bits": "3fe0000000000000",
+      "stored_float_bits": "3f000000",
+      "max10_faster_speed": 5
+    },
+    "0%": {
+      "double_bits": "0000000000000000",
+      "stored_float_bits": "00000000",
+      "max10_faster_speed": 0
+    },
+    "1E+2%": {
+      "double_bits": "3ff0000000000000",
+      "stored_float_bits": "3f800000",
+      "max10_faster_speed": 10
+    },
+    "75%": {
+      "double_bits": "3fe8000000000000",
+      "stored_float_bits": "3f400000",
+      "max10_faster_speed": 7
+    },
+    "9E+1%": {
+      "double_bits": "3feccccccccccccc",
+      "stored_float_bits": "3f666666",
+      "max10_faster_speed": 8
+    },
+    "6E+1%": {
+      "double_bits": "3fe3333333333333",
+      "stored_float_bits": "3f199999",
+      "max10_faster_speed": 5
+    },
+    "1.5E+2%": {
+      "double_bits": "3ff8000000000000",
+      "stored_float_bits": "3fc00000",
+      "max10_faster_speed": 15
+    },
+    "1": {
+      "double_bits": "3ff0000000000000",
+      "stored_float_bits": "3f800000",
+      "max10_faster_speed": 10
+    }
+  },
+  "acceleration": {
+    "constructor": [
+      {
+        "frame": 1,
+        "throttle_bits": "3f9eb851eb851eb8",
+        "speed": 0
+      },
+      {
+        "frame": 2,
+        "throttle_bits": "3faeb851eb851eb8",
+        "speed": 0
+      },
+      {
+        "frame": 3,
+        "throttle_bits": "3fb70a3d70a3d70a",
+        "speed": 0
+      },
+      {
+        "frame": 4,
+        "throttle_bits": "3fbeb851eb851eb8",
+        "speed": 1
+      },
+      {
+        "frame": 5,
+        "throttle_bits": "3fc3333333333333",
+        "speed": 1
+      },
+      {
+        "frame": 6,
+        "throttle_bits": "3fc70a3d70a3d70a",
+        "speed": 1
+      },
+      {
+        "frame": 7,
+        "throttle_bits": "3fcae147ae147ae1",
+        "speed": 2
+      },
+      {
+        "frame": 8,
+        "throttle_bits": "3fceb851eb851eb8",
+        "speed": 2
+      },
+      {
+        "frame": 9,
+        "throttle_bits": "3fd147ae147ae147",
+        "speed": 2
+      },
+      {
+        "frame": 10,
+        "throttle_bits": "3fd3333333333332",
+        "speed": 2
+      },
+      {
+        "frame": 11,
+        "throttle_bits": "3fd51eb851eb851d",
+        "speed": 3
+      },
+      {
+        "frame": 12,
+        "throttle_bits": "3fd70a3d70a3d708",
+        "speed": 3
+      },
+      {
+        "frame": 13,
+        "throttle_bits": "3fd8f5c28f5c28f3",
+        "speed": 3
+      },
+      {
+        "frame": 14,
+        "throttle_bits": "3fdae147ae147ade",
+        "speed": 4
+      },
+      {
+        "frame": 15,
+        "throttle_bits": "3fdcccccccccccc9",
+        "speed": 4
+      },
+      {
+        "frame": 16,
+        "throttle_bits": "3fdeb851eb851eb4",
+        "speed": 4
+      },
+      {
+        "frame": 17,
+        "throttle_bits": "3fe051eb851eb84f",
+        "speed": 5
+      },
+      {
+        "frame": 18,
+        "throttle_bits": "3fe147ae147ae144",
+        "speed": 5
+      },
+      {
+        "frame": 19,
+        "throttle_bits": "3fe23d70a3d70a39",
+        "speed": 5
+      },
+      {
+        "frame": 20,
+        "throttle_bits": "3fe333333333332e",
+        "speed": 5
+      },
+      {
+        "frame": 21,
+        "throttle_bits": "3fe428f5c28f5c23",
+        "speed": 6
+      },
+      {
+        "frame": 22,
+        "throttle_bits": "3fe51eb851eb8518",
+        "speed": 6
+      },
+      {
+        "frame": 23,
+        "throttle_bits": "3fe6147ae147ae0d",
+        "speed": 6
+      },
+      {
+        "frame": 24,
+        "throttle_bits": "3fe70a3d70a3d702",
+        "speed": 7
+      },
+      {
+        "frame": 25,
+        "throttle_bits": "3fe7fffffffffff7",
+        "speed": 7
+      },
+      {
+        "frame": 26,
+        "throttle_bits": "3fe8f5c28f5c28ec",
+        "speed": 7
+      },
+      {
+        "frame": 27,
+        "throttle_bits": "3fe9eb851eb851e1",
+        "speed": 8
+      },
+      {
+        "frame": 28,
+        "throttle_bits": "3feae147ae147ad6",
+        "speed": 8
+      },
+      {
+        "frame": 29,
+        "throttle_bits": "3febd70a3d70a3cb",
+        "speed": 8
+      },
+      {
+        "frame": 30,
+        "throttle_bits": "3fecccccccccccc0",
+        "speed": 8
+      }
+    ],
+    "raw-v3": [
+      {
+        "frame": 1,
+        "throttle_bits": "3f847ae140000000",
+        "speed": 0
+      },
+      {
+        "frame": 2,
+        "throttle_bits": "3f947ae140000000",
+        "speed": 0
+      },
+      {
+        "frame": 3,
+        "throttle_bits": "3f9eb851e0000000",
+        "speed": 0
+      },
+      {
+        "frame": 4,
+        "throttle_bits": "3fa47ae140000000",
+        "speed": 0
+      },
+      {
+        "frame": 5,
+        "throttle_bits": "3fa9999990000000",
+        "speed": 0
+      },
+      {
+        "frame": 6,
+        "throttle_bits": "3faeb851e0000000",
+        "speed": 0
+      },
+      {
+        "frame": 7,
+        "throttle_bits": "3fb1eb8518000000",
+        "speed": 0
+      },
+      {
+        "frame": 8,
+        "throttle_bits": "3fb47ae140000000",
+        "speed": 0
+      },
+      {
+        "frame": 9,
+        "throttle_bits": "3fb70a3d68000000",
+        "speed": 0
+      },
+      {
+        "frame": 10,
+        "throttle_bits": "3fb9999990000000",
+        "speed": 0
+      },
+      {
+        "frame": 11,
+        "throttle_bits": "3fbc28f5b8000000",
+        "speed": 1
+      },
+      {
+        "frame": 12,
+        "throttle_bits": "3fbeb851e0000000",
+        "speed": 1
+      },
+      {
+        "frame": 13,
+        "throttle_bits": "3fc0a3d704000000",
+        "speed": 1
+      },
+      {
+        "frame": 14,
+        "throttle_bits": "3fc1eb8518000000",
+        "speed": 1
+      },
+      {
+        "frame": 15,
+        "throttle_bits": "3fc333332c000000",
+        "speed": 1
+      },
+      {
+        "frame": 16,
+        "throttle_bits": "3fc47ae140000000",
+        "speed": 1
+      },
+      {
+        "frame": 17,
+        "throttle_bits": "3fc5c28f54000000",
+        "speed": 1
+      },
+      {
+        "frame": 18,
+        "throttle_bits": "3fc70a3d68000000",
+        "speed": 1
+      },
+      {
+        "frame": 19,
+        "throttle_bits": "3fc851eb7c000000",
+        "speed": 1
+      },
+      {
+        "frame": 20,
+        "throttle_bits": "3fc9999990000000",
+        "speed": 1
+      },
+      {
+        "frame": 21,
+        "throttle_bits": "3fcae147a4000000",
+        "speed": 2
+      },
+      {
+        "frame": 22,
+        "throttle_bits": "3fcc28f5b8000000",
+        "speed": 2
+      },
+      {
+        "frame": 23,
+        "throttle_bits": "3fcd70a3cc000000",
+        "speed": 2
+      },
+      {
+        "frame": 24,
+        "throttle_bits": "3fceb851e0000000",
+        "speed": 2
+      },
+      {
+        "frame": 25,
+        "throttle_bits": "3fcffffff4000000",
+        "speed": 2
+      },
+      {
+        "frame": 26,
+        "throttle_bits": "3fd0a3d704000000",
+        "speed": 2
+      },
+      {
+        "frame": 27,
+        "throttle_bits": "3fd147ae0e000000",
+        "speed": 2
+      },
+      {
+        "frame": 28,
+        "throttle_bits": "3fd1eb8518000000",
+        "speed": 2
+      },
+      {
+        "frame": 29,
+        "throttle_bits": "3fd28f5c22000000",
+        "speed": 2
+      },
+      {
+        "frame": 30,
+        "throttle_bits": "3fd333332c000000",
+        "speed": 2
+      }
+    ]
+  }
+}

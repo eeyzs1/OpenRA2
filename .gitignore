@@ -1,55 +1,71 @@
-build/
-build-asan/
-# Stale root copy — always launch via build\Release\ra2.exe (启动游戏.bat)
+# 构建产物、编译器缓存与本地编辑器状态
+/build/
+/build-*/
+/cmake-build-*/
+/out/
+/.vs/
+/.vscode/
+/CMakeUserPresets.json
 /ra2.exe
-*.png
-!art/cameos/*.png
-.vs/
-.vscode/
-out/
-saves/
-settings.ini
-# 生成的图像/音频素材（--gen-assets 可再生成，本地覆盖用，不入库）；
-# 元数据 INI/TXT（rules/campaigns/strings/music.ini/README）是游戏内容定义，入库
-assets/sprites/
-assets/sfx/
-assets/music/*.wav
-# RA2 原版游戏文件：版权素材+超大文件（RA2.MIX 269MB 等），仅作本地素材提取源，绝不入库
-tools/ra2pack/game/
-tools/ra2pack/full-pack.7z
-tools/ra2pack/dl/
+*.obj
+*.pdb
+*.idb
+*.ilk
+*.pch
+*.suo
+*.vcxproj.user
 __pycache__/
-launch_log.txt
-# Agent/playtest scratch (screenshots, dumps, probes)
-tools/_scratch/**
-!tools/_scratch/README.txt
-tools/visual_audit/**/_probe/
-tools/visual_audit/**/_probe/**
-tools/visual_audit/**/form_probe/
-tools/visual_audit/**/form_probe/**
-tools/visual_audit/bld_review/
-tools/ra2pack/_*.py
-tools/ra2pack/probe_*.py
-tools/ra2pack/out/
-# MIX-extracted menu chrome (regen via gen_menu_gui.py; copyrighted)
-assets/gui/menu/
-# Local GUI / audit dumps (not game content)
-gui_review/
-gui_review_*/
-gui_review_out/
-gui_review_fix/
-gui_review_after/
-review_out/
-playtest_out.txt
-/pt_*.png
-/shot_*.png
-/menu_setup.png
-assets/preview/
-tools/visual_audit/menu_ref/
-# Local save / progress state (not content)
-userdata/campaign_progress.ini
+*.py[cod]
+/.venv/
 
-/build-review/
-/baseline-tests.log
+# 原版安装、下载缓存与本地提取产物
+/tools/ra2pack/game/
+/tools/ra2pack/dl/
+/tools/ra2pack/full-pack.7z
+/tools/ra2pack/out/
+/assets/sprites/
+/assets/sfx/
+/assets/gui/
+/assets/music/*.wav
+/assets/music/native/
+/assets/maps/native/
+/assets/rules/profiles/
+/assets/preview/
+/assets/**/*.png
+/assets/voxels/*.vxl
+/assets/voxels/*.hva
 
-/build-verify/
+# 用户设置与存档。测试夹具由仓库跟踪
+/settings.ini
+/saves/
+/userdata/campaign_progress.ini
+*.sav
+*.world
+*.app11
+*.app12
+!/tests/fixtures/**/*.sav
+!/tests/fixtures/**/*.world
+!/tests/fixtures/**/*.app11
+!/tests/fixtures/**/*.app12
+
+# 回归记录、截图和素材工具的本地工作文件
+/review_out/
+/gui_review/
+/gui_review_*/
+/ref/
+/*.png
+*.log
+/launch_log.txt
+/playtest_out.txt
+/tools/**/*.png
+/tools/_scratch/**
+!/tools/_scratch/README.txt
+/tools/visual_audit/**/_probe/
+/tools/visual_audit/**/form_probe/
+/tools/visual_audit/bld_review/
+/tools/visual_audit/unit_review/
+/tools/visual_audit/menu_ref/
+/tools/visual_audit/out/
+/tools/asset_pipeline/out/
+/tools/ra2pack/_*.py
+/tools/ra2pack/probe_*.py

@@ -1,0 +1,55 @@
+{
+  "scope": "Actual Scene40/NativeAI4/World62/App11 profiles and saved states remain controls for any later original GetCoords/default-cell contract; no reconstruction or normalization.",
+  "files": {
+    "ra2-profile.ini": {
+      "sourceBatch": "review_out/native-nearby-runtime-20261118",
+      "artifact": "final-test-outputs/release/ra2-profile.ini",
+      "sha256": "c77a1f425b0ce6c84d178e1ba8f77f515c2ee594fe965931df9a229051204dd5"
+    },
+    "ra2-tick0.app11": {
+      "sourceBatch": "review_out/native-nearby-runtime-20261118",
+      "artifact": "final-test-outputs/release/app/ra2/tick-0.app11",
+      "sha256": "a428f778404d36977d2bfd4e047e73f7ab5584b706079794a950b3532b7c1824"
+    },
+    "ra2-house-cleared.world": {
+      "sourceBatch": "review_out/native-nearby-runtime-20261118",
+      "artifact": "final-test-outputs/release/nearby-runtime/ra2/house-cleared.world",
+      "sha256": "d3b5cf2ac410fe00e6fbd0cae1b81321381ba68d77115b063a4b795ea86a187d"
+    },
+    "ra2-staging.world": {
+      "sourceBatch": "review_out/native-nearby-runtime-20261118",
+      "artifact": "final-test-outputs/release/nearby-runtime/ra2/staging.world",
+      "sha256": "91bccc688e4946f07a20187c40cb4c48ac89d5ae23aef1738e7771db29159031"
+    },
+    "ra2-air-focus.world": {
+      "sourceBatch": "review_out/native-nearby-runtime-20261118",
+      "artifact": "final-test-outputs/release/nearby-runtime/ra2/air-focus.world",
+      "sha256": "2de7f2d48ba37fa25f29a6086e89e13a3b6d710dce9dcf6d1c2b9b6c40651a75"
+    },
+    "yr-profile.ini": {
+      "sourceBatch": "review_out/native-nearby-runtime-20261118",
+      "artifact": "final-test-outputs/release/yr-profile.ini",
+      "sha256": "a41a3605eb77069c889fa1701611ad3e00f1ac8d24c676e2a8ffd468926b73eb"
+    },
+    "yr-tick0.app11": {
+      "sourceBatch": "review_out/native-nearby-runtime-20261118",
+      "artifact": "final-test-outputs/release/app/yr/tick-0.app11",
+      "sha256": "addbd9f60449af0e3a378a72c81c799cd47d274f9bd160aa9210b01cac64399d"
+    },
+    "yr-house-cleared.world": {
+      "sourceBatch": "review_out/native-nearby-runtime-20261118",
+      "artifact": "final-test-outputs/release/nearby-runtime/yr/house-cleared.world",
+      "sha256": "c8fef823088861396b9ab8e5bac13a79906cac301fa7b23cf72c6bbf9de980e4"
+    },
+    "yr-staging.world": {
+      "sourceBatch": "review_out/native-nearby-runtime-20261118",
+      "artifact": "final-test-outputs/release/nearby-runtime/yr/staging.world",
+      "sha256": "f3b15ecc6671bc4cfd13c0050b9b24e5d410b811b3c0e0738b63ef9fe11531db"
+    },
+    "yr-air-focus.world": {
+      "sourceBatch": "review_out/native-nearby-runtime-20261118",
+      "artifact": "final-test-outputs/release/nearby-runtime/yr/air-focus.world",
+      "sha256": "bf55dca3293fe967f017cc6b59a072a2e2e923fb7129ccd2131b4d57948d41ca"
+    }
+  }
+}

@@ -3,6 +3,7 @@
 #include "game/script.h"
 #include "gfx/sprites.h"
 #include "sfx/sound.h"
+#include "sfx/announcer.h"
 #include "rlgl.h"
 #include <cmath>
 #include <cstring>
@@ -14,6 +15,7 @@ void Game::consumePresentationEvents() {
         const auto ev = world.presentationEvents.front();
         world.presentationEvents.pop_front();
         if (ev.kind == PresentationKind::Sound) {
+            if (ev.player >= 0 && ev.player != localPlayer) continue;
             if (ev.positional) g_sfx.playAt(ev.sound, ev.x, ev.y);
             else g_sfx.play(ev.sound, ev.volume);
             continue;
@@ -25,6 +27,9 @@ void Game::consumePresentationEvents() {
             continue;
         }
         if (ev.player != localPlayer) continue;
+        voiceOrder(ev);
+        announcementOrder(ev);
+        if(ev.kind==PresentationKind::HarvestOrder)continue;
         if(ev.kind==PresentationKind::BuildingOrder) {
             const auto& result=ev.building;
             if(result.accepted && result.action==BuildingAction::Sell && selBuilding==ev.entity)
@@ -56,7 +61,7 @@ void Game::consumePresentationEvents() {
         }
         if(ev.kind==PresentationKind::PlacementOrder) {
             const auto& result=ev.placement;
-            if(placing && placementPending && placementPending==result.request && (int)placementType==result.type) {
+            if(placing && placementPending && placementPending==result.request && (nativePlacementType>=0?nativePlacementType:(int)placementType)==result.type) {
                 placementPending=0;
                 if(result.accepted || result.reason==PlacementRejectReason::NotReady ||
                     result.reason==PlacementRejectReason::InvalidType) clearPlacement();
@@ -85,15 +90,20 @@ void Game::consumePresentationEvents() {
         if(ev.kind==PresentationKind::DeployOrder) {
             const auto& result=ev.deploy;
             for(const auto& change:result.changes) {
-                const bool selected=selBuilding==change.source || std::find(sel.begin(),sel.end(),change.source)!=sel.end();
+                const auto previous=selectionGenerations.find(change.source);
+                const bool selected=(selBuilding==change.source && selectedBuildingRef.generation==change.sourceGeneration)
+                    || (previous!=selectionGenerations.end() && previous->second==change.sourceGeneration
+                        && std::find(sel.begin(),sel.end(),change.source)!=sel.end());
                 if(!selected) continue;
                 std::erase(sel,change.source);if(selBuilding==change.source) selBuilding=INVALID_EID;
-                if(!world.valid(change.replacement) || world.ents[change.replacement].player!=localPlayer) continue;
+                selectionGenerations.erase(change.source);
+                if(!world.valid(World::EntityRef{change.replacement,change.replacementGeneration}) || world.ents[change.replacement].player!=localPlayer) continue;
                 const auto& replacement=world.ents[change.replacement];
                 if(change.building && replacement.isBuilding && replacement.btype==BldType::ConYard) {
-                    if(sel.empty()) selBuilding=change.replacement;
+                    if(sel.empty()){selBuilding=change.replacement;selectedBuildingRef=world.entityRef(change.replacement);}
                 } else if(!change.building && !replacement.isBuilding && replacement.utype==UnitType::MCV) {
                     if(std::find(sel.begin(),sel.end(),change.replacement)==sel.end()) sel.push_back(change.replacement);
+                    selectionGenerations[change.replacement]=change.replacementGeneration;
                 }
             }
             attackFeedback=false;feedbackLift=eventRenderLift(ev);feedbackTerrainHeight=ev.terrainHeight;
@@ -145,11 +155,14 @@ void Game::consumePresentationEvents() {
         if(ev.kind==PresentationKind::ReleaseOrder) {
             const auto& result=ev.release;attackFeedback=false;
             feedbackLift=eventRenderLift(ev);feedbackTerrainHeight=ev.terrainHeight;moveFeedbackTarget={ev.x,ev.y};
-            moveFeedbackPartial=result.released>0 && result.rejected>0;moveFeedbackRejected=!result.released && result.rejected>0;
+            moveFeedbackPartial=(result.released>0 || result.pending>0) && result.rejected>0;moveFeedbackRejected=!result.released && !result.pending && result.rejected>0;
             moveFeedbackTimer=ev.positional?0.9f:0;
             S reason=result.reason==ReleaseRejectReason::Empty?S::MsgReleaseEmpty:
-                result.reason==ReleaseRejectReason::Unsupported?S::MsgReleaseUnsupported:S::MsgReleaseInvalid;
-            if(result.remaining>0 && result.released) message(TextFormat(TR(S::MsgReleasePartial),result.released,result.remaining));
+                result.reason==ReleaseRejectReason::Unsupported?S::MsgReleaseUnsupported:
+                result.reason==ReleaseRejectReason::Immobilized?S::MsgImmobilized:S::MsgReleaseInvalid;
+            if(result.pending>0) message(TextFormat(TR(ev.visualTarget==VisualTarget::Aircraft?S::MsgReleaseLanding:S::MsgReleaseWaiting),result.pending));
+            else if(result.remaining>0 && result.released) message(TextFormat(TR(S::MsgReleasePartial),result.released,result.remaining));
+            else if(result.reason==ReleaseRejectReason::Immobilized) message(TR(S::MsgImmobilized));
             else if(result.remaining>0) message(TextFormat(TR(S::MsgReleaseBlocked),result.remaining));
             else if(moveFeedbackPartial) message(TextFormat(TR(S::MsgReleaseSomeTargets),result.released,result.rejected,TR(reason)));
             else if(moveFeedbackRejected) message(TR(reason));
@@ -181,6 +194,7 @@ void Game::consumePresentationEvents() {
             moveFeedbackRejected=result.rejected && !result.accepted;moveFeedbackPartial=result.rejected && result.accepted;
             moveFeedbackTimer=ev.positional?0.9f:0;
             S text=ev.engineerIntent==EngineerIntent::Capture?S::MsgCaptureAccepted:S::MsgRepairAccepted;
+            if(ev.engineerIntent==EngineerIntent::RepairBridge)text=S::MsgBridgeRepairAccepted;
             if(result.rejected) switch(result.reason) {
                 case EngineerRejectReason::NoEngineer:text=S::MsgEngineerRequired;break;
                 case EngineerRejectReason::CaptureOwner:text=S::MsgCaptureOwner;break;
@@ -188,6 +202,9 @@ void Game::consumePresentationEvents() {
                 case EngineerRejectReason::NotCapturable:text=S::MsgNotCapturable;break;
                 case EngineerRejectReason::FullHealth:text=S::MsgRepairFullHealth;break;
                 case EngineerRejectReason::Unreachable:text=S::MsgEngineerUnreachable;break;
+                case EngineerRejectReason::NoBridge:text=S::MsgBridgeUnavailable;break;
+                case EngineerRejectReason::BridgeIntact:text=S::MsgBridgeIntact;break;
+                case EngineerRejectReason::BridgeBlocked:text=S::MsgBridgeBlocked;break;
                 default:text=S::MsgEngineerInvalid;break;
             }
             if(moveFeedbackPartial) message(TextFormat(TR(S::MsgEngineerPartial),result.rejected,TR(text)));
@@ -196,11 +213,11 @@ void Game::consumePresentationEvents() {
         }
         if(ev.kind==PresentationKind::AttackOrder) {
             const auto& result=ev.attack;
-            attackFeedback=true;feedbackLift=eventRenderLift(ev);feedbackTerrainHeight=ev.terrainHeight;
+            attackFeedback=!result.healing;feedbackLift=eventRenderLift(ev);feedbackTerrainHeight=ev.terrainHeight;
             moveFeedbackTarget={ev.x,ev.y};moveFeedbackRejected=result.rejected && !result.accepted;
             moveFeedbackPartial=result.rejected && result.accepted;
             moveFeedbackTimer=ev.positional?0.9f:0;
-            S text=S::MsgAttackAccepted;
+            S text=result.healing?S::MsgRepairAccepted:S::MsgAttackAccepted;
             if(result.rejected) switch(result.reason) {
                 case AttackRejectReason::InvalidTarget:text=S::MsgAttackInvalid;break;
                 case AttackRejectReason::NoWeapon:text=S::MsgAttackNoWeapon;break;
@@ -208,12 +225,13 @@ void Game::consumePresentationEvents() {
                 case AttackRejectReason::NoAntiGround:text=S::MsgAttackNoGround;break;
                 case AttackRejectReason::NavalOnly:text=S::MsgAttackNaval;break;
                 case AttackRejectReason::Ineffective:text=S::MsgAttackIneffective;break;
+                case AttackRejectReason::FullHealth:text=S::MsgRepairFullHealth;break;
                 case AttackRejectReason::Deployed:text=S::MsgAttackDeployed;break;
                 case AttackRejectReason::Busy:text=S::MsgDeployBusy;break;
                 case AttackRejectReason::Unreachable:text=S::MsgAttackUnreachable;break;
                 default:text=S::MsgAttackUnsupported;break;
             }
-            if(moveFeedbackPartial) message(TextFormat(TR(S::MsgAttackPartial),result.rejected,TR(text)));
+            if(moveFeedbackPartial) message(TextFormat(TR(result.healing?S::MsgEngineerPartial:S::MsgAttackPartial),result.rejected,TR(text)));
             else message(TR(text));
             continue;
         }
@@ -238,6 +256,7 @@ void Game::consumePresentationEvents() {
 
 void Game::resetNotifications() {
     msg.clear();msgTimer=0;evaLines.clear();wasLowPower=false;
+    wasInsufficientFunds=false;wasAudioGameOver=gameOver;audioTargeting=SWType::COUNT;g_announcer.reset();
 }
 
 void Game::advancePresentation(float seconds) {
@@ -247,6 +266,7 @@ void Game::advancePresentation(float seconds) {
 }
 
 void Game::logic() {
+    captureInteractionReferences();
     if (netGame) {
         netAdvance(); // lockstep：远端命令就绪才 world.update()（本帧可能不推进）
     } else {
@@ -265,45 +285,18 @@ void Game::logic() {
     }
     advancePresentation(1.0f/LOGIC_FPS);
     consumePresentationEvents();
-    // 低电力警报（上升沿触发）
-    {
-        bool low = world.players[localPlayer].lowPower();
-        if(!low)std::erase_if(evaLines,[](const Subtitle& line){return line.powerWarning;});
-        if (low && !wasLowPower) {
-            g_sfx.play(Sfx::Alarm, 0.8f);
-            if(msgTimer>0 && !msg.empty()) {
-                // Preserve the player's current command result. Keep one
-                // pending warning ahead of routine EVA subtitles; the alarm
-                // and power indicator still respond immediately.
-                const std::string warning=TR(S::MsgLowPower);
-                std::erase_if(evaLines,[](const Subtitle& line){return line.powerWarning;});
-                if(evaLines.size()>=4)evaLines.pop_back();
-                evaLines.push_front({warning,true});
-            } else message(TR(S::MsgLowPower));
-        }
-        wasLowPower = low;
-    }
-
-    // EVA 播报：消费世界事件 → 字幕队列（仅本地玩家）
-    while (!world.evaQueue.empty()) {
-        const World::EvaEvent& ev = world.evaQueue.front();
-        if (ev.player == localPlayer && evaLines.size() < 4) {
-            evaLines.push_back({ev.text,false});
-            g_sfx.play(Sfx::Eva, 0.7f);
-        }
-        world.evaQueue.pop_front();
-    }
-    // 逐条显示（不覆盖当前消息）
-    if (msgTimer <= 0 && !evaLines.empty()) {
-        msg = evaLines.front().powerWarning?TR(S::MsgLowPower):evaLines.front().text;
-        msgTimer = 2.6f;
-        evaLines.pop_front();
-    }
+    consumeNativeEventCues();
+    updateNativeCampaignObjectives();
+    pruneInteractionReferences();
+    updateAnnouncements();
 
     // 胜负判定
     if (!gameOver) {
         bool meDead = world.players[localPlayer].defeated;
-        if (campaignMission >= 0) {
+        if (world.nativeEvents.active) {
+            const auto outcome=world.nativeMissionOutcome(localPlayer);
+            if(outcome!=MatchOutcome::Running){gameOver=true;victory=outcome==MatchOutcome::Victory;}
+        } else if (campaignMission >= 0) {
             // 战役：先刷波次与触发器再判定
             const MissionDef& md = missionTable()[campaignMission];
             if (nextWave < md.waves.size() && world.tick >= (uint64_t)md.waves[nextWave].atTick) {
@@ -325,16 +318,16 @@ void Game::logic() {
                     if (!world.players[i].defeated) allAIDead = false;
                 if (allAIDead && nextWave >= md.waves.size()) { gameOver = true; victory = true; }
             }
-            if (gameOver && victory) {
-                if (!md.lineId.empty())
-                    campaignSetProgress(md.lineId, md.lineIndex + 1);
-            }
         } else {
             const MatchOutcome outcome=world.matchOutcome(localPlayer);
             if (outcome!=MatchOutcome::Running) {
                 gameOver=true;
                 victory=outcome==MatchOutcome::Victory;
             }
+        }
+        if(gameOver && victory && campaignMission>=0) {
+            const auto& md=missionTable()[campaignMission];
+            if(!md.lineId.empty())campaignSetProgress(md.lineId,md.lineIndex+1);
         }
     }
     if (msgTimer > 0) msgTimer -= 1.0f / LOGIC_FPS;

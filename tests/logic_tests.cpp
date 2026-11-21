@@ -2,6 +2,7 @@
 #include "game/data.h"
 #include "game/map.h"
 #include "game/production_work.h"
+#include "navigation_equivalence_fixture.h"
 #include <algorithm>
 #include <cstdio>
 #include <vector>
@@ -204,6 +205,16 @@ void testMapLogic() {
 } // namespace
 
 int main() {
+    bool navigationEquivalent=true;
+    for(int scenario=0;scenario<64;++scenario) {
+        const auto actual=NavigationEquivalence::sample(scenario);
+        if(actual!=NavigationEquivalence::baseline[scenario]) {
+            navigationEquivalent=false;
+            std::printf("NAVIGATION_EQUIVALENCE scenario=%d actual=%016llx expected=%016llx\n",scenario,
+                (unsigned long long)actual,(unsigned long long)NavigationEquivalence::baseline[scenario]);
+        }
+    }
+    expect(navigationEquivalent,"single-surface optimization preserves frozen ground/naval/amphibious, gate, cliff, corner and bridge transition answers");
     testWorldFacings();
     testProductionWork();
     testRng();

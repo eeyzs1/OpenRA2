@@ -30,7 +30,7 @@ python tools/ra2pack/gen_menu_gui.py
 
 ### 地图预览 vs 局内地形（后续里程碑）
 
-遭遇战缩略图已与 `bakeTerrain` **同源 TMP/岸线采样**，同 seed 进局地形结构可辨认一致。但地图本身仍是 `Map::generate` 的 FBM 噪声岛（height 全 0），**不是**官方 `.map`/`.yrm`。下一里程碑再考虑：加强 generate、接入官方图、启用 height/cliff。
+遭遇战缩略图与生成地图共用 TMP/岸线采样；固定参考地图仍是项目自制内容。原版地图现在使用独立的 `map_format.py` / `gen_native_maps.py` 导入，保留真实瓦片、地形高度和悬崖立面，不经过噪声生成。已导入盟军/苏军第一关地形，尚未接通其原始任务逻辑，详见 [原版地图导入](native-maps.md)。
 
 审核截图：
 
@@ -152,6 +152,8 @@ flowchart LR
 
 `tools/ra2pack/infantry_sequence.py` 独立解析并检查索引边界；生成的 walkrate/firerate 为项目表现参数，默认每帧 2 tick，独立于朝向步长。开火和死亡的总持续时间仍来自模拟规则，不随素材帧数变化。这是本项目播放策略，不声称复现原引擎的所有硬编码时序。
 
+谭雅和海豹的水上序列另导出 `swim/tread/wetfire`，使用同一个完整 SHP 坐标变换和 `waterox/wateroy` 锚点。两种单位共 288 帧，逐像素对照本机原素材；禁止把短水上姿态逐帧裁剪后分别铺满步兵画布。详见 [原始步兵移动与水上动作](native-motion.md)。
+
 需要重新提取旧动画时，可在完整素材树上运行 `python tools/ra2pack/gen_assets.py`，或使用 `--only=unit_gi,unit_conscript,unit_guardiangi,unit_initiate,unit_brute,unit_slave` 等增量列表。更新动员兵后，单独重建 PLA，避免触及其他融合素材：
 
 ```powershell
@@ -235,6 +237,10 @@ TMP 地面解码位于 `tools/ra2pack/tmp_format.py`：先读取索引表中的�
 
 ## 模块索引
 
+原版单位语音使用独立的 `python tools/ra2pack/gen_voices.py`，输出 `assets/sfx/voices/`，运行前必须准备。工具按同源 MIX 配对 IDX/BAG，并保留完整原采样数据与来源哈希；配置、Mod 覆盖及验证范围见 [原版单位语音](unit-voices.md)。
+
+原版 EVA 和配乐分别使用 `gen_announcer.py`、`gen_music.py`。它们验证 RIFF/WAVE 并逐字节复制源文件；零填充的“同名文件”不能作为有效素材。本机已从另一份本地安装包恢复可用 RA2 `THEME.MIX`；配置与来源记录见 [原版 EVA 与配乐](native-audio.md)。
+
 | 文件 | 作用 |
 |------|------|
 | [`formats.py`](../tools/asset_pipeline/formats.py) | 量化、pack SHP、VOX→VXL/HVA |
@@ -270,3 +276,11 @@ TMP 地面解码位于 `tools/ra2pack/tmp_format.py`：先读取索引表中的�
 VXL 的八方向现在均使用世界角度；原生调色板 16 是亮端、31 是暗端。PNG 量化与遮罩保留实际亮度，包括低亮度纯红。已从修正后的原生犀牛导出重建 Type99，并重建 PLA；两项发布 QA 均通过。HVA 静态写出现在包含完整 section 名称与逐帧矩阵；回退图标用 alpha 合成避免产生半透明底。`ra2.voxel_projection`、`ra2.chopper_pipeline` 与既有资产流水线测试分别验证几何、源格式和发布契约。
 
 `--dump-vxl --dump-dir <目录> --all-facings` 可独立导出八方向分层 PNG、直升机姿态及锚点 CSV；勿让诊断输出覆盖发布素材。过渡的原版持续时间和旋转速率尚未校准，当前每阶段 30 tick 是项目规则。
+
+### 原始场景导弹
+
+`python tools/ra2pack/gen_native_scene.py all01t.map` 现导出 Scene v6，保留原始 738 个初始对象，另加载 CMIN 与 DMISL 定义。`gen_native_rockets.py` 单独负责原始 DRED 槽位、飞行参数、地图弹头覆盖和 NASAM 武器；不能用旧的通用武器数值替换原图局部覆盖。
+
+DMISL.VXL/HVA 生成 17 档俯仰、8 个朝向共 136 帧。所有姿态以同一体素原点和画布输出，不按每帧包围盒重新居中；几何、剔除法线与明暗一起旋转。原始 Remappable=no 不加载队色遮罩。DRED/DREDWO 使用合并投影范围与相同舰体锚点，两个版本的原始 VXL/HVA 来源哈希均进入 scene-report；只按源调色板队色索引生成遮罩。
+
+`native_rockets_assets_test.py` 从 MIX 独立核对规则、地图覆盖、136 帧公共画布及 DREDWO；`native_scene_assets_test.py` 只为 Remappable=yes 的机体要求遮罩。参数、运行时和剩余保真边界见 [原生导弹](native-rockets.md)。原版资源仍是本机提取产物，不进入源码仓库。

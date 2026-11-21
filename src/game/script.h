@@ -1,9 +1,12 @@
 #pragma once
 #include "game/world.h"
+#include "game/script_snapshot.h"
 #include <string>
 #include <functional>
 
 // Lua 用户脚本引擎：加载 assets/scripts/*.lua，提供事件 hook 与 API
+// Entity IDs are opaque nonnegative Lua int64 handles (slot + generation), with
+// -1 for failure. Preserve them unchanged in OnSave/OnLoad; never use as indices.
 // 用户可定义以下函数（均可选，缺失则跳过）：
 //   OnGameStart()                                  开局调用
 //   OnTick(tick)                                   每逻辑帧调用
@@ -81,6 +84,8 @@
 //   ra2.swReady(player, name)    超武是否就绪
 //   ra2.paradropReady(player)    伞兵是否就绪
 //   ra2.orderParadrop(player, x, y)    空降伞兵
+//   ra2.supportReady(player, type) / ra2.orderSupport(player, type, x, y)
+//     type: 0 通用伞兵，1 美国伞兵，2 侦察机，3 心灵揭示；独立充能。
 //   ra2.gameMode()               0 遭遇战 1 战役
 //   ra2.missionId()              当前战役关卡序号（0-based，遭遇战返回 -1）
 
@@ -88,12 +93,21 @@ class ScriptEngine {
 public:
     ScriptEngine();
     ~ScriptEngine();
+    ScriptEngine(const ScriptEngine&) = delete;
+    ScriptEngine& operator=(const ScriptEngine&) = delete;
 
     // 初始化 Lua 状态并加载 assets/scripts/*.lua；无脚本目录时安全空跑
     void init(World* world, int gameMode, int missionId);
 
     // 释放 Lua 状态
     void shutdown();
+
+    // Stateful scripts declare OnSave() -> plain data table and OnLoad(data).
+    // Neither hook may change the World or Game. OnGameStart is never replayed.
+    bool captureSnapshot(ScriptSnapshot& snapshot);
+    bool prepareRestore(World* stagedWorld, int mode, int mission, const ScriptSnapshot& snapshot);
+    void takePrepared(ScriptEngine& prepared, World* committedWorld);
+    const std::string& persistenceError() const { return lastError; }
 
     // ---- 事件分发（World/Game 在对应时机调用）----
     void onGameStart();
@@ -124,8 +138,15 @@ private:
     int gameMode = 0;
     int missionId = -1;
     void* L = nullptr;  // lua_State*（void* 避免 header 污染）
+    bool readOnlyApi = false, sourcesLoaded = true;
+    bool loadingSources = false;
+    Rng random{12345};
+    std::vector<ScriptSource> sources;
+    std::string lastError;
 
     void registerApi();
+    void rebind(World* target);
+    bool open(World* target, int mode, int mission, bool readOnly);
     bool callHook(const char* name, int nargs, int nresults);
     bool loadScripts();
 };

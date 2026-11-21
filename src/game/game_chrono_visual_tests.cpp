@@ -1,10 +1,10 @@
-#include "game/game.h"
+#include "game_regression.h"
 #include "gfx/sprites.h"
 #include <filesystem>
 #include <set>
 #include <cstdio>
 
-int Game::chronoVisualRegression(const char* outputDir) {
+int GameRegression::chronoVisualRegression(const char* outputDir) {
     std::filesystem::create_directories(outputDir);int failures=0;
     auto check=[&](bool ok,const char* name) { failures+=!ok;std::printf("CHRONO_VISUAL %s %s\n",ok?"PASS":"FAIL",name); };
     SetTargetFPS(0);localPlayer=0;phase=Phase::InGame;showMenu=gameOver=paused=netGame=false;camX=-600;camY=250;camZoom=1;

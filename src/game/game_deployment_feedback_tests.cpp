@@ -1,8 +1,25 @@
-#include "game/game.h"
+#include "game_regression.h"
 
-int Game::deploymentFeedbackRegression() {
+int GameRegression::deploymentFeedbackRegression() {
     int failures=0;
     const int savedLanguage=g_lang;
+    // Use the same commands as player input: a conversion must not turn
+    // movement/repacking into a free repair, including at one remaining HP.
+    for(int health:{1,333,999}) {
+        World match;match.init(64,64,20261031,2,0,{Faction::Allies,Faction::Soviet});match.mcvRepacks=true;
+        EID mobile=INVALID_EID;for(EID id=0;id<(EID)match.ents.size();++id)if(match.valid(id) && match.ents[id].player==0 && !match.ents[id].isBuilding && match.ents[id].utype==UnitType::MCV){mobile=id;break;}
+        bool preserved=match.valid(mobile);const int x=preserved?(int)match.ents[mobile].x-1:0,y=preserved?(int)match.ents[mobile].y-1:0;
+        if(preserved)match.ents[mobile].hp=health;
+        for(int cycle=0;cycle<3 && preserved;++cycle) {
+            World::Cmd command{};command.type=World::Cmd::Deploy;command.ids={mobile};match.applyCmd(0,command);
+            const EID yard=match.bldAt(x,y);preserved=match.valid(yard) && match.ents[yard].btype==BldType::ConYard && match.ents[yard].hp==health;
+            if(!preserved)break;
+            command.ids={yard};match.applyCmd(0,command);mobile=INVALID_EID;
+            for(EID id=0;id<(EID)match.ents.size();++id)if(match.valid(id) && match.ents[id].player==0 && !match.ents[id].isBuilding && match.ents[id].utype==UnitType::MCV){mobile=id;break;}
+            preserved=match.valid(mobile) && match.ents[mobile].hp==health;
+        }
+        std::printf("DEPLOYMENT_HEALTH %s hp=%d repeated deploy/repack cannot heal the unit\n",preserved?"PASS":"FAIL",health);failures+=!preserved;
+    }
     for(int language=0;language<2;++language) for(int scenario=0;scenario<18;++scenario) {
         g_lang=language;
         world.init(64,64,20261031,2,0,{Faction::Allies,Faction::Soviet},0,"",true);
@@ -40,7 +57,9 @@ int Game::deploymentFeedbackRegression() {
         replay.applyCmd(0,expected);
         bool equal=world.checksum()==replay.checksum();
         DeployOrderResult result;bool event=false;
-        for(const auto& feedback:world.presentationEvents) if(feedback.kind==PresentationKind::DeployOrder) {
+        // Local issueCmd already consumes its receipt. The peer keeps the
+        // reference receipt while actual UI/selection and World state are checked.
+        for(const auto& feedback:replay.presentationEvents) if(feedback.kind==PresentationKind::DeployOrder) {
             result=feedback.deploy;event=feedback.player==0 && feedback.tick==world.tick && feedback.entity>=0 && feedback.positional;
         }
         const auto checksum=world.checksum();

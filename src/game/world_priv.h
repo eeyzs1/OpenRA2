@@ -16,9 +16,14 @@ inline int scaledWeaponDamage(int base, float mult) {
     return std::max(1, (int)std::lround((double)base * (double)mult));
 }
 inline float weaponMultiplier(const WeaponDef& w, const World::Ent& target) {
+    if(target.nativeTemporalHead!=INVALID_EID && !(w.nativeSource && w.nativeSource->warhead && w.nativeSource->warhead->temporal))return 0;
+    if(w.nativeSource && w.nativeSource->warhead && target.nativeIdentity.definition) {
+        const auto& wh=*w.nativeSource->warhead;const auto& type=*target.nativeIdentity.definition;
+        if((wh.psychicDamage && type.immuneToPsionicWeapons) || (wh.radiation && type.immuneToRadiation))return 0;
+    }
     if (target.isBuilding)
-        return weaponVsArmor(w, Armor::Concrete, false, true);
-    const UnitDef& td = unitDef(target.utype);
+        return weaponVsArmor(w,target.nativeIdentity.definition?target.nativeIdentity.definition->armor:Armor::Concrete,false,true);
+    const UnitDef& td = unitDef(target);
     return weaponVsArmor(w, td.armor, td.isInfantry(), false);
 }
 inline int rotStepDir(int cur, int want) {
@@ -79,7 +84,7 @@ inline float projMoveSpeed(const Projectile& p) {
 inline bool approachBuildingCell(const World& w, int sx, int sy, const World::Ent& b, int domain,
                                  int& ox, int& oy) {
     if (!b.isBuilding) return false;
-    const BldDef& bd = bldDef(b.btype);
+    const BldDef& bd = bldDef(b);
     const int bx = (int)b.x, by = (int)b.y;
     auto walkable = [&](int x, int y) {
         if (!w.map.inBounds(x, y) || w.map.cellBlocked(x, y)) return false;
@@ -101,21 +106,79 @@ inline bool approachBuildingCell(const World& w, int sx, int sy, const World::En
     return found;
 }
 
+// Retain the corner and exit in a replanned route, returning its first unconsumed waypoint.
+inline int prependDriveArcCorner(const World& world, const World::Ent& unit, const NativeDriveArc& curve,
+    std::vector<Vec2i>& path) {
+    const Vec2i exit{curve.corner.x + curve.outgoing.x, curve.corner.y + curve.outgoing.y};
+    const auto sameLevel = [&](Vec2i from, Vec2i to) {
+        return world.movementStep(unit, from.x, from.y, curve.layer, to.x, to.y) == curve.layer
+            && world.map.surfaceHeight(from.x, from.y, curve.layer) == world.map.surfaceHeight(to.x, to.y, curve.layer);
+    };
+    if (!curve.wide) {
+        if (path.empty() || path.size() >= 4096 || path.front() != exit || !sameLevel(curve.corner, exit)) return -1;
+        path.insert(path.begin(), curve.corner);
+        return 0;
+    }
+
+    const auto incoming = NativeDriveMath::directions[curve.incoming];
+    const Vec2i entry{curve.corner.x - incoming.x, curve.corner.y - incoming.y};
+    const Vec2i occupied{(int)unit.x, (int)unit.y};
+    const int index = curve.progress < NativeDriveMath::wideHandoff ? 0 : 1;
+    if (occupied == exit) {
+        if (index == 0 || !sameLevel(exit, exit) || world.bldBlocked(exit.x, exit.y, curve.layer)) return -1;
+        if (!path.empty() && path.front() == exit) {
+            if (path.size() >= 4096) return -1;
+            path.insert(path.begin(), curve.corner);
+            return index;
+        }
+        if (path.size() > 4094) return -1;
+        if (!path.empty()) {
+            const auto next = path.front();
+            if (next == curve.corner || next == entry || std::abs(next.x - exit.x) > 1 || std::abs(next.y - exit.y) > 1
+                || world.movementStep(unit, exit.x, exit.y, curve.layer, next.x, next.y) < 0) return -1;
+        }
+        // The pathfinder starts in the exit cell, but the wide arc still has a leg to its center.
+        path.insert(path.begin(), {curve.corner, exit});
+        return index;
+    }
+
+    if ((occupied != entry && occupied != curve.corner) || path.empty()
+        || !sameLevel(curve.corner, exit) || world.bldBlocked(exit.x, exit.y, curve.layer)) return -1;
+    if (occupied == entry && (index != 0 || !sameLevel(entry, curve.corner)
+        || world.bldBlocked(curve.corner.x, curve.corner.y, curve.layer))) return -1;
+    if (path.front() == curve.corner) return path.size() > 1 && path[1] == exit ? index : -1;
+    if (path.size() >= 4096 || path.front() != exit) return -1;
+    path.insert(path.begin(), curve.corner);
+    return index;
+}
+
+inline bool reversesDriveArc(const World::Ent& unit, const NativeDriveArc& curve, Vec2i next) {
+    const auto incoming = NativeDriveMath::directions[curve.incoming];
+    const Vec2i entry{curve.corner.x - incoming.x, curve.corner.y - incoming.y};
+    if (next == entry) return true;
+    if (!curve.wide) return false;
+    const Vec2i exit{curve.corner.x + curve.outgoing.x, curve.corner.y + curve.outgoing.y};
+    const Vec2i occupied{(int)unit.x, (int)unit.y};
+    return (occupied == exit && next == curve.corner)
+        || (occupied == entry && next == Vec2i{entry.x - incoming.x, entry.y - incoming.y});
+}
+
 inline bool attackPath(const World& world,const World::Ent& unit,const World::Ent& target,std::vector<Vec2i>& path) {
-    const auto& def=unitDef(unit.utype);
+    const auto& def=unitDef(unit);
     path.clear();
     if(def.isAir() || unit.utype==UnitType::Chrono || unit.utype==UnitType::ChronoCommando || unit.utype==UnitType::ChronoIvan) return true;
     float tx=target.x,ty=target.y;
-    if(target.isBuilding) { tx+=bldDef(target.btype).w/2.0f;ty+=bldDef(target.btype).h/2.0f; }
+    if(target.isBuilding) { tx+=bldDef(target).w/2.0f;ty+=bldDef(target).h/2.0f; }
     // Engineer capture/repair and spy infiltration also share the Chasing state.
     if((unit.utype==UnitType::Spy || unit.utype==UnitType::Engineer) && target.isBuilding) {
-        if(distf(unit.x,unit.y,tx,ty)<std::max(bldDef(target.btype).w,bldDef(target.btype).h)/2.0f+2.5f) return true;
+        if(distf(unit.x,unit.y,tx,ty)<std::max(bldDef(target).w,bldDef(target).h)/2.0f+2.5f) return true;
         int x=(int)tx,y=(int)ty;
         return approachBuildingCell(world,(int)unit.x,(int)unit.y,target,def.pathDomain(),x,y)
-            && world.map.findPath((int)unit.x,(int)unit.y,x,y,path,20000,def.pathDomain());
+            && world.map.findPath((int)unit.x,(int)unit.y,x,y,path,20000,def.pathDomain(),nullptr,unit.navLayer,-1,def.fitsUnderBridge(),world.nativeGateAccess(unit));
     }
-    float range=def.hasC4() && target.isBuilding?2.5f:(float)world.effWeapon(unit,&target).range;
-    bool found=world.map.findPathToRange((int)unit.x,(int)unit.y,tx,ty,range,path,20000,def.pathDomain());
+    world.attackTargetPoint(unit,target,tx,ty);
+    float range=world.attackRange(unit,target);
+    bool found=world.map.findPathToRange((int)unit.x,(int)unit.y,tx,ty,range,path,20000,def.pathDomain(),nullptr,unit.navLayer,-1,-1,def.fitsUnderBridge(),world.nativeGateAccess(unit));
     // While between tile centers, the current cell's center may itself be the firing point.
     if(found && path.empty() && distf(unit.x,unit.y,tx,ty)>range) path.push_back({(int)unit.x,(int)unit.y});
     return found;

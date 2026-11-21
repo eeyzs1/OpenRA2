@@ -1,10 +1,13 @@
 #include "game/game.h"
+#include "game/skirmish_map.h"
 #include "game/campaign.h"
 #include "game/script.h"
 #include "core/content.h"
 #include "gfx/sprites.h"
 #include "gfx/bitfont.h"
 #include "sfx/sound.h"
+#include "sfx/voices.h"
+#include "sfx/announcer.h"
 #include "rlgl.h"
 #include <cmath>
 #include <algorithm>
@@ -24,7 +27,7 @@ void Game::init(bool windowed, bool hidden) {
     loadProjectilesFromContent();
     loadStringsFromContent();
     // 初始窗口用小尺寸创建（确保任何屏幕都能完整显示），随后 applyDisplay 切换到目标模式
-    InitWindow(960, 600, "OpenRA2 - 共和国之辉 复刻");
+    InitWindow(960, 600, "OpenRA2 - 红色警戒2 复刻");
     if (windowed) cfgWindowMode = 1; // 调试参数：强制窗口模式
     // 显示模式：无边框全屏（窗口=桌面分辨率，逻辑画布 letterbox 缩放，
     // 任何显示器含低分屏/高DPI缩放都不会出现按钮落在屏幕外）或指定分辨率窗口
@@ -54,14 +57,14 @@ void Game::init(bool windowed, bool hidden) {
     }
     if (!hidden) { // 隐藏窗口=无头测试：不初始化音频设备，避免提示音/BGM 打扰用户
         g_sfx.init();
+        static const int vols[] = {0, 25, 50, 75, 100};
+        g_sfx.setMasterVol(vols[cfgVolume] / 100.0f);
         g_sfx.initBgm();
         if (!g_sfx.assetsOk() || !g_sfx.bgmReady()) {
             assetsOk_ = false;
             TraceLog(LOG_ERROR, "ASSET-CHECK: audio missing (sfx missing=%d bgmOk=%d) — refuse start",
                      g_sfx.missingCount(), (int)g_sfx.bgmReady());
         }
-        static const int vols[] = {0, 25, 50, 75, 100};
-        g_sfx.setMasterVol(vols[cfgVolume] / 100.0f); // 持久化音量生效
     }
 
     // 逻辑分辨率离屏缓冲：点采样放大，避免 LED/像素 UI 被双线性糊成一团
@@ -87,7 +90,19 @@ void Game::init(bool windowed, bool hidden) {
     scriptSetLoseCb([this] { gameOver = true; victory = false; });
 }
 
+void Game::clearOriginalMap() {
+    if(cfgOriginalMap.empty())return;cfgOriginalMap.clear();cfgMapSize=96;previewDirty=true;
+}
+
+bool Game::selectOriginalMap(std::string_view id) {
+    const auto* map=OriginalSkirmishMaps::find(id);if(!map || cfgRules==RulesChoice::Fusion)return false;
+    cfgOriginalMap=id;cfgReferenceMap=false;cfgMapSize=map->width+map->height;cfgMapType=0;
+    cfgAI=std::clamp(cfgAI,1,map->players-1);if(cfgGameMode>1)cfgGameMode=(int)SkirmishMode::Battle;
+    previewDirty=true;return true;
+}
+
 void Game::selectReferenceMap() {
+    clearOriginalMap();
     cfgReferenceMap = true;
     cfgMapSize = 64;
     cfgAI = 1;
@@ -96,16 +111,21 @@ void Game::selectReferenceMap() {
 }
 
 void Game::resetMatchInteraction() {
+    g_unitVoices.reset();
+    g_announcer.reset();
     sel.clear();
     selBuilding = INVALID_EID;
     for (auto& group : groups) group.clear();
+    selectionGenerations.clear();chronoGenerations.clear();selectedBuildingRef={};interactionIdentityEpoch=0;
+    for(auto& group:groupGenerations)group.clear();
     lastGroupKey = -1;
     lastGroupTap = 0;
-    dragging = dragPressSelected = false;
+    dragging = dragPressSelected = dragOrderCandidate = false;
     clearPlacement();
     targetingSW = SWType::COUNT;
     chronoSourceSel.clear();
     targetingParadrop = false;
+    targetingSupport = SupportType::COUNT;
     sideMode = 0;
     waypointLatch = false;
     paused = showMenu = false;
@@ -122,24 +142,50 @@ void Game::resetMatchInteraction() {
     minimapTimer = 0;
 }
 
-void Game::newGame(uint64_t seed) {
+void Game::newGame(uint64_t seed,const World::RulesSnapshot* rulesSnapshot) {
     if (cfgReferenceMap) selectReferenceMap();
+    OriginalSkirmishMaps::Data original;
+    if(!cfgOriginalMap.empty() && !OriginalSkirmishMaps::load(cfgOriginalMap,original,cfgAI+1)){
+        referenceMapReady=false;previewDirty=true;message(TR(S::MsgMapUnavailable));phase=Phase::Setup;return;
+    }
+    RulesInfo installed;
+    if(!validMatchSetup(currentMatchSetup(seed)) || (rulesSnapshot?!validateRulesSource(*rulesSnapshot,installed,original.choice?&original.terrain:nullptr):!refreshRulesChoice(cfgRules,true))) {
+        message(TR(S::RulesUnavailable));phase=Phase::Setup;return;
+    }
+    const uint16_t mask=rulesSnapshot?installed.countries:rulesInfo[(int)cfgRules].countries;
+    std::vector<Country> allowed;for(int c=1;c<(int)Country::COUNT;++c)if(mask&(1<<c))allowed.push_back((Country)c);
+    if(allowed.empty()){message(TR(S::RulesUnavailable));phase=Phase::Setup;return;}
     World reference;
     Rng frng(seed);
     auto pickCountry = [&](int c) {
-        return c >= (int)Country::COUNT ? (Country)frng.range(1, (int)Country::COUNT - 1) : (Country)c;
+        return c==(int)Country::COUNT?allowed[frng.range(0,(int)allowed.size()-1)]:(Country)c;
     };
     std::vector<Country> countries;
     countries.push_back(pickCountry(cfgCountry));
     for (int i = 0; i < cfgAI; i++) countries.push_back(pickCountry(aiCountry[i]));
+    for(Country c:countries)if(c<=Country::None || c>=Country::COUNT || !(mask&(1<<(int)c))){message(TR(S::RulesUnavailable));phase=Phase::Setup;return;}
     std::vector<Faction> factions;
     for (Country c : countries) factions.push_back(countryFaction(c));
     SkirmishMode mode = cfgGameMode >= 0 && cfgGameMode < (int)SkirmishMode::COUNT
                       ? (SkirmishMode)cfgGameMode : SkirmishMode::Battle;
     int effectiveMapType = mode == SkirmishMode::NavalWar ? 1 : cfgMapType;
-    if (cfgReferenceMap) {
+    reference.skirmishMode=mode; // source definitions must select the mode before starting actors bind them
+    World::RulesSnapshot selected;
+    if(!rulesSnapshot && cfgRules!=RulesChoice::Fusion){selected.source=rulesInfo[(int)cfgRules].source;rulesSnapshot=&selected;}
+    if(original.choice) {
+        const auto base=*rulesSnapshot;std::string combined;
+        if(!OriginalSkirmishMaps::composeRules(base.source,original,combined)){
+            message(TR(S::RulesUnavailable));phase=Phase::Setup;return;
+        }
+        selected=base;selected.source=std::move(combined);
+        if(!validateRulesSource(selected,installed,&original.terrain)
+            || !reference.init(cfgMapSize,cfgMapSize,seed,1,cfgAI,factions,0,original.terrainPath.c_str(),false,true,nullptr,countries,&selected)){
+            referenceMapReady=false;previewDirty=true;message(TR(S::MsgMapUnavailable));phase=Phase::Setup;return;
+        }
+        g_script.shutdown();world=std::move(reference);world.map.bldOccRef=&world.bldOcc;referenceMapReady=true;
+    } else if (cfgReferenceMap) {
         // Validate in a staging world so a missing map cannot replace the current match.
-        if (!reference.init(64, 64, seed, 1, 1, factions, 0, REFERENCE_MAP, false, true) ||
+        if (!reference.init(64, 64, seed, 1, 1, factions, 0, REFERENCE_MAP, false, true,nullptr,countries,rulesSnapshot) ||
                 reference.map.w != 64 || reference.map.h != 64) {
             referenceMapReady = false; previewDirty = true; phase = Phase::Setup; return;
         }
@@ -148,8 +194,11 @@ void Game::newGame(uint64_t seed) {
         world.map.bldOccRef = &world.bldOcc;
         referenceMapReady = true;
     } else {
+        if(!reference.init(cfgMapSize,cfgMapSize,seed,1,cfgAI,factions,effectiveMapType,nullptr,false,false,nullptr,countries,rulesSnapshot)){
+            message(TR(S::RulesUnavailable));phase=Phase::Setup;return;
+        }
         g_script.shutdown();
-        world.init(cfgMapSize, cfgMapSize, seed, 1, cfgAI, factions, effectiveMapType);
+        world=std::move(reference);world.map.bldOccRef=&world.bldOcc;
     }
     resetMatchInteraction();
     localPlayer = 0;
@@ -179,19 +228,7 @@ void Game::newGame(uint64_t seed) {
             for (int y = 0; y < world.map.h; ++y)
                 for (int x = 0; x < world.map.w; ++x)
                     world.map.reveal(p, x, y, 0);
-        // 出生点向地图中心集中（官方 Land Rush：抢中心地皮）
-        float cx = world.map.w * 0.5f, cy = world.map.h * 0.5f;
-        int slot = 0;
-        for (auto& e : world.ents) {
-            if (!e.alive || e.isBuilding || e.utype != UnitType::MCV) continue;
-            float ang = slot * 0.9f;
-            float r = 4.0f + (slot % 3) * 2.0f;
-            e.x = cx + cosf(ang) * r;
-            e.y = cy + sinf(ang) * r * 0.7f;
-            e.path.clear();
-            e.state = UState::Idle;
-            slot++;
-        }
+        // World selects legal central starting patches before creating actors.
     }
     if (mode == SkirmishMode::UnholyAlliance) {
         // 通用 MCV 在本引擎中按玩家科技权限展开；第二辆代表另一条官方阵营科技树的开局 MCV。
@@ -262,9 +299,10 @@ void Game::newGame(uint64_t seed) {
         }
     }
     phase = Phase::InGame;
+    matchSetup=currentMatchSetup(seed);
     bakeTerrain(); // 整图地表烘焙（连续噪声，无瓦片网格感）
     g_sprites.preloadMatch(localPlayer); // 开局预载本地玩家素材，消除游戏中懒加载掉帧
-    // Skirmish uses built-in rules; campaign scripts never carry into this match.
+    // Rules and resolved countries are installed before creating the starting force.
 }
 
 void Game::loadFont() {
@@ -321,6 +359,7 @@ void Game::loadFont() {
 }
 
 void Game::shutdown() {
+    unloadNativeActors();
     g_script.shutdown();
     g_sfx.shutdown();
     unloadBriefArt();
@@ -341,7 +380,7 @@ void Game::shutdown() {
 void Game::run() {
     while (!WindowShouldClose()) {
         if (displayDirty) { displayDirty = false; applyDisplay(); } // 显示模式/分辨率热切换
-        g_sfx.updateBgm();
+        updateAudioPresentation();
         if (phase == Phase::NetLobby) netHandleMsgs(); // 大厅：驱动握手状态机
         if (phase == Phase::InGame) {
             if (netGame) netHandleMsgs(); // 联机：渲染帧收包，命令帧尽早入队减少等待
@@ -368,6 +407,7 @@ void Game::run() {
 
 
 void Game::render() {
+    g_sprites.selectHousePalette(phase==Phase::InGame && !world.nativeScenarioSource.empty() && !world.usesRulesProfile()?world.nativeColors:nullptr);
     // 菜单阶段：独立渲染路径
     if (phase != Phase::InGame) {
         // 壳层页先画 640×480 UI RT，再 blit 到 canvas（禁止嵌套 RenderTexture）
@@ -423,6 +463,7 @@ void Game::render() {
     }
     syncFogKnowledge();
     updateMinimap(); // 嵌套 RenderTexture 会破坏画布渲染状态，提前更新
+    const bool modalAtFrameStart=showMenu || gameOver;
     // ESC/结算壳同样先离屏到 UI RT，再在 canvas 上 blit
     if (showMenu || gameOver) {
         menuBeginUi();
@@ -443,6 +484,8 @@ void Game::render() {
         drawCombatFeedback();
         drawEffectsLayer();
         drawFogLayer();
+        drawNativeRockets();
+        drawSupportActors();
         drawPlacement();
         drawRallyOverlay();
         if (moveFeedbackTimer > 0) {
@@ -478,7 +521,10 @@ void Game::render() {
             DrawRectangleRec({x0, y0, w, h}, Color{40, 220, 60, 28});
         }
     }
+    const bool previousInputSuppression=suppressUiInput;
+    suppressUiInput=previousInputSuppression || modalAtFrameStart || showMenu || gameOver;
     drawHUD();
+    suppressUiInput=previousInputSuppression;
     {
         Vector2 m = mousePos();
         drawGameCursor((int)m.x, (int)m.y);
