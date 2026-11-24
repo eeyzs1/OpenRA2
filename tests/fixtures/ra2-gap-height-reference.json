@@ -1,0 +1,757 @@
+{
+  "scope": "Vanilla RA2 ground-cell shroud queries at levels0..15 on provided flat cells, under provided satellite flags. No original frame loop, renderer, full sight gathering, actual map edge or air-altitude claim.",
+  "sourceEdition": "ra2-local-base",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "sourceRulesSHA256": "fd1e95cea0306ea78049dc81c8cd816e18c28c496872a1ff02edd50bd082062f",
+  "radius": 10,
+  "sourceEntries": {
+    "gapDispatch": "0x44f8e0",
+    "gapActivate": "0x6c83f0",
+    "gapDeactivate": "0x6c86f0",
+    "heightToPixels": "0x6a2970",
+    "cellCoordinates": "0x47ba50",
+    "flatFloorHeight": "0x4706c0",
+    "groundShroudWrapper": "0x47cb50",
+    "mapShroudPredicate": "0x568140",
+    "neighborQuery": "0x476ac0",
+    "neighborInitializer": "0x491620"
+  },
+  "sourceFields": {
+    "cellMapCoords": "0x24",
+    "cellLevel": "0x11b",
+    "cellSlope": "0x11c",
+    "copyFlags": "0x12c",
+    "shroudCounter": "0x130",
+    "gapCount": "0x134"
+  },
+  "providedDependencies": [
+    "Private PE mapping at its original base; no original game entrypoint.",
+    "Provided actor/type/owner/power and alliance query dependencies; original local-house predicate executes.",
+    "Provided512x512 pointer grid, local64x64 cell records translated by(64,64), and a satellite-visible background record.",
+    "Map lookup and presentation invalidations intercepted as in the prior flat probe; original ground coordinates, floor height, map shroud predicate and neighbor query execute.",
+    "The original math/height and neighbor initializers execute; no manually assumed height scale, level step or neighbor offsets.",
+    "Flat cell slope0, source levels0..15 and copyFlags0x18/counter0 are fixture inputs; actual sight gathering and whole-map topology are not measured."
+  ],
+  "measured": {
+    "heightScale": 0.14350360082660085,
+    "cellLevelLeptons": 104,
+    "mapLevelLeptons": 104,
+    "neighbor3": [
+      1,
+      1
+    ],
+    "oddLevelGroundCells": 342,
+    "evenLevelGroundCells": 373,
+    "allRawGroundCoordinatesExact": true,
+    "crossGeneratorWitnesses": [
+      [
+        29,
+        35
+      ],
+      [
+        30,
+        34
+      ],
+      [
+        31,
+        33
+      ],
+      [
+        32,
+        32
+      ],
+      [
+        33,
+        31
+      ],
+      [
+        34,
+        30
+      ],
+      [
+        35,
+        29
+      ]
+    ],
+    "originalHeightCases": 18,
+    "originalGroundCaseAssertions": 22
+  },
+  "fixtureInputs": {
+    "ra2-gap-height-cases.csv": "40c1277185eb0c13c008f3f0bea53ca51074f187f15d83a96df252d8ba4ee023",
+    "ra2-gap-height-masks.csv": "f628685f602badd96d6ced164738fb989d18a324fcc8155f42fea3973131396a"
+  },
+  "cases": [
+    {
+      "id": 0,
+      "defaultHeight": 0,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "b93a0c83ce3b6325",
+      "activeCells": 373,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 1,
+      "defaultHeight": 1,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "13411b19e5157325",
+      "activeCells": 342,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 2,
+      "defaultHeight": 2,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "7866570605c62325",
+      "activeCells": 373,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 3,
+      "defaultHeight": 3,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "864caa25d37cf325",
+      "activeCells": 342,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 4,
+      "defaultHeight": 4,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "215646dc29a3a325",
+      "activeCells": 373,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 5,
+      "defaultHeight": 5,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "e8a2106fe87c7325",
+      "activeCells": 342,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 6,
+      "defaultHeight": 6,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "e082915e612e6325",
+      "activeCells": 373,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 7,
+      "defaultHeight": 7,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "96b513127af1f325",
+      "activeCells": 342,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 8,
+      "defaultHeight": 8,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "b8030a740ba76325",
+      "activeCells": 373,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 9,
+      "defaultHeight": 9,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "336cfa667cab7325",
+      "activeCells": 342,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 10,
+      "defaultHeight": 10,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "a82de2554ef5a325",
+      "activeCells": 373,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 11,
+      "defaultHeight": 11,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "c3463e7458eef325",
+      "activeCells": 342,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 12,
+      "defaultHeight": 12,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "511dd22b72d32325",
+      "activeCells": 373,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 13,
+      "defaultHeight": 13,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "a465d793cfd27325",
+      "activeCells": 342,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 14,
+      "defaultHeight": 14,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "df4b8f4e9e9a6325",
+      "activeCells": 373,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 15,
+      "defaultHeight": 15,
+      "regions": [
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "f03a5ea476a3f325",
+      "activeCells": 342,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 16,
+      "defaultHeight": 0,
+      "regions": [
+        [
+          28,
+          28,
+          39,
+          39,
+          4
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "cd34130763689c89",
+      "activeCells": 374,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 17,
+      "defaultHeight": 4,
+      "regions": [
+        [
+          28,
+          28,
+          39,
+          39,
+          0
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "be18c2edf229ea69",
+      "activeCells": 373,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 18,
+      "defaultHeight": 0,
+      "regions": [
+        [
+          0,
+          0,
+          36,
+          64,
+          3
+        ],
+        [
+          -1,
+          -1,
+          -1,
+          -1,
+          0
+        ]
+      ],
+      "gaps": [
+        [
+          32,
+          32
+        ]
+      ],
+      "groundFNV64": "cb336477c362fc25",
+      "activeCells": 323,
+      "afterFirstRemoved": 0,
+      "onlyFirst": 0
+    },
+    {
+      "id": 19,
+      "defaultHeight": 1,
+      "regions": [
+        [
+          28,
+          30,
+          32,
+          35,
+          0
+        ],
+        [
+          34,
+          30,
+          38,
+          35,
+          2
+        ]
+      ],
+      "gaps": [
+        [
+          29,
+          32
+        ],
+        [
+          35,
+          32
+        ]
+      ],
+      "groundFNV64": "3cf167d6f45f66ad",
+      "activeCells": 445,
+      "afterFirstRemoved": 342,
+      "onlyFirst": 342
+    },
+    {
+      "id": 20,
+      "defaultHeight": 1,
+      "regions": [
+        [
+          22,
+          22,
+          27,
+          27,
+          0
+        ],
+        [
+          38,
+          38,
+          43,
+          43,
+          2
+        ]
+      ],
+      "gaps": [
+        [
+          24,
+          24
+        ],
+        [
+          40,
+          40
+        ]
+      ],
+      "groundFNV64": "1c41df32c1bc8c4b",
+      "activeCells": 691,
+      "afterFirstRemoved": 342,
+      "onlyFirst": 342
+    }
+  ],
+  "originalRuns": [
+    {
+      "folder": "original-query-probe",
+      "exitCode": 0,
+      "seconds": 0.1720000000204891,
+      "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+      "probeExecutableSHA256": "b78374a501d072f106bce1cc400c2b9a167fac9f4b283ad32e7c9ddb4266e7b9",
+      "probeSourceSHA256": "41f14c7fb46820f67e3bb44e232a65ff0ad227643bbacf4ef12b50d580aa9099",
+      "logSHA256": "b5aacef7f8bb6de62b878658d58942a29073a1be3b210d3b1f95bfbb94fedd3d"
+    },
+    {
+      "folder": "original-overlap-probe",
+      "exitCode": 0,
+      "seconds": 0.18799999996554106,
+      "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+      "probeExecutableSHA256": "469a433f727c0a1966a68a825f8f81b512b84cf32d7c1537ec6f21aae1bd12c2",
+      "probeSourceSHA256": "90aa66624b9aeca27626be0d646e4dad5ef788f82c7966981076c10b3e170080",
+      "logSHA256": "87606980be5c731e63b7e8853849208e5e322e85e461d404561d69cb2ce9eee7"
+    },
+    {
+      "folder": "original-overlap-diagonal",
+      "exitCode": 0,
+      "seconds": 0.18700000003445894,
+      "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+      "probeExecutableSHA256": "6dac00528074cff3b5248eae10e1f463a8863aabed405bbe5ffb40378bac8173",
+      "probeSourceSHA256": "92a1d214a5ae7c4c5355d65f016e1250f2a57984dd4726df3f0042fcdc9fff16",
+      "logSHA256": "22aea1c2e52ddf51158b18793cd1e6a74f1eec6bedf62c816ccb17e55d1c84a6"
+    }
+  ],
+  "limits": [
+    "Only ground cells with flat slope and level0..15.",
+    "Actual satellite acquisition, local entity sight gathering, bridges, airborne visibility, rendering and original scheduling remain outside this proof.",
+    "The source deactivates via provided power queries; native Sell commands will validate this project continuation without claiming original sale timing."
+  ]
+}

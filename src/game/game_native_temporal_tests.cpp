@@ -138,7 +138,13 @@ int GameRegression::nativeTemporalRegression(const char* outputDir) {
         save("incoming-cancels-outgoing",10);
 
         reset();a=source(true);target=victim();cast(a,target);const auto released=w.orderUnload({a});
-        check(released.released==1 && w.ents[a].cargo.empty() && !w.ents[target].immobilized() && !w.nativeTemporalBeams.contains(a),
+        if(released.pending) {
+            check(released.pending==1 && w.ents[a].cargo.size()==1 && w.ents[target].immobilized() && w.nativeTemporalBeams.contains(a),
+                "a ground IFV keeps its crew and beam until the queued unload mission starts");
+            save("crew-unload-pending",20);
+            for(int i=0;i<180 && !w.ents[a].cargo.empty();++i)w.update();
+        }
+        check((released.released==1 || released.pending==1) && w.ents[a].cargo.empty() && !w.ents[target].immobilized() && !w.nativeTemporalBeams.contains(a),
             "actual IFV unloading cancels its crew's Temporal beam");
 
         reset();a=source();target=victim();w.ents[target].invuln=100;
@@ -202,7 +208,7 @@ int GameRegression::nativeTemporalRegression(const char* outputDir) {
         reset();a=source();target=victim();cast(a,target);b=source(false,12.5f,13.5f);cast(b,target);const auto bytes=temporalBytes(w);
         const auto section=locateWorldSaveSection(bytes,WorldSaveSection::NativeTemporal);
         const auto* expectedWorld=WorldSaveFormat::forRevision(WorldSaveFormat::ordinaryRevision(w.nativeProductionRules.version));
-        check(section && expectedWorld && bytes.size()>8 && std::equal(expectedWorld->magic.begin(),expectedWorld->magic.end(),bytes.begin()),
+        check(section && expectedWorld && worldSaveHeaderMatches(bytes,expectedWorld->magic.data()),
             "current ordinary saves use their declared World revision and contain a bounded Temporal suffix");
         if(section) {
             const auto mark=section->offset;const auto hash=w.checksum();

@@ -1,0 +1,186 @@
+{
+  "scope": "Read-only static inspection of the local RA2 constructor defaults, INI flag readers and one cell-entry eligibility branch; raw unit flags from the identified original rules.ini. Original movement, collision timing, death animation and full game entrypoint are not executed.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "probeSourceSHA256": "d365a28c672ad20db59b22e1c0e3e30601839e0a7229eca1dda12c0c843c5495",
+  "sourceArchive": "ra2.mix/local.mix",
+  "sourceEdition": "ra2-local-base",
+  "sourceRulesSHA256": "fd1e95cea0306ea78049dc81c8cd816e18c28c496872a1ff02edd50bd082062f",
+  "defaultCrusher": false,
+  "defaultInfantryCrushable": true,
+  "defaultOtherObjectCrushable": false,
+  "deployedCrushableKeywordPresent": false,
+  "sourceVeteranCrusherRecipients": [],
+  "instructionEvidence": [
+    {
+      "address": "0x509ce4",
+      "mnemonic": "mov",
+      "operands": "byte ptr [esi + 0x1fd], 1"
+    },
+    {
+      "address": "0x6d9b55",
+      "mnemonic": "xor",
+      "operands": "ebx, ebx"
+    },
+    {
+      "address": "0x6da3ee",
+      "mnemonic": "mov",
+      "operands": "byte ptr [esi + 0xaf3], bl"
+    },
+    {
+      "address": "0x5d7931",
+      "mnemonic": "mov",
+      "operands": "cl, byte ptr [ebx + 0x1fd]"
+    },
+    {
+      "address": "0x5d793e",
+      "mnemonic": "push",
+      "operands": "0x7e8200"
+    },
+    {
+      "address": "0x6dd104",
+      "mnemonic": "mov",
+      "operands": "cl, byte ptr [ebp + 0xaf3]"
+    },
+    {
+      "address": "0x6dd10b",
+      "mnemonic": "push",
+      "operands": "0x7d1b28"
+    },
+    {
+      "address": "0x7039a0",
+      "mnemonic": "mov",
+      "operands": "cl, byte ptr [eax + 0xaf3]"
+    },
+    {
+      "address": "0x7039c1",
+      "mnemonic": "mov",
+      "operands": "cl, byte ptr [eax + 0x1fd]"
+    }
+  ],
+  "answers": [
+    {
+      "id": "AMCV",
+      "armor": "heavy",
+      "rawCrusher": "yes",
+      "rawCrushable": null,
+      "crusher": true,
+      "crushable": false
+    },
+    {
+      "id": "MTNK",
+      "armor": "heavy",
+      "rawCrusher": "yes",
+      "rawCrushable": null,
+      "crusher": true,
+      "crushable": false
+    },
+    {
+      "id": "HTNK",
+      "armor": "heavy",
+      "rawCrusher": "yes",
+      "rawCrushable": null,
+      "crusher": true,
+      "crushable": false
+    },
+    {
+      "id": "HTK",
+      "armor": "heavy",
+      "rawCrusher": "yes",
+      "rawCrushable": null,
+      "crusher": true,
+      "crushable": false
+    },
+    {
+      "id": "FV",
+      "armor": "light",
+      "rawCrusher": "no",
+      "rawCrushable": null,
+      "crusher": false,
+      "crushable": false
+    },
+    {
+      "id": "CMIN",
+      "armor": "medium",
+      "rawCrusher": "yes",
+      "rawCrushable": null,
+      "crusher": true,
+      "crushable": false
+    },
+    {
+      "id": "HARV",
+      "armor": "medium",
+      "rawCrusher": "yes",
+      "rawCrushable": null,
+      "crusher": true,
+      "crushable": false
+    },
+    {
+      "id": "SREF",
+      "armor": "light",
+      "rawCrusher": "yes",
+      "rawCrushable": null,
+      "crusher": true,
+      "crushable": false
+    },
+    {
+      "id": "MGTK",
+      "armor": "light",
+      "rawCrusher": "yes",
+      "rawCrushable": null,
+      "crusher": true,
+      "crushable": false
+    },
+    {
+      "id": "E1",
+      "armor": "none",
+      "rawCrusher": null,
+      "rawCrushable": "yes",
+      "crusher": false,
+      "crushable": true
+    },
+    {
+      "id": "E2",
+      "armor": "flak",
+      "rawCrusher": null,
+      "rawCrushable": null,
+      "crusher": false,
+      "crushable": true
+    },
+    {
+      "id": "TANY",
+      "armor": "flak",
+      "rawCrusher": null,
+      "rawCrushable": "yes",
+      "crusher": false,
+      "crushable": true
+    },
+    {
+      "id": "CLEG",
+      "armor": "none",
+      "rawCrusher": null,
+      "rawCrushable": "no",
+      "crusher": false,
+      "crushable": false
+    },
+    {
+      "id": "SHK",
+      "armor": "plate",
+      "rawCrusher": null,
+      "rawCrushable": "no",
+      "crusher": false,
+      "crushable": false
+    },
+    {
+      "id": "DESO",
+      "armor": "plate",
+      "rawCrusher": null,
+      "rawCrushable": "no",
+      "crusher": false,
+      "crushable": false
+    }
+  ],
+  "limits": [
+    "No claim of final RA2 1.006 or YR 1.001 patch calibration.",
+    "The full original collision admission, aggressive crushing, veteran ability overrides and death presentation remain separate scopes."
+  ]
+}

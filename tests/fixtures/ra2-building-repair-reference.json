@@ -1,0 +1,391 @@
+{
+  "scope": "Ordinary RA2 building wrench repair type charge and selected per-frame repair block, including actual source type virtual slots and cash-only House debit. Excludes service depots, engineer consumption and repair weapons.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "sourceRules": {
+    "source": "ra2.mix/local.mix",
+    "edition": "ra2-local-base",
+    "sha256": "fd1e95cea0306ea78049dc81c8cd816e18c28c496872a1ff02edd50bd082062f",
+    "general": {
+      "repairpercent": "15%",
+      "repairrate": ".016",
+      "repairstep": "8",
+      "urepairrate": ".016",
+      "irepairrate": ".001",
+      "irepairstep": "20",
+      "repairbay": "GADEPT,NADEPT"
+    }
+  },
+  "originalProbe": {
+    "directory": "review_out\\ra2-building-repair-20261124\\original-probe-r3",
+    "cases": 55,
+    "exitCode": 0,
+    "seconds": 0.1559999999590218,
+    "probeSourceSHA256": "ef8d10afbd4e95282abbf7e13e31f9146110f867ceb634a9da3134b7b9ae6fbf",
+    "probeExecutableSHA256": "6f1083e7a3ae25e638ae676e19c58befa1cca81bac127df1090640f4edbcdaa9",
+    "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+    "logSHA256": "0cccf5a575712d332f3b8f4993eda3065badb60ab9165b597aef106c7318fdcd"
+  },
+  "entries": {
+    "buildingTypeVtable": "0x79d1f8",
+    "constructorVtableAssignment": "0x457f66",
+    "buildingTypeCost": "0x4589f0",
+    "repairCost": "0x6daec0",
+    "repairStep": "0x6daf10",
+    "selectedRepairBlock": "0x44bb93..0x44bd3f",
+    "houseDebit": "0x4e5280",
+    "storageQuery": "0x69ae10",
+    "nativeFrame": "0xa40d2c"
+  },
+  "observations": {
+    "stepHP": 8,
+    "periodNativeFrames": 14,
+    "projectTicks": 28,
+    "globalFramePhase": true,
+    "finalPartialStepChargedFully": true,
+    "insufficientCashDisablesRepair": true,
+    "freeUnitCostExcluded": true,
+    "repairCost": "max(1, trunc_x87(binary64(RepairPercent) * (effective_type_cost / (strength / RepairStep)))) with integer divisions first",
+    "x87Examples": {
+      "20*binary64(.15)": 2,
+      "40*binary64(.15)": 5,
+      "60*binary64(.15)": 8
+    }
+  },
+  "buildings": {
+    "GACNST": {
+      "cost": 3000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "repairPrice": 3000,
+      "fee": 3
+    },
+    "NACNST": {
+      "cost": 3000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "repairPrice": 3000,
+      "fee": 3
+    },
+    "GAPOWR": {
+      "cost": 800,
+      "hp": 750,
+      "freeUnitCost": 0,
+      "repairPrice": 800,
+      "fee": 1
+    },
+    "NAPOWR": {
+      "cost": 600,
+      "hp": 750,
+      "freeUnitCost": 0,
+      "repairPrice": 600,
+      "fee": 1
+    },
+    "NANRCT": {
+      "cost": 1000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "repairPrice": 1000,
+      "fee": 1
+    },
+    "GAPILE": {
+      "cost": 500,
+      "hp": 500,
+      "freeUnitCost": 0,
+      "repairPrice": 500,
+      "fee": 1
+    },
+    "NAHAND": {
+      "cost": 500,
+      "hp": 500,
+      "freeUnitCost": 0,
+      "repairPrice": 500,
+      "fee": 1
+    },
+    "GAWEAP": {
+      "cost": 2000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "repairPrice": 2000,
+      "fee": 2
+    },
+    "NAWEAP": {
+      "cost": 2000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "repairPrice": 2000,
+      "fee": 2
+    },
+    "GAREFN": {
+      "cost": 2000,
+      "hp": 1000,
+      "freeUnitCost": 1400,
+      "repairPrice": 600,
+      "fee": 1
+    },
+    "NAREFN": {
+      "cost": 2000,
+      "hp": 1000,
+      "freeUnitCost": 1400,
+      "repairPrice": 600,
+      "fee": 1
+    },
+    "NARADR": {
+      "cost": 1000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "repairPrice": 1000,
+      "fee": 1
+    },
+    "GATECH": {
+      "cost": 2000,
+      "hp": 500,
+      "freeUnitCost": 0,
+      "repairPrice": 2000,
+      "fee": 4
+    },
+    "NATECH": {
+      "cost": 2000,
+      "hp": 500,
+      "freeUnitCost": 0,
+      "repairPrice": 2000,
+      "fee": 4
+    },
+    "GAAIRC": {
+      "cost": 1000,
+      "hp": 600,
+      "freeUnitCost": 0,
+      "repairPrice": 1000,
+      "fee": 1
+    },
+    "AMRADR": {
+      "cost": 1000,
+      "hp": 600,
+      "freeUnitCost": 0,
+      "repairPrice": 1000,
+      "fee": 1
+    },
+    "GAYARD": {
+      "cost": 1000,
+      "hp": 1500,
+      "freeUnitCost": 0,
+      "repairPrice": 1000,
+      "fee": 1
+    },
+    "NAYARD": {
+      "cost": 1000,
+      "hp": 1500,
+      "freeUnitCost": 0,
+      "repairPrice": 1000,
+      "fee": 1
+    },
+    "GAPILL": {
+      "cost": 500,
+      "hp": 400,
+      "freeUnitCost": 0,
+      "repairPrice": 500,
+      "fee": 1
+    },
+    "NALASR": {
+      "cost": 500,
+      "hp": 400,
+      "freeUnitCost": 0,
+      "repairPrice": 500,
+      "fee": 1
+    },
+    "ATESLA": {
+      "cost": 1500,
+      "hp": 600,
+      "freeUnitCost": 0,
+      "repairPrice": 1500,
+      "fee": 2
+    },
+    "TESLA": {
+      "cost": 1500,
+      "hp": 600,
+      "freeUnitCost": 0,
+      "repairPrice": 1500,
+      "fee": 2
+    },
+    "NAFLAK": {
+      "cost": 1000,
+      "hp": 900,
+      "freeUnitCost": 0,
+      "repairPrice": 1000,
+      "fee": 1
+    },
+    "GTGCAN": {
+      "cost": 2000,
+      "hp": 900,
+      "freeUnitCost": 0,
+      "repairPrice": 2000,
+      "fee": 2
+    },
+    "NASAM": {
+      "cost": 1000,
+      "hp": 900,
+      "freeUnitCost": 0,
+      "repairPrice": 1000,
+      "fee": 1
+    },
+    "GAWALL": {
+      "cost": 100,
+      "hp": 300,
+      "freeUnitCost": 0,
+      "repairPrice": 100,
+      "fee": 1
+    },
+    "NAWALL": {
+      "cost": 100,
+      "hp": 300,
+      "freeUnitCost": 0,
+      "repairPrice": 100,
+      "fee": 1
+    },
+    "GAOREP": {
+      "cost": 2500,
+      "hp": 900,
+      "freeUnitCost": 0,
+      "repairPrice": 2500,
+      "fee": 3
+    },
+    "NAMISL": {
+      "cost": 5000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "repairPrice": 5000,
+      "fee": 5
+    },
+    "GAWEAT": {
+      "cost": 5000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "repairPrice": 5000,
+      "fee": 5
+    },
+    "NAIRON": {
+      "cost": 2500,
+      "hp": 750,
+      "freeUnitCost": 0,
+      "repairPrice": 2500,
+      "fee": 3
+    },
+    "GACSPH": {
+      "cost": 2500,
+      "hp": 750,
+      "freeUnitCost": 0,
+      "repairPrice": 2500,
+      "fee": 3
+    },
+    "CAOILD": {
+      "cost": 0,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "repairPrice": 0,
+      "fee": 1
+    },
+    "CAHOSP": {
+      "cost": 0,
+      "hp": 800,
+      "freeUnitCost": 0,
+      "repairPrice": 0,
+      "fee": 1
+    },
+    "CATHOSP": {
+      "cost": 0,
+      "hp": 800,
+      "freeUnitCost": 0,
+      "repairPrice": 0,
+      "fee": 1
+    },
+    "NACLON": {
+      "cost": 2500,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "repairPrice": 2500,
+      "fee": 2
+    },
+    "GADEPT": {
+      "cost": 800,
+      "hp": 1200,
+      "freeUnitCost": 0,
+      "repairPrice": 800,
+      "fee": 1
+    },
+    "NADEPT": {
+      "cost": 800,
+      "hp": 1200,
+      "freeUnitCost": 0,
+      "repairPrice": 800,
+      "fee": 1
+    },
+    "GAGAP": {
+      "cost": 1000,
+      "hp": 600,
+      "freeUnitCost": 0,
+      "repairPrice": 1000,
+      "fee": 1
+    },
+    "GASPYSAT": {
+      "cost": 1500,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "repairPrice": 1500,
+      "fee": 1
+    },
+    "NAPSIS": {
+      "cost": 1000,
+      "hp": 750,
+      "freeUnitCost": 0,
+      "repairPrice": 1000,
+      "fee": 1
+    },
+    "CAAIRP": {
+      "cost": 0,
+      "hp": 800,
+      "freeUnitCost": 0,
+      "repairPrice": 0,
+      "fee": 1
+    },
+    "CALAB": {
+      "cost": 0,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "repairPrice": 0,
+      "fee": 1
+    },
+    "CAHSE01": {
+      "cost": 0,
+      "hp": 600,
+      "freeUnitCost": 0,
+      "repairPrice": 0,
+      "fee": 1
+    },
+    "CAOUTP": {
+      "cost": 0,
+      "hp": 2000,
+      "freeUnitCost": 0,
+      "repairPrice": 0,
+      "fee": 1
+    },
+    "NAPSYA": {
+      "cost": 0,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "repairPrice": 0,
+      "fee": 1
+    }
+  },
+  "providedDependencies": [
+    "Private mapped PE; original main and full game initialization never execute.",
+    "Given normal building/type/house slices, true repair flag, source rules and cash-only storage; original type price/repair functions, source cadence, affordability, House cash debit/spending counter and HP update execute.",
+    "House available-money interface supplied for cash-only house; visual image-index lookup supplied as constant. Original health ratio and empty damage-animation path execute.",
+    "PadAircraft/dock slices supplied, including SeparateAircraft no and yes controls. These controls are mechanism cases, not a full aircraft construction journey."
+  ],
+  "limits": [
+    "Original human input, full outer Building AI guards and entire frame scheduling are outside the selected block.",
+    "Low power/command admission retains existing project policy; original broader AI is not calibrated.",
+    "Source rule exporter charges calibrated local RA2 definitions; this is not a final official patch assertion.",
+    "No human playtest."
+  ],
+  "failedProbe": "r1 expected ordinary-double rounding and therefore failed five assertions; r2 corrected expected x87 truncation; r3 also covers all46 exported source buildings."
+}

@@ -1,0 +1,99 @@
+{
+  "scope": "Original Unit exit/facing selection and adjacent-cell release/Move destination. The original routines execute; validity inputs and physical placement dependencies are controlled.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "originalProbe": {
+    "directory": "review_out/ra2-transport-exit-20261123/original-probe-r3",
+    "exitCode": 0,
+    "seconds": 0.5940000000409782,
+    "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+    "probeExecutableSHA256": "4e198d4d8d460b5ac7a4c015e859a5b88c7ff2b247b5f42e3abff5bd114053a2",
+    "probeSourceSHA256": "ad3146972ca3128c9aec0ba5100d8036219e61f4d22546585b47e4c618f01586",
+    "logSHA256": "bf127661ef8209269776114623b9ff36fe6933907e3a6e50f169b17eb38d653d"
+  },
+  "entries": {
+    "initialExit": "0x704730",
+    "missionUnload": "0x701580",
+    "facingCurrent": "0x4b8be0",
+    "directionsRuntimeInitialization": [
+      "0x470490",
+      "0x470520",
+      "0x470540",
+      "0x470560",
+      "0x544000",
+      "0x544090",
+      "0x5440b0",
+      "0x5440d0",
+      "0x491620"
+    ]
+  },
+  "fixtureInputs": {
+    "ra2-transport-exit-query.csv": "5e51cee170e849991739e1096f15d2cc27cc7b43178d022d4b0fa6cb61f383fa",
+    "ra2-transport-exit-release.csv": "41b95a3895013ec5b3b6d9c58f479e9e092a04a74b798b44d0f15a3b964e095a"
+  },
+  "querySamples": 131072,
+  "releaseSamples": 160,
+  "observed": {
+    "directions": [
+      [
+        0,
+        -1
+      ],
+      [
+        1,
+        -1
+      ],
+      [
+        1,
+        0
+      ],
+      [
+        1,
+        1
+      ],
+      [
+        0,
+        1
+      ],
+      [
+        -1,
+        1
+      ],
+      [
+        -1,
+        0
+      ],
+      [
+        -1,
+        -1
+      ]
+    ],
+    "opposites": [
+      4,
+      5,
+      6,
+      7,
+      0,
+      1,
+      2,
+      3
+    ],
+    "score": "128 or -128, minus absolute signed8 heading difference; direction4 loses another100. Strictly greater score wins; best must exceed0.",
+    "specialTypeFlag": "TechnoType+0xaa0 is IsTrain: INI name0x7f807c, read0x6db041, store0x6db04e; constructor0x6da2dc defaultsfalse. When true, return current rounded facing instead of opposite selected exit.",
+    "release": "Adjacent cell is the physical Unlimbo point. First pass also requires the cell two steps away and queues that destination. Second pass allows only the near cell and skips offset0; 15 attempts can occur. Failure reinserts the same passenger.",
+    "clearNorth": "A normal north-facing transport selects southwest and requests northeast. Existing fixed northwest ring output is wrong."
+  },
+  "providedDependencies": [
+    "Private original PE with original entrypoint not executed. Actual direction initialization, Facing.Current, initial selector, list pop/reinsert, mission queue, Unload and RNG execute.",
+    "Foot land costs are controlled to1/0 and cells have no occupant objects in this query matrix. Map lookup supplies those actual-shaped cells.",
+    "CanEnterCell near/far masks, physical Unlimbo, coordinate adjustment and SetDestination callbacks are provided in the release matrix. Coordinates are cell centers; real infantry subcells are not modeled."
+  ],
+  "limits": [
+    "No full original object construction, map occupancy/bridge/cliff collision or user-click frame scheduling claim.",
+    "Existing project surface/occupancy admission remains the physical boundary; the new calibrated behavior governs adjacent selection, facing, near/far ordering and a normal admitted departure Move.",
+    "Train facing branch is identified and exercised, not a claim to implement train locomotion."
+  ],
+  "probeCorrections": [
+    "R1 did not compile because Windows headers define near/far macros; R2 renamed them.",
+    "R2 validation incorrectly required every nonzero validity mask to produce an exit and read only the Facing output buffer. R3 accepts original nonpositive-score no-exit and reads the returned DirStruct pointer. Captures and failed logs are preserved."
+  ]
+}

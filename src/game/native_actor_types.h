@@ -27,6 +27,10 @@ struct NativeActorDefinition {
     bool nativeBody=false;
     bool nativeRocket=false;
     bool canPassiveAcquire=true;
+    bool sourceCrushing=false,crusher=false,crushable=false; // Scene47; earlier scenes retain armor-based eligibility.
+    bool fraidycat=false; // Scene50 source infantry may scatter while already moving.
+    bool isTrain=false; // Scene58 exit selection retains a train's rounded facing.
+    bool crewed=false,engineer=false; // Scene64 source sale selection flags.
     bool sourceNavalTargeting=false,underwater=false;
     int navalTargeting=0,landTargeting=0;
     int walkSpeedLeptons=-1; // Scene15 walk locomotor; -1 keeps historical prototype movement.
@@ -60,4 +64,15 @@ struct NativeActorIdentity {
     std::shared_ptr<const NativeActorDefinition> definition; // immutable; safe in World copies
     std::string object,tag;
     bool sleeping=false;
+};
+
+struct NativeSaleSurvivorRules {
+    bool enabled=false;
+    int alliedDivisor=0,sovietDivisor=0;
+    int alliedCrew=-1,sovietCrew=-1,engineer=-1,technician=-1;
+};
+
+struct NativeBuildingSaleState {
+    int8_t originalSide=-2; // -2 absent; -1 neutral; 0 Allied, 1 Soviet, 2 other.
+    bool captured=false,pending=false;
 };

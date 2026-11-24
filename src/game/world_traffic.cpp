@@ -1,4 +1,5 @@
 #include "game/world.h"
+#include "game/native_scene_contract.h"
 #include <algorithm>
 #include <tuple>
 
@@ -381,6 +382,21 @@ bool World::admitMovementCorridor(Ent& unit,EID id) {
             gate.until=tick+phaseTicks(occupants.front());
         }
         corridor.exit=gate.exit;
+        const auto reciprocalMovementCell=[&](const Ent& unit) {
+            int index=unit.pathIdx;
+            const Vec2i here{unit.occCell%map.w,unit.occCell/map.w};
+            // A car already at the bay must eventually leave through the peer's
+            // cell. Its saved dwell prefix is time, not a different physical exit.
+            // Keep fractional recentering and retreats still travelling to a bay.
+            if(nativeRulesBaseVersion>=nativeReciprocalDwellSceneVersion
+                && distf(unit.x,unit.y,here.x+.5f,here.y+.5f)<.001f
+                && index+1<(int)unit.path.size() && unit.path[index]==here && unit.path[index+1]==here) {
+                while(index<(int)unit.path.size() && unit.path[index]==here)++index;
+                if(index==(int)unit.path.size())return unit.occCell+unit.navLayer*(int)map.cells.size();
+            }
+            const auto next=unit.path[index];
+            return (int)movementSlot(next.x,next.y,movementLayerAt(unit,next.x,next.y));
+        };
         // Old saves or units initially inside a lane may already oppose each
         // other. Retreat toward the chosen exit, then resume the original goal.
         for(EID occupant:occupants) {
@@ -406,7 +422,9 @@ bool World::admitMovementCorridor(Ent& unit,EID id) {
                         const auto& blocker=ents[peer];
                         if(peer==occupant || blocker.navLayer!=nextLayer || !isAllied(other.player,blocker.player)
                             || !moving(blocker) || blocker.guard || blocker.immobilized() || blocker.blockTick<10
-                            || blocker.path[blocker.pathIdx]!=origin)continue;
+                            || (nativeRulesBaseVersion>=nativeReciprocalDwellSceneVersion
+                                ? reciprocalMovementCell(blocker)!=other.occCell+other.navLayer*(int)map.cells.size()
+                                : blocker.path[blocker.pathIdx]!=origin))continue;
                         if(movementStep(blocker,next->x,next->y,nextLayer,origin.x,origin.y)==other.navLayer
                             && cellHardBlockedForMove(origin.x,origin.y,peer,other.navLayer)) {
                             reciprocal=true;

@@ -1,0 +1,58 @@
+{
+  "scope": "Original RA2 Unit radio15 capacity/size query with provided actor/type/owner/disabled dependencies, original weighted passenger-list sum and original house-alliance predicate. Static Unit object-action branch704105 sends query15. Original full action loop, animation, distance, loading schedule and air landing are not executed.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "rulesSource": "ra2.mix/local.mix",
+  "rulesSHA256": "fd1e95cea0306ea78049dc81c8cd816e18c28c496872a1ff02edd50bd082062f",
+  "entries": {
+    "unitRadio": "0x6fc1f0",
+    "query15": "0x6fc34a",
+    "passengerSizeSum": "0x468a20",
+    "alliance": "0x4e5580",
+    "staticObjectActionQuery": "0x704105"
+  },
+  "sourceFields": {
+    "unitType": "0x5ac",
+    "typePassengers": "0x52c",
+    "typeSize": "0x350(double)",
+    "typeSizeLimit": "0x358(double)",
+    "passengerListCount": "0xf8",
+    "passengerListHead": "0xfc",
+    "passengerNext": "0x30"
+  },
+  "originalProbe": {
+    "exitCode": 0,
+    "seconds": 0.1559999999590218,
+    "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+    "probeExecutableSHA256": "58f43ff082ab7d5a576f14b1c6f16c93bab2a872404342029b3de943e805c19d",
+    "probeSourceSHA256": "e156609ba7f16001c3cc1a397bdf8fdbd3d3b4ff84d995dfe9a8fceaaa5bc940",
+    "logSHA256": "833f920b96db3f5389724e40a47ff3174cb7ad56d606e984b200d54559719576"
+  },
+  "originalCases": 20,
+  "sourceValues": {
+    "HTK": {
+      "Passengers": 5,
+      "SizeLimit": 2
+    },
+    "DRON": {
+      "Size": 2
+    },
+    "FV": {
+      "Passengers": 1,
+      "SizeLimit": 1
+    },
+    "SHAD": {
+      "Passengers": 5,
+      "SizeLimit": 2
+    },
+    "LCRF/SAPC": {
+      "Passengers": 12,
+      "SizeLimit": 6
+    }
+  },
+  "nativeMatrixNote": "17 matching size/capacity queries; preloaded native records are supplied dependencies, not historical legal loading evidence. Six journeys use real Board/smart/Unload commands, with frame180 and initial saves and600-tick exact replay.",
+  "bounds": [
+    "Same-owner project policy and linked-controller protection retain existing behavior; allied transport ownership fidelity is outside this scope.",
+    "Air/naval passengers remain rejected. No cargo layout change or new production fields.",
+    "YR/fusion/old scenes retain prior admission; source RA2 new behavior requires its next rules cohort."
+  ]
+}

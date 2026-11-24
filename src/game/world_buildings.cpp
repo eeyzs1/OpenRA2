@@ -18,8 +18,21 @@ void World::updateBuilding(Ent& e, EID id) {
     if (e.invuln > 0) e.invuln--;
     // 出售：倒放建造动画，结束后无爆炸拆除
     if (e.selling) {
+        if(e.nativeBuildingSale.pending) {
+            const auto ref=entityRef(id);
+            releaseBuildingSurvivors(id); // Spawning can reallocate ents.
+            if(valid(ref)) {
+                if(ents[id].constructAnim>0)--ents[id].constructAnim;
+                else {const auto proceeds=nativeBuildingSaleValue(ents[id]);if(proceeds>=0)changeMoney(ents[id].player,proceeds);kill(id,false);}
+            }
+            return;
+        }
         if (e.constructAnim > 0) e.constructAnim--;
-        else { kill(id, false); return; }
+        else {
+            const auto proceeds=nativeBuildingSaleValue(e);
+            if(proceeds>=0)changeMoney(e.player,proceeds);
+            kill(id, false);return;
+        }
         return;
     }
     if (e.constructAnim > 0) e.constructAnim--; // 建造动画推进

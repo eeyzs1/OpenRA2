@@ -104,7 +104,7 @@ void World::applyCmd(int player, const Cmd& c) {
                 event.terrainHeight=map.at((int)building.x,(int)building.y).height;
                 if(building.player!=player)result.reason=BuildingRejectReason::WrongOwner;
                 else if(building.selling)result.reason=BuildingRejectReason::Selling;
-                else if(result.action==BuildingAction::Sell && building.btype==BldType::ConYard)
+                else if(result.action==BuildingAction::Sell && building.btype==BldType::ConYard && !constructionYardSaleEnabled())
                     result.reason=BuildingRejectReason::ConstructionYard;
                 else if(result.action==BuildingAction::Repair && building.constructAnim>0)
                     result.reason=BuildingRejectReason::Constructing;

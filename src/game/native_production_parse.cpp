@@ -74,12 +74,20 @@ bool parseNativeProductionProfile(const Ini::Section* row,NativeProductionProfil
     }
     if(version>=8 && !number(row,"ROT",out.rotationRate,0,127))return false;
     if(version<8 && row->has("ROT"))return false;
+    if(version>=10) {
+        if(!number(row,"BuildingRepairCost",out.buildingRepairCost,out.category>=4?1:0,out.category>=4?10000000:0))return false;
+    } else if(row->has("BuildingRepairCost"))return false;
+    if(version>=11) {
+        const int high=out.category>=4?10000000:0;
+        if(!number(row,"BuildingSaleHuman",out.buildingSaleHuman,0,high)
+            || !number(row,"BuildingSaleOther",out.buildingSaleOther,0,high))return false;
+    } else if(row->has("BuildingSaleHuman") || row->has("BuildingSaleOther"))return false;
     out.baseNormal=normal!=0;out.naval=naval!=0;out.available=true;return true;
 }
 
 bool parseNativeProductionRules(const Ini& ini,int houses,NativeProductionRules& out) {
     out={};const auto* header=ini.find("NativeProduction");if(!header)return true;int version=0;
-    if(!number(header,"Version",version,1,9) || !number(header,"MaximumQueuedObjects",out.queueLimit,0,255)
+    if(!number(header,"Version",version,1,11) || !number(header,"MaximumQueuedObjects",out.queueLimit,0,255)
         || !nativeSourceNumber(header->get("BuildSpeed"),out.buildSpeed,.001f,100)
         || !nativeSourceNumber(header->get("MultipleFactory"),out.multipleFactory,0,10)
         || !nativeSourceNumber(header->get("MinLowPowerProductionSpeed"),out.minLowPower,.01f,1)
@@ -96,6 +104,10 @@ bool parseNativeProductionRules(const Ini& ini,int houses,NativeProductionRules&
         if(!number(header,"HarvesterDumpFrames",out.harvesterDumpFrames,1,1000000)
             || !nativeSourceNumber(header->get("PurifierBonus"),out.purifierBonus,0,100))return false;
     } else if(header->has("HarvesterDumpFrames") || header->has("PurifierBonus"))return false;
+    if(version>=10) {
+        if(!number(header,"BuildingRepairFrames",out.buildingRepairFrames,1,1000000)
+            || !number(header,"BuildingRepairStep",out.buildingRepairStep,1,1000000))return false;
+    } else if(header->has("BuildingRepairFrames") || header->has("BuildingRepairStep"))return false;
     if(version>=5) {
         const auto* row=ini.find("NativeProduction.Delivery");auto& d=out.delivery;
         if(!number(row,"FlightLevel",d.flightLevel,1,100000) || !number(row,"ParachuteMaxFallRate",d.parachuteFall,-1000,-1)

@@ -1,0 +1,91 @@
+{
+  "scope": "Primary empty-coordinate infantry Scatter search and adjacent fallback, with ordinary cash-sale integration. Original full physical locomotor/frame scheduling is outside this evidence.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "probeSourceSHA256": "8a95c93e8080c331c3f66698b1c4ef4de6f6c31037de5e51b2a52c14b2876851",
+  "probeExecutableSHA256": "a349817d09397e92dc15ed8b2b7a163be00cfab9738b486f78e9883b227ffa66",
+  "probeResultSHA256": "88a006ffc16c1646df398209b8485d2a3b80f910989b5a039453ccfdf8279ac8",
+  "fixtureInputs": {
+    "ra2-nearby-scatter-cases.csv": "bdf1595794bfae48ebb0d6f3b164c147314c217c38c04cc05cf65e177fd15edb"
+  },
+  "cases": {
+    "foundation4x4": 384,
+    "clear": 8,
+    "completelyBlocked": 1,
+    "explicitAdjacentFallback": 80,
+    "candidateCap24": 48,
+    "mapEdge": 8,
+    "total": 529
+  },
+  "addresses": {
+    "Scatter": "0x504120",
+    "primaryNearbyCall": "0x504468",
+    "Nearby": "0x5502e0",
+    "nearbyFootprintAdmission": "0x550cf0",
+    "cellClearance": "0x478760",
+    "footCoordinateQuery": "0x4ca6f0",
+    "occupationMark": "0x508410",
+    "MoveMission": "0x5064b0",
+    "FootMoveMission": "0x4c38d0",
+    "infantryIdle": "0x503c00"
+  },
+  "observations": [
+    "Empty-source Scatter consumes one inclusive[0,4] heading draw, then first executes Nearby. That draw does not choose a successful primary destination.",
+    "Nearby visits square rings0..31 here: top/bottom pairs by ascending x, then left/right pairs by ascending interior y. At most24 admitted candidates are collected. On supplied flat projection, stop after the first ring containing admitted cells.",
+    "Selection among the projection-matching candidates uses original global frame modulo count; no further RNG draw. Project native frame is World tick/2.",
+    "Real original infantry occupation marking excludes its already occupied origin from primary clearance. The original coordinate query uses path direction -1 and the supplied empty locomotor destination before falling back to actual actor coordinates.",
+    "A central cell in a supplied4x4 occupied foundation obtains an outside destination; this primary path was absent from the Scene50/64 project implementation.",
+    "When every cell contains an infantry occupancy bit, Nearby fails and the real eight-adjacent fallback still admits shared infantry cells. The529 rows include80 heading/roll/pose fallback samples.",
+    "Move with a nonnull destination retains its mission; without a destination/nonmoving/no queued mission, Foot Move calls idle. No new blanket walk-through-building rule is justified.",
+    "Final foundation matrix uses all three source sale subspots; explicit fallback rows include a blocked west vehicle cell matching the real pre-entry warning journey."
+  ],
+  "suppliedDependencies": [
+    "64x64 flat cells and controlled building occupancy rectangles, including9x9 solely for cap24 query; source map dimensions, real lookup and original adjacency/subspot initializers are populated.",
+    "Map usable bounds, flat tactical coordinate projection, mission control record, veteran ability false and controlled heading/RNG.",
+    "Locomotor reports stationary and empty destination; Stop/captured SetDestination/mission callbacks do not execute physical walking.",
+    "Source Scatter, Nearby, footprint admission, cell clearance, infantry entry, Foot coordinate lookup and infantry occupation marking execute original instructions."
+  ],
+  "limits": [
+    "No original full map/constructor/animation/frame scheduler or physical Walk/pathfinder execution.",
+    "Flat projection is supplied. Height-dependent tactical projection/tier preference is uncalibrated; project terrain/layer/path admission remains its own model.",
+    "Earlier source warning probes used zero Nearby map dimensions and covered only fallback, not the general primary policy. Their historical saved results remain valid old project behavior.",
+    "Exploratory r1 lacked infantry occupation; r2 omitted path-direction/locomotor dependencies and faulted. r3 fixed those before this matrix; earlier logs are preserved."
+  ],
+  "primarySymbolReference": {
+    "url": "https://raw.githubusercontent.com/Ares-Developers/YRpp/master/ObjectClass.h",
+    "use": "Naming aid only; YR offsets/behavior do not establish RA2 1.08 semantics. Actual local executable instructions are authoritative."
+  },
+  "evidenceDirectory": "review_out/ra2-sale-move-20261124/original-matrix-r3",
+  "moveMissionProbe": {
+    "exitCode": 0,
+    "seconds": 0.062000000034458935,
+    "probeSourceSHA256": "00feb495cf4ab890cfaea9437257b246ed0b54886c42cfde939484f1b096cdae",
+    "probeExecutableSHA256": "208c9536a0ffab3d8ac47df30e6d812545e38ee89563b52201d47435fb167431",
+    "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+    "logSHA256": "98c4e920f71efa74ca6da7c21a1ed788a31fe825798111b5844ed7ea31ef1d5c",
+    "cases": 8
+  },
+  "runtimeContract": {
+    "scene": 65,
+    "production": 11,
+    "world": 77,
+    "application": "11/12",
+    "network": "LAN96 unpublished",
+    "newEncodedFields": false,
+    "policy": "Primary ring/cap/frame choice uses existing project terrain/layer and path admission. A read-only map copy admits a route after its selling origin clears; live movement waits at still occupied foundation cells. Existing path/goal fields encode this state.",
+    "projectionLimit": "The source flat-projection candidate matrix is calibrated. Height-dependent tactical projection and source physical locomotor scheduling remain uncalibrated; project uses its current terrain/layer admission.",
+    "ordinaryAIRepair": "Same unpublished Scene65 cohort: the project ordinary AI consults shared read-only serviceWorkStatus, admits automatic repair only when work can proceed, and releases unavailable service in AI-controlled houses. Human-house waiting orders, free parasite removal, old Scene64 and frozen/authored policy remain. This is project AI correctness, not source AI calibration."
+  },
+  "naturalFailureFollowup": {
+    "initialFullResult": "193/194; mp15s4 seed923 at180000 retained two houses with exact App12 replay",
+    "observedFailure": "House3 money0, power450/595, five damaged heavy vehicles in Servicing. Existing World service waits; ordinary AI neither avoids dispatch nor releases these unavailable orders.",
+    "mechanicalQueryProof": "service-query-byte-comparison.json: ten outputs exact across1200 diagnostic ticks before AI behavior changes",
+    "regression": "Four genuine admission/retention failures; ten final controls pass including paid/powered, human waiting, old Scene64 and free parasite removal. World save plus copied AI continuations agree.",
+    "simulationBoundary": "AI decisions use persisted Player.isAI authority and World work status, never presentation feedback. The first attempted feedback-based distinction failed manual-order replay and was corrected.",
+    "naturalCandidateTicks": {
+      "mp08t2": 31911,
+      "mp15s4": 77125
+    },
+    "seedsAndWindowsUnchanged": true
+  },
+  "followupScene66": "ra2-nearby-height-reference.json replaces the flat-projection adapter with actual Tactical projection, calibrating base-height candidate preference and cross-ring accumulation. Scene65 saved continuations retain the earlier first-nonempty-ring policy."
+}

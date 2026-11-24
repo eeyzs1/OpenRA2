@@ -17,7 +17,9 @@ public:
     int aiEconomyRegression();
     int aiFactoryExitRegression();
     int aiFactoryLayoutRegression(const char* outputDir);
-    int aiScoutingRegression();
+    int aiScoutingRegression(const char* outputDir);
+    int gapHeightRegression(const char* outputDir);
+    int gapSlopeRegression(const char* outputDir);
     int aiTransportRegression();
     int airGroundRegression(const char* outputDir);
     int airProductionRegression(const char* outputDir);
@@ -129,8 +131,20 @@ public:
     int smokeTest(int frames); // 无头冒烟测试，返回失败断言数
     int sourceCrateRegression(const char* outputDir);
     int sourceEconomyRegression(const char* outputDir);
+    int buildingRepairRegression(const char* outputDir);
+    int buildingSaleRegression(const char* outputDir);
+    int buildingSurvivorsRegression(const char* outputDir);
+    int playerScatterRegression(const char* outputDir);
+    int sourceTransportRegression(const char* outputDir);
+    int cargoOwnershipRegression(const char* outputDir);
+    int groundUnloadRegression(const char* outputDir);
+    int transportExitRegression(const char* outputDir);
+    int alliedBoardingRegression(const char* outputDir);
+    int transportBoardingRegression(const char* outputDir);
     int groundControlRegression(const char* outputDir);
     int groundTravelRegression(const char* outputDir);
+    int crushingRegression(const char* outputDir);
+    int driveBlockageRegression(const char* outputDir);
     int sourceMatchRegression(const char* outputDir,int ticks,int editionFilter,int terrainFilter);
     int sourceModeRegression(const char* outputDir);
     int sourceSupportRegression(const char* outputDir);

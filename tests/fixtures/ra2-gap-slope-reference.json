@@ -1,0 +1,91 @@
+{
+  "scope": "Original RA2 ground-cell shroud predicates for 15 base levels times21 slope types; one flat gap anchor, provided satellite flags and64x64 cells. No original frame, renderer, bridge, air or sloped-building-placement claim.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "sourceEntries": {
+    "groundCoordinates": "0x47ba50",
+    "floorHeight": "0x4706c0",
+    "groundShroud": "0x47cb50",
+    "mapPredicate": "0x568140",
+    "tileRampGetter": "0x52b6f0",
+    "tileRampAssignment": [
+      "0x4725ee",
+      "0x472a9d"
+    ]
+  },
+  "sourceFields": {
+    "cellLevel": "0x11b",
+    "cellSlope": "0x11c",
+    "tmpFrameZ": "0x28",
+    "tmpFrameRamp": "0x2a"
+  },
+  "mapping": "Original tile getter reads the TMP frame byte at0x2a into Cell.Slope. tmp_format.py decodes this same byte into frame.ramp; gen_native_maps.py preserves IsoMapPack tile.height and frame.ramp separately. NativeTileInfo already persists ramp0..20. The original getter expects its loaded frame-table entries to be pointers; raw file offsets are not passed directly.",
+  "measured": {
+    "cases": 315,
+    "baseLevels": [
+      0,
+      14
+    ],
+    "slopes": [
+      0,
+      20
+    ],
+    "levelStep": 104,
+    "centerOffsets": {
+      "0,5..8": 0,
+      "1..4,17..20": 52,
+      "9..16": 104
+    },
+    "queryLevel": "Truncated centerZ/104; base14 with slope9..16 reaches effective15 without encoding an illegal base height.",
+    "allCoordinatesXYUnchanged": true,
+    "allQueriesReadOnly": true,
+    "allRemovedFieldsClear": true
+  },
+  "fixtureInputs": {
+    "ra2-gap-slope-masks.csv": "bee0c67721369a41123cd26d272e380502b57f66909e85e867d47cb6759c6aa7"
+  },
+  "capture": {
+    "source": "review_out/ra2-gap-slopes-20261123/original-probe/main.cpp",
+    "sourceSHA256": "88dc6e3c95f6968b3b8977e795491394c4b346ec45142e4d0fbfea517f965b39",
+    "executableSHA256": "75f0af0bd2927c03ddd888a791a311dd62f07543153f4173ad5695c689f5db7e",
+    "log": "review_out/ra2-gap-slopes-20261123/original-probe/result-r1.log",
+    "logSHA256": "0c26cc2f192446f68050a3ddeb608078b5d48f9b51c34b70b009ad20d88f23b8"
+  },
+  "nativeMatrix": {
+    "map": "mp15s4",
+    "players": 2,
+    "queryWindow": [
+      66,
+      66,
+      64,
+      64
+    ],
+    "gapAnchor": [
+      98,
+      98
+    ],
+    "gapAnchorSlope": 0,
+    "allTargetBaseLevels": "0..14",
+    "allTargetSlopes": "0..20",
+    "replayCases": [
+      [
+        0,
+        9
+      ],
+      [
+        1,
+        16
+      ],
+      [
+        14,
+        9
+      ],
+      [
+        7,
+        17
+      ]
+    ],
+    "sellRelativeTick": 120,
+    "continuationTicks": 600,
+    "note": "Controlled flat substrate retains the valid original-map canvas and rules binding. This mechanism matrix modifies existing mutable heights and ramp metadata; it does not recreate an authored slope landscape."
+  }
+}

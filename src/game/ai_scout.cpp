@@ -1,4 +1,5 @@
 #include "game/ai.h"
+#include "game/native_scene_contract.h"
 #include <algorithm>
 #include <limits>
 #include <tuple>
@@ -143,10 +144,13 @@ Vec2i SkirmishAI::scoutDestination(const World& world,const World::Ent& unit,con
             const int dx=goal.x-cell.x,dy=goal.y-cell.y;return dx*dx+dy*dy<radius*radius;});
         const size_t index=(size_t)world.cellIdx(cell.x,cell.y);
         uint64_t stamp=fog==FOG_UNSEEN?0:index<scoutObserved.size()?scoutObserved[index]:0;
-        const bool isolated=coverIsolatedLand && fog==FOG_SEEN && !reachable[index]
+        const bool retainAge=world.nativeRulesBaseVersion>=nativeIsolatedSurveyAgeSceneVersion;
+        const bool isolated=coverIsolatedLand && (fog==FOG_SEEN || (retainAge && fog==FOG_UNSEEN)) && !reachable[index]
             && world.map.passable(cell.x,cell.y) && stamp<=world.tick-revisitDelay;
         const int rank=(reserved?3:0)+(isolated?0:fog==FOG_UNSEEN?1:2);
-        if(isolated)stamp=0;
+        // Never-observed isolated land must not wait behind repeated visits
+        // to nearer stale land. Preserve age when comparing both classes.
+        if(isolated && !retainAge)stamp=0;
         const float d=distance(cell.x,cell.y);if(d<minimumDistance)continue;
         if(rank<bestRank || (rank==bestRank && (stamp<oldest || (stamp==oldest && d<closest)))) {
             bestRank=rank;oldest=stamp;closest=d;best=cell;

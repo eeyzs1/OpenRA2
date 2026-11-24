@@ -33,7 +33,7 @@ World::Ent::GarrisonedUnit* World::findCrewPassenger(EID carrier,uint64_t identi
 }
 
 World::Ent World::passengerActor(const Ent& carrier,const Ent::GarrisonedUnit& p) const {
-    Ent actor;actor.alive=true;actor.player=carrier.player;actor.utype=p.type;actor.nativeIdentity=p.nativeIdentity;
+    Ent actor;actor.alive=true;actor.player=passengerOwner(p,carrier.player);actor.utype=p.type;actor.nativeIdentity=p.nativeIdentity;
     actor.x=carrier.x;actor.y=carrier.y;actor.hp=p.hp;actor.vetRank=p.vetRank;actor.kills=p.kills;
     actor.combatActor=p.combatActor;actor.crateDmgBoost=p.crateDmgBoost;
     actor.gatlingHeat=p.gatlingHeat;actor.gatlingStage=p.gatlingStage;

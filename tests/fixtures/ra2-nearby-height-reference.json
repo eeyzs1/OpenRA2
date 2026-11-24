@@ -1,0 +1,148 @@
+{
+  "scope": "Nearby candidate projection tiers from represented base terrain height; exact local RA2 instructions, with unknown bridge-origin flag controls explicitly separate.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "projectionProbe": {
+    "exitCode": 0,
+    "seconds": 0.09399999992456287,
+    "probeSourceSHA256": "d3c28e22f167ee5479a7a4467a5c2991473cfc83919db9c912d2af3d61882f27",
+    "probeExecutableSHA256": "0f000d1377fc838c38992b1bc3260820706981bb664c54d9294efef0cfff5755",
+    "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+    "logSHA256": "1466e00ba2b6848e95dc1d67cff1587ac10a55ce5726d3cfc75803aaa159e5d1"
+  },
+  "scatterProbe": {
+    "exitCode": 0,
+    "seconds": 0.10900000005494803,
+    "probeSourceSHA256": "a229938c614a3c7ee92639fdbbd03d909142736be4eac9422a8778dc289a0ba6",
+    "probeExecutableSHA256": "08318df82e2c7e9c6346ba945c5d3663c3f1f64e650c0fa84e71ba330d181d37",
+    "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+    "logSHA256": "7266b0530687cfaa64ae52278d9e98acfb540deb0ea4c6b6a49f4a33a5cb41a3"
+  },
+  "cases": {
+    "projection": 2070,
+    "scatter": 1008,
+    "differentFromScene65": 750
+  },
+  "fixtureInputs": {
+    "ra2-nearby-projection-cases.csv": "75693662ce773fa67f1ae42c5222eef5a8b188c13645d9c8765fcff25442b374",
+    "ra2-nearby-height-cases.csv": "1605c0aa78a3e5b94e6a7b0cb5ac49afffed7ba434cf3f58cf13d2cfee009ace"
+  },
+  "addresses": {
+    "projection": "0x6a6a50",
+    "nearby": "0x5502e0",
+    "scatter": "0x504120"
+  },
+  "groundProjection": "At a candidate cell, sample up to six cells along(+1,+1). A sampled base level differing by at least2*k-1 at offsetk occludes that candidate. Actual code walks8 leptons at a time; supported base levels0..14 and offsets1..6 are executed.",
+  "selection": "Accumulate admitted cells in existing ring order, up to24. Stop at the end of a ring when any accumulated candidate projects back to itself, or at cap24. Pick nativeFrame modulo projection-matching subset, falling back to all collected candidates when none matches.",
+  "dependencies": [
+    "Synthetic64x64 map bounds/cells with real base heights, controlled occupation masks, actual infantry occupation marking and coordinate query",
+    "Real Tactical projection6a6a50 and original Nearby/cell clearance/Scatter execute; no flat-projection adapter",
+    "Locomotor stationary/empty-destination, mission/veteran callbacks and controlled one[0,4] draw; physical walking and whole game initialization are not executed"
+  ],
+  "limits": [
+    "Source origin flag0x1000 enables adding4 for sampled bridge flag0x100. Those supplied-bit controls prove only conditional code; this project has no demonstrated representation of origin flag0x1000, so no new bridge flag mapping is inferred.",
+    "Base-height projection is simulation-derived and does not call rendering. Existing bridge/layer/path admission remains the project model.",
+    "No source full constructor/map initializer, physical locomotor, source RNG stream or complete frame/render fidelity claim"
+  ],
+  "examples": [
+    {
+      "input": {
+        "pattern": 1,
+        "base": 0,
+        "frame": 0,
+        "roll": 2,
+        "destination": 1,
+        "x": 21,
+        "y": 23,
+        "draws": 1
+      },
+      "scene65": [
+        21,
+        21
+      ],
+      "source": [
+        21,
+        23
+      ]
+    },
+    {
+      "input": {
+        "pattern": 1,
+        "base": 0,
+        "frame": 1,
+        "roll": 2,
+        "destination": 1,
+        "x": 22,
+        "y": 21,
+        "draws": 1
+      },
+      "scene65": [
+        21,
+        23
+      ],
+      "source": [
+        22,
+        21
+      ]
+    },
+    {
+      "input": {
+        "pattern": 1,
+        "base": 0,
+        "frame": 2,
+        "roll": 2,
+        "destination": 1,
+        "x": 22,
+        "y": 23,
+        "draws": 1
+      },
+      "scene65": [
+        22,
+        21
+      ],
+      "source": [
+        22,
+        23
+      ]
+    },
+    {
+      "input": {
+        "pattern": 1,
+        "base": 0,
+        "frame": 3,
+        "roll": 2,
+        "destination": 1,
+        "x": 23,
+        "y": 21,
+        "draws": 1
+      },
+      "scene65": [
+        22,
+        23
+      ],
+      "source": [
+        23,
+        21
+      ]
+    },
+    {
+      "input": {
+        "pattern": 1,
+        "base": 0,
+        "frame": 4,
+        "roll": 2,
+        "destination": 1,
+        "x": 23,
+        "y": 22,
+        "draws": 1
+      },
+      "scene65": [
+        23,
+        21
+      ],
+      "source": [
+        23,
+        22
+      ]
+    }
+  ]
+}

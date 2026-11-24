@@ -88,12 +88,17 @@ int GameRegression::nativeCrewRegression(const char* outputDir) {
         }
         reset();const EID transport=w.spawnUnit(0,UnitType::AmphTransport,12.5f,13.5f);
         const EID tank=w.spawnUnit(0,UnitType::Grizzly,12.5f,12.5f);const uint64_t tankIdentity=w.ents[tank].combatActor;
-        const EID tankTarget=victim(16.5f);w.ents[tankTarget].hp=1;w.ents[tank].dir=w.ents[tank].turretDir=dirFromVec(1,0);
+        const EID tankTarget=victim(16.5f);w.ents[tankTarget].hp=1;
+        // Keep the hull aligned with the carrier while the independent
+        // turret fires east, so the real projectile remains in flight on entry.
+        w.ents[tank].dir=dirFromVec(0,1);w.ents[tank].turretDir=dirFromVec(1,0);
         check(w.orderAttack({tank},tankTarget).accepted==1,"actual tank attack starts before boarding");w.update();
         check(w.valid(tankTarget) && std::any_of(w.projs.begin(),w.projs.end(),[&](const auto& p){return p.alive && p.sourceActor==tankIdentity;}),"actual delayed projectile captures its physical shooter's durable identity");
         check(w.orderBoard({tank},transport).accepted==1,"firing tank can board an amphibious transport");
         for(int i=0;i<20 && w.valid(tank);++i)w.update();
-        check(!w.valid(tank) && w.findCrewPassenger(transport,tankIdentity),"boarding transfers the actual tank identity to cargo");
+        check(!w.valid(tank) && w.findCrewPassenger(transport,tankIdentity) && w.valid(tankTarget)
+            && std::any_of(w.projs.begin(),w.projs.end(),[&](const auto& p){return p.alive && p.sourceActor==tankIdentity;}),
+            "boarding transfers the actual tank identity to cargo before its delayed impact");
         save("real-projectile-boarding",80);
         for(int i=0;i<80 && w.valid(tankTarget);++i)w.update();
         const auto* credited=w.findCrewPassenger(transport,tankIdentity);

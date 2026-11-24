@@ -24,6 +24,8 @@ struct NativeProductionProfile {
     bool grinding=false,infantryAbsorb=false,unitAbsorb=false,bunker=false,cloning=false,cloneable=true,spyable=false;
     NativeSpyEffect spyEffect=NativeSpyEffect::None;
     int rotationRate=0; // Production8: original ROT, in 256ths of a full 16-bit turn per frame.
+    int buildingRepairCost=0; // Production10: source type charge for one full repair step; units use0.
+    int buildingSaleHuman=0,buildingSaleOther=0; // Production11: ordinary source house refund policies.
 };
 struct NativeProductionRules {
     bool available=false,sourceModes=false,oreGrowth=true;int queueLimit=29,version=0;
@@ -36,6 +38,7 @@ struct NativeProductionRules {
     int oreValue=35,gemValue=70; // Version6 reads source prices; older saves retain project values.
     int harvesterLoadRate=0; // Version7: original frames per mining stage; earlier scenes retain20tick pickups.
     int harvesterDumpFrames=0; // Version8: ceil(HarvesterDumpRate * 900).
+    int buildingRepairFrames=0,buildingRepairStep=0; // Version10: shared original-frame phase, no actor timer.
     float purifierBonus=0;
     unsigned superweaponMask=127;
     float spyMoneyFraction=.5f;int spyBlackoutTicks=2000;bool spyTechByOwner=false;

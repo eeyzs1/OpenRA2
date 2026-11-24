@@ -24,6 +24,12 @@ int GameRegression::airGroundRegression(const char* outputDir) {
         ok &= sample.checksum()==replay.checksum();
         for(int i=0;i<ticks && ok;++i){sample.update();replay.update();ok=sample.checksum()==replay.checksum();}return ok;
     };
+    const auto finishBoarding=[&](World& sample,const std::vector<EID>& people,EID carrier) {
+        int at=0;bool pending=true;
+        for(;at<600;++at){pending=std::any_of(people.begin(),people.end(),[&](EID id){return sample.valid(id);});if(!pending)break;sample.update();}
+        std::printf("AIR_GROUND_PREP ticks=%d cargo=%zu expected=%zu\n",at,sample.ents[carrier].cargo.size(),people.size());
+        return !std::any_of(people.begin(),people.end(),[&](EID id){return sample.valid(id);}) && sample.ents[carrier].cargo.size()==people.size();
+    };
     const auto bridge=[&](World& w){
         const EID owner=w.spawnBuilding(0,BldType::Wall,4,4,true);w.map.bridgeCells.assign(w.map.cells.size(),{});
         for(auto& cell:w.map.cells)cell.height=2;
@@ -112,7 +118,7 @@ int GameRegression::airGroundRegression(const char* outputDir) {
         }
         {
             World w;bool ok=fresh(w,profile.c_str());const EID air=w.spawnUnit(0,UnitType::Nighthawk,20.5f,20.5f);
-            const EID person=w.spawnUnit(0,UnitType::GI,19.5f,20.5f);w.orderBoard({person},air);for(int i=0;i<20 && w.valid(person);++i)w.update();
+            const EID person=w.spawnUnit(0,UnitType::GI,19.5f,20.5f);w.orderBoard({person},air);ok &= finishBoarding(w,{person},air);
             w.orderMove({air},20.5f,8.5f,false);for(int i=0;i<120;++i)w.update();w.orderUnload({air});
             ok &= w.ents[air].nativeAirUnload;w.orderMove({air},30.5f,20.5f,false);ok &= !w.ents[air].nativeAirUnload;
             for(int i=0;i<900 && ok;++i)w.update();
@@ -141,7 +147,7 @@ int GameRegression::airGroundRegression(const char* outputDir) {
         }
         {
             World w;bool ok=fresh(w,profile.c_str());const EID air=w.spawnUnit(0,UnitType::Nighthawk,20.5f,20.5f);
-            const EID person=w.spawnUnit(0,UnitType::GI,19.5f,20.5f);w.orderBoard({person},air);for(int i=0;i<20 && w.valid(person);++i)w.update();
+            const EID person=w.spawnUnit(0,UnitType::GI,19.5f,20.5f);w.orderBoard({person},air);ok &= finishBoarding(w,{person},air);
             w.orderMove({air},20.5f,8.5f,false);for(int i=0;i<120;++i)w.update();for(auto& cell:w.map.cells)cell.terrain=Terrain::Water;
             w.orderUnload({air});for(int i=0;i<150 && ok;++i){w.update();ok &= w.ents[air].airborne() && w.ents[air].cargo.size()==1;}
             check(ok && w.ents[air].nativeAirUnload && roundtrip(w,7),"a transport with no legal landing site keeps its passenger and saved retry state while hovering above water");
@@ -166,13 +172,16 @@ int GameRegression::airGroundRegression(const char* outputDir) {
             ok &= w.orderBoard({person},air).accepted==1;w.update();
             const bool waiting=ok && (w.valid(person) || !w.ents[air].airborne());
             check(waiting,"boarding a nearby flying transport waits for physical ground contact");
+            auto replay=w;replay.map.bldOccRef=&replay.bldOcc;
+            const bool resumed=roundtrip(replay,900);
             bool physical=true;for(int i=0;i<900 && w.valid(person);++i){w.update();if(!w.valid(person))physical &= !w.ents[air].airborne();}
-            check(waiting && physical && !w.valid(person) && w.ents[air].cargo.size()==1,"an accepted pickup command lands the transport and completes boarding");
+            std::printf("AIR_GROUND_PICKUP admitted=%d waiting=%d physical=%d loaded=%zu live=%d replay=%d\n",ok,waiting,physical,w.ents[air].cargo.size(),w.valid(person),resumed);
+            check(waiting && physical && resumed && !w.valid(person) && w.ents[air].cargo.size()==1,"an accepted pickup command lands the transport and completes boarding with exact saved continuation");
         }
         {
             World w;bool ok=fresh(w,profile.c_str());bridge(w);
             const EID air=w.spawnUnit(0,UnitType::Nighthawk,21.5f,26.5f),person=w.spawnUnit(0,UnitType::GI,20.5f,26.5f);
-            const auto identity=w.ents[person].nativeIdentity.object;w.orderBoard({person},air);for(int i=0;i<30 && w.valid(person);++i)w.update();
+            const auto identity=w.ents[person].nativeIdentity.object;w.orderBoard({person},air);ok &= finishBoarding(w,{person},air);
             w.orderMove({air},21.5f,21.5f,false);for(int i=0;i<1000 && ok;++i)w.update();
             ok &= !w.ents[air].airborne() && w.ents[air].navLayer==1 && w.ents[air].nativeAltitude==624;
             const auto result=w.orderUnload({air});EID released=INVALID_EID;
@@ -183,7 +192,7 @@ int GameRegression::airGroundRegression(const char* outputDir) {
         {
             World w;bool ok=fresh(w,profile.c_str());for(int y=19;y<=21;++y)for(int x=19;x<=21;++x)w.map.at(x,y).height=5;
             const EID air=w.spawnUnit(0,UnitType::Nighthawk,20.5f,20.5f),person=w.spawnUnit(0,UnitType::GI,19.5f,20.5f);
-            w.orderBoard({person},air);for(int i=0;i<30 && w.valid(person);++i)w.update();
+            w.orderBoard({person},air);ok &= finishBoarding(w,{person},air);
             for(int y=19;y<=21;++y)for(int x=19;x<=21;++x)if(x!=20 || y!=20)w.map.at(x,y).height=0;
             const auto blocked=w.orderUnload({air});
             check(ok && blocked.released==0 && w.ents[air].cargo.size()==1,"a landed transport cannot unload through a five-level cliff into a disconnected lower surface");
@@ -197,7 +206,7 @@ int GameRegression::airGroundRegression(const char* outputDir) {
             World w;bool ok=fresh(w,profile.c_str());const EID air=w.spawnUnit(0,UnitType::Nighthawk,20.5f,20.5f);
             const EID a=w.spawnUnit(0,UnitType::GI,19.5f,20.5f),b=w.spawnUnit(0,UnitType::GI,20.5f,19.5f);
             const std::string first=w.ents[a].nativeIdentity.object,second=w.ents[b].nativeIdentity.object;w.ents[a].hp=61;w.ents[b].hp=62;
-            w.orderBoard({a,b},air);for(int i=0;i<30 && (w.valid(a) || w.valid(b));++i)w.update();ok &= w.ents[air].cargo.size()==2;
+            w.orderBoard({a,b},air);ok &= finishBoarding(w,{a,b},air);
             for(auto& cell:w.map.cells)cell.terrain=Terrain::Water;w.map.at(20,20).terrain=w.map.at(21,20).terrain=Terrain::Clear;
             const auto partial=w.orderUnload({air});ok &= partial.released==1 && partial.pending==1 && w.ents[air].cargo.size()==1;
             Game feedback;feedback.world=w;feedback.localPlayer=0;feedback.phase=Phase::InGame;World::Cmd command{};command.type=World::Cmd::Unload;command.ids={air};

@@ -7,10 +7,12 @@ bool constructionVehicle(const World::Ent& unit,int player) {
         && unit.mindBy==INVALID_EID && !unit.permaControlled;
 }
 
-bool carriedConstructionVehicle(const std::vector<World::Ent::GarrisonedUnit>& cargo) {
-    for(const auto& passenger:cargo)
-        if((passenger.type==UnitType::MCV && !passenger.permaControlled)
-            || carriedConstructionVehicle(passenger.cargo))return true;
+bool carriedConstructionVehicle(const std::vector<World::Ent::GarrisonedUnit>& cargo,int containerOwner,int player) {
+    for(const auto& passenger:cargo) {
+        const int owner=World::passengerOwner(passenger,containerOwner);
+        if((owner==player && passenger.type==UnitType::MCV && !passenger.permaControlled)
+            || carriedConstructionVehicle(passenger.cargo,owner,player))return true;
+    }
     return false;
 }
 }
@@ -18,7 +20,7 @@ bool carriedConstructionVehicle(const std::vector<World::Ent::GarrisonedUnit>& c
 bool SkirmishAI::constructionVehiclePlanned(const World& world) const {
     for(const auto& unit:world.ents) {
         if(constructionVehicle(unit,player))return true;
-        if(unit.alive && unit.player==player && carriedConstructionVehicle(unit.cargo))return true;
+        if(unit.alive && carriedConstructionVehicle(unit.cargo,unit.player,player))return true;
     }
     const auto mcv=[&](int selector) {
         if(!world.validProductionType(true,selector))return false;

@@ -243,8 +243,11 @@ int main(int argc, char** argv) {
         "--modal-input-regression",
         "--classic-input-regression",
         "--original-skirmish-regression", "--original-skirmish-natural",
-        "--ai-scouting-regression", "--ground-control-regression", "--ground-travel-regression",
+        "--ai-scouting-regression", "--gap-height-regression", "--gap-slope-regression", "--source-transport-regression", "--cargo-ownership-regression", "--ground-unload-regression", "--ground-control-regression", "--ground-travel-regression", "--crushing-regression", "--drive-blockage-regression",
         "--entity-identity-regression",
+        "--transport-exit-regression",
+        "--allied-boarding-regression",
+        "--transport-boarding-regression", "--building-repair-regression", "--building-sale-regression", "--building-survivors-regression", "--player-scatter-regression",
         "--rules-profile-regression", "--source-match-regression", "--source-mode-regression", "--source-economy-regression", "--source-support-regression", "--support-delivery-regression", "--source-crate-regression", "--native-gatling-regression", "--rules-consistency-regression",
         "--rules-selection-regression",
         "--rules-spawner-regression",
@@ -903,11 +906,35 @@ int main(int argc, char** argv) {
     if(int at=findFlag("--original-skirmish-natural");at>=0) {
         int result=game.originalSkirmishNaturalRegression(flagStr(at,1,"review_out/original-natural"),flagInt(at,2,0));game.shutdown();return result?1:0;
     }
-    if(findFlag("--ai-scouting-regression")>=0) {
-        int result=game.aiScoutingRegression();game.shutdown();return result?1:0;
+    if(int at=findFlag("--ai-scouting-regression");at>=0) {
+        int result=game.aiScoutingRegression(flagStr(at,1,"review_out/ai-gap-audit"));game.shutdown();return result?1:0;
+    }
+    if(int at=findFlag("--gap-height-regression");at>=0) {
+        int result=game.gapHeightRegression(flagStr(at,1,"review_out/gap-height-audit"));game.shutdown();return result?1:0;
+    }
+    if(int at=findFlag("--gap-slope-regression");at>=0) {
+        int result=game.gapSlopeRegression(flagStr(at,1,"review_out/gap-slope-audit"));game.shutdown();return result?1:0;
+    }
+    if(int at=findFlag("--source-transport-regression");at>=0) {
+        int result=game.sourceTransportRegression(flagStr(at,1,"review_out/source-transport-audit"));game.shutdown();return result?1:0;
+    }
+    if(int at=findFlag("--cargo-ownership-regression");at>=0) {
+        int result=game.cargoOwnershipRegression(flagStr(at,1,"review_out/cargo-ownership-audit"));game.shutdown();return result?1:0;
+    }
+    if(int at=findFlag("--ground-unload-regression");at>=0) {
+        int result=game.groundUnloadRegression(flagStr(at,1,"review_out/ground-unload-audit"));game.shutdown();return result?1:0;
     }
     if(findFlag("--entity-identity-regression")>=0) {
         int result=game.entityIdentityRegression();game.shutdown();return result?1:0;
+    }
+    if(int at=findFlag("--transport-exit-regression");at>=0) {
+        int result=game.transportExitRegression(flagStr(at,1,"review_out/transport-exit-audit"));game.shutdown();return result?1:0;
+    }
+    if(int at=findFlag("--allied-boarding-regression");at>=0) {
+        int result=game.alliedBoardingRegression(flagStr(at,1,"review_out/allied-boarding-audit"));game.shutdown();return result?1:0;
+    }
+    if(int at=findFlag("--transport-boarding-regression");at>=0) {
+        int result=game.transportBoardingRegression(flagStr(at,1,"review_out/transport-boarding-audit"));game.shutdown();return result?1:0;
     }
     if(findFlag("--aircraft-spawner-regression")>=0) {
         const int at=findFlag("--aircraft-spawner-regression");
@@ -941,12 +968,36 @@ int main(int argc, char** argv) {
         const int failures=game.groundTravelRegression(at+1<argc?argv[at+1]:"review_out/ground-travel");
         game.shutdown();return failures?1:0;
     }
+    if(int at=findFlag("--crushing-regression");at>=0) {
+        const int failures=game.crushingRegression(at+1<argc?argv[at+1]:"review_out/crushing");
+        game.shutdown();return failures?1:0;
+    }
     if(int at=findFlag("--ground-control-regression");at>=0) {
         const int failures=game.groundControlRegression(at+1<argc?argv[at+1]:"review_out/ground-control");
         game.shutdown();return failures?1:0;
     }
     if(int at=findFlag("--source-economy-regression");at>=0) {
         int failures=game.sourceEconomyRegression(at+1<argc?argv[at+1]:"review_out/source-economy");
+        game.shutdown();return failures==0?0:1;
+    }
+    if(int at=findFlag("--building-repair-regression");at>=0) {
+        const int failures=game.buildingRepairRegression(at+1<argc?argv[at+1]:"review_out/building-repair");
+        game.shutdown();return failures?1:0;
+    }
+    if(int at=findFlag("--player-scatter-regression");at>=0) {
+        const int failures=game.playerScatterRegression(at+1<argc?argv[at+1]:"review_out/player-scatter");
+        game.shutdown();return failures?1:0;
+    }
+    if(int at=findFlag("--building-survivors-regression");at>=0) {
+        const int failures=game.buildingSurvivorsRegression(at+1<argc?argv[at+1]:"review_out/building-survivors");
+        game.shutdown();return failures?1:0;
+    }
+    if(int at=findFlag("--building-sale-regression");at>=0) {
+        const int failures=game.buildingSaleRegression(at+1<argc?argv[at+1]:"review_out/building-sale");
+        game.shutdown();return failures?1:0;
+    }
+    if(int at=findFlag("--drive-blockage-regression");at>=0) {
+        const int failures=game.driveBlockageRegression(at+1<argc?argv[at+1]:"review_out/drive-blockage");
         game.shutdown();return failures==0?0:1;
     }
     if(int at=findFlag("--support-delivery-regression");at>=0) {

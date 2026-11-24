@@ -1,0 +1,96 @@
+{
+  "scope": "Selected original RA2 Unit-class passenger unloading mission and its actual timer dispatch. Not the miner, aircraft or garrison branches.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "originalProbe": {
+    "directory": "review_out/ra2-ground-unload-20261123/original-probe-r2",
+    "exitCode": 0,
+    "seconds": 0.1559999999590218,
+    "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+    "probeExecutableSHA256": "12948b9455586997aa42c986b6fbaea7fc640440b96e1a55e80f2bc81edf9717",
+    "probeSourceSHA256": "f8f2f4a5aa5629c996f59dfb393c1bbccdc9f87f776d704254d40d693eaa7096",
+    "logSHA256": "a38d60258bf95c11b215fae07fbbb4ffd3af7cdac5b7a9e0f20232e0dd3e0f69"
+  },
+  "entries": {
+    "missionUnload": "0x701580",
+    "missionAI": "0x594790",
+    "missionControl": "0x5950d0",
+    "queueMission": "0x594cb0",
+    "advanceMission": "0x594c50",
+    "canAdvance": "0x707a40",
+    "removeFirstPassenger": "0x4ccfc0",
+    "rngConstructor": "0x638790",
+    "rngRange": "0x6388a0"
+  },
+  "sourceRules": {
+    "identity": "ra2-local-base",
+    "source": "ra2.mix/local.mix",
+    "sha256": "fd1e95cea0306ea78049dc81c8cd816e18c28c496872a1ff02edd50bd082062f",
+    "section": "Unload",
+    "rate": ".016",
+    "framesPerMinute": 900,
+    "rateFrames": 14,
+    "randomInclusive": [
+      0,
+      2
+    ]
+  },
+  "observations": {
+    "movingWaitFrames": 10,
+    "prepareAndReadyFrames": [
+      1,
+      1
+    ],
+    "onePassengerPerRelease": true,
+    "blockedAdmissionOrUnlimboFailure": "Reinsert passenger, retain count and retry at the common mission rate.",
+    "noInitialExit": "Queue Guard instead of popping a passenger.",
+    "finish": "After the release dispatch observes empty cargo, stage4 subsequently queues Guard and marks completion; both use the common rate.",
+    "normalizedScheduler": [
+      {
+        "seed": 922,
+        "releaseFrames": [
+          2,
+          16,
+          32
+        ]
+      },
+      {
+        "seed": 923,
+        "releaseFrames": [
+          2,
+          18,
+          32
+        ]
+      },
+      {
+        "seed": 20261123,
+        "releaseFrames": [
+          2,
+          16,
+          32
+        ]
+      }
+    ],
+    "interrupt": "A real immediate Move queue at native frame3 changes current mission to Move and retains two passengers, for all three seeds."
+  },
+  "projectMapping": {
+    "nativeFramesToTicks": 2,
+    "firstDispatchAfterOrderTicks": 1,
+    "firstStationaryReleaseTicks": 5,
+    "subsequentReleaseIntervalTicks": [
+      28,
+      32
+    ],
+    "sourceScene": 57
+  },
+  "providedDependencies": [
+    "Private PE image with entrypoint not executed; flat map lookup, coordinate adjustment and surface callbacks supplied.",
+    "Carrier locomotor moving/face callbacks and passenger CanEnterCell/physical Unlimbo supplied; actual passenger linked list and gunner bind/release execute.",
+    "Object::AI runs with a limbo host and returns before its full physical work. Actual MissionClass::AI timers and dispatch execute."
+  ],
+  "limits": [
+    "Original physical placement, map/pathfinding geometry, actual locomotor turn progression, full object construction and full user-click frame alignment are not established.",
+    "Project keeps its existing release-cell search and passenger post-release behavior. The first project dispatch alignment is explicit, not claimed as original input timing.",
+    "RNG draw cadence is deterministic in the project but does not establish equality of entire original scenario RNG streams."
+  ],
+  "correction": "Probe r1 logged uninitialized high padding of DirStruct as a 32-bit facing. R2 reads the actual low 16 bits (8192); timing/list results are unchanged. Both logs are preserved."
+}

@@ -327,6 +327,7 @@ void World::consumeEntity(EID id) {
     if(!valid(id)) return;
     ents[id].engineerIntent=EngineerIntent::None;ents[id].feedbackEngineerTarget=INVALID_EID;
     ents[id].alive=false;
+    ents[id].nativeTransportUnload={};
     retireNativeRocketActor(id);
     retireNativeEventActor(id,false);
     unitOccSync(id); airOccSync(id);
@@ -362,7 +363,9 @@ EID World::allocEnt() {
     return (int)ents.size() - 1;
 }
 
-EID World::spawnUnit(int player, UnitType t, float x, float y,int sourceType,const NativeActorIdentity* existingIdentity) {
+EID World::spawnUnit(int player, UnitType t, float x, float y,int sourceType,const NativeActorIdentity* existingIdentity,int initialFacing) {
+    if(initialFacing< -1 || initialFacing>7)return INVALID_EID;
+    if(t==UnitType::NativeInfantry && (!nativeSaleSurvivorRules.enabled || sourceType<0))return INVALID_EID;
     if(t==UnitType::NativeVehicle && (sourceType<0 || sourceType>=(int)nativeTypes.size()
         || !nativeTypes[sourceType]->rulesOnly || !nativeTypes[sourceType]->nativeRocket))return INVALID_EID;
     if(usesRulesProfile() && sourceType<0)sourceType=rulesTypeIndex(player,true,(int)t);
@@ -386,7 +389,7 @@ EID World::spawnUnit(int player, UnitType t, float x, float y,int sourceType,con
     e.px = x; e.py = y; // 渲染插值起点（避免从 (0,0) 拉花）
     const auto& definition=unitDef(e);
     e.hp = definition.hp;
-    e.dir = rng.range(0, 7);
+    e.dir = initialFacing<0?rng.range(0,7):initialFacing;
     e.turretDir = e.dir;
     e.previousDir=e.dir;e.previousTurretDir=e.turretDir;
     if (definition.isAir()) {
@@ -427,6 +430,7 @@ EID World::spawnBuilding(int player, BldType t, int bx, int by, bool free_,int s
     e.btype = t;
     if(sourceType>=0)e.nativeIdentity={sourceType,nativeTypes[sourceType],"production:"+std::to_string(player)+":"+std::to_string(nativeProductionSerial++),"",false};
     e.x = (float)bx; e.y = (float)by;
+    if(nativeSaleBuilding(e))e.nativeBuildingSale.originalSide=(int8_t)nativeSaleHouseSide(player);
     // Conversion health must be established before building-complete scripts.
     e.hp = initialHp<0?d.hp:std::clamp(initialHp,1,d.hp);
     e.rallyX = std::clamp(bx+d.w/2,0,map.w-1);e.rallyY=std::clamp(by+d.h+1,0,map.h-1);
@@ -466,6 +470,7 @@ void World::kill(EID id, bool explode,bool scriptedCollapse,bool erased) {
     bool wasSelling = e.selling;
     ents[id].engineerIntent=EngineerIntent::None;ents[id].feedbackEngineerTarget=INVALID_EID;
     ents[id].alive = false;
+    ents[id].nativeTransportUnload={};
     unitOccSync(id); // alive=false → 从占位链表摘除
     airOccSync(id);
     if (e.isBuilding) {

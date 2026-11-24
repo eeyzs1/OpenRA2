@@ -1,0 +1,51 @@
+{
+  "scope": "Ordinary RA2 player ScatterObject event7 and Infantry Scatter(empty,true,false); represented standing/walking/deployed cases, without full locomotor or whole-frame fidelity.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "probe": {
+    "exitCode": 0,
+    "seconds": 0.0779999999795109,
+    "probeSourceSHA256": "9ca43e02f83de981e05d17d54798a64d46afe36ab02ffc436e9dd1b570c6de20",
+    "probeExecutableSHA256": "bb9bf5b2bfddbec6589afd1402e3a447f92a615eea1a6c398e39b130090e8953",
+    "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+    "logSHA256": "3de2b8e5156ede1be87ea3d004e2f80b4f91867f939c128a41f9a51e11d7e018"
+  },
+  "originalCases": 390,
+  "capturedRows": 384,
+  "fixtureInputs": {
+    "ra2-player-scatter-cases.csv": "a4fb4a2f90bd1f8df0218551cbafc9a8d40e36cad7800d5fcabc3be6f194d673"
+  },
+  "addresses": {
+    "command": "0x51c020",
+    "selection": "0x6f5d10",
+    "targetConstructor": "0x6b54a0",
+    "queue": "0x6cc510",
+    "eventConstructor": "0x4b5ef0",
+    "eventDispatcher": "0x4b65c0",
+    "event7": "0x4b708d",
+    "infantryScatter": "0x504120",
+    "footCoordinate": "0x4ca6f0",
+    "nearby": "0x5502e0",
+    "projection": "0x6a6a50"
+  },
+  "observations": [
+    "ScatterObject queues event7/SCATTER with a Target identity. The full event dispatcher calls Infantry Scatter with empty coordinates,true,false.",
+    "Stationary ordinary infantry can scatter even with PlayerScatter=false. Moving ordinary infantry retain their route with zero draws.",
+    "Human deployed sequences27..30 decline; sequence11 declines. Supplied AI sequence27 declines, whereas28..30 remain eligible. The project has one deployed state; only the represented sequence27 is mapped.",
+    "Moving Fraidycat infantry are eligible for AI; human Fraidycat requires PlayerScatter=true in the supplied no-veteran-ability case.",
+    "An eligible call draws once[0,4], then Nearby/projection determines destination by native frame. Moving Fraidycat queries the locomotor Head_To_Coord immediate next cell, not its final order destination.",
+    "Event guards exclude null/non-Foot/dead/limbo/busy actors before virtual Scatter. Planning helper615480 is called before those guards; its full meaning and actor59c are not mapped."
+  ],
+  "controlledDependencies": [
+    "Synthetic selection array, controllability, RTTI public-ID42 and Target resolution to a supplied real-layout infantry.",
+    "Actual Target/event constructors, ring queue and dispatcher execute. WINMM timeGetTime IAT is supplied by GetTickCount for the queue wall-clock stamp only.",
+    "Planning615480 and acknowledgment713db0 are captured; source replay gate is false and logging is inert.",
+    "Synthetic64x64 cells with actual occupation marking, Foot coordinate query, Cell clearance, Nearby and Tactical projection. Stationary Head_To_Coord is empty; moving Head_To_Coord is cell23,22 while actor is22,22.",
+    "Mission Scatter=true, veteran ability=false, locomotor moving flag, sequence, human house and PlayerScatter are supplied. Destination/mission/stop callbacks capture effects; RNG returns2 and counts calls."
+  ],
+  "limits": [
+    "No complete original object construction, physical Walk, mission/planning/controller scheduling, source RNG stream equivalence, full user-click timing or human playtesting claim.",
+    "Native regression maps sequence1 and27 only; other captured sequence flags remain source evidence, not invented native animation states.",
+    "Vehicle/air/naval Scatter policy and unknown event-state/planning fields remain outside the infantry calibration. Existing project ownership/generation and admitted-order controller cleanup stay authoritative.",
+    "The moving next-cell anchor is applied only to the new manual policy; existing automatic warning/blockage/sale semantics are preserved in this bounded batch."
+  ]
+}

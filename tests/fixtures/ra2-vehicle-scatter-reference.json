@@ -1,0 +1,105 @@
+{
+  "scope": "Ordinary RA2 Unit-class ground/naval player Scatter(empty,true,false): eligibility and primary Nearby destination with zero RNG, retaining existing movement admission. Original physical locomotor/full mission scheduling is not executed.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "probe": {
+    "exitCode": 0,
+    "seconds": 0.125,
+    "probeSourceSHA256": "ee8429b519f79278fcc519d2d0e0d287b870a35c111cfdde35c5401e0d1bde39",
+    "probeExecutableSHA256": "1d5e673a5b79e483b5b4c378f96987918a3074034154f0d9f3791b1290e6f2d5",
+    "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+    "logSHA256": "9d939cfc16a1535676d4fe6335839daa93e75a14ecee7aed7c53a2e163c4e4e5"
+  },
+  "originalCases": 2715,
+  "cases": {
+    "destination": 1680,
+    "eligibility": 1024,
+    "facingTimer": 6,
+    "queuedMission": 5,
+    "nativeMappedDestinationRows": 960
+  },
+  "fixtureInputs": {
+    "ra2-vehicle-scatter-cases.csv": "a4ac01a33593c2421b3f1c10a1f5ec6891cc3de3b44f2ae222da8011f51ae618",
+    "ra2-vehicle-scatter-guards.csv": "0fd2b199038a63458b7e38a787f551f71367628ba1378e7d811fc9fab6e35e41",
+    "ra2-vehicle-scatter-timers.csv": "ece86b562dd1a25daec5264000a64bce08bc0865a5a26f86830c74ed53487da9"
+  },
+  "addresses": {
+    "unitVTable": "0x7addf8",
+    "unitScatter": "0x7072d0",
+    "canScatter": "0x6c12d0",
+    "missionQuery": "0x594770",
+    "facingRotating": "0x4b8c90",
+    "unitOccupation": "0x707980",
+    "persistQuery": "0x454bf0",
+    "nearby": "0x5502e0",
+    "eventDispatcher": "0x4b65c0",
+    "event7": "0x4b708d"
+  },
+  "observations": [
+    "Unit-class uses the same actual selection, Target/event constructors, ring queue and event7 dispatcher as infantry; it calls a different virtual Scatter implementation.",
+    "The manual empty-coordinate branch consumes no simulation RNG. It invokes Nearby and assigns the returned destination; failure returns without the nonempty-source directional fallback.",
+    "CanScatter rejects current-or-queued mission0(Sleep),6(Sticky),16(Unload), and Type+aa0 IsTrain. Existing destination494 rejects when ignoreDestination=false.",
+    "Original COM QueryInterface helper and GetClassID comparison reject Teleport GUID4a582747; Drive,Hover,Ship controls proceed.",
+    "A running original hull-facing timer rejects before destination assignment; timer expiration at frame10 is admitted. A nonzero source5c8 byte also rejects.",
+    "The original empty-coordinate path has no distinct naval branch. Float/FloatBeach samples use supplied Water land2; other speed samples use Clear land0. Four represented native types map Track1,Wheel2,Float3,Hover5."
+  ],
+  "dependencies": [
+    "Synthetic selectable Unit-layout actor, house/RTTI public-ID42, Target resolution, controlled planning615480, acknowledgment and replay/logging callbacks. Queue wall-clock timeGetTime is supplied by GetTickCount.",
+    "Original UnitCanScatter, current-or-queued mission query, COM smart-pointer query helper, actual facing timer predicate, Unit occupation marking, Nearby, cell clearance and Tactical projection execute.",
+    "Controlled COM interface returns source Drive/Hover/Teleport/Ship GUIDs and counts release. No original locomotor implementation is claimed.",
+    "Flat64x64 cells with Cell124 vehicle bit0x20 occupation masks; actual Unit marking occupies its origin. Terrain lookup costs are supplied1 for all entries; sampled Clear/Track-Wheel and Water/Float are admissible flat controls, not a new terrain-cost calibration.",
+    "Mission control Scatter permission is suppliedtrue (manual ignoreMission=true); destination and mission setters only capture requests. No original construction, real pathfinding, physical driving or frame loop."
+  ],
+  "primaryNamingAids": [
+    {
+      "url": "https://raw.githubusercontent.com/Ares-Developers/YRpp/master/UnitClass.h",
+      "use": "YR field names and common ground/naval Unit class only; no YR offsets are used as RA2 execution evidence."
+    },
+    {
+      "url": "https://raw.githubusercontent.com/Ares-Developers/YRpp/master/GeneralDefinitions.h",
+      "use": "Mission names0/6/16; actual local predicate and current/queued fields execute independently."
+    }
+  ],
+  "pendingControls": [
+    {
+      "mission": "0",
+      "accepted": "0",
+      "draws": "0",
+      "queries": "0",
+      "releases": "0"
+    },
+    {
+      "mission": "2",
+      "accepted": "1",
+      "draws": "0",
+      "queries": "1",
+      "releases": "1"
+    },
+    {
+      "mission": "5",
+      "accepted": "1",
+      "draws": "0",
+      "queries": "1",
+      "releases": "1"
+    },
+    {
+      "mission": "6",
+      "accepted": "0",
+      "draws": "0",
+      "queries": "0",
+      "releases": "0"
+    },
+    {
+      "mission": "16",
+      "accepted": "0",
+      "draws": "0",
+      "queries": "0",
+      "releases": "0"
+    }
+  ],
+  "limits": [
+    "The source5c8 bit is captured as an explicit control. Existing project deployed/movement protection is reused; no new imported Unit field or unproved setter mapping is invented.",
+    "Sticky6 has no independent ordinary-world field; its original guard is preserved as source evidence, not fabricated as a new encoded state. Ordinary mapped controls use Sleep, Guard, Move and actual staged Unload.",
+    "Synthetic speed6/7/8 rows are source-only controls; native destination matrix maps existing types and speed1/2/3/5. Underlying map/layer/path admission remains the project model.",
+    "No full original mission/target/planning side effects, physical collision/Walk/Drive, source RNG stream, real map edges, bridge-origin mapping or user-click timing claim. Aircraft Scatter and nonempty-source vehicle reactions remain outside this command scope."
+  ]
+}

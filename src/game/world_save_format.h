@@ -19,6 +19,13 @@ inline constexpr int unloadStartupRevision=71;
 inline constexpr int departureWaitRevision=72;
 inline constexpr int driveExitRevision=73;
 inline constexpr int cubicWideDriveRevision=74;
+inline constexpr int cargoOwnerRevision=75;
+inline constexpr int transportUnloadRevision=76;
+inline constexpr int buildingSaleRevision=77;
+// World75 wraps an explicit existing layout instead of changing its travel tags.
+inline constexpr bool cargoOwnerBaseRevision(int revision) {
+    return revision>=travelRevision && revision<=cubicWideDriveRevision;
+}
 inline constexpr bool requiresTravelAndDockRedirects(int revision) {
     return revision==forwardDockRevision || revision==wideDriveRevision
         || revision==chronoBerthRevision || revision==chronoYieldRevision || revision==unloadStartupRevision
@@ -27,7 +34,7 @@ inline constexpr bool requiresTravelAndDockRedirects(int revision) {
 inline constexpr int ordinaryRevision(int productionVersion) {
     return productionVersion>=9?travelRevision:productionVersion>=8?groundRevision:currentRevision;
 }
-inline constexpr std::array<Contract,69> supported{{
+inline constexpr std::array<Contract,72> supported{{
     {6,{'R','A','2','W','R','L','D','6'}},
     {7,{'R','A','2','W','R','L','D','7'}},
     {8,{'R','A','2','W','R','L','D','8'}},
@@ -97,6 +104,9 @@ inline constexpr std::array<Contract,69> supported{{
     {72,{'R','A','2','W','L','D','7','2'}},
     {73,{'R','A','2','W','L','D','7','3'}},
     {74,{'R','A','2','W','L','D','7','4'}},
+    {75,{'R','A','2','W','L','D','7','5'}},
+    {76,{'R','A','2','W','L','D','7','6'}},
+    {77,{'R','A','2','W','L','D','7','7'}},
 }};
 inline constexpr const Contract* forRevision(int revision) {
     for(const auto& format:supported)if(format.revision==revision)return &format;

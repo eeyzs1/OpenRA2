@@ -1,4 +1,5 @@
 #include "game/world.h"
+#include "game/native_scene_contract.h"
 #include <algorithm>
 
 bool World::hasAttackMoveState(const Ent& actor) {
@@ -9,7 +10,11 @@ void World::changeActorOwner(EID id,int owner) {
     // Retirement can finalize an allocated slot before its lifecycle ends.
     if(id<0 || id>=(EID)ents.size() || owner< -1 || owner>=numPlayers)return;
     auto& actor=ents[id];if(actor.player==owner)return;
+    if(actor.alive && nativeSaleBuilding(actor))actor.nativeBuildingSale.captured=true;
     if(hasAttackMoveState(actor)){actor.attackMove={};actor.wps.clear();}
+    if(!actor.isBuilding && actor.utype!=UnitType::AircraftCarrier && nativeRulesBaseVersion>=nativeCargoOwnerSceneVersion) {
+        for(auto& passenger:actor.cargo)if(passenger.player==-2)passenger.player=actor.player;
+    }
     actor.player=owner;
     actor.cancelChronoReturn();
     actor.pendingDockRefinery={};

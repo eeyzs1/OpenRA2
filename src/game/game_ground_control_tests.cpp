@@ -56,8 +56,8 @@ int GameRegression::groundControlRegression(const char* outputDir) {
         FILE* f=std::fopen(path.c_str(),"wb");bool ok=f && world.saveGame(f);if(f)std::fclose(f);
         World copy;f=std::fopen(path.c_str(),"rb");
         if(f && expectedHeader) {
-            char header[8]{};
-            ok=ok && std::fread(header,1,sizeof header,f)==sizeof header && std::memcmp(header,expectedHeader,sizeof header)==0;
+            uint8_t header[13]{};
+            ok=ok && std::fread(header,1,sizeof header,f)==sizeof header && worldSaveHeaderMatches(header,expectedHeader);
             std::rewind(f);
         }
         ok=ok && f && copy.loadGame(f);if(f)std::fclose(f);
@@ -232,7 +232,7 @@ int GameRegression::groundControlRegression(const char* outputDir) {
             std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(stream),{}};
             const auto embedded=embeddedWorldSaveOffset(bytes);
             app=embedded && std::memcmp(bytes.data(),"RA2GAM11",8)==0
-                && std::memcmp(bytes.data()+*embedded,"RA2WLD73",8)==0;
+                && worldSaveHeaderMatches(std::span(bytes).subspan(*embedded),"RA2WLD73");
             if(app) {
                 std::memcpy(bytes.data()+*embedded,"RA2WLD72",8);
                 const auto bad=(output/"dock-exit-wait-world72-app11.sav").string();
@@ -292,10 +292,10 @@ int GameRegression::groundControlRegression(const char* outputDir) {
         const auto source=(std::filesystem::path(outputDir)/sourceName).string();
         World loaded;
         FILE* file=std::fopen(source.c_str(),"rb");
-        char header[8]{};
+        uint8_t header[13]{};
         bool loaded73=false;
         if(file) {
-            loaded73=std::fread(header,1,sizeof header,file)==sizeof header && std::memcmp(header,"RA2WLD73",8)==0;
+            loaded73=std::fread(header,1,sizeof header,file)==sizeof header && worldSaveHeaderMatches(header,"RA2WLD73");
             std::rewind(file);
             loaded73=loaded73 && loaded.loadGame(file) && loaded.valid(vehicle);
             std::fclose(file);
@@ -707,7 +707,7 @@ int GameRegression::groundControlRegression(const char* outputDir) {
             const auto embedded = embeddedWorldSaveOffset(bytes);
             bool rejected = false;
             if (loaded && embedded && std::memcmp(bytes.data(), "RA2GAM11", 8) == 0
-                    && std::memcmp(bytes.data() + *embedded, "RA2WLD69", 8) == 0) {
+                    && worldSaveHeaderMatches(std::span(bytes).subspan(*embedded),"RA2WLD69")) {
                 bytes[*embedded + 7] = '8';
                 const auto bad = std::filesystem::path(outputDir) / "chrono-berth-exit-bad-world68.sav";
                 bool written = false;
@@ -874,7 +874,7 @@ int GameRegression::groundControlRegression(const char* outputDir) {
                 std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(stream),{}};
                 const auto embedded=embeddedWorldSaveOffset(bytes);
                 currentApp=embedded && std::memcmp(bytes.data(),"RA2GAM11",8)==0
-                    && std::memcmp(bytes.data()+*embedded,"RA2WLD71",8)==0;
+                    && worldSaveHeaderMatches(std::span(bytes).subspan(*embedded),"RA2WLD71");
                 if(currentApp) {
                     const auto reject=[&](const char* version) {
                         std::memcpy(bytes.data()+*embedded,version,8);
@@ -900,13 +900,19 @@ int GameRegression::groundControlRegression(const char* outputDir) {
                 std::ifstream stream(armedApp,std::ios::binary);
                 std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(stream),{}};
                 const auto embedded=embeddedWorldSaveOffset(bytes);
-                if(embedded && std::memcmp(bytes.data()+*embedded,"RA2WLD64",8)==0) {
+                if(embedded && worldSaveHeaderMatches(std::span(bytes).subspan(*embedded),"RA2WLD64")) {
                     const auto nested=std::span(bytes).subspan(*embedded);
                     const auto travel=locateWorldSaveSection(nested,WorldSaveSection::NativeTravel);
-                    if(travel && travel->footer+4==nested.size()) {
-                        std::memcpy(bytes.data()+*embedded,"RA2WLD71",8);
+                    const auto sale=locateWorldSaveSection(nested,WorldSaveSection::BuildingSale);
+                    if(travel && travel->footer+4==(sale?sale->offset:nested.size())) {
                         constexpr uint8_t emptyRedirects[]={'D','D','R','1',0,0,0,0,8,0,0,0};
-                        bytes.insert(bytes.end(),std::begin(emptyRedirects),std::end(emptyRedirects));
+                        if(sale) {
+                            const int base=71;std::memcpy(bytes.data()+*embedded+8,&base,4);
+                            bytes.insert(bytes.begin()+*embedded+sale->offset,std::begin(emptyRedirects),std::end(emptyRedirects));
+                        } else {
+                            std::memcpy(bytes.data()+*embedded,"RA2WLD71",8);
+                            bytes.insert(bytes.end(),std::begin(emptyRedirects),std::end(emptyRedirects));
+                        }
                         const auto invalid=(directory/(prefix+"-bad-no-startup.sav")).string();
                         std::ofstream out(invalid,std::ios::binary);
                         out.write((const char*)bytes.data(),bytes.size());out.close();
@@ -1789,7 +1795,7 @@ int GameRegression::groundControlRegression(const char* outputDir) {
             const auto nested = embeddedWorldSaveOffset(bytes);
             const auto block = nested ? locateWorldSaveSection(std::span(bytes).subspan(*nested),
                 WorldSaveSection::NativeDockRedirect) : std::nullopt;
-            bool rejected = block && block->length == 24 && bytes[*nested + 7] == '6';
+            bool rejected = block && block->length == 24 && worldSaveHeaderMatches(std::span(bytes).subspan(*nested),"RA2WLD66");
             if (rejected) for (bool wrongHeader : {false, true}) {
                 auto malformed = bytes;
                 if (wrongHeader) {

@@ -1,0 +1,63 @@
+{
+  "scope": "Ordinary RA2 cash-sale survivors; controlled original queries and Selling mission prefix, not original whole-frame execution.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "sourceRulesSHA256": "fd1e95cea0306ea78049dc81c8cd816e18c28c496872a1ff02edd50bd082062f",
+  "probes": {
+    "query": {
+      "exitCode": 0,
+      "seconds": 0.15700000000651926,
+      "probeSourceSHA256": "7385f5927cca16fa076a5f19ba89937a06467ff447a97160ec09d1bd6fa6cf98",
+      "probeExecutableSHA256": "314b76ffec8a51b4a05ee1026e428f5ffe8a41b363757567ade9c98ec2bd189e",
+      "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+      "logSHA256": "eab8fb1fc1f5e314f103e3f92251d1e97b45b1f5143db81e4f40b5ff3011c854"
+    },
+    "mission": {
+      "exitCode": 0,
+      "seconds": 0.1559999999590218,
+      "probeSourceSHA256": "8f1571aeb22815bd1f6d2068d4bca83a4f9a330445a9fa668745f690b26699f0",
+      "probeExecutableSHA256": "684a9b2403105e82fe098547710fc43d4444f92ebd1927d1a3b91cb0c5e25d37",
+      "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+      "logSHA256": "684ae89ce9588e19ef0b68af15058e378dfeef665c465456b4270263dab6de2f"
+    }
+  },
+  "cases": {
+    "countRows": 752,
+    "distinctBuildings": 46,
+    "aliasRows": 47,
+    "countControls": 64,
+    "typeSelections": 768,
+    "spotQueries": 128,
+    "missionPrefixes": 12
+  },
+  "semantics": {
+    "count": "Crewed gates count; quote divided by Allied500/Soviet250 from original house side, doubled divisor after capture; clamp1..5; zero divisor returns0. HP is not read.",
+    "type": "Every uncaptured selection samples[0,99], including non-yards. <25 plus factoryBuildingType returns global ENGINEER. Otherwise current house side picks E1/E2; neutral country returns CTECH; armed actor samples[0,99], <15 selects CTECH. At most one engineer attempt even after allocation/placement failure.",
+    "placement": "Pick one provided source foundation offset uniformly; supply cell(base+offset)*256+(128,164),z0. Actual map lookup548000 and Cell free infantry spot4764b0. Initialized483390 gives quarter-cell subspots. Input center request draws[0,3], source search skips slots0/1 and uses slots2/3/4; capacity3 here. Occupancy bits and flat height are supplied dependencies.",
+    "phase": "Actual Selling phase0 broadcasts radio23; phase1 broadcasts radio3 (unlink), creates crew, queues Scatter(empty,true,false) then Move2; phase2 waits for completion and credits. These radio calls do not establish animation timing. Project first selling update maps crew creation; exact source outer timing remains uncalibrated. See ra2-sale-egress-reference.json for the corrected broadcast and building-admission queries."
+  },
+  "addresses": {
+    "count": "0044c520",
+    "buildingCrew": "00449fb0",
+    "genericCrew": "006d30b0",
+    "selling": "00445b30",
+    "cellLookup": "00548000",
+    "freeSpot": "004764b0",
+    "spotInitializer": "00483390",
+    "capturedFlagWriter": "00444b67",
+    "initialHouseSideWriter": "006c11d0"
+  },
+  "suppliedDependencies": [
+    "Query actors/types/houses and source flags; exact sale price fields, PadAircraft/dock dependencies from prior sale evidence",
+    "Controlled inclusive RNG tape, weapon pointer for actual IsArmed query",
+    "Mission allocation/Infantry constructor/Unlimbo, Scatter and queue adapters; no actual original constructor, physical locomotor or complete map initialization",
+    "Synthetic foundation offsets, cell occupancy masks, flat ground height, radio/other mission callbacks; ordinary mission credit is actual source code"
+  ],
+  "limits": [
+    "No combat-death survivors or pilots",
+    "No full source constructor, map placement admission, animation/frame scheduling or global RNG stream identity",
+    "Project retains its terrain, three-infantry cell model and path/Scatter admission; source irregular occupancy is not fully reproduced",
+    "Source query r1 omitted spot initializer; its coordinates are not valid evidence; r2/r3 execute initializer, r3 asserts exact coordinates"
+  ],
+  "frozenScene41RA2SHA256": "4b4ad757975bf7b76d6d74d1f444710b96884bae0ae6731a445a5c2a714a314e",
+  "followupScene65": "ra2-nearby-scatter-reference.json executes the source primary Nearby branch, actual infantry occupation marking and coordinate query. Scene65 admits departure routes that wait for the selling foundation to clear; Scene64 saved continuations retain adjacent-only Scatter."
+}

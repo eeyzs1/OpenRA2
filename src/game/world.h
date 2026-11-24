@@ -224,6 +224,7 @@ public:
             std::vector<GarrisonedUnit> cargo;
             NativeActorIdentity nativeIdentity;
             int nativeEventTag=-1,nativeLastEnteredCell=-1;
+            int player = -2; // -2 inherits the container in historical records; -1 is neutral.
         };
         bool alive = false;
         uint64_t combatActor=0;
@@ -234,7 +235,9 @@ public:
         BldType btype = BldType::ConYard;
         NativeActorIdentity nativeIdentity;
         uint8_t navLayer=0,goalLayer=0;
+        NativeBuildingSaleState nativeBuildingSale;
         NativeMovementState nativeMovement;
+        NativeTransportUnloadState nativeTransportUnload;
         NativeGroundState nativeGround;
         NativeDriveArc driveArc;
         uint16_t previousHullHeading=0; // presentation only
@@ -520,7 +523,10 @@ public:
     bool loadRulesProfile(const char* path);
     bool loadRulesSnapshot(const RulesSnapshot& snapshot);
     NativeProductionRules nativeProductionRules;
+    NativeSaleSurvivorRules nativeSaleSurvivorRules;
     NativeMovementRules nativeMovementRules;
+    NativeCrushWarningRules nativeCrushWarningRules;
+    NativeTransportUnloadRules nativeTransportUnloadRules;
     uint64_t nativeProductionSerial=0;
     bool nativeBridgesDestroyable=true;
     std::shared_ptr<const NativeEventDefinition> nativeEventDefinition;
@@ -754,6 +760,7 @@ public:
         int64_t remaining=0; // only the head owns the shared Strength*10 budget
     };
     int nativeSceneVersion=0; // immutable contract derived from the embedded source
+    int nativeRulesBaseVersion=0; // derived effective contract, including Scene42's embedded ordinary rules
     bool nativeTemporalEnabled=false; // derived from embedded SourceScene35
     std::map<int64_t,NativeTemporalBeam> nativeTemporalBeams;
     bool nativeTemporalWeapon(const WeaponDef& weapon) const;
@@ -881,9 +888,9 @@ public:
     };
 
     // 创建
-    EID spawnUnit(int player, UnitType t, float x, float y,int sourceType=-1,const NativeActorIdentity* existingIdentity=nullptr);
+    EID spawnUnit(int player, UnitType t, float x, float y,int sourceType=-1,const NativeActorIdentity* existingIdentity=nullptr,int initialFacing=-1);
     EID spawnBuilding(int player, BldType t, int bx, int by, bool free_ = false,int sourceType=-1,int initialHp=-1);
-    void kill(EID id, bool explode = true,bool scriptedCollapse=false,bool erased=false); // erased skips physical death effects
+    void kill(EID id, bool explode = true,bool scriptedCollapse=false,bool erased=false); // erased skips physical death effects (erasure/direct crushing)
 
     // 访问
     Ent& ent(EID id) { return ents[id]; }
@@ -917,8 +924,12 @@ public:
     std::vector<int> orderScatter(const std::vector<EID>& sel); // X 散布
     void orderGuard(const std::vector<EID>& sel);   // G 警戒（视野索敌）
     EntryOrderResult orderBoard(const std::vector<EID>& sel, EID transportId,bool feedback=false);
+    bool boardOwnerAllowed(int unitOwner,int carrierOwner) const;
     ReleaseOrderResult orderUnload(const std::vector<EID>& sel,bool feedback=false);
     EntryOrderResult orderGarrison(const std::vector<EID>& sel, EID bldId,bool feedback=false);
+    static int passengerOwner(const Ent::GarrisonedUnit& passenger,int containerOwner) {
+        return passenger.player==-2?containerOwner:passenger.player;
+    }
     static int cargoUnitCount(const std::vector<Ent::GarrisonedUnit>& cargo,UnitType type) {
         int count=0;for(const auto& p:cargo)count+=(p.type==type)+cargoUnitCount(p.cargo,type);return count;
     }
@@ -926,6 +937,7 @@ public:
         int load=0;for(const auto& passenger:cargo)load+=unitDef(passenger).transportSize();return load;
     }
     EntryRejectReason entryRejection(EID unit,EID target,EntryKind kind) const;
+    bool entryWithinReach(const Ent& unit,const Ent& target) const;
     int buildingEntryDomain(const Ent& building) const;
     void emitEntryResult(int player,EID target,EntryKind kind,const EntryOrderResult& result);
     ReleaseOrderResult orderUngarrison(const std::vector<EID>& sel,bool feedback=false);
@@ -936,6 +948,7 @@ public:
     void orderPsychicReveal(int player, float x, float y); // YR 心灵揭示揭雾
     static bool serviceFacility(BldType type) { return type==BldType::ServiceDepot || type==BldType::TechOutpost; }
     ServiceRejectReason serviceRejection(EID unit,EID depot) const;
+    ServiceStatus serviceWorkStatus(EID unit,EID depot) const;
     ServiceOrderResult orderService(const std::vector<EID>& sel, EID depotId,bool feedback=false); // 车辆开往维修厂（维修+摘除寄生）
 
     // ---- P8 联机：玩家命令抽象（lockstep 同步的最小单元） ----
@@ -1000,6 +1013,7 @@ public:
     RallyOrderResult orderRally(EID factory,float x,float y,bool clear=false);
     void emitRallyResult(int player,const RallyOrderResult& result,float x,float y);
     void sellBuilding(EID id);
+    bool constructionYardSaleEnabled() const;
     bool repairBuilding(EID id); // 切换持续维修；不可修返回 false
     int unitProductionCost(int player, UnitType t) const; // 含工业工厂车辆造价减免
     int buildingProductionCost(int player,BldType type) const;
@@ -1074,8 +1088,9 @@ public:
     Vec2i nativeNearbyPoint(Vec2i requested,int speed,int footprint=1) const;
     int nativeNearbySpeed(EID actor) const;
     bool groundUnitBlocksCell(int x, int y, EID ignore = INVALID_EID,int layer=-1) const;
-    // 移动占位：车/舰与其他地面单位互斥，步兵同格≤3；合法碾压在入格前结算。
-    bool cellHardBlockedForMove(int x, int y, EID mover,int layer=-1) const;
+    // 实际路径步进支持Scene48碾压和Scene49步兵格内离位；其他查询仍要求空格。
+    bool cellHardBlockedForMove(int x, int y, EID mover,int layer=-1,bool physicalStep=false) const;
+    bool canCrushOccupant(const Ent& actor,const Ent& occupant) const;
     int countInfantryAtCell(int x, int y, EID ignore = INVALID_EID,int layer=-1) const;
     void unitOccSync(EID id);      // 按当前 x/y/状态刷新占位链表（O(同格人数)）
     void rebuildUnitOcc();         // 全量重建（init/load 后）
@@ -1144,9 +1159,17 @@ private:
     void endService(Ent& e,EID id,ServiceRejectReason reason);
     void emitServiceResult(int player,EID depot,const ServiceOrderResult& result,ServiceStatus status=ServiceStatus::Accepted);
     float serviceReach(const Ent& depot) const;
-    bool interactionPath(const Ent& unit,const Ent& target,float reach,std::vector<Vec2i>& path) const;
+    bool interactionPath(const Ent& unit,const Ent& target,float reach,std::vector<Vec2i>& path,bool targetCell=false) const;
     bool interactionWithinReach(const Ent& unit,const Ent& target,float reach) const;
     void updateUnit(Ent& e, EID id);
+    bool resolveCrushingContact(EID mover);
+    void warnCrushingCell(const Ent& mover,int x,int y,int layer);
+    bool scatterBlockedInfantry(Ent& mover,int x,int y,int layer);
+    void scatterInfantryCell(int x,int y,int layer,bool forced);
+    enum class InfantryScatterPolicy { Warning, Forced, Player };
+    bool scatterInfantry(EntityRef recipient,InfantryScatterPolicy policy,bool eliteInCell=false);
+    bool scatterUnit(EntityRef recipient);
+    bool nearbyScatterCell(const Ent& actor,Vec2i origin,Vec2i& cell,int& layer) const;
     bool updateMagnetic(Ent& e,EID id);
     void updateAircraft(Ent& e, EID id);    // 战机状态机
     void updateChopperDeployment(Ent& e,EID id);
@@ -1197,7 +1220,7 @@ private:
     bool writeNativeTravelState(FILE* file) const;
     bool readNativeTravelState(FILE* file,int saveRevision);
     uint32_t nativeTravelChecksum() const;
-    bool findNearestReachableOre(int sx, int sy, int maxR, Vec2i& out) const;
+    bool findNearestReachableOre(int sx, int sy, int maxR, Vec2i& out, EID mover=INVALID_EID) const;
     void moveAlongPath(Ent& e, EID id,int nativeSegments=8);
     void prepareNativeMovement(Ent& e,int x,int y,int layer,Vec2i goal);
     float nativeMovementStep(Ent& e,int x,int y,int layer,Vec2i goal,float stopBefore=0);
@@ -1239,7 +1262,15 @@ private:
     void checkDefeat();
     bool stepTo(Ent& e, EID id, int nx, int ny);
     float entryReach(const Ent& target) const;
+    Credits nativeBuildingSaleValue(const Ent& building) const; // -1 retains the legacy sale policy.
+    int nativeSaleHouseSide(int player) const;
+    bool nativeSaleBuilding(const Ent& building) const;
+    bool validateNativeBuildingSales() const;
+    int nativeBuildingSurvivorCount(const Ent& building) const;
+    int nativeBuildingSurvivorType(const Ent& building);
+    void releaseBuildingSurvivors(EID id);
     bool entryPath(const Ent& unit,const Ent& target,std::vector<Vec2i>& path) const;
+    void completeEntry(EID unit,EID destination);
     EntryOrderResult orderEntry(const std::vector<EID>& sel,EID target,EntryKind kind,bool feedback);
     void endEntry(Ent& unit,EID id,EntryRejectReason reason);
     bool buildingApproachGoal(const Ent& b, int domain, int& gx, int& gy) const; // 靠近建筑占地外缘的最近可走格
@@ -1248,7 +1279,14 @@ private:
     ReleaseOrderResult evacuateGarrison(EID bldId);
     struct ReleaseCell { int x=0,y=0,layer=0; };
     std::vector<ReleaseCell> releaseCells(const Ent& source,const UnitDef& passenger,int radius) const;
-    ReleaseOrderResult releaseContainer(EID source,ReleaseKind kind);
+    bool nativeTransportCell(const Ent& source,const UnitDef& passenger,int x,int y,ReleaseCell& result) const;
+    NativeTransportMath::Exit nativeTransportExit(const Ent& source) const;
+    struct TransportReleasePlan {ReleaseCell position,destination;};
+    bool nativeTransportReleasePlan(const Ent& source,const UnitDef& passenger,TransportReleasePlan& plan) const;
+    ReleaseOrderResult releaseContainer(EID source,ReleaseKind kind,int limit=64);
+    bool usesNativeTransportUnload(const Ent& e) const;
+    bool updateNativeTransportUnload(EID id);
+    bool validateNativeTransportUnload() const;
     ReleaseOrderResult orderRelease(const std::vector<EID>& sel,ReleaseKind kind,bool feedback);
     bool chronoJump(EID id, float gx, float gy); // 超时空传送：瞬移至目标点附近空格，按距离产生相位不适
     void placeNeutralTechs();                   // 地图生成后放置中立科技建筑（油井/医院/机械店/科技机场/秘密实验室/民房）
@@ -1262,6 +1300,7 @@ private:
     void regrowOre();                           // 矿脉缓慢再生（RA2 矿钻等效）
     void updateTimedBombs();                    // 疯狂伊文炸弹倒计时与引爆
     void garrisonFire(Ent& b, EID id);          // 驻军轮流出击（民房/战斗碉堡/坦克碉堡）
+    void revealLocalSight(int player,int owner);
     void applyGapShroud();                      // 裂缝产生器：敌军在黑幕半径内的迷雾降为不可见
     void updateParadrop();                      // 伞兵充能（美国空指部/科技机场）
     void updatePsychicAreaDevices();            // 战役心灵信标/放大器范围心控

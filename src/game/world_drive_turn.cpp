@@ -83,7 +83,7 @@ NativeDriveArc World::planDriveArc(const Ent& e,Vec2i corner,int layer,EID id) c
     // wide turn only if there is already room for the second half.
     if(id!=INVALID_EID && dx==in.x && dy==in.y && NativeDriveMath::cardinalRightAngle(in,out)
         && movementStep(e,(int)e.x,(int)e.y,e.navLayer,corner.x,corner.y)==layer
-        && !waitingForNativeGate(e,next) && !cellHardBlockedForMove(next.x,next.y,id,layer)) {
+        && !waitingForNativeGate(e,next) && !cellHardBlockedForMove(next.x,next.y,id,layer,true)) {
         const EID reserved=movementReservations.size()==movementSlotCount()
             ?movementReservations[movementSlot(next.x,next.y,layer)]:INVALID_EID;
         arc.wide=reserved==INVALID_EID || reserved==id;

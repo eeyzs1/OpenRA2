@@ -2151,9 +2151,15 @@ int GameRegression::playTest() {
             // RA2：扳手模式是持续维修开关，非一帧回满；推进若干 tick 后应回满并结束
             check(world.ents[pbld].repairing || world.ents[pbld].hp > actual.hp / 2,
                   "维修模式已开启持续维修");
-            for (int t = 0; t < 600 && world.ents[pbld].alive
+            const auto& repairRules=world.nativeProductionRules;
+            const int repairWait=repairRules.buildingRepairStep>0?
+                repairRules.buildingRepairFrames*2*((actual.hp-world.ents[pbld].hp+repairRules.buildingRepairStep-1)/repairRules.buildingRepairStep+1):600;
+            const int repairStarted=world.tick;
+            for (int t = 0; t < repairWait && world.ents[pbld].alive
                            && world.ents[pbld].hp < actual.hp; t++)
                 logic();
+            TraceLog(LOG_INFO,"PLAY repair source=%d wait_limit=%d elapsed=%d hp=%d/%d",world.nativeRulesBaseVersion,repairWait,
+                world.tick-repairStarted,world.ents[pbld].hp,actual.hp);
             check(world.ents[pbld].hp == actual.hp && !world.ents[pbld].repairing,
                   "维修模式恢复建筑生命");
             sideMode = 0; // 显式清零：下面单独测出售模式保持

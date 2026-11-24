@@ -133,6 +133,7 @@ inline const char* unitAssetName(UnitType t) {
         case UnitType::YuriPrime: return "yuriprime";
         case UnitType::ChronoIvan: return "chronoivan";
         case UnitType::NativeVehicle: return "nativevehicle";
+        case UnitType::NativeInfantry: return "nativeinfantry";
         default: return "unknown";
     }
 }

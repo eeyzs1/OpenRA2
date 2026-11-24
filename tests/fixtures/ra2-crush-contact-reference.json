@@ -1,0 +1,186 @@
+{
+  "scope": "Isolated execution of the unmodified local RA2 1.08 Unit TryCrushCell routine, not the original game entrypoint, locomotor frame scheduler or human playtest.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "probeSourceSHA256": "eef32883396593fd4dffa233fdbe4358c55c05f879db3c802d671ecd7d9622e4",
+  "probeExecutableSHA256": "d28e9139ccdd4094c394f7d9da5f8a54e0689b85c23fce07e69851366f16381c",
+  "probeResultSHA256": "e90d4deccc34e0e31f771ba034f348053c3bd8240ba99249adcffbd9a1e7a15d",
+  "unitVtable": "0x7addf8",
+  "tryCrushCellSlot": "0x4b8",
+  "tryCrushCell": "0x705160",
+  "warningBranch": "0x705211",
+  "contactBranch": "0x705256",
+  "horizontalDistanceSquared": "0x5d4e00",
+  "compareAddress": "0x7052c9",
+  "exclusiveDistanceSquaredLeptons": 16384,
+  "leptonsPerCell": 256,
+  "cellOccupantLists": [
+    "0xe4",
+    "0xe8"
+  ],
+  "stubbedDependencies": [
+    "alliance query 0x4e5580",
+    "veteran ability query 0x6d7910 (false)",
+    "warning scatter 0x476920 (captured)",
+    "sound 0x713e60 (captured)",
+    "victim type/kind and external death callbacks (captured)"
+  ],
+  "executedUnmodified": [
+    "map cell lookup 0x548070",
+    "Crusher and Crushable checks",
+    "warning/contact split",
+    "coordinate retrieval 0x5d4e40",
+    "squared horizontal distance, strict boundary comparison",
+    "cell occupant traversal"
+  ],
+  "cases": [
+    {
+      "case": "one_cell",
+      "dx": 256,
+      "dy": 0,
+      "z": 0,
+      "warn": 0,
+      "death": 0,
+      "warning": 0,
+      "sound": 0,
+      "pass": 1
+    },
+    {
+      "case": "outside",
+      "dx": 129,
+      "dy": 0,
+      "z": 0,
+      "warn": 0,
+      "death": 0,
+      "warning": 0,
+      "sound": 0,
+      "pass": 1
+    },
+    {
+      "case": "exact_half",
+      "dx": 128,
+      "dy": 0,
+      "z": 0,
+      "warn": 0,
+      "death": 0,
+      "warning": 0,
+      "sound": 0,
+      "pass": 1
+    },
+    {
+      "case": "inside",
+      "dx": 127,
+      "dy": 0,
+      "z": 0,
+      "warn": 0,
+      "death": 1,
+      "warning": 0,
+      "sound": 1,
+      "pass": 1
+    },
+    {
+      "case": "diagonal_inside",
+      "dx": 90,
+      "dy": 90,
+      "z": 0,
+      "warn": 0,
+      "death": 1,
+      "warning": 0,
+      "sound": 1,
+      "pass": 1
+    },
+    {
+      "case": "diagonal_outside",
+      "dx": 91,
+      "dy": 91,
+      "z": 0,
+      "warn": 0,
+      "death": 0,
+      "warning": 0,
+      "sound": 0,
+      "pass": 1
+    },
+    {
+      "case": "horizontal_only",
+      "dx": 127,
+      "dy": 0,
+      "z": 256,
+      "warn": 0,
+      "death": 1,
+      "warning": 0,
+      "sound": 1,
+      "pass": 1
+    },
+    {
+      "case": "warning_distant",
+      "dx": 256,
+      "dy": 0,
+      "z": 0,
+      "warn": 1,
+      "death": 0,
+      "warning": 1,
+      "sound": 0,
+      "pass": 1
+    },
+    {
+      "case": "warning_inside",
+      "dx": 127,
+      "dy": 0,
+      "z": 0,
+      "warn": 1,
+      "death": 0,
+      "warning": 1,
+      "sound": 0,
+      "pass": 1
+    },
+    {
+      "case": "not_crusher",
+      "dx": 0,
+      "dy": 0,
+      "z": 0,
+      "warn": 0,
+      "death": 0,
+      "warning": 0,
+      "sound": 0,
+      "pass": 1
+    },
+    {
+      "case": "not_crushable",
+      "dx": 0,
+      "dy": 0,
+      "z": 0,
+      "warn": 0,
+      "death": 0,
+      "warning": 0,
+      "sound": 0,
+      "pass": 1
+    },
+    {
+      "case": "ally",
+      "dx": 0,
+      "dy": 0,
+      "z": 0,
+      "warn": 0,
+      "death": 0,
+      "warning": 0,
+      "sound": 0,
+      "pass": 1
+    },
+    {
+      "case": "inactive",
+      "dx": 0,
+      "dy": 0,
+      "z": 0,
+      "warn": 0,
+      "death": 0,
+      "warning": 0,
+      "sound": 0,
+      "pass": 1
+    }
+  ],
+  "limits": [
+    "The original ordinary warning/scatter and UpdatePosition scheduling are identified statically, not reproduced as a full running game.",
+    "The horizontal-only case isolates the distance calculation; it does not authorize cross-layer crushing.",
+    "Scene48 applies the measured half-cell threshold after each actual admitted ordinary path movement. Continuous geometry uses the project coordinate representation.",
+    "Aggressive crushing, veteran overrides, death presentation and human playtesting remain separate work."
+  ]
+}

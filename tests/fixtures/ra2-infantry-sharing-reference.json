@@ -1,0 +1,177 @@
+{
+  "scope": "Isolated execution of the local original RA2 Walk ILocomotion Process and Movement_AI on already admitted in-cell steps, with one stationary vehicle and the infantry linked to the origin cell. Not a full original command/pathfinding/placement run.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "probeSourceSHA256": "3526250f75ad8a30f61168007ecdaa3e4303e3c70263e147d867f40871b1f962",
+  "probeResultSHA256": "5c9b5ecb5b863cfe1da6e02982255c5d21d499eb50514cfda0b1365cb2f17aee",
+  "probeExecutableSHA256": "9a7233320612976b5e5eec37ac4ce717b1ddc7fb1b3513e4e4f58aafb2aa04f5",
+  "locomotorCLSID": "{4A582744-9839-11d1-B709-00A024DDAFD1}",
+  "originalCLSIDAddress": "0x7a1fa0",
+  "walkILocomotionVtable": "0x7aead8",
+  "infantryVtable": "0x7a3540",
+  "process": "0x71dff0",
+  "movementAI": "0x71e220",
+  "alreadyAdmittedBranch": "0x71f077",
+  "newSegmentAdmissionCall": "0x71e9ed (virtual 0x194)",
+  "sameCellBranch": "0x71f462 -> 0x71f546",
+  "positionCommitCall": "0x71f55a (virtual 0x19c)",
+  "unmodifiedOperations": [
+    "original Process dispatch and movement branch selection",
+    "coordinate/cell retrieval",
+    "original heading and displacement math",
+    "same-cell decision",
+    "Foot/Object position commit"
+  ],
+  "controlledDependencies": [
+    "speed callback returns the requested fixed integer rate",
+    "immobilization callback returns false",
+    "cell-admission callback returns blocked and records calls; none occurs during these admitted steps",
+    "position commit instrumentation delegates to the original Foot/Object setters",
+    "mark/speed-scale/cell bookkeeping side effects intercepted"
+  ],
+  "cases": [
+    {
+      "case": "east",
+      "rate": 16,
+      "moving": 1,
+      "from_x": 2944,
+      "from_y": 4480,
+      "to_x": 2960,
+      "to_y": 4480,
+      "admissions": 0,
+      "position_writes": 1,
+      "pass": 1
+    },
+    {
+      "case": "southeast",
+      "rate": 16,
+      "moving": 1,
+      "from_x": 2944,
+      "from_y": 4480,
+      "to_x": 2955,
+      "to_y": 4491,
+      "admissions": 0,
+      "position_writes": 1,
+      "pass": 1
+    },
+    {
+      "case": "south",
+      "rate": 16,
+      "moving": 1,
+      "from_x": 2944,
+      "from_y": 4480,
+      "to_x": 2943,
+      "to_y": 4496,
+      "admissions": 0,
+      "position_writes": 1,
+      "pass": 1
+    },
+    {
+      "case": "southwest",
+      "rate": 16,
+      "moving": 1,
+      "from_x": 2944,
+      "from_y": 4480,
+      "to_x": 2932,
+      "to_y": 4491,
+      "admissions": 0,
+      "position_writes": 1,
+      "pass": 1
+    },
+    {
+      "case": "west",
+      "rate": 16,
+      "moving": 1,
+      "from_x": 2944,
+      "from_y": 4480,
+      "to_x": 2928,
+      "to_y": 4479,
+      "admissions": 0,
+      "position_writes": 1,
+      "pass": 1
+    },
+    {
+      "case": "northwest",
+      "rate": 16,
+      "moving": 1,
+      "from_x": 2944,
+      "from_y": 4480,
+      "to_x": 2932,
+      "to_y": 4468,
+      "admissions": 0,
+      "position_writes": 1,
+      "pass": 1
+    },
+    {
+      "case": "north",
+      "rate": 16,
+      "moving": 1,
+      "from_x": 2944,
+      "from_y": 4480,
+      "to_x": 2944,
+      "to_y": 4464,
+      "admissions": 0,
+      "position_writes": 1,
+      "pass": 1
+    },
+    {
+      "case": "northeast",
+      "rate": 16,
+      "moving": 1,
+      "from_x": 2944,
+      "from_y": 4480,
+      "to_x": 2955,
+      "to_y": 4468,
+      "admissions": 0,
+      "position_writes": 1,
+      "pass": 1
+    },
+    {
+      "case": "slow",
+      "rate": 1,
+      "moving": 1,
+      "from_x": 2944,
+      "from_y": 4480,
+      "to_x": 2944,
+      "to_y": 4480,
+      "admissions": 0,
+      "position_writes": 1,
+      "pass": 1
+    },
+    {
+      "case": "fast",
+      "rate": 64,
+      "moving": 1,
+      "from_x": 2944,
+      "from_y": 4480,
+      "to_x": 2989,
+      "to_y": 4524,
+      "admissions": 0,
+      "position_writes": 1,
+      "pass": 1
+    },
+    {
+      "case": "stopped",
+      "rate": 16,
+      "moving": 0,
+      "from_x": 2944,
+      "from_y": 4480,
+      "to_x": 2944,
+      "to_y": 4480,
+      "admissions": 0,
+      "position_writes": 0,
+      "pass": 1
+    }
+  ],
+  "instrumentationControl": {
+    "queryCalls": 1,
+    "blockedResult": 7,
+    "notOriginalAdmissionEvidence": true
+  },
+  "limits": [
+    "HeadTo and destination were pre-admitted fixtures; no full original player command or pathfinding runs.",
+    "Actual coordinate setters run; map registration, height and other bookkeeping are controlled fixture callbacks.",
+    "Speed, rounding and heading observations are recorded, not ported as part of the departure fix. The one-lepton diagonal sample has zero displacement.",
+    "Warning/scatter, full collision scheduling, combat and human playtesting remain separate scopes."
+  ],
+  "positionSetter": "0x4ca160 -> 0x5d51c0, instrumented and executed unchanged"
+}

@@ -125,6 +125,7 @@ enum class UnitType : uint8_t {
     ASW,                         // destroyer-launched Osprey; not directly buildable
     CargoPlane,                  // support transport; never player-built
     SpyPlane,                    // support reconnaissance aircraft
+    NativeInfantry,              // unbuildable carrier for a source infantry definition
     COUNT
 };
 

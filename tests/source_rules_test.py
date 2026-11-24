@@ -1,5 +1,6 @@
 """Source provenance, edition isolation and real map-override regression."""
 import configparser
+import json
 from pathlib import Path
 import sys
 import tempfile
@@ -21,6 +22,8 @@ def main():
     mission = build_catalog(tree, "ra2", "all01t.map")
     yr = build_catalog(tree, "yr")
     assert base["source"] == "ra2.mix/local.mix"
+    crushing=json.loads((ROOT/"tests/fixtures/ra2-crushing-reference.json").read_text(encoding="utf-8"))
+    assert base["sha256"]==crushing["sourceRulesSHA256"] and crushing["defaultInfantryCrushable"]
     if yr["source"] == "ra2md.mix/localmd.mix":
         assert yr["edition"] == "yr-local-base"  # No final-patch claim from a base archive.
     else:
@@ -63,7 +66,7 @@ def main():
             profile = configparser.ConfigParser(interpolation=None);profile.optionxform = str
             profile.read(output, encoding="utf-8")
             scene = profile["Scene"]
-            assert scene["Version"] == ("46" if edition == "ra2" else "43") and scene["Mode"] == "Rules" and scene["Map"] == ""
+            assert scene["Version"] == ("68" if edition == "ra2" else "43") and scene["Mode"] == "Rules" and scene["Map"] == ""
             carrier=profile["NativeAircraft.0"]
             assert profile["NativeAircraft"]["Version"] == "2" and profile["NativeAircraft"]["Count"] == "2" and carrier["Capacity"] == "3"
             assert carrier["Regenerate"] == "600" and carrier["Reload"] == "150" and carrier["LaunchDelay"] == "20"
@@ -74,19 +77,83 @@ def main():
             assert scene["SourceSHA256"] == catalog["sha256"] and scene["SourceArtSHA256"] == catalog["art_sha256"]
             assert scene["SourceArchive"] == catalog["source"] and scene["SourceArtArchive"] == catalog["art_source"]
             types = {profile[name]["Id"]: profile[name] for name in profile.sections() if name.startswith("Type.")}
+            if edition == "ra2":
+                for reference in crushing["answers"]:
+                    row=types[reference["id"]]
+                    assert int(row["Armor"])==["none","flak","plate","light","medium","heavy"].index(reference["armor"])
+                    assert row["Crusher"]==str(int(reference["crusher"]))
+                    assert row["Crushable"]==str(int(reference["crushable"]))
+                original=read_ini(select_source(tree,edition)[1])
+                survivors=json.loads((ROOT/"tests/fixtures/ra2-sale-survivors-reference.json").read_text(encoding="utf-8"))
+                assert survivors["sourceRulesSHA256"]==catalog["sha256"]
+                assert dict(profile["NativeSaleSurvivors"]) == {"Version":"1", **{key:original["general"][key.lower()].upper()
+                    for key in ("AlliedSurvivorDivisor","SovietSurvivorDivisor","AlliedCrew","SovietCrew","Engineer","Technician")}}
+                assert types["CTECH"]["Base"]=="NativeInfantry" and types["CTECH"]["Hp"]=="50" and types["CTECH"]["Trainable"]=="0"
+                assert types["CTECH"]["Gun0Present"]=="1" and profile["Type."+str(int(scene["Types"])-1)]["Id"]=="CTECH"
+                for identity,row in types.items():
+                    raw=original[identity.lower()]
+                    assert row["SaleCrewed"]==str(int(raw.get("crewed","no").lower() in ("yes","true","1")))
+                    assert row["Engineer"]==str(int(raw.get("engineer","no").lower() in ("yes","true","1")))
+                assert dict(profile['NativeTransportUnload']) == {'Version':'1',
+                    'RateFrames':str(int(float(original['unload']['rate'])*900)),
+                    'RandomFrames':'2','MovingFrames':'10','StageFrames':'1'}
+                assert dict(profile["NativeCrushWarning"]) == {"Version":"1",
+                    "PlayerScatter":str(int(original["combatdamage"]["playerscatter"].lower()=="yes")),
+                    "ComputerIQ":original["iq"]["maxiqlevels"],"ScatterIQ":original["iq"]["scatter"]}
+                infantry={identity.upper() for identity in original["infantrytypes"].values()}
+                yes=lambda value: str(value).lower() in ("yes","true","1")
+                for identity,row in types.items():
+                    if row["Building"]=="1":
+                        assert "Crusher" not in row and "Crushable" not in row
+                        continue
+                    raw=original[identity.lower()]
+                    assert row['IsTrain']==str(int(yes(raw.get('istrain','no'))))
+                    assert row["Crusher"]==str(int(yes(raw.get("crusher","no"))))
+                    assert row["Crushable"]==str(int(yes(raw.get("crushable","yes" if identity in infantry else "no"))))
+                    assert row["Fraidycat"]==str(int(yes(raw.get("fraidycat","no"))))
+                for identity in ("MTNK","HTNK","HTK","CMIN","HARV","SREF","MGTK"):
+                    assert types[identity]["Crusher"]=="1"
+                assert types["FV"]["Crusher"]=="0" and types["E2"]["Crushable"]=="1"
+                assert types["CLEG"]["Crushable"]==types["SHK"]["Crushable"]==types["DESO"]["Crushable"]=="0"
+            else:
+                assert all("Crusher" not in row and "Crushable" not in row for row in types.values())
             assert {row["Id"] for row in types.values() if row.get("Base") == "AirForceCmd"} == {"GAAIRC", "AMRADR"}
             def production(identity):
                 section = next(name for name in profile.sections() if name.startswith("Type.") and profile[name]["Id"] == identity)
                 return profile["NativeProduction." + section]
-            assert profile["NativeProduction"]["Version"] == ("9" if edition == "ra2" else "6")
+            assert profile["NativeProduction"]["Version"] == ("11" if edition == "ra2" else "6")
             if edition == "ra2":
                 assert profile["NativeProduction"]["HarvesterLoadRate"] == "2"
                 assert profile["NativeProduction"]["HarvesterDumpFrames"] == "15"
                 assert float(profile["NativeProduction"]["PurifierBonus"]) == .25
                 for identity in ("MTNK", "HTNK", "APOC", "CMIN", "HARV"):
                     assert production(identity)["ROT"] == "5"
+                repair = json.loads((ROOT/"tests/fixtures/ra2-building-repair-reference.json").read_text(encoding="utf-8"))
+                assert base["sha256"] == repair["sourceRules"]["sha256"]
+                assert profile["NativeProduction"]["BuildingRepairFrames"] == "14"
+                assert profile["NativeProduction"]["BuildingRepairStep"] == "8"
+                for identity, observed in repair["buildings"].items():
+                    assert int(production(identity)["BuildingRepairCost"]) == observed["fee"], identity
+                assert production("MTNK")["BuildingRepairCost"] == "0"
+                sale = json.loads((ROOT/"tests/fixtures/ra2-building-sale-reference.json").read_text(encoding="utf-8"))
+                assert base["sha256"] == sale["sourceRules"]["sha256"]
+                for identity, observed in sale["buildings"].items():
+                    assert int(production(identity)["BuildingSaleHuman"]) == observed["human"], identity
+                    assert int(production(identity)["BuildingSaleOther"]) == observed["other"], identity
+                yard = json.loads((ROOT/"tests/fixtures/ra2-conyard-sale-reference.json").read_text(encoding="utf-8"))
+                assert base["sha256"] == yard["sourceRules"]["sha256"]
+                for identity,observed in yard["types"].items():
+                    assert types[identity]["TransformsTo"] == observed["undeploysInto"]
+                    assert int(production(identity)["BuildingSaleHuman"]) == observed["humanRefund"]
+                    assert int(production(identity)["BuildingSaleOther"]) == observed["otherRefund"]
+                for identity,row in types.items():
+                    if row["Building"]=="0":
+                        assert production(identity)["BuildingSaleHuman"] == production(identity)["BuildingSaleOther"] == "0"
             else:
                 assert "HarvesterLoadRate" not in profile["NativeProduction"]
+                assert "BuildingRepairFrames" not in profile["NativeProduction"]
+                assert "BuildingRepairCost" not in production("GAPOWR")
+                assert all("BuildingSaleHuman" not in production(identity) and "BuildingSaleOther" not in production(identity) for identity in types)
             assert profile["NativeProduction"]["OreValue"] == "25" and profile["NativeProduction"]["GemValue"] == "50"
             assert float(profile["NativeProduction"]["SpyMoneyFraction"]) == .5
             assert profile["NativeProduction"]["SpyBlackoutTicks"] == "2000"

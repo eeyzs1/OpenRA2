@@ -37,9 +37,16 @@ bool harvestReceiver(const World::Ent& unit,int player) {
     return unit.alive && unit.player==player && ((unit.isBuilding && unit.btype==BldType::OreRefinery)
         || (!unit.isBuilding && unit.utype==UnitType::SlaveMiner && unit.deployed));
 }
-// RA2 UI 保真：走到矿格上或邻格再挖（Chebyshev≤1）
-bool canDigOre(float ex, float ey, int ox, int oy) {
-    return std::max(std::abs((int)ex - ox), std::abs((int)ey - oy)) <= 1;
+bool canDigOre(const World::Ent& e, Vec2i ore) {
+    return (int)e.x == ore.x && (int)e.y == ore.y;
+}
+bool findOrePath(const World& world, const World::Ent& e, Vec2i ore, std::vector<Vec2i>& path) {
+    if (!world.map.findPath((int)e.x,(int)e.y,ore.x,ore.y,path,20000,0,nullptr,e.navLayer,-1,
+            unitDef(e).fitsUnderBridge(),world.nativeGateAccess(e))) return false;
+    // Movement can snap blocked goals to a nearby cell, but digging needs the ore cell.
+    if (path.empty() ? canDigOre(e, ore) : path.back() == ore) return true;
+    path.clear();
+    return false;
 }
 bool besideCell(float ex, float ey, int cx, int cy) {
     return std::max(std::abs((int)ex - cx), std::abs((int)ey - cy)) <= 1;
@@ -56,7 +63,7 @@ void enterDig(World& world, World::Ent& e, int ox, int oy) {
 }
 } // namespace
 
-bool World::findNearestReachableOre(int sx, int sy, int maxR, Vec2i& out) const {
+bool World::findNearestReachableOre(int sx, int sy, int maxR, Vec2i& out, EID mover) const {
     if(!map.inBounds(sx,sy) || maxR<0) return false;
     // A single flood search finds a reachable harvesting position. Repeated A*
     // for every ore cell is pathological when deposits are behind a blocked base.
@@ -71,7 +78,8 @@ bool World::findNearestReachableOre(int sx, int sy, int maxR, Vec2i& out) const 
         // beside an inaccessible/covered deposit.
         if(std::max(std::abs(sx-cell.x),std::abs(sy-cell.y))<=maxR
             && map.at(cell.x,cell.y).ore>0 && map.passable(cell.x,cell.y)
-            && !bldBlocked(cell.x,cell.y)) { out=cell; return true; }
+            && !bldBlocked(cell.x,cell.y)
+            && (mover==INVALID_EID || !cellHardBlockedForMove(cell.x,cell.y,mover))) { out=cell; return true; }
         for(int d=0;d<8;++d) {
             int x=cell.x+DX[d],y=cell.y+DY[d];
             if(!passableStep(cell.x,cell.y,x,y,0) || bldBlocked(x,y)) continue;
@@ -165,7 +173,7 @@ void World::updateHarvester(Ent& e, EID id) {
                 if (findNearestReachableOre((int)e.x, (int)e.y, kTiberiumFarScan, ore)) {
                     e.oreCell = ore;
                     std::vector<Vec2i> path;
-                    if (map.findPath((int)e.x,(int)e.y,ore.x,ore.y,path,20000,0,nullptr,e.navLayer,-1,unitDef(e).fitsUnderBridge(),nativeGateAccess(e))) {
+                    if (findOrePath(*this, e, ore, path)) {
                         e.path = std::move(path); e.pathIdx = 0;
                     } else if (e.oreLoad > 0) {
                         beginReturnToRefinery();
@@ -179,39 +187,12 @@ void World::updateHarvester(Ent& e, EID id) {
                     break;
                 }
             }
-            if (canDigOre(e.x, e.y, e.oreCell.x, e.oreCell.y)) {
+            if (canDigOre(e, e.oreCell)) {
                 enterDig(*this, e, e.oreCell.x, e.oreCell.y);
             } else if (e.path.empty() || e.pathIdx >= (int)e.path.size()) {
                 std::vector<Vec2i> path;
-                if (map.findPath((int)e.x,(int)e.y,e.oreCell.x,e.oreCell.y,path,20000,0,nullptr,e.navLayer,-1,unitDef(e).fitsUnderBridge(),nativeGateAccess(e))) {
-                    if (path.empty()) {
-                        if (canDigOre(e.x, e.y, e.oreCell.x, e.oreCell.y)) {
-                            enterDig(*this, e, e.oreCell.x, e.oreCell.y);
-                        } else {
-                            bool stepped = false;
-                            for (int dy = -1; dy <= 1 && !stepped; dy++)
-                                for (int dx = -1; dx <= 1 && !stepped; dx++) {
-                                    int ax = e.oreCell.x + dx, ay = e.oreCell.y + dy;
-                                    if (!map.passable(ax, ay) || bldBlocked(ax, ay)) continue;
-                                    std::vector<Vec2i> ap;
-                                    if (map.findPath((int)e.x,(int)e.y,ax,ay,ap,20000,0,nullptr,e.navLayer,-1,unitDef(e).fitsUnderBridge(),nativeGateAccess(e)) && !ap.empty()) {
-                                        e.path = std::move(ap); e.pathIdx = 0;
-                                        stepped = true;
-                                    }
-                                }
-                            if (!stepped) {
-                                Vec2i alt;
-                                if (findNearestReachableOre((int)e.x, (int)e.y, kTiberiumNearScan, alt)
-                                    && (alt.x != e.oreCell.x || alt.y != e.oreCell.y)) {
-                                    e.oreCell = alt;
-                                    e.clearPath(); e.pathIdx = 0;
-                                } else if (e.oreLoad > 0) beginReturnToRefinery();
-                                else e.state = UState::Idle;
-                            }
-                        }
-                    } else {
-                        e.path = std::move(path); e.pathIdx = 0;
-                    }
+                if (findOrePath(*this, e, e.oreCell, path)) {
+                    e.path = std::move(path); e.pathIdx = 0;
                 } else {
                     // 寻路失败：换可达近矿 / 有货回厂 / 空车 Idle
                     Vec2i alt;
@@ -219,10 +200,10 @@ void World::updateHarvester(Ent& e, EID id) {
                     if (findNearestReachableOre((int)e.x, (int)e.y, kTiberiumNearScan, alt)
                         && (alt.x != e.oreCell.x || alt.y != e.oreCell.y)) {
                         e.oreCell = alt;
-                        if (canDigOre(e.x, e.y, alt.x, alt.y)) {
+                        if (canDigOre(e, alt)) {
                             enterDig(*this, e, alt.x, alt.y);
                             rerouted = true;
-                        } else if (map.findPath((int)e.x,(int)e.y,alt.x,alt.y,path,20000,0,nullptr,e.navLayer,-1,unitDef(e).fitsUnderBridge(),nativeGateAccess(e))) {
+                        } else if (findOrePath(*this, e, alt, path)) {
                             e.path = std::move(path); e.pathIdx = 0;
                             rerouted = true;
                         }
@@ -234,6 +215,21 @@ void World::updateHarvester(Ent& e, EID id) {
                             e.oreCell = {-1, -1}; // 放弃不可达目标，Idle FarScan 另选
                             e.state = UState::Idle;
                         }
+                    }
+                }
+            } else if (e.blockTick==LOGIC_FPS && repathsThisTick<8 && e.path[e.pathIdx]==e.oreCell) {
+                const int layer=movementLayerAt(e,e.oreCell.x,e.oreCell.y);
+                const EID working=unitAtCell(e.oreCell.x,e.oreCell.y,layer);
+                if (valid(working) && isAllied(e.player,ents[working].player) && ents[working].state==UState::HarvestDig) {
+                    Vec2i spare;
+                    std::vector<Vec2i> route;
+                    if (findNearestReachableOre((int)e.x,(int)e.y,kTiberiumNearScan,spare,id)
+                        && repathUnit(id,spare.x,spare.y,route,working)
+                        && (route.empty()?canDigOre(e,spare):route.back()==spare)) {
+                        e.clearPath();
+                        e.path=std::move(route);
+                        e.oreCell=spare;
+                        e.blockTick=0;
                     }
                 }
             }
@@ -261,7 +257,7 @@ void World::updateHarvester(Ent& e, EID id) {
                     Vec2i next;
                     if (findNearestReachableOre(e.oreCell.x, e.oreCell.y, kTiberiumNearScan, next)) {
                         e.oreCell = next;
-                        if (canDigOre(e.x, e.y, next.x, next.y)) {
+                        if (canDigOre(e, next)) {
                             enterDig(*this, e, next.x, next.y);
                         } else {
                             e.state = UState::HarvestGo;
@@ -358,23 +354,20 @@ void World::finishHarvesterUnload(Ent& e) {
     e.dockRefinery = INVALID_EID;
     Vec2i ore = e.oreCell;
     std::vector<Vec2i> path;
-    const auto planRoute = [&] {
-        return map.findPath((int)e.x,(int)e.y,ore.x,ore.y,path,20000,0,nullptr,e.navLayer,-1,
-            unitDef(e).fitsUnderBridge(),nativeGateAccess(e));
-    };
+    const auto planRoute = [&] { return findOrePath(*this, e, ore, path); };
     bool haveOre = ore.x >= 0 && map.inBounds(ore.x, ore.y) && map.at(ore.x, ore.y).ore > 0;
-    if (haveOre && !canDigOre(e.x, e.y, ore.x, ore.y)) haveOre = planRoute();
+    if (haveOre && !canDigOre(e, ore)) haveOre = planRoute();
     if (!haveOre && ore.x >= 0 && !(nativeTravelEnabled() && e.utype==UnitType::ChronoMiner)) {
         haveOre = findNearestReachableOre(ore.x, ore.y, kTiberiumNearScan, ore);
         // The old field's neighbors can be cut off from the refinery too.
         if (haveOre && timedGround)
-            haveOre = ore != e.oreCell && (canDigOre(e.x, e.y, ore.x, ore.y) || planRoute());
+            haveOre = ore != e.oreCell && (canDigOre(e, ore) || planRoute());
     }
     if (!haveOre)
         haveOre = findNearestReachableOre((int)e.x, (int)e.y, kTiberiumFarScan, ore);
     if (haveOre && e.autoHarvest) {
         const bool routed = !path.empty() || planRoute();
-        if (routed || !timedGround || canDigOre(e.x, e.y, ore.x, ore.y)) {
+        if (routed || !timedGround || canDigOre(e, ore)) {
             e.oreCell = ore;
             if (routed) {
                 e.path = std::move(path);

@@ -1,10 +1,16 @@
 #include "game/ai.h"
+#include "game/native_scene_contract.h"
 #include "game/script.h"
 #include <vector>
 #include <algorithm>
 #include <limits>
 
 namespace {
+bool automaticServiceReady(const World& world,EID unit,EID depot) {
+    return world.nativeRulesBaseVersion<nativeAutomaticServiceSceneVersion || world.nativeAIRules.isGlobal()
+        || world.serviceWorkStatus(unit,depot)==ServiceStatus::Working;
+}
+
 bool combatUnit(const World::Ent& e) {
     if(!e.alive || e.isBuilding || e.utype==UnitType::MCV || e.utype==UnitType::Engineer || e.utype==UnitType::Spy) return false;
     if(e.utype==UnitType::Nighthawk && e.nativeJumpjet.motion.started && e.nativeIdentity.definition
@@ -160,6 +166,15 @@ void SkirmishAI::update(World& w) {
     };
     tryReady(p.bldProd);
     tryReady(p.defProd);
+
+    if(!sourceArmy && p.isAI && w.nativeRulesBaseVersion>=nativeAutomaticServiceSceneVersion) {
+        for(EID id=0;id<(EID)w.ents.size();++id) {
+            const auto& unit=w.ents[id];
+            if(!unit.alive || unit.isBuilding || unit.player!=player || unit.state!=UState::Servicing)continue;
+            const auto status=w.serviceWorkStatus(id,unit.target);
+            if(status==ServiceStatus::WaitingPower || status==ServiceStatus::WaitingMoney)w.orderStop({id});
+        }
+    }
 
     if(!sourceArmy){doEngineers(w);doAttack(w);}
     doSuperWeapon(w);
@@ -331,21 +346,29 @@ void SkirmishAI::doAttack(World& w) {
     };
     // A strategic target may be immune to part of a mixed army. Keep legal
     // orders and give rejected units a visible, compatible alternative.
-    auto issueAttack=[&](const std::vector<EID>& group,EID preferred) {
+    const auto localContact=[&](const World::Ent& unit,const World::Ent& target) {
+        if(target.isBuilding)return true;
+        const auto point=center(target);
+        return distf(unit.x,unit.y,point.x,point.y)<=std::max((float)unitDef(unit).sight,w.attackRange(unit,target));
+    };
+    auto issueAttack=[&](const std::vector<EID>& group,EID preferred,bool localMobileTargets=false) {
         int accepted=0;
         for(EID id:group) {
             if(!w.valid(id) || w.ents[id].immobilized() || w.ents[id].deploying())continue;
             const auto& unit=w.ents[id];
             if((unit.state==UState::Chasing || unit.state==UState::Attacking)
                 && w.valid(unit.target) && visibleEnemy(w.ents[unit.target])
+                && (!localMobileTargets || localContact(unit,w.ents[unit.target]))
                 && w.attackRejection(id,unit.target)==AttackRejectReason::None) {
                 continue;
             }
             if(w.valid(preferred) && visibleEnemy(w.ents[preferred])
+                && (!localMobileTargets || localContact(unit,w.ents[preferred]))
                 && w.orderAttack({id},preferred).accepted) { ++accepted;continue; }
             EID fallback=INVALID_EID;float best=1e9f;
             for(size_t index=0;index<w.ents.size();++index) {
                 if((EID)index==preferred || !visibleEnemy(w.ents[index])
+                    || (localMobileTargets && !localContact(unit,w.ents[index]))
                     || w.attackRejection(id,(EID)index)!=AttackRejectReason::None) continue;
                 const auto point=center(w.ents[index]);
                 const float distance=distf(w.ents[id].x,w.ents[id].y,point.x,point.y);
@@ -379,6 +402,9 @@ void SkirmishAI::doAttack(World& w) {
     }
     for(EID id:airIds) {
         const auto& e=w.ents[id];const auto& def=unitDef(e);
+        const auto* source=e.nativeIdentity.definition.get();
+        const bool localMobileTargets=w.nativeRulesBaseVersion>=nativeCrushingSceneVersion
+            && source && source->jumpjet.available && source->jumpjet.balloon;
         const bool readyOnPad=e.state==UState::Landed && def.ammo>0 && e.ammo>=def.ammo;
         if(e.utype==UnitType::Hornet || e.state==UState::Returning || (e.state==UState::Landed && !readyOnPad) || e.immobilized()
             || (def.ammo>0 && e.ammo<=0)) continue;
@@ -389,21 +415,32 @@ void SkirmishAI::doAttack(World& w) {
             if(building.player==objective.owner && building.btype==objective.type && building.x==objective.x && building.y==objective.y
                 && buildingVisible(w,building) && w.attackRejection(id,candidate)==AttackRejectReason::None){structure=candidate;break;}
         }
+        bool resumeSurvey=false;
         if((e.state==UState::Chasing || e.state==UState::Attacking) && w.valid(e.target)) {
             // Retain actual fire and strategic pursuit. A bomber chasing a
             // mobile decoy can instead begin a visible infrastructure raid.
-            if(e.state==UState::Chasing && !w.ents[e.target].isBuilding && structure!=INVALID_EID)
+            if(e.state==UState::Chasing && !w.ents[e.target].isBuilding && structure!=INVALID_EID) {
                 airAttacks+=w.orderAttack({id},structure).accepted>0;
-            continue;
+                continue;
+            }
+            // A slow survey bomber must not abandon reconnaissance for a
+            // mobile contact seen only far away by another friendly actor.
+            resumeSurvey=localMobileTargets && e.state==UState::Chasing && !w.ents[e.target].isBuilding
+                && (!visibleEnemy(w.ents[e.target]) || !localContact(e,w.ents[e.target]));
+            if(!resumeSurvey)continue;
         }
         const EID preferred=structure!=INVALID_EID?structure:targetB;
-        if(preferred!=INVALID_EID && issueAttack({id},preferred)>0) { ++airAttacks;continue; }
-        if(e.state!=UState::Idle && e.state!=UState::Circling && !readyOnPad) continue;
+        if(preferred!=INVALID_EID && issueAttack({id},preferred,localMobileTargets)>0) { ++airAttacks;continue; }
+        if(!resumeSurvey && e.state!=UState::Idle && e.state!=UState::Circling && !readyOnPad) continue;
         const auto scout=scoutDestination(w,e,airSurvey);
         if(scout.x>=0) {
             const bool probe=w.nativeSceneVersion>=36 && w.effWeapon(e).damage>0;
             if(w.orderMove({id},scout.x+0.5f,scout.y+0.5f,probe).accepted && w.nativeProductionRules.version>=8)
                 airSurvey.push_back({(int)w.ents[id].goalX,(int)w.ents[id].goalY});
+        } else if(localMobileTargets && preferred!=INVALID_EID) {
+            // With no fog left to survey, a distant observed survivor is still
+            // a legitimate target. Do not strand the bomber on a revealed map.
+            airAttacks+=issueAttack({id},preferred)>0;
         }
     }
     if(airAttacks>0 && attackWave<std::numeric_limits<int>::max()) ++attackWave;
@@ -548,6 +585,7 @@ void SkirmishAI::doTactics(World& w) {
             if (ud.isInfantry() || ud.isAir() || ud.isNaval() || ud.canHarvet()) continue;
             if (e.hp >= ud.hp * 30 / 100) continue;
             if (e.state != UState::Attacking && e.state != UState::Chasing) continue;
+            if(depot!=INVALID_EID && !automaticServiceReady(w,(EID)i,depot))continue;
             hurt.push_back((int)i);
             if ((int)hurt.size() >= 5) break;  // 每波最多撤 5 辆
         }
@@ -833,6 +871,7 @@ void SkirmishAI::doSupport(World& w) {
             if (ud.isInfantry() || ud.isAir() || ud.pathDomain() != 0 || ud.canHarvet()) continue;
             bool needFix = e.hp < ud.hp * 55 / 100 || e.parasite != INVALID_EID;
             if (!needFix) continue;
+            if(!automaticServiceReady(w,(EID)i,depot))continue;
             if (e.state == UState::Idle || (e.state == UState::Moving && e.target == INVALID_EID))
                 hurt.push_back((int)i);
             if ((int)hurt.size() >= 3) break;  // 每波最多送修 3 辆，避免前线空虚

@@ -23,7 +23,7 @@ for edition in ('ra2', 'yr'):
     assert ini.read(ROOT / f'assets/rules/profiles/{edition}.ini', encoding='utf-8-sig')
     _, raw, identity = select_source(tree, edition)
     original = read_ini(raw)
-    assert ini['Scene']['Version'] == ('46' if edition == 'ra2' else '43') and ini['Scene']['TemporalVersion'] == '1'
+    assert ini['Scene']['Version'] == ('68' if edition == 'ra2' else '43') and ini['Scene']['TemporalVersion'] == '1'
     assert ini['Scene']['CrewVersion'] == ini['NativeCrew']['Version'] == '2'
     assert int(ini['NativeCrew']['OccupyMode']) == int(edition == 'yr')
     combat = original.get('combatdamage', {})

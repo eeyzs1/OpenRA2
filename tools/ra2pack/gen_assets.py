@@ -82,6 +82,7 @@ FORCE_IMAGE = {
     "yuriprime": "yurix",
 }
 UNITS = {
+    "nativeinfantry": ["CTECH"],
     "gi": ["E1"], "conscript": ["E2"], "engineer": ["ENGINEER"],
     "attackdog": ["ADOG", "DOG"], "spy": ["SPY"], "flaktrooper": ["FLAKT"],
     "teslatrooper": ["SHK"], "sniper": ["SNIPE"], "tanya": ["TANY"],
@@ -124,7 +125,7 @@ UNITS = {
     "pla": ["PLA"],
     "type99": ["TYPE99"],
 }
-INFANTRY = {"gi", "conscript", "engineer", "spy", "flaktrooper",
+INFANTRY = {"nativeinfantry", "gi", "conscript", "engineer", "spy", "flaktrooper",
             "teslatrooper", "sniper", "tanya", "desolator", "chrono", "crazyivan",
             "terrorist", "navyseal", "yuri", "chronocommando", "psicommando",
             "rocketeer", "guardiangi", "pla", "initiate", "brute", "virus", "boris",

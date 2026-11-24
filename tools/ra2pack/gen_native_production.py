@@ -10,6 +10,60 @@ SOURCE_SW_TYPES = ('MultiMissile', 'LightningStorm', 'IronCurtain', 'ChronoSpher
 SOURCE_SUPPORT_TYPES = ('ParaDrop', 'AmerParaDrop', 'SpyPlane', 'PsychicReveal')
 
 
+def original_building_cost(definition, rules, identity):
+    """BuildingType cost after FreeUnit and SeparateAircraft adjustments."""
+    general = rules['general']
+    cost = int(definition.get('cost', '0'))
+    if general.get('separateaircraft', 'no').lower() not in ('yes', 'true', '1'):
+        aircraft = [rules[name.strip().lower()] for name in general['padaircraft'].split(',')]
+        if identity.lower() == aircraft[0].get('dock', '').split(',')[0].strip().lower():
+            cost -= (int(aircraft[0].get('cost', '0')) + int(aircraft[1].get('cost', '0'))) // 2
+    free = rules.get(definition.get('freeunit', '').lower(), {})
+    return max(0, cost - int(free.get('cost', '0')))
+
+
+def building_repair_cost(definition, rules, identity):
+    """Original BuildingType cost and x87-truncated TechnoType repair charge.
+
+    Binary64 RepairPercent is multiplied while retained in the x87 register:
+    20 * binary64(.15) remains below3. Rounding the product to a Python float
+    before truncation would incorrectly export3 instead of the original2.
+    """
+    general = rules['general']
+    step = int(general.get('repairstep', '8'))
+    if step <= 0:
+        raise ValueError(('unsupported original building repair step', identity))
+    count = int(definition.get('strength', '1')) // step
+    if count <= 0:
+        raise ValueError(('unsupported original building repair divisor', identity))
+    cost = original_building_cost(definition, rules, identity)
+    fraction = general.get('repairpercent', '15%')
+    fraction = float(fraction[:-1]) / 100 if fraction.endswith('%') else float(fraction)
+    return max(1, int(Decimal(cost // count) * Decimal.from_float(fraction)))
+
+
+def building_sale_values(definition, rules, identity):
+    """Local source houses have unit building/defense cost multipliers.
+
+    Original nonzero Soylent overrides both policies. The ordinary human
+    predicate applies RefundPercent; other ordinary houses receive type cost.
+    The original steady x87 control word truncates the single-precision rate.
+    """
+    import struct
+    soylent = int(definition.get('soylent', '0'))
+    if soylent:
+        if soylent < 0: raise ValueError(('negative source building Soylent', identity))
+        return soylent, soylent
+    cost = original_building_cost(definition, rules, identity)
+    raw = rules['general'].get('refundpercent', '50%')
+    rate = float(raw[:-1]) / 100 if raw.endswith('%') else float(raw)
+    if not 0 <= rate <= 1: raise ValueError(('unsupported source RefundPercent', raw))
+    bits = struct.unpack('<I', struct.pack('<f', rate))[0]
+    single = struct.unpack('<f', struct.pack('<I', bits))[0]
+    if single > rate: single = struct.unpack('<f', struct.pack('<I', bits-1))[0]
+    return int(Decimal(cost) * Decimal.from_float(single)), cost
+
+
 def production_economy(definition, rules, identity='', edition='ra2'):
     yes = lambda key: definition.get(key, 'no').lower() in ('yes', 'true', '1')
     fields = {'RequiredStolenTech': str(sum(bit for bit, key in (

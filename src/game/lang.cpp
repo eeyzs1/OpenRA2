@@ -613,7 +613,7 @@ static const char* UNIT_EN[(int)UnitType::COUNT] = {
     "Magnetron", "Master Mind", "Floating Disc", "Boomer",
     "Boris", "Siege Chopper", "Chaos Drone",
     "Slave", "Slave Miner",
-    "Yuri Prime", "Chrono Ivan", "Native vehicle", "Osprey", "Cargo Plane", "Spy Plane",
+    "Yuri Prime", "Chrono Ivan", "Native vehicle", "Osprey", "Cargo Plane", "Spy Plane", "Technician",
 };
 
 static const char* BLD_EN[(int)BldType::COUNT] = {

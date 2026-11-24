@@ -905,6 +905,8 @@ const Sprite& SpriteBank::warpEffect(int visual,int frame) {
 // RA2 原作 cameo = 带天空/地面的小场景照（非深色底）：上部钢青天空渐变+云斑，
 // 地平线 ~63% 处，下部棕灰土地+噪点；建筑按地面锚点立于地面，底部软椭圆投影。
 const Sprite& SpriteBank::iconUnit(UnitType t, int player) {
+    // CTECH has no source cameo; selection uses its actual infantry portrait.
+    if(t==UnitType::NativeInfantry)return unitBody(t,2,0,player);
     uint64_t k = keyOf(10, (int)t, 0, 0, player);
     auto it = cache.find(k);
     if (it != cache.end()) return it->second;
@@ -994,7 +996,8 @@ void SpriteBank::preloadMatch(int localPlayer) {
         building(t, localPlayer, true, Country::None);
         building(t, -1, false, Country::None); // 中立（灰色 remap）预置建筑
     }
-    for (int i = 0; i < (int)UnitType::COUNT; i++) if((UnitType)i!=UnitType::NativeVehicle)iconUnit((UnitType)i, localPlayer);
+    for (int i = 0; i < (int)UnitType::COUNT; i++)
+        if((UnitType)i!=UnitType::NativeVehicle && (UnitType)i!=UnitType::NativeInfantry)iconUnit((UnitType)i, localPlayer);
     for (int i = 0; i < (int)BldType::COUNT; i++) iconBld((BldType)i, localPlayer);
     for (int kind = 0; kind < 2; kind++)
         for (int d = 0; d < 8; d++) projectile(kind, d);

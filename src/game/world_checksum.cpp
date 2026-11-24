@@ -1,4 +1,5 @@
 #include "game/world.h"
+#include "game/actor_contents.h"
 #include "game/lang.h"
 #include <algorithm>
 #include <cmath>
@@ -236,6 +237,30 @@ uint32_t World::checksum() const {
     if(nativeCrewRules.enabled)h.u32(nativeCrewChecksum());
     if(nativeGroundEnabled())h.u32(nativeGroundChecksum());
     if(nativeTravelEnabled())h.u32(nativeTravelChecksum());
+    bool hasOwners=false;size_t passengers=0;
+    visitStoredPassengers(*this,[&](const auto& p){hasOwners |= p.player!=-2;++passengers;});
+    if(hasOwners) {
+        h.u32(0x31574f43);h.size(passengers);
+        visitStoredPassengers(*this,[&](const auto& p){h.i32(p.player);});
+    }
+    uint32_t unloadCount=0;for(const auto& e:ents)if(e.nativeTransportUnload.active())++unloadCount;
+    if(unloadCount) {
+        h.u32(0x314e5554);h.u32(unloadCount);
+        for(EID id=0;id<(EID)ents.size();++id)if(ents[id].nativeTransportUnload.active()) {
+            const auto& e=ents[id];h.i32(id);h.u64(e.generation);
+            h.u8(static_cast<uint8_t>(e.nativeTransportUnload.phase));h.i32(e.nativeTransportUnload.ticks);
+        }
+    }
+    if(nativeSaleSurvivorRules.enabled) {
+        uint32_t count=0;for(const auto& e:ents)if(e.alive && e.nativeBuildingSale.originalSide!=-2)++count;
+        h.u32(0x31534c53);h.u32(count);
+        for(EID id=0;id<(EID)ents.size();++id) {
+            const auto& e=ents[id];const auto& state=e.nativeBuildingSale;
+            if(!e.alive || state.originalSide==-2)continue;
+            h.i32(id);h.u64(e.generation);h.u8(static_cast<uint8_t>(state.originalSide));
+            h.u8(static_cast<uint8_t>((state.captured?1:0)|(state.pending?2:0)));
+        }
+    }
     return h.value;
 }
 

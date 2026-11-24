@@ -47,7 +47,11 @@ int GameRegression::aiConstructionRegression(const char* outputDir) {
             if(scenario==5) {
                 const auto carrier=w.spawnUnit(0,UnitType::AmphTransport,8.5f,12.5f);
                 setup &= w.valid(carrier) && w.orderBoard({mcv},carrier).accepted==1;
-                w.update();setup &= w.valid(carrier) && World::cargoUnitCount(w.ents[carrier].cargo,UnitType::MCV)==1;
+                int preparation=0;
+                for(;preparation<600 && w.valid(mcv);++preparation)w.update();
+                std::printf("AI_CONSTRUCTION_PREP choice=%d faction=%d ticks=%d loaded=%d\n",choice,faction,preparation,
+                    World::cargoUnitCount(w.ents[carrier].cargo,UnitType::MCV));
+                setup &= w.valid(carrier) && World::cargoUnitCount(w.ents[carrier].cargo,UnitType::MCV)==1;
             }
             SkirmishAI bot;bot.reset(0);bot.pcfg.expandBase=scenario==1;
             const int selector=w.productionSelector(0,true,(int)UnitType::MCV);

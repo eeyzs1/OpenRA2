@@ -119,7 +119,9 @@ int GameRegression::nativeIFVRegression(const char* outputDir) {
             check(selected,std::string("vehicle rank selects and scales the source mode for ")+crew.name);
             w.ents[fv].vetRank=0;
             if(crew.mode==1 || crew.mode==10 || crew.mode==16)save("crew-"+std::to_string(crew.mode),120);
-            const auto release=w.orderUnload({fv},false);bool unloaded=release.released==1 && w.ents[fv].cargo.empty()
+            const auto release=w.orderUnload({fv},false);
+            for(int i=0;i<180 && !w.ents[fv].cargo.empty() && release.pending;++i)w.update();
+            bool unloaded=(release.released==1 || release.pending==1) && w.ents[fv].cargo.empty()
                 && w.nativeIFVMode(w.ents[fv])==0 && w.effWeapon(w.ents[fv]).nativeSource->id=="HoverMissile";
             check(unloaded,"public unloading restores the empty missile mode");
         }
@@ -217,7 +219,10 @@ int GameRegression::nativeIFVRegression(const char* outputDir) {
         check(visuals && turretHashes.size()==4 && w.checksum()==hash,"four distinct original turrets share one origin across all eight directions without changing World");
         bool pixels=true;camZoom=1;camX=-450;camY=0;w.map.reveal(0,32,32,64);bakeTerrain();shotAtDisplaySize=true;
         for(const char* crewName:{"ENGINEER","E1","YURI"}) {
-            if(!w.ents[fv].cargo.empty())w.orderUnload({fv},false);
+            if(!w.ents[fv].cargo.empty()) {
+                const auto release=w.orderUnload({fv},false);
+                for(int i=0;i<180 && !w.ents[fv].cargo.empty() && release.pending;++i)w.update();
+            }
             pixels &= board(fv,crewName);const int selected=w.nativeIFVTurret(w.ents[fv]);
             const auto& body=nativeIFVSprite(w.ents[fv],false);const auto& turret=nativeIFVSprite(w.ents[fv],true);
             pixels &= body.tex.id && turret.tex.id;

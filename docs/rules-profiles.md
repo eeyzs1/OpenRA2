@@ -1,6 +1,6 @@
 # 普通地图的原始规则包
 
-普通入口默认RA2与美国，融合和YR仍可手动选择。来源基线是`ra2-local-base`，规则来自`ra2.mix/local.mix`，SHA-256为`fd1e95cea0306ea78049dc81c8cd816e18c28c496872a1ff02edd50bd082062f`。当前RA2 Scene46 / NativeProduction9通常写World64，离位或等待寻路的指定回厂使用World65，驶往或等候指定精炼厂的武装矿车使用World66。武装矿车新的入泊或转向离位状态使用World67，活动的坦克宽弯使用World68，超时空矿车直达泊位的待跳状态或转东前的离位使用World69，活动的等候让位路径使用World70，仍处于卸矿启动帧的状态使用World71。YR使用Scene43 / NativeProduction6 / World60。App11 / LAN93合同见[当前架构](architecture.md)。
+普通入口默认RA2与美国，融合和YR仍可手动选择。来源基线是`ra2-local-base`，规则来自`ra2.mix/local.mix`，SHA-256为`fd1e95cea0306ea78049dc81c8cd816e18c28c496872a1ff02edd50bd082062f`。当前普通RA2为Scene68 / NativeProduction11，用World77保存建筑初始阵营、占领历史和出售阶段，并封装既有64..74主体及COW1/TUN1；YR仍为Scene43 / NativeProduction6 / World60，作者场景及冻结来源AI各保留自身合同。App11/12 / LAN96及各World布局见[当前架构](architecture.md)。
 
 当前普通新局从`Riparius.Value`与`Cruentus.Value`读取25/50矿价。旧Scene37及缺省旧Scene42存档保留当时35/70。地图Scene42用`RulesBaseVersion=43/44/45/46`区分价格、采集、停靠和行驶语义。满载CMIN普通矿500、宝石1000，HARV普通矿1000、宝石2000。Production8起按类型整批卸矿，矿石先于宝石。每批的有效供电达到需求时，精炼器按当批数量计算增益并截断。拥有一个精炼器且两批均足电时，10矿石加10宝石实际入账937。
 
@@ -105,3 +105,33 @@ Scene19 接通 CARRIER/HORNET 固定槽位：出航继续占位、同波准备�
 Scene20 / World51 / LAN34 接通 DEST/ASW：水下目标走原始虚拟副武器和真实深水炸弹，水面/陆地目标保留舰炮，实际飞机占一个固定槽并使用 800/300 tick 的损失再生/整备。源槽保留 Range=-2、AG=no；ASW 与 DESTWO 均有专用原版素材。旧 World50/Scene19 应用快照继续使用原航母状态机与旧驱逐舰行为，原版地图 Scene16 和 App10 保持。当前专项、完整回归和剩余边界分别记录于舰载机说明及本地 asw-validation.json，未把历史阶段的成绩计入当前版本。
 
 App11 / LAN35 接通正常规则入口与开局配置；SourceScene20 / World51 保持。当前 UI、真实 TCP、两端规则差异与版本边界见 [规则选择](rules-selection.md)，单独记录本批结果。
+
+Production10保存来源建筑维修的BuildingRepairFrames=14、BuildingRepairStep=8和各类型BuildingRepairCost。默认每28逻辑tick按全局相位修复8HP，未满一步仍收完整费率。导出器执行已隔离校准的整数除法及x87截断，保留原型造价扣除FreeUnit与SeparateAircraft分支；46种本地来源建筑的派生费用均与原函数执行对照。费用属于导出合同，修改原始造价、生命或维修参数后应重新导出规则。旧Production9及更早不能携带这些新字段；冻结Scene41导出会剥离它们。
+
+Production11在每个NativeProduction.Type段保存BuildingSaleHuman与BuildingSaleOther；非建筑必须为零，缺失、负数、越界与伪署旧Scene/Production均拒绝。RA2导出来自本地原版返款查询：非零Soylent直接覆盖，否则BuildingType有效造价扣除FreeUnit，人类按RefundPercent返款，其他普通房屋保留有效造价。本地国家的CostBuildingsMult/CostDefensesMult默认1；任意模组或作者房屋倍率未纳入本合同。默认精炼厂返300且赠车保留；HP不缩减正常返款。冻结Scene41 / Production5剥离新增字段，YR43 / Production6保持原包。详见tests/fixtures/ra2-building-sale-reference.json。
+
+Scene63修正建造厂出售准入及输入映射，Production11派生价格和类型字段保持不变；与Scene62规则包相比仅Scene版本头变化。普通人类建造厂返1500、其他普通房屋返3000，沿用完成时入账。普通现金出售不受MCV Repacks开关影响，部署打包仍走原开关及转换路径。旧Scene62包和YR/融合/作者合同保持原策略，冻结Scene41导出字节保持一致。原始入口、字段绑定和受控执行边界见tests/fixtures/ra2-conyard-sale-reference.json。
+
+Scene64 / Production11引入以下乘员字段，Scene65继续使用。NativeSaleSurvivors（Version1）读取AlliedSurvivorDivisor、SovietSurvivorDivisor以及AlliedCrew/SovietCrew/Engineer/Technician引用；引用必须解析到现有步兵定义，工程师引用须有Engineer标志。Type.*增加SaleCrewed和Engineer，旧来源拒绝这些字段。附加CTECH类型放在所有既有类型之后，使用追加的NativeInfantry载体；TechLevel-1且StartAllowed关闭，不进入建造或开局列表。
+
+原始规则导出包含CTECH的Pistola与CIV3美术；冻结实验Scene41导出先移除该普通来源专用类型，再重建可达武器目录，恢复原有碎片武器编号。RA2与YR冻结输出已与本批修改前版本逐字节比较；YR43原普通profile也保持原字节。新普通RA2的初始阵营、占领历史与待撤出阶段由World77保存，不扩充Production或App合同。
+
+非工程师乘员引用必须没有Engineer标志；不支持把普通乘员或技师配置成工程师的组合，以保证重复工程师候选能够结束并在装载阶段拒绝错误规则。
+
+## Scene65空坐标Scatter
+
+Scene65校正empty-source步兵散开的Nearby主分支与出售后路线等待，不增加INI字段。Scene64以前的相邻格算法按来源版本保留；NativeSaleSurvivors1、Production11、CTECH和World77合同沿用。冻结Scene41导出与YR43保持各自规则，不启用新分支。
+
+同一未发布Scene65还修正普通AI自动返修：经济/供电工作条件由World共享查询提供，房屋控制权限来自已编码状态，场景/规则未加字段。Scene64保留旧调度，世界服务仍允许玩家按原合同等待资金或电力。
+
+## Scene66高度投影分组
+
+Scene66只增加Nearby候选的基础高度投影分组策略，不加INI字段。2,070条原版投影查询覆盖基础等级0..14及六个偏移，另有1,008条真实原程序散开输出；source规则导出与消费者使用当前Scene66。Scene65保留首个非空方环策略；Production11、CTECH、服务价格和原AI返修策略不变。
+
+## Scene67玩家步兵散开
+
+Scene67 / Production11不新增INI字段。手动Scatter复用现有PlayerScatter与Fraidycat以及Nearby规则，来源版本隔离新手动语义；旧66继续原手动算法。自动预警、Drive强制让路及出售使用各自既有策略，YR43与冻结Scene41导出的规则和字节合同不变。原版供应条件与捕获见tests/fixtures/ra2-player-scatter-reference.json。
+
+## Scene68 Unit车辆散开
+
+当前普通RA2为Scene68 / Production11，不新增INI字段。新手动车辆分支重用IsTrain、MovementLocomotor及既有状态；与步兵不同，它不消费散开随机数。现有Scene67及以前的车辆算法保持，步兵/自动散开、YR43与冻结Scene41沿用；World77/App11/12和未发布LAN96不变。原版准入/水面/计时器捕获见tests/fixtures/ra2-vehicle-scatter-reference.json。

@@ -1,0 +1,90 @@
+{
+  "scope": "Ordinary idle RA2 construction-yard cash sale versus the separate source undeploy predicate. Includes actual sale entry and selected Selling mission prefix, with source UndeploysInto present.",
+  "sourceRules": {
+    "source": "ra2.mix/local.mix",
+    "edition": "ra2-local-base",
+    "sha256": "fd1e95cea0306ea78049dc81c8cd816e18c28c496872a1ff02edd50bd082062f"
+  },
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "originalProbe": {
+    "directory": "review_out/ra2-conyard-sale-20261124/original-conyard-r2",
+    "cases": 32,
+    "cashSaleCases": 16,
+    "undeployPredicateControls": 16,
+    "exitCode": 0,
+    "seconds": 0.14000000001396984,
+    "probeSourceSHA256": "da3ed04bcfc1953d5e4060dd3b3c6890dcd88bec8bd0927e103eb26146ce3de2",
+    "probeExecutableSHA256": "7f5f66eff2cc787acff39ad19616d32e0a925a63d37c2dbb58acbbd33c474f6c",
+    "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+    "logSHA256": "8d9dda0d33d908d476c1e3ee31ba809b7725ee36cd30a6b1cc2e11b5a856f9ea"
+  },
+  "entries": {
+    "buildingActorVtable": "0x79cbbc",
+    "sellEntrySlot": "0x188",
+    "sellEntry": "0x4437a0",
+    "sellingMissionSlot": "0x230",
+    "sellingMission": "0x445b30",
+    "canUndeploy": "0x445ab0",
+    "actorRefund": "0x6d5850",
+    "houseCashAdd": "0x4e5440",
+    "creditReturnBoundary": "0x44611e"
+  },
+  "types": {
+    "GACNST": {
+      "cost": 3000,
+      "hp": 1000,
+      "undeploysInto": "AMCV",
+      "humanRefund": 1500,
+      "otherRefund": 3000,
+      "specialFlags": {
+        "unsellable": false,
+        "ticktank": false,
+        "sensorarray": false,
+        "icbmlauncher": false,
+        "artillary": false
+      }
+    },
+    "NACNST": {
+      "cost": 3000,
+      "hp": 1000,
+      "undeploysInto": "SMCV",
+      "humanRefund": 1500,
+      "otherRefund": 3000,
+      "specialFlags": {
+        "unsellable": false,
+        "ticktank": false,
+        "sensorarray": false,
+        "icbmlauncher": false,
+        "artillary": false
+      }
+    }
+  },
+  "observations": {
+    "sellEntryQueuesMission": 19,
+    "cashSaleWorksWithRepacksOffAndOn": true,
+    "hpDoesNotScaleCashSale": true,
+    "normalNoUndeployTargetIsCashSale": true,
+    "ordinaryHumanUndeployRequiresRepacksAndTarget": true,
+    "waitDispatchesPerCashCase": 12,
+    "cashQueriesAtCompletion": 1,
+    "constructorBLZero": "0x457ac7",
+    "flagDefaults": "building-type-default-stores.txt",
+    "typeFlagBindings": "type-flag-bindings-verified.json"
+  },
+  "controlledDependencies": [
+    "Privately loaded identified executable; original main, full game setup, command-event pump and physical frame scheduling do not execute.",
+    "Actual Building virtual sale entry executes. The supplied current mission is idle; its queue/commence callbacks record Mission19 and start phase0. Building input-ready byte+0x5b9 is supplied1.",
+    "Source building price, HP, category, source MCV target association and false special flags are supplied in object slices. Original constructor defaults and INI bindings verify Unsellable, TickTank, SensorArray, ICBMLauncher and Artillary are false for both yards.",
+    "Type+0x3cc is a nonnull MCV type slice with the original UnitType vtable. The normal sale supplies actor+0x1b0=null; undeploy predicate controls use0/1 as an opaque target-state value. This is not a full MCV-construction probe.",
+    "Actual refund routines and house cash add execute, with unit category cost modifiers and the original PadAircraft/dock dependency supplied. Original house flags and repack-option byte are controlled.",
+    "Zero survivor crew and empty footprint are supplied; cosmetic animation/sound maintenance are noops. Completion is supplied after12 waits. Returns immediately after real cash credit, before physical deletion, ore cleanup and controller maintenance."
+  ],
+  "limits": [
+    "Full original mouse/event scheduling and animation duration",
+    "Survivor crews",
+    "Full MCV conversion/placement/health path",
+    "Stored-ore cleanup",
+    "Arbitrary mod building flags and authored-mission sale policies",
+    "Original outer AI and human playtesting"
+  ]
+}

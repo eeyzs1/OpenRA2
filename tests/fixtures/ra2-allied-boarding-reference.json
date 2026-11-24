@@ -1,0 +1,229 @@
+{
+  "scope": "Original Unit radio15 allied admission, selected object-action tail with supplied base action0, and allied Foot passenger addition/dequeue with actual Gunner flag.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "originalProbe": {
+    "directory": "review_out/ra2-allied-boarding-20261123/original-probe-r3",
+    "exitCode": 0,
+    "seconds": 0.46799999999348074,
+    "probeSourceSHA256": "da67567ddd4df6cf48926864b364bec81f410f985a063e0e99c7a28d0d00d8e4",
+    "probeExecutableSHA256": "3500f366593983d95ab36d9fafab9b316e7a826d602f4bc4a4ba96be331e0574",
+    "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+    "logSHA256": "66ffdfa974870693e94e58e231d211592f494e66a8d6e28b23cda74c68ec453f"
+  },
+  "entries": {
+    "houseAlliance": "0x4e5580",
+    "unitRadio": "0x6fc1f0",
+    "query15": "0x6fc34a",
+    "actionTail": "0x704056..0x7041e4",
+    "controlledHouse": "0x4f52b0",
+    "actorCast": "0x40dbd0",
+    "footAddPassenger": "0x4cce80",
+    "listDequeue": "0x4689f0",
+    "receiveGunner": "0x709a20"
+  },
+  "fields": {
+    "houseIndex": "house+0x30",
+    "houseAllianceMask": "house+0x5674",
+    "owner": "actor+0x1b4",
+    "Gunner": "type+0x701"
+  },
+  "observed": {
+    "query": "Carrier house must ally with the incoming actor; equality also succeeds. Capacity/size and supplied disabled/linked guards still apply.",
+    "action": "Selected original tail also tests the incoming actor house toward the carrier. Mutual allies yield action3; a successful one-way carrier query alone does not.",
+    "owner": "A different allied house stays on the passenger after actual addition/dequeue; actual Gunner binding preserves it too."
+  },
+  "queries": [
+    {
+      "name": "same-house",
+      "host_allies": "0",
+      "sender_allies": "0",
+      "query": "1",
+      "expected_query": "1",
+      "action": "3",
+      "expected_action": "3",
+      "readonly": "1"
+    },
+    {
+      "name": "enemy",
+      "host_allies": "0",
+      "sender_allies": "0",
+      "query": "0",
+      "expected_query": "0",
+      "action": "2",
+      "expected_action": "2",
+      "readonly": "1"
+    },
+    {
+      "name": "host-only-alliance",
+      "host_allies": "2",
+      "sender_allies": "0",
+      "query": "1",
+      "expected_query": "1",
+      "action": "2",
+      "expected_action": "2",
+      "readonly": "1"
+    },
+    {
+      "name": "sender-only-alliance",
+      "host_allies": "0",
+      "sender_allies": "1",
+      "query": "0",
+      "expected_query": "0",
+      "action": "2",
+      "expected_action": "2",
+      "readonly": "1"
+    },
+    {
+      "name": "mutual-alliance",
+      "host_allies": "2",
+      "sender_allies": "1",
+      "query": "1",
+      "expected_query": "1",
+      "action": "3",
+      "expected_action": "3",
+      "readonly": "1"
+    },
+    {
+      "name": "allied-drone",
+      "host_allies": "2",
+      "sender_allies": "1",
+      "query": "1",
+      "expected_query": "1",
+      "action": "3",
+      "expected_action": "3",
+      "readonly": "1"
+    },
+    {
+      "name": "allied-full",
+      "host_allies": "2",
+      "sender_allies": "1",
+      "query": "10",
+      "expected_query": "10",
+      "action": "31",
+      "expected_action": "31",
+      "readonly": "1"
+    },
+    {
+      "name": "allied-too-large",
+      "host_allies": "2",
+      "sender_allies": "1",
+      "query": "10",
+      "expected_query": "10",
+      "action": "31",
+      "expected_action": "31",
+      "readonly": "1"
+    },
+    {
+      "name": "allied-disabled",
+      "host_allies": "2",
+      "sender_allies": "1",
+      "query": "0",
+      "expected_query": "0",
+      "action": "2",
+      "expected_action": "2",
+      "readonly": "1"
+    },
+    {
+      "name": "allied-linked",
+      "host_allies": "2",
+      "sender_allies": "1",
+      "query": "0",
+      "expected_query": "0",
+      "action": "2",
+      "expected_action": "2",
+      "readonly": "1"
+    },
+    {
+      "name": "allied-no-capacity",
+      "host_allies": "2",
+      "sender_allies": "1",
+      "query": "0",
+      "expected_query": "0",
+      "action": "2",
+      "expected_action": "2",
+      "readonly": "1"
+    },
+    {
+      "name": "allied-ifv-infantry",
+      "host_allies": "2",
+      "sender_allies": "1",
+      "query": "1",
+      "expected_query": "1",
+      "action": "3",
+      "expected_action": "3",
+      "readonly": "1"
+    },
+    {
+      "name": "allied-ifv-drone",
+      "host_allies": "2",
+      "sender_allies": "1",
+      "query": "10",
+      "expected_query": "10",
+      "action": "31",
+      "expected_action": "31",
+      "readonly": "1"
+    },
+    {
+      "name": "allied-amph-tank",
+      "host_allies": "2",
+      "sender_allies": "1",
+      "query": "1",
+      "expected_query": "1",
+      "action": "3",
+      "expected_action": "3",
+      "readonly": "1"
+    }
+  ],
+  "ownerCases": [
+    {
+      "active": "0",
+      "gunner": "0",
+      "admitted": "1",
+      "attached": "1",
+      "owners": "1",
+      "mode": "1",
+      "removed_owner": "1"
+    },
+    {
+      "active": "0",
+      "gunner": "1",
+      "admitted": "1",
+      "attached": "1",
+      "owners": "1",
+      "mode": "1",
+      "removed_owner": "1"
+    },
+    {
+      "active": "1",
+      "gunner": "0",
+      "admitted": "1",
+      "attached": "1",
+      "owners": "1",
+      "mode": "1",
+      "removed_owner": "1"
+    },
+    {
+      "active": "1",
+      "gunner": "1",
+      "admitted": "1",
+      "attached": "1",
+      "owners": "1",
+      "mode": "1",
+      "removed_owner": "1"
+    }
+  ],
+  "providedDependencies": [
+    "Private identified original PE; no original entrypoint. Supplied actor/type/house slices, type/owner virtual getters, disabled state, controlled-house byte, Unit/Infantry kind values and a COM locomotor IsMoving=false callback.",
+    "Action starts at0x704056 with base action0; message routing delivers its message15 to the actual original Unit receiver. The original alliance/control/cast/query/result code executes.",
+    "Foot addition/dequeue execute with an already-limbo Foot-compatible passenger, no add animation, empty mode tables and actual Unit.ReceiveGunner/mode routines. External House/map/visibility bookkeeping callbacks from the accepted owner probe are supplied."
+  ],
+  "limits": [
+    "Earlier full object-action evaluation, original mouse input/frame scheduling, pathfinding, physical loading/unloading and full Infantry construction do not execute.",
+    "Native regression uses existing AI coalition relations; this batch adds no diplomacy UI or new alliance storage.",
+    "Existing project size/capacity/controller guards remain their own contracts; no new disabled-state mapping is inferred from the supplied original virtual callback."
+  ],
+  "probeCorrections": [
+    "R1/R2 faulted after using a fastcall no-argument function for a COM stdcall one-argument method; R3 supplies the correct stack cleanup. Failed sources/logs are preserved.",
+    "First unit-action disassembly started inside an instruction and produced one line; it is not used as evidence. The valid0x704056 tail/dependencies are separately decoded."
+  ]
+}

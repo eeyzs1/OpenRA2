@@ -176,7 +176,7 @@ void testMapLogic() {
     expect(ore.harvestAt(1, 1, 20) == 15 && ore.at(1, 1).terrain == Terrain::Rough,
            "depleted ore becomes rough terrain");
 
-    // 邻格可挖语义：Chebyshev≤1；NearScan=6 / FarScan=48 是搜矿半径而非挖掘距
+    // NearScan 和 FarScan 是搜矿半径，矿车起采位置由 ground_travel 验证。
     Map patch = makeMap(15, 15, Terrain::Clear);
     patch.at(7, 7).terrain = Terrain::Ore; patch.at(7, 7).ore = 10;
     patch.at(10, 7).terrain = Terrain::Ore; patch.at(10, 7).ore = 10; // 距中心 Chebyshev=3
@@ -188,9 +188,6 @@ void testMapLogic() {
            "NearScan does not reach FarScan-only ore");
     expect(patch.findNearestOre(7, 7, 48, near) && (near == Vec2i{10, 7} || near == Vec2i{7, 14}),
            "TiberiumFarScan=48 can find distant ore");
-    // 邻格挖掘：站在(6,7) 对(7,7) Chebyshev=1
-    expect(std::max(std::abs(6 - 7), std::abs(7 - 7)) <= 1, "adjacent cell is diggable (Chebyshev<=1)");
-    expect(std::max(std::abs(4 - 7), std::abs(7 - 7)) > 1, "distance 3 is not dig reach");
 
     // OreRefinery 4×3 DockUnload=(3,1)、QueueingCell=(4,1)（与 data.cpp BldDef 一致）
     const int refW = 4, refH = 3;

@@ -51,6 +51,9 @@ void World::prepareNativeMovement(Ent& e,int x,int y,int layer,Vec2i goal) {
             if(e.hp<=maxHpFor(e,unitDef(e))*nativeMovementRules.conditionYellow)target=NativeMovementMath::multiply(target,.75);
         }
         state.targetThrottle=target;
+        // The original Drive/Ship track admission warns once for its new
+        // cell. The already saved node identity also preserves this on resume.
+        warnCrushingCell(e,x,y,layer);
     }
     if(state.lastTick!=tick) {
         const bool justStarted=!state.started;

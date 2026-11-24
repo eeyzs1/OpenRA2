@@ -19,6 +19,17 @@ float World::serviceReach(const Ent& depot) const {
     return std::max(def.w,def.h)/2.f+0.75f;
 }
 
+ServiceStatus World::serviceWorkStatus(EID id,EID depot) const {
+    const auto reason=serviceRejection(id,depot);
+    if(reason==ServiceRejectReason::FullHealth)return ServiceStatus::Completed;
+    if(reason!=ServiceRejectReason::None)return ServiceStatus::Failed;
+    const auto& unit=ents[id];const auto& owner=players[unit.player];
+    if(owner.lowPower())return ServiceStatus::WaitingPower;
+    // Removing a parasite precedes paid healing and costs no repair slice.
+    if(unit.parasite!=INVALID_EID)return ServiceStatus::Working;
+    return owner.money<6?ServiceStatus::WaitingMoney:ServiceStatus::Working;
+}
+
 ServiceOrderResult World::orderService(const std::vector<EID>& selected,EID depot,bool feedback) {
     ServiceOrderResult result;std::vector<uint8_t> seen(ents.size(),0);
     for(EID id:selected) {
@@ -79,7 +90,7 @@ void World::updateService(Ent& unit,EID id) {
                 emitServiceResult(unit.player,unit.target,{1,0,id},next);
             unit.feedbackServiceStatus=next;
         };
-        if(players[unit.player].lowPower()) { status(ServiceStatus::WaitingPower);return; }
+        if(serviceWorkStatus(id,serviceTarget)==ServiceStatus::WaitingPower) { status(ServiceStatus::WaitingPower);return; }
         if(unit.parasite!=INVALID_EID) {
             const EID drone=unit.parasite;unit.parasite=INVALID_EID;
             if(valid(drone)) kill(drone);
@@ -92,7 +103,7 @@ void World::updateService(Ent& unit,EID id) {
         }
         const int maxHp=maxHpFor(unit,unitDef(unit));
         if(unit.hp>=maxHp) { endService(unit,id,ServiceRejectReason::None);return; }
-        if(players[unit.player].money<6) { status(ServiceStatus::WaitingMoney);return; }
+        if(serviceWorkStatus(id,serviceTarget)==ServiceStatus::WaitingMoney) { status(ServiceStatus::WaitingMoney);return; }
         status(ServiceStatus::Working);
         if(tick%5==0) {
             players[unit.player].money-=6;unit.hp=std::min(maxHp,unit.hp+12);

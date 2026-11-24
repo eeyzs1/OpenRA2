@@ -1,4 +1,6 @@
 #include "game/world.h"
+#include "game/actor_contents.h"
+#include "game/native_scene_contract.h"
 #include "core/binary_state_io.h"
 #include "game/world_save_format.h"
 #include "game/lang.h"
@@ -10,6 +12,77 @@
 // ===================== 存档/读档 =====================
 namespace {
 using Passenger=World::Ent::GarrisonedUnit;
+constexpr uint32_t maxOwnerRecords=1000000;
+bool passengerOwners(const World& w,uint32_t& count,bool& explicitOwners) {
+    bool valid=true;uint64_t total=0;explicitOwners=false;
+    visitStoredPassengers(w,[&](const auto& p) {
+        ++total;explicitOwners |= p.player!=-2;
+        valid &= p.player>=-2 && p.player<w.numPlayers;
+    });
+    count=total>maxOwnerRecords?maxOwnerRecords+1:static_cast<uint32_t>(total);
+    return valid && (!explicitOwners || (total<=maxOwnerRecords && w.nativeRulesBaseVersion>=nativeCargoOwnerSceneVersion));
+}
+void writePassengerOwners(BinaryStateStream& s,const World& w,uint32_t count) {
+    s.writeBytes("COW1",4);s.write(count);
+    visitStoredPassengers(w,[&](const auto& p){s.write(p.player);});
+    const uint32_t length=8+count*4;s.write(length);
+}
+void writeTransportUnloads(BinaryStateStream& s,const World& w,uint32_t count) {
+    s.writeBytes("TUN1",4);s.write(count);
+    for(EID id=0;id<(EID)w.ents.size();++id)if(w.ents[id].nativeTransportUnload.active()) {
+        const auto& e=w.ents[id];s.write(id);s.write(e.generation);
+        s.write(static_cast<uint8_t>(e.nativeTransportUnload.phase));s.write(e.nativeTransportUnload.ticks);
+    }
+    s.write(uint32_t{8+17*count});
+}
+void writeBuildingSales(BinaryStateStream& s,const World& w) {
+    uint32_t count=0;for(const auto& e:w.ents)if(e.alive && e.nativeBuildingSale.originalSide!=-2)++count;
+    s.writeBytes("SLS1",4);s.write(count);
+    for(EID id=0;id<(EID)w.ents.size();++id) {
+        const auto& e=w.ents[id];const auto& state=e.nativeBuildingSale;
+        if(!e.alive || state.originalSide==-2)continue;
+        s.write(id);s.write(e.generation);s.write(state.originalSide);
+        s.write(uint8_t{static_cast<uint8_t>((state.captured?1:0)|(state.pending?2:0))});
+    }
+    s.write(uint32_t{8+14*count});
+}
+bool readBuildingSales(BinaryStateStream& s,World& w) {
+    char tag[4]{};uint32_t count=0,length=0;EID previous=INVALID_EID;
+    s.readBytes(tag,4);s.read(count);
+    if(!s.ok || std::memcmp(tag,"SLS1",4) || count>w.ents.size() || !w.nativeSaleSurvivorRules.enabled)return false;
+    for(uint32_t i=0;i<count;++i) {
+        EID id=INVALID_EID;uint64_t generation=0;int8_t side=-2;uint8_t flags=0;
+        s.read(id);s.read(generation);s.read(side);s.read(flags);
+        if(!s.ok || id<=previous || !w.valid(World::EntityRef{id,generation}) || side< -1 || side>2 || flags>3)return false;
+        previous=id;w.ents[id].nativeBuildingSale={side,(flags&1)!=0,(flags&2)!=0};
+    }
+    s.read(length);return s.ok && length==8+14*count;
+}
+bool readTransportUnloads(BinaryStateStream& s,World& w) {
+    char tag[4]{};uint32_t count=0,length=0;EID previous=INVALID_EID;
+    s.readBytes(tag,4);s.read(count);
+    if(!s.ok || std::memcmp(tag,"TUN1",4) || !count || count>w.ents.size()
+        || w.nativeRulesBaseVersion<nativeTransportUnloadSceneVersion)return false;
+    for(uint32_t i=0;i<count;++i) {
+        EID id=INVALID_EID;uint64_t generation=0;uint8_t phase=0;int ticks=0;
+        s.read(id);s.read(generation);s.read(phase);s.read(ticks);
+        if(!s.ok || id<=previous || !w.valid(World::EntityRef{id,generation})
+            || phase<static_cast<uint8_t>(NativeTransportUnloadPhase::Prepare)
+            || phase>static_cast<uint8_t>(NativeTransportUnloadPhase::Finish))return false;
+        previous=id;w.ents[id].nativeTransportUnload={static_cast<NativeTransportUnloadPhase>(phase),ticks};
+    }
+    s.read(length);return s.ok && length==8+17*count;
+}
+bool readPassengerOwners(BinaryStateStream& s,World& w) {
+    char tag[4]{};uint32_t count=0,expected=0,length=0;bool explicitOwners=false;
+    s.readBytes(tag,4);s.read(count);
+    if(!s.ok || std::memcmp(tag,"COW1",4) || count>maxOwnerRecords
+        || w.nativeRulesBaseVersion<nativeCargoOwnerSceneVersion
+        || !passengerOwners(w,expected,explicitOwners) || count!=expected)return false;
+    visitStoredPassengers(w,[&](auto& p){s.read(p.player);});
+    s.read(length);
+    return s.ok && length==8+count*4 && passengerOwners(w,expected,explicitOwners) && explicitOwners;
+}
 void serPassengerExtra(BinaryStateStream& s,const Passenger& p) {
     s.write(p.oreLoad);
     s.write(p.gemLoad);
@@ -65,6 +138,7 @@ void deserPassengerExtra(BinaryStateStream& s,Passenger& p,int depth=0) {
     }
 }
 bool validPassenger(const Passenger& p,int depth=0) {
+    if(p.type==UnitType::NativeInfantry && (!p.nativeIdentity.definition || p.nativeIdentity.definition->unit.type!=p.type))return false;
     if((int)p.type<0 || p.type>=UnitType::COUNT || p.hp<0 || p.kills<0 || p.veterancyValue<0 || p.vetRank<0 || p.vetRank>2
         || p.oreLoad<0 || p.gemLoad<0 || p.gemLoad>p.oreLoad || p.ammo<0 || p.atkCd<0 || p.invuln<0
         || p.crateDmgBoost<0 || p.crateArmorBoost<0 || p.crateSpeedBoost<0 || p.airstrikeCd<0 || p.confused<0
@@ -122,6 +196,7 @@ void deserProd(BinaryStateStream& s, ProdItem& p, bool withHeld, bool withWork) 
 } // namespace
 
 bool World::saveGame(FILE* f) const {
+    if(!validateNativeTransportUnload() || !validateNativeBuildingSales())return false;
     if(!validateNativeProductionState() || !validateNativeAIState() || !validateNativeAIGlobalState() || !validateNativeCrateState() || !validateNativeConditionState()
         || !validateSupportState() || !validateSupportDelivery() || !validateNativeCellOrder() || !validateNativeTemporalState() || !validateNativeCrewState())return false;
     if(updateInProgress || entityMutationDepth>0 || areaDamageDepth>0 || !retiredDuringUpdate.empty()) return false;
@@ -176,9 +251,19 @@ bool World::saveGame(FILE* f) const {
     const bool requiresTravelTail=WorldSaveFormat::requiresTravelAndDockRedirects(saveRevision);
     if((redirectCount || requiresTravelTail) && (!nativeGroundEnabled() || nativeAIRules.isGlobal()))return false;
     if(requiresTravelTail && !nativeTravelEnabled())return false;
-    const auto* saveFormat=WorldSaveFormat::forRevision(saveRevision);
+    uint32_t ownerRecords=0;bool hasCargoOwners=false;
+    if(!passengerOwners(*this,ownerRecords,hasCargoOwners)
+        || (hasCargoOwners && !WorldSaveFormat::cargoOwnerBaseRevision(saveRevision)))return false;
+    uint32_t unloadCount=0;for(const auto& e:ents)if(e.nativeTransportUnload.active())++unloadCount;
+    if(unloadCount && !WorldSaveFormat::cargoOwnerBaseRevision(saveRevision))return false;
+    const bool buildingSaleSave=nativeSaleSurvivorRules.enabled;
+    const auto* saveFormat=WorldSaveFormat::forRevision(buildingSaleSave?WorldSaveFormat::buildingSaleRevision:unloadCount?WorldSaveFormat::transportUnloadRevision:
+        hasCargoOwners?WorldSaveFormat::cargoOwnerRevision:saveRevision);
     if(!saveFormat)return false;
     s.writeBytes(saveFormat->magic.data(),saveFormat->magic.size());
+    if(buildingSaleSave || unloadCount || hasCargoOwners)s.write(saveRevision);
+    if(buildingSaleSave)s.write(uint8_t{static_cast<uint8_t>((hasCargoOwners?1:0)|(unloadCount?2:0))});
+    else if(unloadCount)s.write(static_cast<uint8_t>(hasCargoOwners));
     s.write(tick); s.write(numPlayers); s.write(rng.s);
     s.write(cratesEnabled); s.write(aiAlliance);
     uint8_t mode = (uint8_t)skirmishMode;
@@ -361,12 +446,15 @@ bool World::saveGame(FILE* f) const {
     if(s.ok && nativeGroundEnabled())s.ok=writeNativeGroundState(f);
     if(s.ok && nativeTravelEnabled())s.ok=writeNativeTravelState(f);
     if(s.ok && (redirectCount || requiresTravelTail))s.ok=writeNativeDockRedirects(f,redirectCount,saveRevision);
+    if(s.ok && hasCargoOwners)writePassengerOwners(s,*this,ownerRecords);
+    if(s.ok && unloadCount)writeTransportUnloads(s,*this,unloadCount);
+    if(s.ok && buildingSaleSave)writeBuildingSales(s,*this);
     return s.ok;
 }
 
 bool World::loadGame(FILE* f) {
     if(updateInProgress || entityMutationDepth>0 || areaDamageDepth>0 || !f) return false;
-    nativeTemporalEnabled=false;nativeTemporalBeams.clear();nativeCrewRules={};nativeSceneVersion=0;nextCombatActor=1;nativeCrewBursts.clear();
+    nativeTemporalEnabled=false;nativeTemporalBeams.clear();nativeCrewRules={};nativeSceneVersion=nativeRulesBaseVersion=0;nextCombatActor=1;nativeCrewBursts.clear();
     for(EID id=0;id<(EID)ents.size();++id)retireCombatIdentity(id);
     for(auto& projectile:projs)projectile.sourceActor=0;
     retiredDuringUpdate.clear();
@@ -379,7 +467,20 @@ bool World::loadGame(FILE* f) {
     veterancyProgressEnabled=independentSupportEnabled=false;
     supportDeliveryEnabled=false;supportMissions.clear();
     if(!saveFormat)return false;
-    const int saveRevision=saveFormat->revision;
+    const bool buildingSaleSave=saveFormat->revision==WorldSaveFormat::buildingSaleRevision;
+    bool transportUnloadSave=saveFormat->revision==WorldSaveFormat::transportUnloadRevision;
+    bool cargoOwnerSave=saveFormat->revision==WorldSaveFormat::cargoOwnerRevision;
+    int saveRevision=saveFormat->revision;
+    if(buildingSaleSave || cargoOwnerSave || transportUnloadSave) {
+        s.read(saveRevision);
+        if(!s.ok || !WorldSaveFormat::cargoOwnerBaseRevision(saveRevision))return false;
+    }
+    if(buildingSaleSave) {
+        uint8_t flags=0;s.read(flags);if(!s.ok || flags>3)return false;
+        cargoOwnerSave=(flags&1)!=0;transportUnloadSave=(flags&2)!=0;
+    } else if(transportUnloadSave) {
+        uint8_t owners=0;s.read(owners);if(!s.ok || owners>1)return false;cargoOwnerSave=owners!=0;
+    }
     const bool schemaAtLeast20=saveRevision>=20;
     const bool schemaAtLeast19=saveRevision>=19;
     const bool schemaAtLeast18=saveRevision>=18;
@@ -509,7 +610,8 @@ bool World::loadGame(FILE* f) {
             for (uint32_t i = 0; i < n; i++) {
                 int t = 0;
                 s.read(t);
-                if (t < 0 || (t >= (int)UnitType::COUNT && (!schema43 || t<NATIVE_PRODUCTION_BASE || t>=NATIVE_PRODUCTION_BASE+512))) { s.ok = false; break; }
+                if (t < 0 || (!buildingSaleSave && t==(int)UnitType::NativeInfantry)
+                    || (t >= (int)UnitType::COUNT && (!schema43 || t<NATIVE_PRODUCTION_BASE || t>=NATIVE_PRODUCTION_BASE+512))) { s.ok = false; break; }
                 p.unitQueue[c].push_back(t);
             }
         }
@@ -535,7 +637,7 @@ bool World::loadGame(FILE* f) {
             s.read(e.alive); s.read(e.isBuilding); s.read(e.player);
             uint8_t ut = 0, bt = 0, st = 0;
             s.read(ut); s.read(bt);
-            if (ut >= (uint8_t)UnitType::COUNT || bt >= (uint8_t)BldType::COUNT) return false;
+            if (ut >= (uint8_t)(buildingSaleSave?UnitType::COUNT:UnitType::NativeInfantry) || bt >= (uint8_t)BldType::COUNT) return false;
             e.utype = (UnitType)ut; e.btype = (BldType)bt;
             s.read(e.x); s.read(e.y); s.read(e.dir); s.read(e.turretDir); s.read(e.hp);
             uint32_t pn = 0;
@@ -591,7 +693,7 @@ bool World::loadGame(FILE* f) {
             for (Ent::GarrisonedUnit& cu : e.cargo) {
                 uint8_t ct = 0;
                 s.read(ct);
-                if (ct >= (uint8_t)UnitType::COUNT) { s.ok = false; break; }
+                if (ct >= (uint8_t)(buildingSaleSave?UnitType::COUNT:UnitType::NativeInfantry)) { s.ok = false; break; }
                 cu.type = (UnitType)ct;
                 if (schemaAtLeast12) {
                     s.read(cu.hp); s.read(cu.kills); s.read(cu.veterancyValue); s.read(cu.vetRank);
@@ -623,7 +725,7 @@ bool World::loadGame(FILE* f) {
             e.garrison.resize(gn);
             for (Ent::GarrisonedUnit& gu : e.garrison) {
                 uint8_t gt = 0; s.read(gt); gu.type = (UnitType)gt;
-                if (gt >= (uint8_t)UnitType::COUNT) { s.ok = false; break; }
+                if (gt >= (uint8_t)(buildingSaleSave?UnitType::COUNT:UnitType::NativeInfantry)) { s.ok = false; break; }
                 if (schemaAtLeast7) {
                     s.read(gu.hp); s.read(gu.kills); s.read(gu.veterancyValue); s.read(gu.vetRank);
                     if(schema25)deserPassengerExtra(s,gu);
@@ -833,6 +935,11 @@ bool World::loadGame(FILE* f) {
     if(schema64 || (dockRedirectSave && nativeTravelEnabled())){if(!readNativeTravelState(f,saveRevision))return false;}
     else if(nativeTravelEnabled())return false;
     if(dockRedirectSave && !readNativeDockRedirects(f,saveRevision))return false;
+    if(cargoOwnerSave && !readPassengerOwners(s,*this))return false;
+    if(transportUnloadSave && !readTransportUnloads(s,*this))return false;
+    if(buildingSaleSave && !readBuildingSales(s,*this))return false;
+    if(buildingSaleSave!=nativeSaleSurvivorRules.enabled || !validateNativeBuildingSales())return false;
+    if(!validateNativeTransportUnload())return false;
     rebuildNativeGates();
     if (fgetc(f) != EOF || ferror(f)) return false;
     // Legacy servicing was encoded as a normal move/idle targeting a depot.
@@ -874,6 +981,8 @@ bool World::loadGame(FILE* f) {
     for (size_t i = 0; i < ents.size(); ++i) {
         const Ent& e = ents[i];
         if(e.alive && !e.isBuilding && e.utype==UnitType::NativeVehicle && !e.nativeIdentity.definition)return false;
+        if(!e.isBuilding && e.utype==UnitType::NativeInfantry
+            && (!buildingSaleSave || !e.nativeIdentity.definition || !unitDef(e).isInfantry()))return false;
         if (e.player < -1 || e.player >= numPlayers || !finite(e.x) || !finite(e.y)
             || (e.state>=UState::DeployLanding && (!e.deploying() || e.deployAnim<1 || e.deployAnim>3600
                 || e.deployed!=(e.state==UState::DeployUnfolding || e.state==UState::DeployFolding)))

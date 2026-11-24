@@ -21,35 +21,93 @@ int GameRegression::originalSkirmishRegression(const char* outputDir,const char*
         std::printf("ORIGINAL_DIAG scene=%d production=%d oreValue=%d gemValue=%d\n",world.nativeSceneVersion,
             world.nativeProductionRules.version,world.nativeProductionRules.oreValue,world.nativeProductionRules.gemValue);
         const auto file=(std::filesystem::path(outputDir)/"actors.csv").string();FILE* out=std::fopen(file.c_str(),"w");if(!out)return 1;
-        std::fprintf(out,"id,player,type,building,x,y,hp,state,target,goalX,goalY,path,attackMove,attackX,attackY,air,frozen,altitude,jumpPhase,jumpSpeed,jumpDesired,jumpGoalX,jumpGoalY,jumpGround,jumpHeight\n");
+        std::fprintf(out,"id,player,type,building,x,y,hp,state,target,goalX,goalY,path,attackMove,attackX,attackY,air,frozen,altitude,jumpPhase,jumpSpeed,jumpDesired,jumpGoalX,jumpGoalY,jumpGround,jumpHeight,blockTick,pathIdx,pathSize,nextX,nextY,navLayer,nextUnit,nextBuilding,generation\n");
         for(EID id=0;id<(EID)world.ents.size();++id){const auto& e=world.ents[id];if(!e.alive || e.player<0)continue;
             const auto& j=e.nativeJumpjet;
             const char* name=e.nativeIdentity.definition?e.nativeIdentity.definition->id.c_str():e.isBuilding?bldDef(e).name:unitDef(e).name;
-            std::fprintf(out,"%d,%d,%s,%d,%.3f,%.3f,%d,%d,%d,%.3f,%.3f,%d,%d,%.3f,%.3f,%d,%d,%.3f,%d,%.9g,%.9g,%.3f,%.3f,%d,%d\n",id,e.player,name,e.isBuilding,e.x,e.y,e.hp,(int)e.state,e.target,e.goalX,e.goalY,std::max(0,(int)e.path.size()-e.pathIdx),e.attackMove.active,e.attackMove.x,e.attackMove.y,!e.isBuilding && unitDef(e).isAir(),e.immobilized(),e.nativeAltitude,(int)j.phase,j.speed,j.desiredSpeed,j.goalX/256.,j.goalY/256.,j.ground,j.goalHeight);}
+            const auto next=e.pathIdx<(int)e.path.size()?e.path[e.pathIdx]:Vec2i{-1,-1};
+            const int layer=next.x>=0?world.movementLayerAt(e,next.x,next.y):0;
+            std::fprintf(out,"%d,%d,%s,%d,%.3f,%.3f,%d,%d,%d,%.3f,%.3f,%d,%d,%.3f,%.3f,%d,%d,%.3f,%d,%.9g,%.9g,%.3f,%.3f,%d,%d,%d,%d,%zu,%d,%d,%d,%d,%d,%llu\n",id,e.player,name,e.isBuilding,e.x,e.y,e.hp,(int)e.state,e.target,e.goalX,e.goalY,std::max(0,(int)e.path.size()-e.pathIdx),e.attackMove.active,e.attackMove.x,e.attackMove.y,!e.isBuilding && unitDef(e).isAir(),e.immobilized(),e.nativeAltitude,(int)j.phase,j.speed,j.desiredSpeed,j.goalX/256.,j.goalY/256.,j.ground,j.goalHeight,
+                e.blockTick,e.pathIdx,e.path.size(),next.x,next.y,e.navLayer,world.unitAtCell(next.x,next.y,layer),world.bldAt(next.x,next.y),(unsigned long long)e.generation);}
         std::fclose(out);
+        const auto dumpPaths=[&](const World& state,const char* name) {
+            FILE* paths=std::fopen((std::filesystem::path(outputDir)/name).string().c_str(),"w");if(!paths)return false;
+            std::fprintf(paths,"tick,id,generation,player,index,active,x,y\n");
+            for(EID id=0;id<(EID)state.ents.size();++id) {
+                const auto& actor=state.ents[id];if(!actor.alive || actor.isBuilding || actor.player<0)continue;
+                for(int index=0;index<(int)actor.path.size();++index)
+                    std::fprintf(paths,"%llu,%d,%llu,%d,%d,%d,%d,%d\n",(unsigned long long)state.tick,id,
+                        (unsigned long long)actor.generation,actor.player,index,index==actor.pathIdx,actor.path[index].x,actor.path[index].y);
+            }
+            return std::fclose(paths)==0;
+        };
+        check(dumpPaths(world,"paths.csv"),"diagnostic records complete generation-bound admitted routes");
         for(int p=0;p<world.numPlayers;++p){const auto& player=world.players[p];const auto& pr=player.unitProd[1];
             std::printf("ORIGINAL_DIAG player=%d money=%lld power=%d/%d factory=%d lab=%d buildings=%d readyBld=%d activeUnit=%d unitType=%d progress=%d paid=%lld readyUnit=%d queue=%zu\n",p,(long long)player.money,player.powerMade,player.powerUsed,world.countBlds(p,BldType::WarFactory),world.countBlds(p,BldType::BattleLab),world.countBlds(p,BldType::ConYard),player.bldProd.ready,pr.active,pr.typeIdx,pr.progress,(long long)pr.paid,pr.ready,player.unitQueue[1].size());}
         const auto brains=(std::filesystem::path(outputDir)/"brains.csv").string();if(FILE* f=std::fopen(brains.c_str(),"w")){
             std::fprintf(f,"player,rallyX,rallyY,rallyWait,attackTimer,wave,knownOwner,knownType,knownX,knownY\n");
             for(const auto& ai:ais)for(const auto& b:ai.knownBuildings)std::fprintf(f,"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",ai.player,ai.rallyPoint.x,ai.rallyPoint.y,ai.rallyCheckTimer,ai.attackTimer,ai.attackWave,b.owner,(int)b.type,b.x,b.y);
             std::fclose(f);}
+        if(FILE* f=std::fopen((std::filesystem::path(outputDir)/"scout-grid.csv").string().c_str(),"w")) {
+            std::fprintf(f,"player,x,y,fog,observed,passable,open,height\n");
+            for(const auto& bot:ais)if(bot.player>=0 && bot.player<world.numPlayers)
+                for(int y=0;y<world.map.h;++y)for(int x=0;x<world.map.w;++x)if(world.map.inBounds(x,y)) {
+                const size_t cell=(size_t)world.cellIdx(x,y);const uint64_t stamp=cell<bot.scoutObserved.size()?bot.scoutObserved[cell]:0;
+                std::fprintf(f,"%d,%d,%d,%d,%llu,%d,%d,%d\n",bot.player,x,y,(int)world.map.fogAt(bot.player,x,y),
+                    (unsigned long long)stamp,world.map.passable(x,y),world.passableFor(x,y,0),world.map.surfaceHeight(x,y,world.map.preferredLayer(x,y,0)));
+            }
+            check(std::fclose(f)==0,"diagnostic records own observed survey age and terrain");
+        }
         if(const char* requested=std::getenv("OPENRA2_INSPECT_CONTINUE_TICKS")) {
             const int ticks=std::atoi(requested);if(ticks<1 || ticks>180000)return 1;
             World stepped=world;stepped.map.bldOccRef=&stepped.bldOcc;auto bots=ais;const auto original=world.checksum();
             const auto trace=(std::filesystem::path(outputDir)/"continuation.csv").string();FILE* f=std::fopen(trace.c_str(),"w");if(!f)return 1;
-            std::fprintf(f,"tick,id,player,type,x,y,hp,state,target,goalX,goalY,attackMove,jumpPhase,speed,desiredSpeed,facing,desiredFacing,dx,dy,height,ground\n");
+            std::fprintf(f,"tick,id,player,type,x,y,hp,state,target,goalX,goalY,attackMove,jumpPhase,speed,desiredSpeed,facing,desiredFacing,dx,dy,height,ground,generation\n");
+            FILE* summary=std::fopen((std::filesystem::path(outputDir)/"continuation-summary.csv").string().c_str(),"w");
+            if(!summary){std::fclose(f);return 1;}
+            std::fprintf(summary,"tick,player,defeated,buildings,units,money,produced,damage,knownBuildings,wave\n");
             for(int frame=0;frame<=ticks;++frame){
+                if(frame%(std::max(1,ticks/20))==0)for(int player=0;player<stepped.numPlayers;++player) {
+                    int buildings=0,units=0;
+                    for(const auto& actor:stepped.ents)if(actor.alive && actor.player==player) {
+                        buildings+=actor.isBuilding;units+=!actor.isBuilding;
+                    }
+                    const auto bot=std::find_if(bots.begin(),bots.end(),[&](const auto& ai){return ai.player==player;});
+                    std::fprintf(summary,"%llu,%d,%d,%d,%d,%lld,%llu,%llu,%zu,%d\n",(unsigned long long)stepped.tick,
+                        player,stepped.players[player].defeated,buildings,units,(long long)stepped.players[player].money,
+                        (unsigned long long)stepped.producedUnits[player],(unsigned long long)stepped.combatDamage[player],
+                        bot==bots.end()?size_t{0}:bot->knownBuildings.size(),bot==bots.end()?0:bot->attackWave);
+                }
                 if(frame%(std::max(1,ticks/20))==0)for(EID id=0;id<(EID)stepped.ents.size();++id){const auto& e=stepped.ents[id];
                     if(!e.alive || e.player<0 || e.isBuilding || (e.player!=0 && !unitDef(e).isAir() && !e.attackMove.active))continue;
                     const auto& j=e.nativeJumpjet;const char* name=e.nativeIdentity.definition?e.nativeIdentity.definition->id.c_str():unitDef(e).name;
-                    std::fprintf(f,"%llu,%d,%d,%s,%.6f,%.6f,%d,%d,%d,%.6f,%.6f,%d,%d,%.9g,%.9g,%u,%u,%d,%d,%.3f,%d\n",
+                    std::fprintf(f,"%llu,%d,%d,%s,%.6f,%.6f,%d,%d,%d,%.6f,%.6f,%d,%d,%.9g,%.9g,%u,%u,%d,%d,%.3f,%d,%llu\n",
                         (unsigned long long)stepped.tick,id,e.player,name,e.x,e.y,e.hp,(int)e.state,e.target,e.goalX,e.goalY,e.attackMove.active,
-                        (int)j.phase,j.speed,j.desiredSpeed,j.motion.facing,j.motion.desiredFacing,j.motion.dx,j.motion.dy,e.nativeAltitude,j.ground);}
+                        (int)j.phase,j.speed,j.desiredSpeed,j.motion.facing,j.motion.desiredFacing,j.motion.dx,j.motion.dy,e.nativeAltitude,j.ground,(unsigned long long)e.generation);}
                 if(frame==ticks)break;
                 stepped.update();for(auto& bot:bots)bot.update(stepped);
                 stepped.presentationEvents.clear();stepped.evaQueue.clear();
             }
-            std::fclose(f);
+            std::fclose(f);check(std::fclose(summary)==0,"diagnostic records copied per-player progression");
+            FILE* continued=std::fopen((std::filesystem::path(outputDir)/"continuation-world.sav").string().c_str(),"wb");
+            const bool copiedSave=continued && stepped.saveGame(continued);if(continued)std::fclose(continued);
+            check(copiedSave,"diagnostic saves only the continued World copy");
+            FILE* remembered=std::fopen((std::filesystem::path(outputDir)/"brains-after.csv").string().c_str(),"w");
+            if(remembered) {
+                std::fprintf(remembered,"player,rallyX,rallyY,rallyWait,attackTimer,wave,knownOwner,knownType,knownX,knownY\n");
+                for(const auto& ai:bots)for(const auto& b:ai.knownBuildings)std::fprintf(remembered,"%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\n",
+                    ai.player,ai.rallyPoint.x,ai.rallyPoint.y,ai.rallyCheckTimer,ai.attackTimer,ai.attackWave,b.owner,(int)b.type,b.x,b.y);
+                check(std::fclose(remembered)==0,"diagnostic records copied AI contacts");
+            } else check(false,"diagnostic opens copied AI contacts");
+            check(dumpPaths(stepped,"paths-after.csv"),"diagnostic records copied continuation routes");
+            const auto trafficPath=std::filesystem::path(outputDir)/"traffic.csv";
+            if(FILE* traffic=std::fopen(trafficPath.string().c_str(),"w")) {
+                std::fprintf(traffic,"tick,domain,anchor,exit,remaining,draining,opposed,cells,ports,groups,occupants\n");
+                for(const auto& gate:stepped.trafficDebug())std::fprintf(traffic,"%llu,%d,%d,%d,%llu,%d,%d,%d,%d,%d,%d\n",
+                    (unsigned long long)stepped.tick,gate.domain,gate.anchor,gate.exit,(unsigned long long)gate.remaining,
+                    gate.draining,gate.opposed,gate.cells,gate.ports,gate.groups,gate.occupants);
+                std::fclose(traffic);
+            }
             std::printf("ORIGINAL_DIAG continuationTick=%llu outcome0=%d originalUnchanged=%d\n",(unsigned long long)stepped.tick,
                 (int)stepped.matchOutcome(0),world.checksum()==original);
             check(world.checksum()==original,"continuation diagnostic advances only the captured copy");
@@ -63,8 +121,8 @@ int GameRegression::originalSkirmishRegression(const char* outputDir,const char*
         std::string source;
         if(!check(composeRules(rulesInfo[(int)RulesChoice::RA2].source,data,source),"ordinary source rules compose with the identified original map"))continue;
         const World::RulesSnapshot snapshot{source,true,true};
-        for(const char* base:{"37","38","43","44","45"}) {
-            const auto declaration="RulesBaseVersion = "+std::to_string(nativeTravelSceneVersion);
+        for(const char* base:{"37","38","43","44","45","46"}) {
+            const auto declaration="RulesBaseVersion = "+std::to_string(nativeCurrentRulesSceneVersion);
             auto invalid=source;const auto position=invalid.find(declaration);
             if(position!=std::string::npos)invalid.replace(position,declaration.size(),std::string("RulesBaseVersion = ")+base);
             World rejected;const World::RulesSnapshot mismatch{invalid,true,true};

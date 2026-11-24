@@ -1,0 +1,488 @@
+{
+  "scope": "Ordinary RA2 building sale proceeds and credit phase. Type quotes cover46 source buildings;72 sale mission prefixes exclude construction yards and neutral types.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "sourceRules": {
+    "source": "ra2.mix/local.mix",
+    "edition": "ra2-local-base",
+    "sha256": "fd1e95cea0306ea78049dc81c8cd816e18c28c496872a1ff02edd50bd082062f",
+    "refundPercent": "50%",
+    "separateAircraft": "yes"
+  },
+  "originalProbe": {
+    "directory": "review_out/ra2-building-sale-20261124/original-refund-r4",
+    "cases": 268,
+    "quoteCases": 184,
+    "controlCases": 12,
+    "missionPrefixCases": 72,
+    "exitCode": 0,
+    "seconds": 0.1559999999590218,
+    "probeSourceSHA256": "4379cd80b93d98ca245a848e8cf001ca435017e1ccbea0330e6a9806503c1c68",
+    "probeExecutableSHA256": "a2c6f596d0ced7cb9896638a7a58b4ba4dc0809e9d4948bd8eabda7366c258d0",
+    "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+    "logSHA256": "0e04ca72d2d2c5d0921f5430eac3fa1ef5560d85367849ff50b749b529d8cd8f"
+  },
+  "entries": {
+    "buildingTypeVtable": "0x79d1f8",
+    "typeCost": "0x4589f0",
+    "typeRefund": "0x6dad80",
+    "buildingActorVtable": "0x79cbbc",
+    "actorRefund": "0x6d5850",
+    "ordinaryHousePredicate": "0x4f52f0",
+    "houseCostModifier": "0x4f5960",
+    "sellingMission": "0x445b30",
+    "completedRefundQuery": "0x44610c",
+    "completedHouseCredit": "0x446119",
+    "houseCredit": "0x4e5440"
+  },
+  "observations": {
+    "hpDoesNotScaleNormalRefund": true,
+    "nonzeroSoylentOverridesBothPolicies": true,
+    "ordinaryHumanUsesRefundPercent": true,
+    "otherOrdinaryHouseUsesFullEffectiveTypeCost": true,
+    "sourceCountryBuildingAndDefenseMultipliers": 1,
+    "sourceCountryMultiplierDefaultBits": "0x3f800000",
+    "costBuildingMultiplierBinding": "0x4f98c7..0x4f98d1, houseType+0x120",
+    "costDefenseMultiplierBinding": "0x4f98e6..0x4f98f0, houseType+0x124",
+    "refundX87SteadyControlWord": "0x0e7f",
+    "singleRate15PercentCost20Result": 2,
+    "queryAndCreditWaitForAnimationCompletion": true,
+    "missionWaitDispatchesPerCase": 12,
+    "refundQueriesAndCreditsAtCompletion": 1,
+    "refineryHumanAndOtherRefund": 300,
+    "purifierSoylentRefund": 1250
+  },
+  "buildings": {
+    "GACNST": {
+      "cost": 3000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 1500,
+      "other": 3000
+    },
+    "NACNST": {
+      "cost": 3000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 1500,
+      "other": 3000
+    },
+    "GAPOWR": {
+      "cost": 800,
+      "hp": 750,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 400,
+      "other": 800
+    },
+    "NAPOWR": {
+      "cost": 600,
+      "hp": 750,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 300,
+      "other": 600
+    },
+    "NANRCT": {
+      "cost": 1000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 500,
+      "other": 1000
+    },
+    "GAPILE": {
+      "cost": 500,
+      "hp": 500,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 250,
+      "other": 500
+    },
+    "NAHAND": {
+      "cost": 500,
+      "hp": 500,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 250,
+      "other": 500
+    },
+    "GAWEAP": {
+      "cost": 2000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 1000,
+      "other": 2000
+    },
+    "NAWEAP": {
+      "cost": 2000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 1000,
+      "other": 2000
+    },
+    "GAREFN": {
+      "cost": 2000,
+      "hp": 1000,
+      "freeUnitCost": 1400,
+      "soylent": 300,
+      "category": 4,
+      "human": 300,
+      "other": 300
+    },
+    "NAREFN": {
+      "cost": 2000,
+      "hp": 1000,
+      "freeUnitCost": 1400,
+      "soylent": 300,
+      "category": 4,
+      "human": 300,
+      "other": 300
+    },
+    "NARADR": {
+      "cost": 1000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 500,
+      "other": 1000
+    },
+    "GATECH": {
+      "cost": 2000,
+      "hp": 500,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 1000,
+      "other": 2000
+    },
+    "NATECH": {
+      "cost": 2000,
+      "hp": 500,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 1000,
+      "other": 2000
+    },
+    "GAAIRC": {
+      "cost": 1000,
+      "hp": 600,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 500,
+      "other": 1000
+    },
+    "AMRADR": {
+      "cost": 1000,
+      "hp": 600,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 500,
+      "other": 1000
+    },
+    "GAYARD": {
+      "cost": 1000,
+      "hp": 1500,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 500,
+      "other": 1000
+    },
+    "NAYARD": {
+      "cost": 1000,
+      "hp": 1500,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 500,
+      "other": 1000
+    },
+    "GAPILL": {
+      "cost": 500,
+      "hp": 400,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 5,
+      "human": 250,
+      "other": 500
+    },
+    "NALASR": {
+      "cost": 500,
+      "hp": 400,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 5,
+      "human": 250,
+      "other": 500
+    },
+    "ATESLA": {
+      "cost": 1500,
+      "hp": 600,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 5,
+      "human": 750,
+      "other": 1500
+    },
+    "TESLA": {
+      "cost": 1500,
+      "hp": 600,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 5,
+      "human": 750,
+      "other": 1500
+    },
+    "NAFLAK": {
+      "cost": 1000,
+      "hp": 900,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 5,
+      "human": 500,
+      "other": 1000
+    },
+    "GTGCAN": {
+      "cost": 2000,
+      "hp": 900,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 1000,
+      "other": 2000
+    },
+    "NASAM": {
+      "cost": 1000,
+      "hp": 900,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 5,
+      "human": 500,
+      "other": 1000
+    },
+    "GAWALL": {
+      "cost": 100,
+      "hp": 300,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 50,
+      "other": 100
+    },
+    "NAWALL": {
+      "cost": 100,
+      "hp": 300,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 50,
+      "other": 100
+    },
+    "GAOREP": {
+      "cost": 2500,
+      "hp": 900,
+      "freeUnitCost": 0,
+      "soylent": 1250,
+      "category": 4,
+      "human": 1250,
+      "other": 1250
+    },
+    "NAMISL": {
+      "cost": 5000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 2500,
+      "other": 5000
+    },
+    "GAWEAT": {
+      "cost": 5000,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 2500,
+      "other": 5000
+    },
+    "NAIRON": {
+      "cost": 2500,
+      "hp": 750,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 1250,
+      "other": 2500
+    },
+    "GACSPH": {
+      "cost": 2500,
+      "hp": 750,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 1250,
+      "other": 2500
+    },
+    "CAOILD": {
+      "cost": 0,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 0,
+      "other": 0
+    },
+    "CAHOSP": {
+      "cost": 0,
+      "hp": 800,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 0,
+      "other": 0
+    },
+    "CATHOSP": {
+      "cost": 0,
+      "hp": 800,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 0,
+      "other": 0
+    },
+    "NACLON": {
+      "cost": 2500,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 1250,
+      "other": 2500
+    },
+    "GADEPT": {
+      "cost": 800,
+      "hp": 1200,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 400,
+      "other": 800
+    },
+    "NADEPT": {
+      "cost": 800,
+      "hp": 1200,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 400,
+      "other": 800
+    },
+    "GAGAP": {
+      "cost": 1000,
+      "hp": 600,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 500,
+      "other": 1000
+    },
+    "GASPYSAT": {
+      "cost": 1500,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 750,
+      "other": 1500
+    },
+    "NAPSIS": {
+      "cost": 1000,
+      "hp": 750,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 500,
+      "other": 1000
+    },
+    "CAAIRP": {
+      "cost": 0,
+      "hp": 800,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 0,
+      "other": 0
+    },
+    "CALAB": {
+      "cost": 0,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 0,
+      "other": 0
+    },
+    "CAHSE01": {
+      "cost": 0,
+      "hp": 600,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 0,
+      "other": 0
+    },
+    "CAOUTP": {
+      "cost": 0,
+      "hp": 2000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 0,
+      "other": 0
+    },
+    "NAPSYA": {
+      "cost": 0,
+      "hp": 1000,
+      "freeUnitCost": 0,
+      "soylent": 0,
+      "category": 4,
+      "human": 0,
+      "other": 0
+    }
+  },
+  "controlledDependencies": [
+    "The original executable is privately loaded; its main/game startup does not execute. Supplied actor, house, house type and rules slices satisfy only selected calls.",
+    "Actual BuildingType cost/refund, Building actor refund wrapper, house predicate, category modifier and house cash-add code execute. Type identity and normal owner are supplied; bindings are checked against original vtables.",
+    "All local source countries omit the two category cost fields; original constructor defaults both to float1. Modifier controls supply0.8 and0.6 to the actual source function; runtime export supports the local unit multipliers.",
+    "Mission prefix supplies zero survivor crews, empty foundation, no UndeploysInto, and animation completion after12 waits. Sound maintenance and cosmetic animation work are noops; animation requests are observed.",
+    "Mission returns immediately after the real house credit at0x44611e. Physical disposal, stored ore removal, ownership/controller cleanup and later mission dispatch do not execute.",
+    "Project maps the verified completion gate to its existing buildingAnimationTicks and retirement boundary. Default40 animation ticks credit/retire on tick41; no exact full original timing claim."
+  ],
+  "limits": [
+    "Construction-yard sale admission/MCV branch",
+    "Survivor crew spawning",
+    "Full buildup rendering and original frame/input scheduling",
+    "Stored-ore disposal fidelity",
+    "Service-depot vehicle sale",
+    "Authored-mission and arbitrary mod house multipliers",
+    "Full original AI",
+    "Human playtesting"
+  ]
+}

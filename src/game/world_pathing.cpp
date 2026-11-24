@@ -1,4 +1,5 @@
 #include "game/world.h"
+#include "game/native_scene_contract.h"
 #include "game/world_priv.h"
 #include "game/lang.h"
 #include "game/script.h"
@@ -7,19 +8,239 @@
 #include <cstring>
 #include <algorithm>
 
-namespace {
-bool canCrushOccupant(const World& world,const World::Ent& actor,const World::Ent& occupant) {
-    if(actor.isBuilding || occupant.isBuilding || world.isAllied(actor.player,occupant.player)) return false;
+bool World::canCrushOccupant(const Ent& actor,const Ent& occupant) const {
+    if(actor.isBuilding || occupant.isBuilding || isAllied(actor.player,occupant.player)) return false;
     const auto& mover=unitDef(actor);const auto& other=unitDef(occupant);
-    return mover.move==MoveType::Vehicle && mover.armor==Armor::Heavy && other.isInfantry()
-        && other.armor==Armor::None && occupant.invuln==0 && !occupant.immobilized() && !occupant.deployed && !occupant.radDeployed;
+    if(!other.isInfantry() || occupant.invuln!=0 || occupant.immobilized())return false;
+    const auto* source=actor.nativeIdentity.definition.get();
+    const auto* target=occupant.nativeIdentity.definition.get();
+    if(source && source->sourceCrushing) {
+        const bool crushable=target && target->sourceCrushing?target->crushable
+            :other.armor==Armor::None && !occupant.deployed && !occupant.radDeployed;
+        return source->crusher && crushable;
+    }
+    return mover.move==MoveType::Vehicle && mover.armor==Armor::Heavy
+        && other.armor==Armor::None && !occupant.deployed && !occupant.radDeployed;
 }
+
+bool World::resolveCrushingContact(EID mover) {
+    const auto moving=entityRef(mover);
+    if(nativeRulesBaseVersion<nativeCrushContactSceneVersion)return valid(moving);
+    if(!valid(moving))return false;
+    const auto& actor=ents[mover];
+    const auto* source=actor.nativeIdentity.definition.get();
+    if(!source || !source->sourceCrushing || !source->crusher)return true;
+    const int x=(int)actor.x,y=(int)actor.y;
+    if(!map.inBounds(x,y) || unitOccHead.empty())return true;
+    // Death callbacks can change this list or recycle a previously seen slot.
+    std::vector<EntityRef> occupants;
+    for(EID other=unitOccHead[(size_t)cellIdx(x,y)];other!=INVALID_EID;other=ents[other].occNext)
+        if(other!=mover && ents[other].navLayer==actor.navLayer)occupants.push_back(entityRef(other));
+    for(const auto target:occupants) {
+        if(!valid(target))continue;
+        const auto& victim=ents[target.id];
+        const auto& vehicle=ents[mover];
+        if((int)victim.x!=(int)vehicle.x || (int)victim.y!=(int)vehicle.y
+            || victim.navLayer!=vehicle.navLayer || !canCrushOccupant(vehicle,victim))continue;
+        // Original Unit::TryCrushCell compares squared horizontal distance
+        // against 128*128 leptons; equality does not crush (RA2 1.08).
+        const float dx=vehicle.x-victim.x,dy=vehicle.y-victim.y;
+        if(dx*dx+dy*dy>=.25f)continue;
+        emitSoundAt(Sfx::Crush,victim.x,victim.y);
+        if(victim.player>=0 && victim.player<numPlayers) {
+            auto& player=players[victim.player];
+            if(player.evaUnitCd<=0){eva(victim.player,TR(S::EvaUnitLost),EvaCue::UnitLost);player.evaUnitCd=150;}
+        }
+        // Original crushing unregisters the victim directly, without the
+        // ordinary infantry falling sequence. Keep the common death cleanup.
+        kill(target.id,true,false,true);
+        if(!valid(moving))return false;
+    }
+    return true;
+}
+namespace {
 bool pendingMovement(const World::Ent& unit) {
     if(unit.pathIdx>=(int)unit.path.size()) return false;
     return unit.state==UState::Moving || unit.state==UState::AttackMoving || unit.state==UState::Chasing
         || unit.state==UState::HarvestGo || unit.state==UState::HarvestReturn || unit.state==UState::Boarding
         || unit.state==UState::Servicing;
 }
+}
+
+void World::warnCrushingCell(const Ent& mover,int x,int y,int layer) {
+    const auto* source=mover.nativeIdentity.definition.get();
+    if(!nativeCrushWarningRules.available || nativeRulesBaseVersion<nativeCrushWarningSceneVersion
+        || !source || !source->sourceCrushing || !source->crusher
+        || (source->movement.locomotor!=NativeLocomotor::Drive && source->movement.locomotor!=NativeLocomotor::Ship)
+        || !map.inBounds(x,y) || unitOccHead.empty())return;
+    scatterInfantryCell(x,y,layer,false);
+}
+
+bool World::scatterBlockedInfantry(Ent& mover,int x,int y,int layer) {
+    const auto* source=mover.nativeIdentity.definition.get();
+    if(nativeRulesBaseVersion<nativeDriveBlockageSceneVersion || !nativeCrushWarningRules.available
+        || !source || source->movement.locomotor!=NativeLocomotor::Drive
+        || !map.inBounds(x,y) || unitOccHead.empty() || bldBlocked(x,y,layer))return false;
+    bool stationary=false;
+    for(EID id=unitOccHead[(size_t)cellIdx(x,y)];id!=INVALID_EID;id=ents[id].occNext) {
+        const auto& foot=ents[id];if(foot.navLayer!=layer)continue;
+        // Original class 6 is a friendly stationary obstruction. Other entry
+        // classes, vehicles and mixed hostile occupancy keep their admission.
+        if(!unitDef(foot).isInfantry() || !isAllied(mover.player,foot.player))return false;
+        stationary |= !pendingMovement(foot) && !foot.immobilized() && !foot.deploying()
+            && (!(foot.deployed || foot.radDeployed) || rulesTransformIndex(foot)<0);
+    }
+    if(!stationary)return false;
+    // Drive aligns before testing the new cell and taking the blockage branch.
+    const auto heading=NativeGroundMath::vector(x+.5f-mover.x,y+.5f-mover.y);
+    desireNativeHull(mover,heading);
+    if(!unitHasTurret(mover.utype) || (mover.state!=UState::Chasing
+        && mover.state!=UState::Attacking && !(mover.state==UState::AttackMoving && valid(mover.target))))
+        desireNativeTurret(mover,heading);
+    if(NativeGroundMath::delta(nativeHullHeading(mover,tick),heading)!=0)return true;
+    scatterInfantryCell(x,y,layer,true);
+    return false;
+}
+
+void World::scatterInfantryCell(int x,int y,int layer,bool forced) {
+    bool eliteInCell=false;
+    std::vector<EntityRef> occupants;
+    for(EID id=unitOccHead[(size_t)cellIdx(x,y)];id!=INVALID_EID;id=ents[id].occNext) {
+        const auto& other=ents[id];if(other.navLayer!=layer)continue;
+        eliteInCell |= other.vetRank>=2;
+        if(unitDef(other).isInfantry())occupants.push_back(entityRef(id));
+    }
+    const auto policy=forced?InfantryScatterPolicy::Forced:InfantryScatterPolicy::Warning;
+    for(const auto recipient:occupants)if(scatterInfantry(recipient,policy,eliteInCell))releaseNativePlayerUnits({recipient.id});
+}
+
+bool World::nearbyScatterCell(const Ent& actor,Vec2i origin,Vec2i& cell,int& layer) const {
+    const auto& ud=unitDef(actor);const auto [cx,cy]=origin;
+    const int height=map.surfaceHeight(cx,cy,actor.navLayer);
+    struct Candidate {Vec2i cell;int layer;bool preferred;};
+    std::vector<Candidate> candidates;candidates.reserve(24);
+    bool preferredFound=false;
+    const auto projectionMatches=[&](int x,int y) {
+        if(nativeRulesBaseVersion<nativeNearbyHeightSceneVersion)return true;
+        // Source Tactical6a6a50 walks the screen diagonal in eight-lepton
+        // steps. For represented base heights, a cell k steps ahead occludes
+        // this center exactly when its relative level is at least2*k-1.
+        const int base=map.at(x,y).height;
+        for(int k=1;k<=6;++k)
+            if(map.surfaceHeight(x+k,y+k,0)-base>=2*k-1)return false;
+        return true;
+    };
+    const auto append=[&](int x,int y) {
+        if(candidates.size()==24 || !map.inBounds(x,y))return;
+        const int targetLayer=map.preferredLayer(x,y,ud.pathDomain());
+        // The primary source query requires an entirely clear cell, unlike
+        // the adjacent fallback, which can share an infantry cell.
+        if(!map.surfacePassable(x,y,ud.pathDomain(),targetLayer,true,ud.fitsUnderBridge(),nativeGateAccess(actor))
+            || std::abs(height-map.surfaceHeight(x,y,targetLayer))>=2
+            || unitAtCell(x,y,targetLayer)!=INVALID_EID)return;
+        const bool preferred=projectionMatches(x,y);preferredFound |= preferred;
+        candidates.push_back({{x,y},targetLayer,preferred});
+    };
+    for(int radius=0;radius<std::min(32,map.w+map.h);++radius) {
+        for(int dx=-radius;dx<=radius && candidates.size()<24;++dx) {
+            append(cx+dx,cy-radius);append(cx+dx,cy+radius);
+        }
+        for(int dy=1-radius;dy<radius && candidates.size()<24;++dy) {
+            append(cx-radius,cy+dy);append(cx+radius,cy+dy);
+        }
+        if(preferredFound || candidates.size()==24)break;
+    }
+    if(candidates.empty())return false;
+    const size_t count=preferredFound?std::count_if(candidates.begin(),candidates.end(),[](const auto& candidate){return candidate.preferred;}):candidates.size();
+    size_t index=(tick/2)%count;
+    for(const auto& chosen:candidates) {
+        if(preferredFound && !chosen.preferred)continue;
+        if(index--==0){cell=chosen.cell;layer=chosen.layer;return true;}
+    }
+    return false;
+}
+
+bool World::scatterUnit(EntityRef recipient) {
+    if(!valid(recipient))return false;
+    const auto& unit=ents[recipient.id];const auto* type=unit.nativeIdentity.definition.get();
+    if(!type || unit.isBuilding || unitDef(unit).isInfantry() || unitDef(unit).isAir()
+        || unit.immobilized() || unit.deploying() || unit.deployed || unit.radDeployed
+        || unit.nativeIdentity.sleeping || type->isTrain || unit.nativeTransportUnload.active()
+        || type->movement.locomotor==NativeLocomotor::Teleport)return false;
+    // Unit::Scatter(empty,true,false) retains an existing destination, even
+    // before physical motion begins. These are the project's saved routes
+    // and admitted movement goals, including deferred path preparation.
+    if(unit.pathIdx<(int)unit.path.size() || !unit.wps.empty() || unit.driveArc.active())return false;
+    switch(unit.state) {
+    case UState::Moving:case UState::AttackMoving:case UState::Chasing:
+    case UState::HarvestGo:case UState::HarvestReturn:case UState::Boarding:case UState::Servicing:
+        return false;
+    default:break;
+    }
+    if(unit.nativeGround.initialized) {
+        const auto& turn=unit.nativeGround.hull;const uint64_t frame=tick/2;
+        if(turn.duration && (frame<turn.since || frame-turn.since<turn.duration))return false;
+    }
+    Vec2i destination;int layer=0;
+    // The original empty-coordinate Unit branch calls Nearby directly. It
+    // has no random draw and no directional fallback after search failure.
+    if(!nearbyScatterCell(unit,{(int)unit.x,(int)unit.y},destination,layer))return false;
+    return !orderMove({recipient.id},destination.x+.5f,destination.y+.5f,false,false,false,layer,MoveFormation::Directional).acceptedUnits.empty();
+}
+
+bool World::scatterInfantry(EntityRef recipient,InfantryScatterPolicy policy,bool eliteInCell) {
+    constexpr Vec2i steps[]={{0,-1},{1,-1},{1,0},{1,1},{0,1},{-1,1},{-1,0},{-1,-1}};
+    if(!valid(recipient))return false;
+    const auto& foot=ents[recipient.id];
+    if(foot.player<0 || foot.player>=numPlayers || foot.immobilized() || foot.deploying())return false;
+    const bool computer=players[foot.player].isAI;
+    const bool playerOrder=policy==InfantryScatterPolicy::Player;
+    const bool forced=policy!=InfantryScatterPolicy::Warning;
+    if(!forced && !nativeCrushWarningRules.playerScatter && !eliteInCell
+        && (!computer || nativeCrushWarningRules.computerIQ<nativeCrushWarningRules.scatterIQ))return false;
+    if(!forced && !computer && (foot.deployed || foot.radDeployed))return false;
+    // Manual event7 passes true,false. Unlike Drive's forced blockage, it
+    // does not request undeployment of the represented deployed sequence.
+    if(playerOrder && (foot.deployed || foot.radDeployed))return false;
+    if((foot.deployed || foot.radDeployed) && rulesTransformIndex(foot)>=0)return false;
+    if(pendingMovement(foot) && (!foot.nativeIdentity.definition || !foot.nativeIdentity.definition->fraidycat))return false;
+    if(playerOrder && pendingMovement(foot) && !computer && !nativeCrushWarningRules.playerScatter)return false;
+    // Foot's source coordinate query uses the locomotor's immediate next
+    // cell while moving. Existing automatic reactions keep their policy.
+    const Vec2i origin=playerOrder && pendingMovement(foot)?foot.path[foot.pathIdx]:Vec2i{(int)foot.x,(int)foot.y};
+    const auto [cx,cy]=origin;
+    const int localX=(int)(foot.x*256)&255,localY=(int)(foot.y*256)&255;
+    const uint16_t heading=localX==128 && localY==128?NativeGroundMath::fromDir(foot.dir)
+        :NativeGroundMath::vector((float)localX-128,(float)localY-128);
+    // Empty-source warnings use the recipient's pose, not the crusher's
+    // location. Consume the source [0,4] draw before Nearby; only the adjacent
+    // fallback uses that draw to rotate eight exits.
+    const int start=((((unsigned)heading>>12)+1)/2+rng.range(0,4)-2)&7;
+    if(nativeRulesBaseVersion>=nativeNearbyScatterSceneVersion) {
+        Vec2i destination;int layer=0;
+        if(nearbyScatterCell(foot,origin,destination,layer)) {
+            if(foot.deployed || foot.radDeployed) {
+                orderDeployment({recipient.id});
+                if(!valid(recipient) || ents[recipient.id].deployed || ents[recipient.id].radDeployed)return false;
+            }
+            const auto result=orderMove({recipient.id},destination.x+.5f,destination.y+.5f,false,false,false,layer,MoveFormation::Directional);
+            return !result.acceptedUnits.empty();
+        }
+    }
+    for(int offset=0;offset<8;++offset) {
+        const auto step=steps[(start+offset)&7];const int nx=cx+step.x,ny=cy+step.y;
+        const int surface=movementStep(foot,cx,cy,foot.navLayer,nx,ny);
+        if(surface<0 || bldBlocked(nx,ny,surface) || cellHardBlockedForMove(nx,ny,recipient.id,surface))continue;
+        if(foot.deployed || foot.radDeployed) {
+            orderDeployment({recipient.id});
+            if(!valid(recipient) || ents[recipient.id].deployed || ents[recipient.id].radDeployed)break;
+        }
+        // This is a locomotor reaction, not an acknowledged player order.
+        // Reuse admission/controller cleanup without producing order voices.
+        const auto result=orderMove({recipient.id},nx+.5f,ny+.5f,false,false,false,surface,MoveFormation::Directional);
+        return !result.acceptedUnits.empty();
+    }
+    return false;
 }
 
 bool World::repathUnit(EID id, int gx, int gy, std::vector<Vec2i>& path,EID fixedBlocker,int requestedGoalLayer) {
@@ -40,7 +261,7 @@ bool World::repathUnit(EID id, int gx, int gy, std::vector<Vec2i>& path,EID fixe
                 || (!isAllied(e.player,other.player) && !pendingMovement(other));
             const size_t index=movementSlot(x,y,other.navLayer);
             auto& cell=costs[index];cell=std::max(cell,uint8_t{16});
-            if(fixed && !canCrushOccupant(*this,e,other)) {
+            if(fixed && !canCrushOccupant(e,other)) {
                 // An infantry mover can share a cell with two stationary
                 // infantry. Only fixed occupants exhausting all slots seal it.
                 if(!infantry || !unitDef(other).isInfantry()
@@ -127,6 +348,11 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
     if (e.parasite != INVALID_EID && valid(e.parasite) && ents[e.parasite].utype == UnitType::Squid) return;
     const UnitDef& ud = unitDef(e);
     Vec2i next = e.path[e.pathIdx];
+    if(nativeRulesBaseVersion>=nativeNearbyScatterSceneVersion && ud.isInfantry() && e.navLayer==0) {
+        const EID origin=bldAt((int)e.x,(int)e.y);
+        if(valid(origin) && nativeSaleBuilding(ents[origin]) && ents[origin].selling
+            && bldAt(next.x,next.y)==origin)return;
+    }
     auto corridorCell = [&](int x,int y,int domain) { return narrowMovementCell(x,y,domain); };
     auto abandonPath = [&]() {
         e.nativeMovement={};
@@ -240,7 +466,7 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
             e.blockTick = 0;
             int gx = e.path.back().x, gy = e.path.back().y;
             // 终点被敌军硬挡才放弃；友军占用仍尝试靠近
-            if (cellHardBlockedForMove(gx, gy, id)) {
+            if (cellHardBlockedForMove(gx, gy, id,-1,true)) {
                 EID gOcc=unitAtCell(gx,gy,movementLayerAt(e,gx,gy));
                 if (gOcc != INVALID_EID && !isAllied(ents[gOcc].player,e.player)) {
                     abandonPath();
@@ -272,8 +498,8 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
     EID occ = unitAtCell(next.x,next.y,nextLayer);
     if (occ != INVALID_EID && occ != id) {
         Ent& o = ents[occ];
-        // 坦克碾压（RA2 原作）：重甲车辆直接碾死敌方无甲步兵
-        if (canCrushOccupant(*this,e,o)) {
+        // Source crushing flags and historical eligibility share the same collision/lifecycle path.
+        if (nativeRulesBaseVersion<nativeCrushContactSceneVersion && canCrushOccupant(e,o)) {
             emitSoundAt(Sfx::Crush, o.x, o.y);
             if(o.player>=0 && o.player<numPlayers) {
                 Player& vp = players[o.player];
@@ -282,7 +508,8 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
             kill(occ);
             if(!valid(id)) return; // death callbacks can also retire the moving vehicle
             // 格子已空，继续走正常移动流程
-        } else if (cellHardBlockedForMove(next.x, next.y, id)) {
+        } else if (cellHardBlockedForMove(next.x, next.y, id,-1,true)) {
+            if(scatterBlockedInfantry(e,next.x,next.y,nextLayer))return;
             EID yielding=occ;
             if(ud.isInfantry()) for(EID other=unitOccHead[(size_t)next.y*map.w+next.x];other!=INVALID_EID;other=ents[other].occNext) {
                 const auto& candidate=ents[other];
@@ -332,7 +559,7 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
     const bool aimTurret=unitHasTurret(e.utype) && (e.state==UState::Attacking || e.state==UState::Chasing
         || (e.state==UState::AttackMoving && valid(e.target)));
     auto finishNode=[&](float x,float y,bool moved,bool keepCurve=false) {
-        if(cellHardBlockedForMove(next.x,next.y,id,nextLayer) || bldBlocked(next.x,next.y,nextLayer)) {
+        if(cellHardBlockedForMove(next.x,next.y,id,nextLayer,true) || bldBlocked(next.x,next.y,nextLayer)) {
             releaseReservation();
             waitOrRepath(unitAtCell(next.x,next.y,nextLayer));
             return;
@@ -349,6 +576,7 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
         pickupCrates(e);
         if(!valid(identity))return;
         unitOccSync(id);airOccSync(id);
+        if(moved && !resolveCrushingContact(id))return;
         offerNativeCellEntry(id,next.x,next.y);
         if(sourceMovement && valid(identity)) {
             auto& moving=ents[id];
@@ -363,7 +591,7 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
     if(arc.active() && (e.driveArc.active() || distf(e.x,e.y,entry.x,entry.y)<.00001f)) {
         // A wide arc crosses into its next cell before completing the node.
         // Check virtual occupancy as well as units before advancing the pose.
-        if(arc.wide && cellHardBlockedForMove(next.x,next.y,id,nextLayer)) {
+        if(arc.wide && cellHardBlockedForMove(next.x,next.y,id,nextLayer,true)) {
             releaseReservation();
             waitOrRepath(unitAtCell(next.x,next.y,nextLayer));
             if(e.driveArc.active() && !driveArcMatchesRoute(e))e.driveArc={};
@@ -379,6 +607,7 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
             e.x=point.x;e.y=point.y;e.blockTick=0;
             e.walkAnim=e.walkAnim>=999999999?0:e.walkAnim+1;
             unitOccSync(id);airOccSync(id);
+            resolveCrushingContact(id);
         }
         return;
     }
@@ -434,7 +663,7 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
         const int sweptLayer=map.hasBridgeDecks()?movementStep(e,(int)e.x,(int)e.y,e.navLayer,(int)mx,(int)my):0;
         // Diagonal interpolation can enter an orthogonal cell before the path
         // node's cell. Reserve/check the actual swept cell as well as the node.
-        if (sweptLayer>=0 && cellHardBlockedForMove((int)mx,(int)my,id,sweptLayer)) {
+        if (sweptLayer>=0 && cellHardBlockedForMove((int)mx,(int)my,id,sweptLayer,true)) {
             releaseReservation();
             waitOrRepath(unitAtCell((int)mx,(int)my,sweptLayer));
             return;
@@ -452,6 +681,7 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
         e.navLayer=(uint8_t)sweptLayer;
         unitOccSync(id);
         airOccSync(id);
+        if(!resolveCrushingContact(id))return;
         if(reachingArc) {
             e.driveArc=arc;
             if(nativeSegments>1 && e.nativeMovement.credit>1e-8)moveAlongPath(e,id,nativeSegments-1);

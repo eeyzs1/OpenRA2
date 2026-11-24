@@ -1,4 +1,5 @@
 #include "game/world.h"
+#include "game/native_scene_contract.h"
 #include "game/lang.h"
 #include <cmath>
 #include <algorithm>
@@ -158,7 +159,7 @@ int World::countInfantryAtCell(int x, int y, EID ignore,int layer) const {
 // - 车/舰：同格至多 1（友军/敌军、静止/移动一律硬挡，避免永久重叠）
 // - 步兵：同格至多 3
 // - 车可进入有步兵的格（碾压/驶过另判）；步兵不可进入有车/舰的格
-bool World::cellHardBlockedForMove(int x, int y, EID mover,int layer) const {
+bool World::cellHardBlockedForMove(int x, int y, EID mover,int layer,bool physicalStep) const {
     const bool alreadyHere=valid(mover) && (int)ents[mover].x==x && (int)ents[mover].y==y;
     if(nativeGroundEnabled() && !alreadyHere && map.inBounds(x-1,y)) {
         const EID refinery=bldAt(x-1,y);
@@ -176,19 +177,29 @@ bool World::cellHardBlockedForMove(int x, int y, EID mover,int layer) const {
     const Ent& self = ents[mover];
     if(layer<0)layer=movementLayerAt(self,x,y);
     const bool moverInf = unitDef(self).isInfantry();
+    // Walk advances an admitted in-cell step without asking to enter that
+    // origin cell again. A stopped crusher can already share it with infantry.
+    const bool infantryAlreadyHere=physicalStep && moverInf && alreadyHere && self.navLayer==layer
+        && nativeRulesBaseVersion>=nativeInfantryDepartureSceneVersion;
+    // A Board approach may enter its admitted carrier, while every other
+    // occupant and nonphysical occupancy query retains the ordinary policy.
+    const EID carrier=physicalStep && nativeRulesBaseVersion>=nativeTransportBoardingSceneVersion
+        && self.state==UState::Boarding && valid(self.target) && !ents[self.target].isBuilding
+        && entryRejection(mover,self.target,EntryKind::Board)==EntryRejectReason::None?self.target:INVALID_EID;
     constexpr int kInfStack = 3;
     int otherInf = 0;
     bool hasVehicle = false;
     for (EID id = unitOccHead[(size_t)cellIdx(x, y)]; id != INVALID_EID; id = ents[id].occNext) {
-        if (id == mover || ents[id].navLayer!=layer) continue;
+        if (id == mover || id == carrier || ents[id].navLayer!=layer) continue;
+        if(physicalStep && nativeRulesBaseVersion>=nativeCrushContactSceneVersion && canCrushOccupant(self,ents[id]))continue;
         if (unitDef(ents[id]).isInfantry()) otherInf++;
-        else hasVehicle = true;
+        else if(!infantryAlreadyHere)hasVehicle = true;
     }
     if (moverInf) {
         if (hasVehicle) return true;
         return otherInf >= kInfStack;
     }
-    return hasVehicle || otherInf>0; // Surface vehicles cannot overlap infantry; crushing is resolved before entry.
+    return hasVehicle || otherInf>0; // Every occupant not admitted by contact crushing still blocks.
 }
 
 bool World::hasBld(int player, BldType t) const {

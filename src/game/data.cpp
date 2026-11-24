@@ -239,6 +239,7 @@ static UnitDef g_units[(int)UnitType::COUNT] = {
     {UnitType::ASW,"反潜机",0,0,30,3,2,Armor::Light,MoveType::Air,wASWBomb(),0,BldType::COUNT,1},
     {UnitType::CargoPlane,"运输机",0,0,400,15,0,Armor::Light,MoveType::Air,wNone(),0,BldType::COUNT},
     {UnitType::SpyPlane,"侦察机",0,0,400,15,0,Armor::Light,MoveType::Air,wNone(),0,BldType::COUNT},
+    {UnitType::NativeInfantry,"技师",0,0,1,12,0,Armor::None,MoveType::Infantry,wNone(),0,BldType::COUNT},
 };
 
 // ===================== 建筑表 =====================
@@ -408,7 +409,7 @@ static const char* kUnitKey[(int)UnitType::COUNT] = {
     "Initiate", "Brute", "Virus", "LasherTank", "GatlingTank", "Magnetron", "MasterMind", "FloatingDisc", "Boomer",
     "Boris", "SiegeChopper", "ChaosDrone",
     "Slave", "SlaveMiner",
-    "YuriPrime", "ChronoIvan", "NativeVehicle", "ASW", "CargoPlane", "SpyPlane",
+    "YuriPrime", "ChronoIvan", "NativeVehicle", "ASW", "CargoPlane", "SpyPlane", "NativeInfantry",
 };
 static const char* kBldKey[(int)BldType::COUNT] = {
     "ConYard", "PowerPlant", "TeslaReactor", "NuclearReactor",

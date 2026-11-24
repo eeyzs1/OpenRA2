@@ -14,7 +14,7 @@ import re
 
 from gen_native_weapons import export_native_weapons
 from gen_native_weapon_catalog import export_native_weapon_catalog
-from gen_native_production import production_timing, production_economy, export_support_rules, SOURCE_SW_TYPES
+from gen_native_production import production_timing, production_economy, export_support_rules, building_repair_cost, building_sale_values, SOURCE_SW_TYPES
 from gen_voices import unit_mapping
 from map_format import read_ini
 from ra2lib import MixTree
@@ -157,6 +157,8 @@ def build_catalog(tree, edition, scenario_file=None):
     for kind, names, mapping in (("units", enum_names("UnitType"), unit_assets),
                                  ("buildings", enum_names("BldType"), building_assets)):
         for name in names:
+            if name == "NativeInfantry" and edition != "ra2":
+                continue
             aliases = list(mapping.get(name.lower(), []))
             if kind == "buildings":
                 aliases = BUILDING_ALIASES.get(name, aliases)
@@ -210,7 +212,7 @@ def export_profile(tree, edition, output):
     general = rules["general"]
     ini = configparser.ConfigParser(interpolation=None);ini.optionxform = str
     label = "RA2 本地基础规则" if edition == "ra2" else "尤里本地基础规则"
-    ini["Scene"] = {"Version": "46" if edition == "ra2" else "43", "TemporalVersion": "1", "CrewVersion": "2", "Mode": "Rules", "RulesId": catalog["edition"], "RulesName": label,
+    ini["Scene"] = {"Version": "68" if edition == "ra2" else "43", "TemporalVersion": "1", "CrewVersion": "2", "Mode": "Rules", "RulesId": catalog["edition"], "RulesName": label,
                     "Map": "", "SourceSHA256": catalog["sha256"], "SourceArchive": catalog["source"],
                     "SourceArtSHA256": catalog["art_sha256"], "SourceArtArchive": catalog["art_source"],
                     "Houses": "0", "Actors": "0", "Types": "0",
@@ -219,15 +221,25 @@ def export_profile(tree, edition, output):
               for key in ("infantrytypes", "vehicletypes", "aircrafttypes", "buildingtypes")}
     armor = ["none", "flak", "plate", "light", "medium", "heavy", "wood", "steel", "concrete", "special_1", "special_2"]
     yes = lambda value: str(value).lower() in ("yes", "true", "1")
+    if edition == "ra2":
+        ini["NativeTransportUnload"] = {"Version":"1", "RateFrames":str(int(float(rules["unload"]["rate"])*900)),
+            "RandomFrames":"2", "MovingFrames":"10", "StageFrames":"1"}
+        ini["NativeCrushWarning"] = {"Version": "1",
+            "PlayerScatter": str(int(yes(rules.get("combatdamage", {}).get("playerscatter", "no")))),
+            "ComputerIQ": rules.get("iq", {}).get("maxiqlevels", "5"),
+            "ScatterIQ": rules.get("iq", {}).get("scatter", "2")}
     launchers = ["DRED", "V3"] + (["BSUB"] if edition == "yr" else [])
     missiles = [rules[identity.lower()]["spawns"].upper() for identity in launchers]
     units = dict(catalog["units"])
     units["NativeVehicle"] = [{"id": identity, "raw": rules[identity.lower()],
         "hp": int(rules[identity.lower()]["strength"]), "cost": int(rules[identity.lower()].get("cost", "0")),
         "sight": int(rules[identity.lower()].get("sight", "0")), "armor": rules[identity.lower()]["armor"]} for identity in missiles]
+    # Append the source carrier after all established slots. Frozen AI and
+    # older actor indexes must not move when the ordinary profile grows.
+    supplemental = units.pop("NativeInfantry", [])
     types, seen = [], set()
-    for kind in ("units", "buildings"):
-        for base, aliases in (units if kind == "units" else catalog[kind]).items():
+    for kind, group in (("units", units), ("buildings", catalog["buildings"]), ("units", {"NativeInfantry": supplemental})):
+        for base, aliases in group.items():
             for item in aliases:
                 id, d = item["id"], item["raw"]
                 # The generic fusion harvester shares HARV art. Its original
@@ -252,6 +264,15 @@ def export_profile(tree, edition, output):
                        "VeteranFaster": str(int("FASTER" in d.get("veteranabilities", "").upper().split(","))),
                        "EliteFaster": str(int("FASTER" in (d.get("veteranabilities", "") + "," + d.get("eliteabilities", "")).upper().split(","))),
                        "TooBigToFitUnderBridge": str(int(yes(d.get("toobigtofitunderbridge", "no"))))}
+                if edition == "ra2":
+                    row.update(SaleCrewed=str(int(yes(d.get("crewed", "no")))),
+                               Engineer=str(int(yes(d.get("engineer", "no")))))
+                if edition == "ra2" and not building:
+                    # The original infantry constructor enables Crushable;
+                    # other object types and Crusher default to false.
+                    row.update(Crusher=str(int(yes(d.get("crusher", "no")))),
+                               Crushable=str(int(yes(d.get("crushable", "yes" if id in tables["infantrytypes"] else "no")))),
+                               Fraidycat=str(int(yes(d.get("fraidycat", "no")))))
                 if building:
                     wall=yes(d.get("wall", "no"))
                     if not wall and "height" not in visual:raise ValueError((id,"missing original art Height"))
@@ -263,6 +284,7 @@ def export_profile(tree, edition, output):
                                Garrison=d.get("maxnumberoccupants", "0") if yes(d.get("canbeoccupied", "no")) else "0",
                                Capturable=str(int(yes(d.get("capturable", "no")))))
                 else:
+                    if edition == "ra2": row["IsTrain"] = str(int(yes(d.get("istrain", "no"))))
                     row.update(TransportCapacity=d.get("passengers", "0"), PassengerSize=d.get("size", "1"),
                                PassengerLimit=d.get("sizelimit", "2"), SourceAmmo=d.get("ammo", "0"), SourceSpawns=d.get("spawnsnumber", "0"))
                 ini["Type." + str(index)] = row
@@ -282,10 +304,16 @@ def export_profile(tree, edition, output):
                     "InfantryExit": str(1 if yes(d.get("gdibarracks", "no")) else 2 if yes(d.get("nodbarracks", "no")) else 0)}
                 if edition == "ra2":
                     ini["NativeProduction.Type." + str(index)]["ROT"] = str(min(127, max(0, int(d.get("rot", "0")))))
+                    ini["NativeProduction.Type." + str(index)]["BuildingRepairCost"] = str(building_repair_cost(d,rules,id) if building else 0)
+                    human,other=building_sale_values(d,rules,id) if building else (0,0)
+                    ini["NativeProduction.Type." + str(index)].update(BuildingSaleHuman=str(human),BuildingSaleOther=str(other))
                 ini["NativeProduction.Type." + str(index)].update(production_economy(d, rules, id, edition))
                 ini["NativeProduction.Type." + str(index)].update(
                     CrateGoodie=str(int(yes(d.get("crategoodie", "no")))),
                     StartAllowed=str(int(yes(d.get("allowedtostartinmultiplayer", "yes")))))
+    if edition == "ra2":
+        ini["NativeSaleSurvivors"] = {"Version": "1", **{key: general[key.lower()].upper()
+            for key in ("AlliedSurvivorDivisor", "SovietSurvivorDivisor", "AlliedCrew", "SovietCrew", "Engineer", "Technician")}}
     ini["Scene"]["Types"] = str(len(types))
     export_mode_overlays(tree, edition, ini, types)
     export_native_crates(ini, {}, rules)
@@ -301,7 +329,7 @@ def export_profile(tree, edition, output):
     for index, identity in enumerate(types):
         ini["Type." + str(index)]["Trainable"] = str(int(yes(rules[identity.lower()].get("trainable", "yes"))))
     abilities = {rules.get(name.lower(), {}).get('type', '').lower() for name in rules.get("superweapontypes", {}).values()}
-    ini["NativeProduction"] = {"Version": "9" if edition == "ra2" else "6", "OreValue": rules["riparius"]["value"], "GemValue": rules["cruentus"]["value"],
+    ini["NativeProduction"] = {"Version": "11" if edition == "ra2" else "6", "OreValue": rules["riparius"]["value"], "GemValue": rules["cruentus"]["value"],
         "SuperweaponMask": str(sum(1 << i for i, name in enumerate(SOURCE_SW_TYPES) if name.lower() in abilities)),
         "SpyMoneyFraction": general.get("spymoneystealpercent", ".5"), "SpyBlackoutTicks": str(int(general.get("spypowerblackout", "1000"))*2),
         "SpyTechByOwner": str(int(edition == "ra2")),
@@ -315,6 +343,8 @@ def export_profile(tree, edition, output):
         from decimal import Decimal, ROUND_CEILING
         ini["NativeProduction"]["HarvesterDumpFrames"] = str(int((Decimal(general.get("harvesterdumprate", ".016"))*900).to_integral_value(rounding=ROUND_CEILING)))
         ini["NativeProduction"]["PurifierBonus"] = general.get("purifierbonus", ".25")
+        ini["NativeProduction"]["BuildingRepairFrames"] = str(int(Decimal(general.get("repairrate", ".016"))*900))
+        ini["NativeProduction"]["BuildingRepairStep"] = general.get("repairstep", "8")
     ini["NativeProduction.Prerequisites"] = {key[12:].upper(): value for key, value in general.items() if key.startswith("prerequisite")}
     country_keys = ["", "Americans", "Alliance", "French", "Germans", "British", "Russians", "Confederation", "Africans", "Arabs", "", "YuriCountry"]
     ini["Rules.Countries"] = {str(i): key for i, key in enumerate(country_keys) if key and key.lower() in rules}

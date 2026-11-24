@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
 
 int GameRegression::movingYieldRegression() {
     int failures=0;
@@ -346,6 +347,94 @@ int GameRegression::movingYieldRegression() {
         }
         const bool ok=protectedUnit && (control!=3 || (w.ents[b].guard && w.ents[a].state==UState::Idle && (int)w.ents[a].x==17));
         failures+=!ok;std::printf("MOVING_YIELD_CONTROL %s scenario=%d protected=%d\n",ok?"PASS":"FAIL",control,protectedUnit);
+    }
+    {
+        // Capture of the natural-match bay conflict: the first car is already
+        // dwelling in a dead end; both admitted retreat prefixes name that bay.
+        World w;bool setup=w.init(64,64,20261123,2,0,{Faction::Allies,Faction::Soviet},0,
+            "maps/skirmish-reference.txt",true,true,"assets/rules/profiles/ra2.ini",{Country::America,Country::Russia});
+        if(!setup){std::printf("OCCUPIED_BAY_YIELD FAIL initialization\n");return failures+1;}
+        for(EID id=0;id<(EID)w.ents.size();++id)if(w.valid(id))w.kill(id,false);
+        for(auto& cell:w.map.cells){cell=Cell{};cell.overlay=Overlay::Rock1;}
+        for(int x=4;x<=25;++x)w.map.at(x,20)=Cell{};
+        for(int y=18;y<=22;++y)w.map.at(12,y)=Cell{};
+        for(int y=8;y<=19;++y)for(int x=8;x<=16;++x)w.map.at(x,y)=Cell{};
+        w.cratesEnabled=false;w.crates.clear();int native=-1;
+        for(int i=0;i<(int)w.nativeTypes.size();++i)if(w.nativeTypes[i]->id=="TTNK")native=i;
+        const EID leader=w.spawnUnit(0,UnitType::TeslaTank,12.5f,21.5f,native);
+        if(!w.valid(leader)){std::printf("OCCUPIED_BAY_YIELD FAIL leader\n");return failures+1;}
+        w.ents[leader].dir=w.ents[leader].turretDir=7;w.ents[leader].atkCd=1000000;
+        World::Cmd opening{};opening.type=World::Cmd::Move;opening.ids={leader};opening.x=12.5f;opening.y=16.5f;
+        w.bindCommand(opening);w.applyCmd(0,opening);for(int n=0;n<8;++n)w.update();
+        bool established=!w.trafficDebug().empty();w.kill(leader,false);
+        const EID dwelling=w.spawnUnit(0,UnitType::TeslaTank,12.5f,22.5f,native);
+        const EID incoming=w.spawnUnit(0,UnitType::TeslaTank,12.5f,21.5f,native);
+        setup &= native>=0 && w.valid(dwelling) && w.valid(incoming);
+        if(!setup){std::printf("OCCUPIED_BAY_YIELD FAIL setup\n");return failures+1;}
+        const Vec2i bay{12,22},stem{12,21},goals[]={{20,20},{4,20}};
+        for(int n=0;n<2;++n) {
+            World::Cmd move{};move.type=World::Cmd::Move;move.ids={n?incoming:dwelling};
+            move.x=goals[n].x+.5f;move.y=goals[n].y+.5f;w.bindCommand(move);w.applyCmd(0,move);
+            auto& actor=w.ents[n?incoming:dwelling];actor.atkCd=1000000;
+            actor.path.assign(30,bay);actor.path.push_back(stem);actor.path.push_back({12,20});
+            const int increment=n?-1:1;
+            for(int x=12+increment;x!=(n?3:21);x+=increment)actor.path.push_back({x,20});
+            actor.pathIdx=0;actor.state=UState::Moving;actor.blockTick=40;
+            actor.goalX=goals[n].x+.5f;actor.goalY=goals[n].y+.5f;
+            actor.dir=actor.turretDir=n?3:7;
+        }
+        FILE* file=tmpfile();World resumed;bool exact=file && w.saveGame(file);
+        if(exact){rewind(file);exact=resumed.loadGame(file) && resumed.checksum()==w.checksum();}if(file)fclose(file);
+        bool moved[2]{},reached[2]{},legal=true,keptGoals=true,budget=true;
+        for(int tick=0;tick<1200;++tick) {
+            w.update();if(exact){resumed.update();exact=w.checksum()==resumed.checksum();}
+            established |= !w.trafficDebug().empty();
+            for(int n=0;n<2;++n) {
+                const auto& actor=w.ents[n?incoming:dwelling];
+                moved[n] |= std::abs(actor.x-12.5f)>.001f || std::abs(actor.y-(n?21.5f:22.5f))>.001f;
+                reached[n] |= distf(actor.x,actor.y,goals[n].x+.5f,goals[n].y+.5f)<.05f;
+                if(actor.pathIdx<(int)actor.path.size())keptGoals &= actor.path.back()==goals[n];
+                legal &= w.valid(n?incoming:dwelling) && actor.hp==300 && w.map.passable((int)actor.x,(int)actor.y)
+                    && !w.bldBlocked((int)actor.x,(int)actor.y);
+            }
+            legal &= w.ents[dwelling].occCell!=w.ents[incoming].occCell;
+            budget &= w.repathsThisTick<=8;
+        }
+        const bool ok=setup && established && exact && moved[0] && moved[1] && reached[0] && reached[1] && keptGoals && legal && budget;
+        failures+=!ok;
+        std::printf("OCCUPIED_BAY_YIELD %s setup=%d established=%d moved=%d,%d reached=%d,%d goals=%d legal=%d budget=%d replay=%d\n",
+            ok?"PASS":"FAIL",setup,established,moved[0],moved[1],reached[0],reached[1],keptGoals,legal,budget,exact);
+    }
+    if(const char* input=std::getenv("OPENRA2_RECIPROCAL_BAY_INPUT")) {
+        // Natural-match recovery includes the captured AI schedule. A World
+        // alone does not advance those controllers or their waiting columns.
+        bool loaded=loadGameFile(input);const auto original=world.checksum();
+        World captured=world;captured.map.bldOccRef=&captured.bldOcc;auto bots=ais;
+        World replay=captured;replay.map.bldOccRef=&replay.bldOcc;auto replayBots=bots;
+        World::EntityRef car[2]{};
+        for(EID id=0;id<(EID)captured.ents.size();++id) {
+            const auto& actor=captured.ents[id];
+            if(!captured.valid(id) || actor.player!=1 || !actor.nativeIdentity.definition || actor.nativeIdentity.definition->id!="TTNK")continue;
+            if(actor.x==45.5f && (actor.y==95.5f || actor.y==94.5f))car[actor.y==95.5f?0:1]=captured.entityRef(id);
+        }
+        loaded &= captured.valid(car[0]) && captured.valid(car[1]);
+        bool moved[2]{},exact=true;int peakBudget=0;
+        for(int tick=0;tick<1200 && loaded;++tick) {
+            captured.update();for(auto& bot:bots)bot.update(captured);
+            replay.update();for(auto& bot:replayBots)bot.update(replay);
+            exact &= captured.checksum()==replay.checksum();
+            peakBudget=std::max(peakBudget,captured.repathsThisTick);
+            for(int n=0;n<2;++n)if(captured.valid(car[n])) {
+                const auto& actor=captured.ents[car[n].id];
+                moved[n] |= actor.x!=45.5f || actor.y!=(n?94.5f:95.5f);
+            }
+            captured.presentationEvents.clear();captured.evaQueue.clear();
+            replay.presentationEvents.clear();replay.evaQueue.clear();
+        }
+        const bool unchanged=world.checksum()==original;
+        const bool ok=loaded && moved[0] && moved[1] && exact && unchanged && peakBudget<=8;failures+=!ok;
+        std::printf("CAPTURED_BAY_YIELD %s loaded=%d moved=%d,%d exact=%d original_unchanged=%d budget=%d\n",
+            ok?"PASS":"FAIL",loaded,moved[0],moved[1],exact,unchanged,peakBudget);
     }
     return failures;
 }

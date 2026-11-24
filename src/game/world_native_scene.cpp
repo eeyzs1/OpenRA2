@@ -70,10 +70,29 @@ bool World::restoreNativeDefinitions(const std::string& source) {
     if(!scene)return false;
     const int declaredVersion=integer(scene,"Version",1,maximumNativeSceneVersion,ok);
     const bool rulesMap=declaredVersion==nativeSkirmishMapSceneVersion;
-    const int rulesBase=rulesMap?integer(scene,"RulesBaseVersion",nativeSkirmishRulesSemantics,nativeTravelSceneVersion,ok,nativeSkirmishRulesSemantics):declaredVersion;
+    const int rulesBase=rulesMap?integer(scene,"RulesBaseVersion",nativeSkirmishRulesSemantics,nativeCurrentRulesSceneVersion,ok,nativeSkirmishRulesSemantics):declaredVersion;
     if((rulesMap && !nativeOrdinaryRulesScene(rulesBase))
         || (!rulesMap && scene->get("RulesBaseVersion")))return false;
     const int version=nativeOrdinaryRulesScene(rulesBase)?nativeSkirmishRulesSemantics:rulesBase;
+    NativeCrushWarningRules crushWarning;
+    const auto* warning=ini.find("NativeCrushWarning");
+    if(rulesBase>=nativeCrushWarningSceneVersion) {
+        if(integer(warning,"Version",1,1,ok)!=1)return false;
+        crushWarning.available=true;
+        crushWarning.playerScatter=integer(warning,"PlayerScatter",0,1,ok)!=0;
+        crushWarning.computerIQ=integer(warning,"ComputerIQ",0,1000,ok);
+        crushWarning.scatterIQ=integer(warning,"ScatterIQ",0,1000,ok);
+    } else if(warning)return false;
+    NativeTransportUnloadRules transportUnload;
+    const auto* unload=ini.find("NativeTransportUnload");
+    if(rulesBase>=nativeTransportUnloadSceneVersion) {
+        if(integer(unload,"Version",1,1,ok)!=1)return false;
+        transportUnload.available=true;
+        transportUnload.rateFrames=integer(unload,"RateFrames",1,9000,ok);
+        transportUnload.randomFrames=integer(unload,"RandomFrames",2,2,ok);
+        transportUnload.movingFrames=integer(unload,"MovingFrames",10,10,ok);
+        transportUnload.stageFrames=integer(unload,"StageFrames",1,1,ok);
+    } else if(unload)return false;
     if(version>=35) {if(integer(scene,"TemporalVersion",1,1,ok)!=1)return false;}
     else if(scene && scene->get("TemporalVersion"))return false;
     const int crewVersion=version>=37?2:version>=36?1:0;
@@ -127,7 +146,7 @@ bool World::restoreNativeDefinitions(const std::string& source) {
     if(!parseNativeMovementRules(ini,houses,version>=16,movement))return false;
     diagnostic.stage="production rules";
     if(!parseNativeProductionRules(ini,houses,production) || (version>=11 && !production.available))return false;
-    const int ordinaryProduction=rulesBase==nativeTravelSceneVersion?9:rulesBase==nativeGroundSceneVersion?8
+    const int ordinaryProduction=rulesBase>=nativeBuildingSaleSceneVersion?11:rulesBase>=nativeBuildingRepairSceneVersion?10:rulesBase>=nativeTravelSceneVersion?9:rulesBase==nativeGroundSceneVersion?8
         :rulesBase==nativeHarvestSceneVersion?7:rulesBase==nativeEconomySceneVersion?6:0;
     if(ordinaryProduction?production.version!=ordinaryProduction:production.version>=6)return false;
     if(rulesOnly && (version>=27)!=production.economy)return false;
@@ -160,6 +179,17 @@ bool World::restoreNativeDefinitions(const std::string& source) {
             d->landTargeting=integer(s,"LandTargeting",0,2,ok);
         }
         d->kind=integer(s,"Kind",0,3,ok,0);d->immune=integer(s,"Immune",0,1,ok,d->id=="CABHUT"?1:0)!=0;
+        if(rulesBase>=nativeCrushingSceneVersion && !d->isBuilding && d->kind==0) {
+            d->sourceCrushing=true;
+            d->crusher=integer(s,"Crusher",0,1,ok)!=0;
+            d->crushable=integer(s,"Crushable",0,1,ok)!=0;
+        } else if(s->get("Crusher") || s->get("Crushable"))return false;
+        if(rulesBase>=nativeCrushWarningSceneVersion && !d->isBuilding && !d->kind)
+            d->fraidycat=integer(s,"Fraidycat",0,1,ok)!=0;
+        else if(s->get("Fraidycat"))return false;
+        if(rulesBase>=nativeTransportExitSceneVersion && !d->isBuilding && !d->kind)
+            d->isTrain=integer(s,"IsTrain",0,1,ok)!=0;
+        else if(s->get("IsTrain"))return false;
         if(rulesMap && (i<ruleTypes)!=(d->kind==0))return false;
         if(version>=35 && d->kind==0)d->warpable=integer(s,"Warpable",0,1,ok)!=0;
         if(!parseNativeCrewProfile(s,d->kind==0?crewVersion:0,weapons.get(),d->crew)
@@ -193,6 +223,11 @@ bool World::restoreNativeDefinitions(const std::string& source) {
         d->radarRGB=(uint32_t)integer(s,"RadarRGB",0,0xffffff,ok,0x5c5c5c);
         if(d->gate && (!d->isBuilding || !d->blocksMovement || d->kind || d->artFrames<2*d->gateStages+1))return false;
         if(d->kind && (!d->isBuilding || (d->kind>1 && d->overlay<0)))return false;
+        if(rulesBase>=nativeSaleSurvivorsSceneVersion && !d->kind) {
+            d->crewed=integer(s,"SaleCrewed",0,1,ok)!=0;
+            d->engineer=integer(s,"Engineer",0,1,ok)!=0;
+            if(d->isBuilding && d->engineer)return false;
+        } else if(s->get("SaleCrewed") || s->get("Engineer"))return false;
         d->armor=(Armor)integer(s,"Armor",0,(int)Armor::COUNT-1,ok);
         d->originX=integer(s,"OriginX",0,4096,ok,0);d->originY=integer(s,"OriginY",0,4096,ok,0);
         const int hp=integer(s,"Hp",1,1000000,ok),sight=integer(s,"Sight",0,128,ok),cost=integer(s,"Cost",0,10000000,ok);
@@ -210,6 +245,7 @@ bool World::restoreNativeDefinitions(const std::string& source) {
             if(type==BldType::CivHouse)d->building.weapon.damage=0;
         } else {
             UnitType type;if(!unitTypeByName(base.c_str(),type))return false;
+            if(type==UnitType::NativeInfantry && rulesBase<nativeSaleSurvivorsSceneVersion)return false;
             d->unit=unitDef(type);d->unit.name=d->name.c_str();d->unit.hp=hp;d->unit.cost=cost;d->unit.sight=sight;d->unit.armor=d->armor;
             auto locomotor=value(s,"OriginalLocomotor");
             std::transform(locomotor.begin(),locomotor.end(),locomotor.begin(),[](unsigned char c){return (char)std::tolower(c);});
@@ -280,6 +316,24 @@ bool World::restoreNativeDefinitions(const std::string& source) {
         definitions.push_back(std::move(d));
     }
     if(!ok)return false;
+    NativeSaleSurvivorRules saleSurvivors;
+    if(rulesBase>=nativeSaleSurvivorsSceneVersion) {
+        const auto* row=ini.find("NativeSaleSurvivors");
+        if(integer(row,"Version",1,1,ok)!=1)return false;
+        saleSurvivors.alliedDivisor=integer(row,"AlliedSurvivorDivisor",0,10000000,ok);
+        saleSurvivors.sovietDivisor=integer(row,"SovietSurvivorDivisor",0,10000000,ok);
+        const char* names[]={"AlliedCrew","SovietCrew","Engineer","Technician"};
+        int* types[]={&saleSurvivors.alliedCrew,&saleSurvivors.sovietCrew,&saleSurvivors.engineer,&saleSurvivors.technician};
+        for(int i=0;i<4;++i) {
+            const auto name=value(row,names[i]);
+            for(int type=0;type<(int)definitions.size();++type)if(definitions[type]->id==name)*types[i]=type;
+            if(*types[i]<0 || definitions[*types[i]]->isBuilding || !definitions[*types[i]]->unit.isInfantry())return false;
+        }
+        if(!ok || !definitions[saleSurvivors.engineer]->engineer)return false;
+        if(definitions[saleSurvivors.alliedCrew]->engineer || definitions[saleSurvivors.sovietCrew]->engineer
+            || definitions[saleSurvivors.technician]->engineer)return false; // Rerolls require a non-engineer candidate.
+        saleSurvivors.enabled=true;
+    } else if(ini.find("NativeSaleSurvivors"))return false;
     if(rulesMap){std::vector<Vec2i> starts;std::vector<RulesMapActor> placed;
         if(!rulesMapActors(ini,map,numPlayers,definitions,starts,placed))return false;}
     for(const auto& gunner:definitions)if(gunner->ifv.gunner)
@@ -374,12 +428,15 @@ bool World::restoreNativeDefinitions(const std::string& source) {
     nativeCrateRules=std::move(crateRules);
     nativeEventDefinition=std::move(eventDefinition);
     nativeProductionRules=std::move(production);
+    nativeSaleSurvivorRules=saleSurvivors;
     if(nativeProductionRules.version<4)veterancyProgressEnabled=independentSupportEnabled=false;
     if(nativeProductionRules.version<5)supportDeliveryEnabled=false;
     nativeMovementRules=std::move(movement);
+    nativeCrushWarningRules=crushWarning;
+    nativeTransportUnloadRules=transportUnload;
     nativeRocketDefinitions=std::move(rockets);nativeAircraftDefinitions=std::move(aircraft);
     nativeScenarioSource=source;nativeTypes=std::move(definitions);nativeBridgeBlueprints=std::move(bridges);nativeWeaponCatalog=std::move(weapons);
-    nativeSceneVersion=declaredVersion;nativeCrewRules=crewRules;nextCombatActor=1;nativeCrewBursts.clear();
+    nativeSceneVersion=declaredVersion;nativeRulesBaseVersion=rulesBase;nativeCrewRules=crewRules;nextCombatActor=1;nativeCrewBursts.clear();
     nativeTemporalEnabled=version>=35;nativeTemporalBeams.clear();for(auto& actor:ents)actor.nativeTemporalHead=INVALID_EID;
     rulesProfileId=std::move(profileId);rulesProfileName=std::move(profileName);rulesCountryMask=countryMask;
     rulesCountryKeys=std::move(countryKeys);rulesCountrySpeed=countrySpeed;
@@ -487,7 +544,7 @@ bool World::writeNativeActors(FILE* file) const {
 
 bool World::readNativeActors(FILE* file) {
     BinaryStateStream s{file};uint8_t active=0;s.read(active);if(!s.ok || active>1)return false;
-    nativeScenarioSource.clear();nativeTypes.clear();nativeWeaponCatalog.reset();nativeProductionRules={};nativeProductionSerial=0;std::fill_n(nativeAllies,MAX_PLAYERS,0);
+    nativeScenarioSource.clear();nativeTypes.clear();nativeWeaponCatalog.reset();nativeProductionRules={};nativeSaleSurvivorRules={};nativeCrushWarningRules={};nativeTransportUnloadRules={};nativeProductionSerial=0;std::fill_n(nativeAllies,MAX_PLAYERS,0);
     rulesProfileId.clear();rulesProfileName.clear();rulesCountryMask=0;rulesCountryKeys={};rulesCountrySpeed.fill(1);
     resetNativeEvents();
     resetNativeRockets();

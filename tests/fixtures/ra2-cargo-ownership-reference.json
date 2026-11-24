@@ -1,0 +1,126 @@
+{
+  "scope": "Source RA2 ordinary passenger ownership when a transport changes house, including an actual Gunner-flag binding path. All ordinary passengers, including the gunner, retain their previous owner through carrier ownership change and the selected dequeue.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "originalProbe": {
+    "directory": "review_out/ra2-allied-transport-20261123/original-probe-r6",
+    "exitCode": 0,
+    "cases": 4,
+    "failures": 0,
+    "probeSourceSHA256": "a14bb1249cff8c9a4dd6a222c550c8e7e53946405d9b33cdb488eb90e5b944e9",
+    "probeExecutableSHA256": "b6389d8f3a0daacfd52a5f1f7e37b05f71254e520d7fc51c6e1f7fa3f241ede3",
+    "logSHA256": "0517805e1b35953e718bf2e5c85345a7cbf23d3e2b30549b5ee3828c736ca0d9"
+  },
+  "entries": {
+    "unitSetOwningHouse": "0x7099a0",
+    "footSetOwningHouse": "0x4ca7d0",
+    "technoSetOwningHouse": "0x6cd940",
+    "footAddPassenger": "0x4cce80",
+    "passengerDequeue": "0x4689f0",
+    "gunnerBind": "0x709a20",
+    "gunnerINIRead": "0x6dcef5..0x6dcf09",
+    "modeSelection": "0x6d83f0",
+    "modeLookup": "0x6df6b0",
+    "unitLinkRestore": "0x706ef6..0x706f30",
+    "infantryOwnerVirtual": "0x4ca7d0"
+  },
+  "fields": {
+    "owner": "actor+0x1b4",
+    "passengerCount": "actor+0xf8",
+    "passengerHead": "actor+0xfc",
+    "passengerNext": "passenger+0x30",
+    "GunnerINI": "type+0x701",
+    "unrelatedUnitLink": "unit+0x5b0; not the gunner",
+    "passengerIFVMode": "passengerType+0x5b0",
+    "selectedMode": "carrier+0x10c"
+  },
+  "cases": [
+    {
+      "activeCarrier": false,
+      "gunnerFlag": false,
+      "selectedMode": 0,
+      "unrelatedUnitLinkEmpty": true,
+      "carrierNewOwner": true,
+      "passengerRetainsOldOwner": true,
+      "dequeueRetainsOwner": true
+    },
+    {
+      "activeCarrier": false,
+      "gunnerFlag": true,
+      "selectedMode": 3,
+      "unrelatedUnitLinkEmpty": true,
+      "carrierNewOwner": true,
+      "passengerRetainsOldOwner": true,
+      "dequeueRetainsOwner": true
+    },
+    {
+      "activeCarrier": true,
+      "gunnerFlag": false,
+      "selectedMode": 0,
+      "unrelatedUnitLinkEmpty": true,
+      "carrierNewOwner": true,
+      "passengerRetainsOldOwner": true,
+      "dequeueRetainsOwner": true
+    },
+    {
+      "activeCarrier": true,
+      "gunnerFlag": true,
+      "selectedMode": 3,
+      "unrelatedUnitLinkEmpty": true,
+      "carrierNewOwner": true,
+      "passengerRetainsOldOwner": true,
+      "dequeueRetainsOwner": true
+    }
+  ],
+  "providedBoundaries": [
+    "Supplied Unit carrier and Infantry-compatible Foot passenger slices, type/house records, existing-limbo passenger and empty radio arrays. Host WhatAmI is Unit1; passenger WhatAmI is Infantry15, with original Infantry owner dispatch4ca7d0 and supplied Foot Limbo early-entry4c9bd0. Full Infantry construction/locomotor wrapper does not run.",
+    "Actual Foot.AddPassenger reads type.Gunner, calls original Unit.ReceiveGunner when enabled, reads supplied passenger IFVMode3 and selects it through original mode/array routines. Empty mode-table entries are provided. Unit+0x5b0 stays null.",
+    "Original Unit/Foot/Techno carrier ownership chain, list addition/dequeue and the original selected mode path execute. House bookkeeping, visibility/target and map lookup/registry dependencies are provided as recorded in the source."
+  ],
+  "notExecuted": [
+    "Original entrypoint, full mind-control/boarding/unload missions, physical Unlimbo or game frame loop.",
+    "Actual constructed Infantry and its locomotor Limbo wrapper, nonempty temporal weapon transfer or full House bookkeeping."
+  ],
+  "nativeContract": {
+    "currentScene": 56,
+    "legacyScene": 55,
+    "production": 9,
+    "ownerField": "GarrisonedUnit.player: -2 inherits, -1 neutral, [0,numPlayers) explicit",
+    "capture": "New ordinary RA2 unit transport Board records the actor owner; garrisons and aircraft-spawn storage retain their existing contracts.",
+    "ownerChange": "Materialize inherited ordinary cargo owners before changing the carrier; retain all independent passenger owners, including native IFV gunners. Nested ownership remains independent.",
+    "save": "World75 + int32 baseRevision64..74, unchanged base body/extensions, COW1 uint32 recordCount then int32 owner per stored passenger preorder including dead slots and uint32 payload length. At most 1000000 owner records.",
+    "compatibility": "No explicit owners: original World64..74 bytes/checksum contributions; Scene55 and earlier, YR43 and fusion retain inherited behavior. App11/12 and unpublished LAN96 retained with changed rules fingerprint."
+  },
+  "nativeEvidence": {
+    "validRed": "review_out/ra2-allied-transport-20261123/native-repro-initial/behavior.log",
+    "redOrdinaryFailures": 4,
+    "redGunnerControlPass": 1,
+    "legacyInputs": "review_out/ra2-allied-transport-20261123/native-repro-initial/states",
+    "legacyJourneys": 5,
+    "currentJourneys": 6,
+    "currentTravelFixtureBaseRevisions": [
+      68,
+      74
+    ],
+    "atomicCorruptions": 8,
+    "stats": "Measured immediately after actual Unload; subsequent combat may change HP/experience.",
+    "validGunnerRed": "review_out/ra2-allied-transport-20261123/native-gunner-repro/behavior.log",
+    "redGunnerOwnerFailure": 1,
+    "initialRedCorrection": "The initial Scene55 red run declared four failures and treated IFV as a control. Its observed IFV owner1 is also incorrect under the actual Gunner evidence. The later real Scene56 red isolates the mistaken exception with all setup/control/replay/stat conditions valid.",
+    "mixedOwners": "A real new-owner Board enters a carrier that still holds an original-owner passenger. COW1 contains owners0/1, live counts are separate, real Unload restores each owner, and its loaded snapshot resumes for600 ticks.",
+    "fixtureProtection": "Current journey passengers and the psychic receive fixture-only invuln4000 to prevent incidental death from obscuring ownership. Carriers remain vulnerable and the hostile psychic Attack is real. The captured historical Scene55 inputs retain their original unprotected fields."
+  },
+  "limits": [
+    "Allied boarding and diplomacy remain outside this change; same-owner entry guard is unchanged.",
+    "Original full-frame timing, physical release placement, open-topped ownership behavior and human playtesting are not calibrated by this record."
+  ],
+  "initialProbe": {
+    "directory": "review_out/ra2-allied-transport-20261123/original-probe-r5",
+    "exitCode": 0,
+    "cases": 4,
+    "failures": 0,
+    "probeSourceSHA256": "0625aa9fd8dd45b83683ebde71e9e7a1bd75683842deca2df9f67b4a11605ad3",
+    "probeExecutableSHA256": "42e0b90eaa7e7a216a1b560d4432c441e7ffda2d0bae00d3d72f3f2c756a6f44",
+    "logSHA256": "4f33b3a0f6c46ad66b79ca950522159147db86642eccffbfb7d311ae95e6e3ec",
+    "interpretationCorrection": "The r5 supplied Unit+0x5b0 link was initially mislabeled gunner. It is restored from the Unit array, while the real Gunner path changes weapon mode. This diagnostic does not establish any gunner owner exception."
+  }
+}

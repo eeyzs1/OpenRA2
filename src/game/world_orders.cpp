@@ -1,4 +1,5 @@
 #include "game/world.h"
+#include "game/native_scene_contract.h"
 #include "game/actor_state_transfer.h"
 #include "game/world_priv.h"
 #include "game/lang.h"
@@ -144,6 +145,7 @@ MoveOrderResult World::orderMove(const std::vector<EID>& sel, float x, float y, 
     MoveOrderResult result;
     result.attackMove=attackMove;
     auto actor=[&](EID id,Ent& unit,bool preserveRoute=false){result.acceptedUnits.push_back(id);unit.nativeIdentity.sleeping=false;
+        unit.nativeTransportUnload={};
         if(!preserveRoute)stopNativeTemporal(id);
         if(!preserveRoute)rememberAttackMove(id,unit.state==UState::AttackMoving);
         if(feedback)addOrderActor(result.actors,(int)unit.utype,(int)players[unit.player].faction);};
@@ -319,7 +321,12 @@ MoveOrderResult World::orderMove(const std::vector<EID>& sel, float x, float y, 
         const auto findOriginComponent = [&] {
             return componentAt(domain, connectivityStart.x, connectivityStart.y, e.navLayer, underBridge, gateAccess);
         };
-        int originComponent=components[profile].empty()?-2:findOriginComponent();
+        EID sellingOrigin=INVALID_EID;
+        if(nativeRulesBaseVersion>=nativeNearbyScatterSceneVersion && ud.isInfantry() && e.navLayer==0) {
+            const EID origin=bldAt((int)e.x,(int)e.y);
+            if(valid(origin) && nativeSaleBuilding(ents[origin]) && ents[origin].selling)sellingOrigin=origin;
+        }
+        int originComponent=sellingOrigin!=INVALID_EID || components[profile].empty()?-2:findOriginComponent();
         auto available=[&](int tx,int ty) {
             return map.inBounds(tx,ty) && map.surfacePassable(tx,ty,domain,targetLayer(tx,ty),true,underBridge,gateAccess)
                 && (originComponent==-2 || (originComponent>=0 && componentAt(domain,tx,ty,targetLayer(tx,ty),underBridge,gateAccess)==originComponent))
@@ -343,6 +350,15 @@ MoveOrderResult World::orderMove(const std::vector<EID>& sel, float x, float y, 
             }
         const auto route=[&](int tx,int ty) {
             if(e.navLayer==0 && targetLayer(tx,ty)==0 && directOrderPath(map,(int)e.x,(int)e.y,tx,ty,domain,underBridge,gateAccess,path))return true;
+            if(sellingOrigin!=INVALID_EID) {
+                // Admit the route that becomes available after this selling
+                // foundation retires. Physical movement still uses the live
+                // map and waits at its occupied cells; no collision is removed.
+                auto occupancy=bldOcc;
+                for(auto& occupant:occupancy)if(occupant==sellingOrigin+1)occupant=-1;
+                Map afterSale=map;afterSale.bldOccRef=&occupancy;
+                return afterSale.findPath((int)e.x,(int)e.y,tx,ty,path,20000,domain,nullptr,e.navLayer,targetLayer(tx,ty),underBridge,gateAccess);
+            }
             // For a large group, prove reachability once before spending an
             // entire A* budget on the first disconnected destination. Clear
             // orders retain the linear route above without paying for a flood.
@@ -507,6 +523,7 @@ AttackOrderResult World::orderAttack(const std::vector<EID>& sel,EID target,bool
     AttackOrderResult result;
     result.healing=nativeRepairIntent(sel,target);
     auto actor=[&](EID id,Ent& unit){
+        unit.nativeTransportUnload={};
         unit.nativeAirUnload=false;unit.nativeAirLandingRetry=0;unit.attackMove={};result.acceptedUnits.push_back(id);
         // A parked aircraft becomes airborne as soon as this order changes its
         // state. AI issues orders after update(), so synchronize before a save
@@ -609,6 +626,7 @@ void World::orderStop(const std::vector<EID>& sel,bool cancelDriveFacing) {
         stopNativeTemporal(id);stopNativeCrewTemporal(id);
         std::erase_if(nativeCrewBursts,[&](const auto& node){return node.second.carrier.id==id;});
         e.nativeAirUnload=false;e.nativeAirLandingRetry=0;
+        e.nativeTransportUnload={};
         stopAircraft(id);
         e.attackMove={};
         if(e.nativeDock.phase==NativeDockPhase::DriveExit)e.cancelNativeDockTiming();
@@ -646,7 +664,7 @@ void World::orderStop(const std::vector<EID>& sel,bool cancelDriveFacing) {
     }
 }
 
-// X 散布：各自前往周围随机空格（规避范围伤害与碾压）
+// X 散开：来源步兵与Unit车辆使用各自资格和抽样合同。
 std::vector<int> World::orderScatter(const std::vector<EID>& sel) {
     std::vector<int> accepted;
     for (EID id : sel) {
@@ -654,6 +672,14 @@ std::vector<int> World::orderScatter(const std::vector<EID>& sel) {
         Ent& e = ents[id];
         const UnitDef& ud = unitDef(e);
         if (ud.isAir()) continue; // 战机不散布
+        if(nativeRulesBaseVersion>=nativePlayerScatterSceneVersion && ud.isInfantry()) {
+            if(scatterInfantry(entityRef(id),InfantryScatterPolicy::Player))accepted.push_back(id);
+            continue;
+        }
+        if(nativeRulesBaseVersion>=nativeUnitScatterSceneVersion && !ud.isInfantry()) {
+            if(scatterUnit(entityRef(id)))accepted.push_back(id);
+            continue;
+        }
         int dom = ud.pathDomain();
         // 在 2~4 格内找随机可通行落点
         for (int tries = 0; tries < 8; tries++) {
@@ -674,6 +700,7 @@ std::vector<int> World::orderScatter(const std::vector<EID>& sel) {
                 e.goalLayer=(uint8_t)layer;
                 e.attackMove={};
                 accepted.push_back(id);
+                e.nativeTransportUnload={};
                 break;
             }
         }
@@ -687,6 +714,7 @@ void World::orderGuard(const std::vector<EID>& sel) {
         if (!valid(id) || ents[id].isBuilding) continue;
         Ent& e = ents[id];
         if (unitDef(e).weapon.damage == 0) continue;
+        e.nativeTransportUnload={};
         e.nativeAirUnload=false;e.nativeAirLandingRetry=0;
         e.clearPath();
         e.wps.clear();
@@ -709,6 +737,13 @@ int World::buildingEntryDomain(const Ent& building) const {
     return garrisonDomain(building.btype);
 }
 
+bool World::boardOwnerAllowed(int unitOwner,int carrierOwner) const {
+    if(unitOwner==carrierOwner)return true;
+    return nativeRulesBaseVersion>=nativeAlliedBoardingSceneVersion
+        && unitOwner>=0 && unitOwner<numPlayers && carrierOwner>=0 && carrierOwner<numPlayers
+        && isAllied(carrierOwner,unitOwner);
+}
+
 EntryRejectReason World::entryRejection(EID unit,EID target,EntryKind kind) const {
     if(!valid(target) || (kind==EntryKind::Garrison)!=ents[target].isBuilding) return EntryRejectReason::InvalidTarget;
     if(!valid(unit) || unit==target || ents[unit].isBuilding) return EntryRejectReason::Incompatible;
@@ -717,9 +752,10 @@ EntryRejectReason World::entryRejection(EID unit,EID target,EntryKind kind) cons
     if(kind==EntryKind::Board) {
         const auto& td=unitDef(destination);
         if(td.cargoCap<=0 || destination.utype==UnitType::AircraftCarrier) return EntryRejectReason::Unsupported;
-        if(destination.player!=actor.player) return EntryRejectReason::WrongOwner;
+        if(!boardOwnerAllowed(actor.player,destination.player)) return EntryRejectReason::WrongOwner;
+        const bool sourceSizedTransport=nativeRulesBaseVersion>=nativeSizedTransportSceneVersion;
         if(ud.isAir() || ud.isNaval() || ud.transportSize()>td.cargoSizeLimit
-            || (!ud.isInfantry() && destination.utype!=UnitType::AmphTransport)) return EntryRejectReason::Incompatible;
+            || (!ud.isInfantry() && destination.utype!=UnitType::AmphTransport && !sourceSizedTransport)) return EntryRejectReason::Incompatible;
         // Entity-linked effects cannot be converted to an anonymous cargo record.
         if(actor.mindBy!=INVALID_EID || actor.mindTarget!=INVALID_EID || !actor.mindTargets.empty()
             || actor.parasite!=INVALID_EID || actor.parasiteHost!=INVALID_EID || actor.parasiting)
@@ -750,18 +786,50 @@ float World::entryReach(const Ent& target) const {
     return target.isBuilding?std::max(bldDef(target).w,bldDef(target).h)/2.0f+1.5f:1.6f;
 }
 
-bool World::entryPath(const Ent& unit,const Ent& target,std::vector<Vec2i>& path) const {
-    return interactionPath(unit,target,entryReach(target),path);
+bool World::entryWithinReach(const Ent& unit,const Ent& target) const {
+    if(!target.isBuilding && nativeRulesBaseVersion>=nativeTransportBoardingSceneVersion
+        && ((int)unit.x!=(int)target.x || (int)unit.y!=(int)target.y))return false;
+    return interactionWithinReach(unit,target,entryReach(target));
 }
 
-bool World::interactionPath(const Ent& unit,const Ent& target,float reach,std::vector<Vec2i>& path) const {
+void World::completeEntry(EID id,EID destination) {
+    auto& e=ents[id];auto& target=ents[destination];
+    if(target.isBuilding && buildingEntryDomain(target)==3) {
+        const Credits refund=grindingValue(e);
+        changeMoney(e.player,refund);
+        consumeEntity(id);return;
+    }
+    auto slot=ActorStateTransfer::capture(e);
+    if(!target.isBuilding && nativeRulesBaseVersion>=nativeCargoOwnerSceneVersion)slot.player=e.player;
+    if(target.isBuilding) {
+        target.garrison.push_back(slot);
+        if(target.player<0) changeActorOwner(destination,e.player);
+    } else {target.cargo.push_back(slot);nativeIFVCrewChanged(destination);}
+    const bool bio=target.isBuilding && (nativeProductionRules.version>=3 && target.nativeIdentity.definition
+        ?target.nativeIdentity.definition->production.infantryAbsorb || target.nativeIdentity.definition->production.unitAbsorb
+        :target.btype==BldType::BioReactor);
+    consumeEntity(id);
+    if(bio) recomputePower();
+}
+
+bool World::entryPath(const Ent& unit,const Ent& target,std::vector<Vec2i>& path) const {
+    const bool targetCell=!target.isBuilding && nativeRulesBaseVersion>=nativeTransportBoardingSceneVersion
+        && !(usesNativeAirNavigation(target) && target.airborne());
+    // Search nodes are cell centers. The small positive range selects only
+    // the carrier cell; transfer itself uses entryWithinReach, not this radius.
+    return interactionPath(unit,target,targetCell?.002f:entryReach(target),path,targetCell);
+}
+
+bool World::interactionPath(const Ent& unit,const Ent& target,float reach,std::vector<Vec2i>& path,bool targetCell) const {
     float tx=target.x,ty=target.y;
     if(target.isBuilding) { tx+=bldDef(target).w/2.0f;ty+=bldDef(target).h/2.0f; }
+    if(targetCell) {tx=(int)target.x+.5f;ty=(int)target.y+.5f;}
     path.clear();
-    if(interactionWithinReach(unit,target,reach)) return true;
+    if(targetCell?entryWithinReach(unit,target):interactionWithinReach(unit,target,reach)) return true;
     std::vector<uint8_t> costs(movementSlotCount(),0);
     std::vector<uint8_t> fixedInfantry(movementSlotCount(),0);
-    for(const auto& other:ents) if(&other!=&unit && other.alive && !other.isBuilding && other.occCell>=0 && map.inBounds((int)other.x,(int)other.y)) {
+    for(const auto& other:ents) if(&other!=&unit && !(targetCell && &other==&target)
+        && other.alive && !other.isBuilding && other.occCell>=0 && map.inBounds((int)other.x,(int)other.y)) {
         const size_t cell=movementSlot((int)other.x,(int)other.y,other.navLayer);
         costs[cell]=std::max<uint8_t>(costs[cell],16);
         if(other.deployed || other.radDeployed) {
@@ -805,6 +873,7 @@ EntryOrderResult World::orderEntry(const std::vector<EID>& sel,EID target,EntryK
             continue;
         }
         auto& actor=ents[id];actor.target=target;actor.guard=false;actor.path=std::move(path);actor.pathIdx=0;
+        actor.nativeTransportUnload={};
         actor.wps.clear();actor.attackMove={};actor.blockTick=0;actor.state=UState::Boarding;
         actor.engineerIntent=EngineerIntent::None;actor.feedbackEngineerTarget=INVALID_EID;actor.feedbackAttackTarget=INVALID_EID;
         actor.feedbackEntryTarget=feedback?target:INVALID_EID;actor.feedbackEntryKind=kind;++result.accepted;
@@ -817,7 +886,7 @@ EntryOrderResult World::orderBoard(const std::vector<EID>& sel,EID target,bool f
     return orderEntry(sel,target,EntryKind::Board,feedback);
 }
 
-ReleaseOrderResult World::releaseContainer(EID id,ReleaseKind kind) {
+ReleaseOrderResult World::releaseContainer(EID id,ReleaseKind kind,int limit) {
     ReleaseOrderResult result;
     auto reject=[&](ReleaseRejectReason reason) { result.rejected=1;result.failedEntity=id;result.reason=reason; };
     if(!valid(id)) { reject(ReleaseRejectReason::InvalidTarget);return result; }
@@ -836,12 +905,18 @@ ReleaseOrderResult World::releaseContainer(EID id,ReleaseKind kind) {
             ents[id].nativeAirUnload=true;result.remaining=result.pending=(int)out.size();return result;
         }
     }
-    const int owner=ents[id].player;
     std::vector<EID> entered;
-    while(!out.empty()) {
-        const auto saved=out.back();auto cells=releaseCells(ents[id],unitDef(saved),building?3:2);
-        if(cells.empty()) break;
-        const auto cell=cells.front();
+    while(!out.empty() && result.released<limit) {
+        const auto saved=out.back();TransportReleasePlan departure;
+        const bool sourceExit=!building && usesNativeTransportUnload(ents[id]) && nativeRulesBaseVersion>=nativeTransportExitSceneVersion;
+        ReleaseCell cell;
+        if(sourceExit) {
+            if(!nativeTransportReleasePlan(ents[id],unitDef(saved),departure))break;
+            cell=departure.position;
+        } else {
+            auto cells=releaseCells(ents[id],unitDef(saved),building?3:2);if(cells.empty())break;cell=cells.front();
+        }
+        const int owner=passengerOwner(saved,ents[id].player);
         EID unit=saved.nativeIdentity.definition?spawnNativeActor(saved.nativeIdentity.type,owner,cell.x+0.5f,cell.y+0.5f,256,0,
             saved.nativeIdentity.object,saved.nativeIdentity.tag,saved.nativeIdentity.sleeping?"Sleep":"Guard"):
             spawnUnit(owner,saved.type,cell.x+0.5f,cell.y+0.5f);
@@ -851,12 +926,13 @@ ReleaseOrderResult World::releaseContainer(EID id,ReleaseKind kind) {
         ActorStateTransfer::restore(restored,saved);
         restored.vetRank=std::clamp(saved.vetRank,0,2);
         restored.hp=std::clamp(saved.hp,1,maxHpFor(restored,unitDef(saved)));
+        if(sourceExit)orderMove({unit},departure.destination.x+.5f,departure.destination.y+.5f,false);
         entered.push_back(unit);
         if(saved.combatActor){stopNativeTemporal(nativeCrewTemporalKey(saved.combatActor));nativeCrewBursts.erase(saved.combatActor);}
         out.pop_back();++result.released;
     }
     result.remaining=(int)out.size();
-    if(result.remaining) reject(ReleaseRejectReason::Blocked);
+    if(result.remaining && result.released<limit) reject(ReleaseRejectReason::Blocked);
     if(building) {
         ents[id].garrison=std::move(out);
         if(result.released && !result.remaining && ents[id].btype==BldType::CivHouse) changeActorOwner(id,-1);
@@ -890,7 +966,14 @@ ReleaseOrderResult World::orderRelease(const std::vector<EID>& sel,ReleaseKind k
     for(EID id:sel) {
         if(id<0 || id>=(EID)seen.size() || seen[id] || !valid(id)) continue;
         seen[id]=1;
-        int owner=ents[id].player;auto one=releaseContainer(id,kind);
+        int owner=ents[id].player;ReleaseOrderResult one;
+        if(kind==ReleaseKind::Unload && usesNativeTransportUnload(ents[id])
+            && !ents[id].cargo.empty() && !ents[id].immobilized()) {
+            ents[id].nativeIdentity.sleeping=false;
+            auto& mission=ents[id].nativeTransportUnload;
+            if(!mission.active())mission.phase=NativeTransportUnloadPhase::Prepare;
+            one.remaining=one.pending=(int)ents[id].cargo.size();
+        } else one=releaseContainer(id,kind);
         result.released+=one.released;result.remaining+=one.remaining;result.rejected+=one.rejected;
         result.pending+=one.pending;
         if(result.reason==ReleaseRejectReason::None && one.reason!=ReleaseRejectReason::None) { result.reason=one.reason;result.failedEntity=id; }
@@ -942,6 +1025,7 @@ bool World::chronoJump(EID id, float gx, float gy) {
     e.clearPath();
     e.state = UState::Idle;
     e.tpSick = std::min(600, 30 + (int)(dist * 2.5f)); // RA2：跳跃越远冻结越久
+    e.nativeTransportUnload={};
     Effect w2; w2.kind = 9; w2.x = e.x; w2.y = e.y; w2.maxAge = 24; effects.push_back(w2);
     emitSoundAt(Sfx::Deploy, e.x, e.y);
     return true;

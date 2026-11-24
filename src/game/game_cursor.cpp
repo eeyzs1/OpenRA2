@@ -157,7 +157,7 @@ void Game::updateHoverCursor(int mx, int my) {
     }
 
     // 运输载具
-    if (eu != INVALID_EID && world.ents[eu].player == localPlayer
+    if (eu != INVALID_EID && world.boardOwnerAllowed(localPlayer,world.ents[eu].player)
         && unitDef(world.ents[eu]).cargoCap > 0) {
         bool eligible=false;
         for(EID id:sel) eligible |= world.entryRejection(id,eu,EntryKind::Board)==EntryRejectReason::None;

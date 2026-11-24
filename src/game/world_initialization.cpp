@@ -52,6 +52,7 @@ bool World::init(int w, int h, uint64_t seed, int numHumans, int numAI, const st
     if(updateInProgress || entityMutationDepth>0 || areaDamageDepth>0)return false;
     presentationEpoch=nextPresentationEpoch();
     nativeScenarioSource.clear();nativeTypes.clear();nativeWeaponCatalog.reset();nativeProductionRules={};nativeMovementRules={};nativeProductionSerial=0;std::fill_n(nativeAllies,MAX_PLAYERS,0);
+    nativeCrushWarningRules={};nativeTransportUnloadRules={};
     rulesProfileId.clear();rulesProfileName.clear();rulesCountryMask=0;rulesCountryKeys={};rulesCountrySpeed.fill(1);
     resetNativeBridgeScenario();
     map.gateCells.clear();

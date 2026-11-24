@@ -1,5 +1,7 @@
 #include "game_regression.h"
+#include "game/native_scene_contract.h"
 #include <cstdio>
+#include <fstream>
 
 int GameRegression::aiAttackRegression() {
     int failures=0;
@@ -204,6 +206,52 @@ int GameRegression::aiAttackRegression() {
         const bool ok=w.valid(jet) && returns>=2 && relaunches>=2 && w.combatDamage[0]>0;
         failures+=!ok;
         std::printf("AI_AIR_SORTIES %s faction=%d returns=%d relaunches=%d damage=%llu\n",ok?"PASS":"FAIL",faction,returns,relaunches,(unsigned long long)w.combatDamage[0]);
+    }
+    for(int scenario=0;scenario<10;++scenario) {
+        const bool legacy=scenario==7 || scenario==8,manual=scenario==4;
+        const bool unpowered=scenario==0 || scenario==2 || scenario==4 || scenario==7;
+        const bool unfunded=scenario==1 || scenario==3 || scenario==4 || scenario==8 || scenario==9;
+        const bool existing=scenario!=2 && scenario!=3 && scenario!=6;
+        std::ifstream file("assets/rules/profiles/ra2.ini",std::ios::binary);World::RulesSnapshot rules;
+        rules.source.assign(std::istreambuf_iterator<char>(file),{});
+        if(legacy) {
+            const std::string current="[Scene]\nVersion = "+std::to_string(nativeCurrentRulesSceneVersion)+"\n";
+            const auto at=rules.source.find(current);if(at==std::string::npos){++failures;continue;}
+            rules.source.replace(at,current.size(),"[Scene]\nVersion = 64\n");
+        }
+        World w;bool ok=w.init(64,64,20261124,2,0,{Faction::Soviet,Faction::Soviet},0,nullptr,false,false,
+            nullptr,{Country::Russia,Country::Russia},&rules);
+        if(!ok){++failures;continue;}
+        for(EID id=0;id<(EID)w.ents.size();++id)if(w.valid(id))w.kill(id,false);
+        for(auto& cell:w.map.cells)cell=Cell{};w.cratesEnabled=false;w.crates.clear();
+        for(auto& player:w.players){player.defeated=false;player.money=0;}
+        w.players[0].isAI=!manual;
+        w.spawnBuilding(0,BldType::ConYard,4,4,true);w.spawnBuilding(1,BldType::ConYard,50,50,true);
+        if(!unpowered)w.spawnBuilding(0,BldType::TeslaReactor,9,4,true);
+        const EID depot=w.spawnBuilding(0,BldType::ServiceDepot,22,20,true);
+        const EID tank=w.spawnUnit(0,UnitType::Rhino,21.5f,21.5f);w.ents[tank].hp=unitDef(w.ents[tank]).hp/4;
+        w.players[0].money=unfunded?0:1000;
+        if(scenario==9) {
+            const EID drone=w.spawnUnit(1,UnitType::TerrorDrone,21.5f,21.5f);
+            w.ents[tank].parasite=drone;w.ents[drone].parasiteHost=tank;w.ents[drone].parasiting=true;w.unitOccSync(drone);
+        }
+        if(existing) {
+            if(manual){World::Cmd c{};c.type=World::Cmd::Service;c.ids={tank};c.a=depot;w.bindCommand(c);w.applyCmd(0,c);}
+            else ok &= w.orderService({tank},depot).accepted==1;
+        }
+        const int initialHp=w.ents[tank].hp;const auto initialMoney=w.players[0].money;
+        SkirmishAI bot;bot.reset(0);bot.difficulty=AIDiff::Normal;bot.thinkTimer=14;bot.attackTimer=0;
+        bot.pcfg.useEngineers=bot.pcfg.useSpies=bot.pcfg.useSuperWeapon=false;
+        FILE* saved=std::tmpfile();World loaded;
+        bool exact=saved && w.saveGame(saved);if(saved)std::rewind(saved);exact &= saved && loaded.loadGame(saved);if(saved)std::fclose(saved);
+        SkirmishAI resumed=bot;bot.update(w);if(exact){resumed.update(loaded);exact=w.checksum()==loaded.checksum() && bot==resumed;}
+        const bool retained=w.ents[tank].state==UState::Servicing && w.ents[tank].target==depot;
+        const bool expected=scenario>=4;
+        ok &= retained==expected && exact && w.ents[tank].hp==initialHp && w.players[0].money==initialMoney;
+        if(manual)ok &= w.ents[tank].feedbackServiceTarget==depot;
+        std::printf("AI_AUTO_SERVICE %s case=%d legacy=%d manual=%d powered=%d money=%lld existing=%d servicing=%d expected=%d replay=%d\n",
+            ok?"PASS":"FAIL",scenario,legacy,manual,!w.players[0].lowPower(),(long long)w.players[0].money,existing,retained,expected,exact);
+        failures+=!ok;
     }
     return failures+aiAssaultRegression();
 }

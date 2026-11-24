@@ -1,4 +1,5 @@
 #include "game/world.h"
+#include "game/native_scene_contract.h"
 #include "game/actor_state_transfer.h"
 #include "game/world_priv.h"
 #include "game/lang.h"
@@ -100,18 +101,22 @@ void World::update() {
         if (p.revealTimer > 0) p.revealTimer--;
     }
     spawnCrateTick();    // 周期性生成补给箱
-    // 建筑持续维修（RA2：RepairRate 周期到后回复一格血条；约 20 格血条）
-    // 扳手模式逐步修，非工程师瞬间回满
-    if (tick % 15 == 0) { // ~0.5s @ LOGIC_FPS=30
+    // Scene61 uses the source global frame phase and a full type charge even
+    // for the final partial step. Historical/fusion scenes retain their pips.
+    const bool sourceBuildingRepair=nativeRulesBaseVersion>=nativeBuildingRepairSceneVersion;
+    const int buildingRepairPeriod=sourceBuildingRepair?nativeProductionRules.buildingRepairFrames*2:15;
+    if (tick % 15 == 0 || (sourceBuildingRepair && tick % buildingRepairPeriod == 0)) {
         for (Ent& e : ents) {
             if (!e.alive || !e.isBuilding || !e.repairing || e.selling || e.player < 0 || e.nativeTemporalHead!=INVALID_EID) continue;
             const BldDef& d = bldDef(e);
+            const bool sourceType=sourceBuildingRepair && e.nativeIdentity.definition && e.nativeIdentity.definition->production.available;
+            if(tick % (sourceType?buildingRepairPeriod:15)!=0)continue;
             if (e.hp >= d.hp) { e.repairing = false; continue; }
-            const int pips = 20;
-            int pipHp = std::max(1, (d.hp + pips - 1) / pips); // 一格血
+            int pipHp = sourceType?nativeProductionRules.buildingRepairStep:std::max(1, (d.hp + 19) / 20);
             int heal = std::min(pipHp, d.hp - e.hp);
             const int repairPercent = 15; // 满修约造价 15%
-            int stepCost = std::max(1, (d.cost * repairPercent * heal + d.hp - 1) / (100 * std::max(1, d.hp)));
+            int stepCost = sourceType?e.nativeIdentity.definition->production.buildingRepairCost:
+                std::max(1, (d.cost * repairPercent * heal + d.hp - 1) / (100 * std::max(1, d.hp)));
             if (players[e.player].money < stepCost) { e.repairing = false; continue; }
             players[e.player].money -= stepCost;
             e.hp = std::min(d.hp, e.hp + heal);
@@ -353,7 +358,7 @@ void World::update() {
                 }
             }
     }
-    applyGapShroud(); // 裂缝产生器黑幕最后覆盖（RA2 原作：间谍卫星也无法穿透）
+    applyGapShroud(); // 裂缝遮蔽卫星照亮，再解析附近实体的实际观察。
     updateNativeDiscovery();
     freeList.insert(freeList.end(),retiredDuringUpdate.begin(),retiredDuringUpdate.end());
     retiredDuringUpdate.clear();
@@ -415,6 +420,8 @@ void World::updateUnit(Ent& e, EID id) {
         return; // 冻结中不能行动
     }
     updateNativeGroundFacing(e);
+    // A release can spawn an actor and reallocate ents. Return before using e.
+    if(updateNativeTransportUnload(id))return;
     if(updateNativeDock(e,id))return;
     if(e.supportAir==1){updateSupportAircraft(id);return;}
     if(e.supportAir==2){updateSupportDescent(id);return;}
@@ -1051,24 +1058,12 @@ void World::updateUnit(Ent& e, EID id) {
             auto reason=entryRejection(id,e.target,kind);
             if(reason!=EntryRejectReason::None) { endEntry(e,id,reason);break; }
             const EID destination=e.target;auto& target=ents[destination];
-            const bool withinReach=interactionWithinReach(e,target,entryReach(target));
-            if(withinReach && usesNativeAirNavigation(target) && target.airborne())break;
+            const bool withinReach=entryWithinReach(e,target);
+            // Keep the landing cell free until the aircraft is on the ground.
+            if(usesNativeAirNavigation(target) && target.airborne()
+                && interactionWithinReach(e,target,entryReach(target)))break;
             if(withinReach) {
-                if(target.isBuilding && buildingEntryDomain(target)==3) {
-                    const Credits refund=grindingValue(e);
-                    changeMoney(e.player,refund);
-                    consumeEntity(id);break;
-                }
-                auto slot=ActorStateTransfer::capture(e);
-                if(target.isBuilding) {
-                    target.garrison.push_back(slot);
-                    if(target.player<0) changeActorOwner(destination,e.player);
-                } else {target.cargo.push_back(slot);nativeIFVCrewChanged(destination);}
-                const bool bio=target.isBuilding && (nativeProductionRules.version>=3 && target.nativeIdentity.definition
-                    ?target.nativeIdentity.definition->production.infantryAbsorb || target.nativeIdentity.definition->production.unitAbsorb
-                    :target.btype==BldType::BioReactor);
-                consumeEntity(id);
-                if(bio) recomputePower();
+                completeEntry(id,destination);
                 break;
             }
             if(e.pathIdx>=(int)e.path.size() || (tick+(uint64_t)id)%30==0) {
@@ -1077,7 +1072,18 @@ void World::updateUnit(Ent& e, EID id) {
                 if(!entryPath(e,target,path)) { ++repathFailures;endEntry(e,id,EntryRejectReason::Unreachable);break; }
                 e.path=std::move(path);e.pathIdx=0;
             }
-            moveAlongPath(e,id);break;
+            const bool cellContact=!target.isBuilding && nativeRulesBaseVersion>=nativeTransportBoardingSceneVersion;
+            const auto actorRef=entityRef(id),carrierRef=entityRef(destination);
+            moveAlongPath(e,id);
+            if(cellContact && valid(actorRef) && valid(carrierRef)) {
+                auto& actor=ents[id];const auto& carrier=ents[destination];
+                if(actor.state!=UState::Boarding || actor.target!=destination)break;
+                reason=entryRejection(id,destination,EntryKind::Board);
+                if(reason!=EntryRejectReason::None)endEntry(actor,id,reason);
+                else if(entryWithinReach(actor,carrier) && !(usesNativeAirNavigation(carrier) && carrier.airborne()))
+                    completeEntry(id,destination);
+            }
+            break;
         }
     }
 }

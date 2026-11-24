@@ -58,9 +58,9 @@ int GameRegression::groundTravelRegression(const char* outputDir) {
         World resumed;
         stream=std::fopen(file.c_str(),"rb");
         if(stream && expectedHeader) {
-            char header[8]{};
+            uint8_t header[13]{};
             same &= std::fread(header,1,sizeof header,stream)==sizeof header
-                && std::memcmp(header,expectedHeader,sizeof header)==0;
+                && worldSaveHeaderMatches(header,expectedHeader);
             std::rewind(stream);
         }
         same &= stream && resumed.loadGame(stream);
@@ -81,7 +81,7 @@ int GameRegression::groundTravelRegression(const char* outputDir) {
         std::ifstream in(file,std::ios::binary);
         std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(in),{}};
         const auto nested=embeddedWorldSaveOffset(bytes);
-        if(!nested || (worldTag && std::memcmp(bytes.data()+*nested,worldTag,8)!=0))return false;
+        if(!nested || (worldTag && !worldSaveHeaderMatches(std::span(bytes).subspan(*nested),worldTag)))return false;
         const auto block=locateWorldSaveSection(std::span(bytes).subspan(*nested),WorldSaveSection::NativeTravel);
         const size_t recordStart=8+4;
         if(!block || block->length<recordStart+1+fieldOffset+sizeof(invalidField))return false;
@@ -1201,10 +1201,18 @@ int GameRegression::groundTravelRegression(const char* outputDir) {
     const EID refinery=world.spawnBuilding(0,BldType::OreRefinery,20,20,true,type("GAREFN"));
     const EID miner=world.spawnUnit(0,UnitType::ChronoMiner,29.5f,21.5f,type("CMIN"));
     if(!world.valid(refinery) || !world.valid(miner))return 1;
-    auto& ore=world.map.at(30,21);
+    const Vec2i deposit{30,21};
+    auto& ore=world.map.at(deposit.x,deposit.y);
     ore.terrain=Terrain::Ore;ore.ore=ore.oreMax=80;
-    command(World::Cmd::Harvest,miner,30,21);
-    int fullAt=-1,warpAt=-1,alignAt=-1,unloadAt=-1,creditAt=-1,exitAt=-1,againAt=-1;
+    command(World::Cmd::Harvest,miner,deposit.x,deposit.y);
+    const bool harvestAdmitted=world.ents[miner].state==UState::HarvestGo && world.ents[miner].oreCell==deposit;
+    struct FirstPickup {
+        int digAt=-1,pickedAt=-1;
+        Vec2i digCell{-1,-1},pickupCell{-1,-1};
+        Vec2f position{};
+    };
+    FirstPickup afterOrder,afterUnload;
+    int fullAt=-1,warpAt=-1,alignAt=-1,unloadAt=-1,creditAt=-1,exitAt=-1;
     int arrivals=0,departures=0,otherEffects=0;
     unsigned checkpoints=0;
     bool replay=true,fullAtSource=false,landedWithCargo=false,noSettling=true,noEnter=true;
@@ -1216,15 +1224,29 @@ int GameRegression::groundTravelRegression(const char* outputDir) {
         const auto& actor=world.ents[miner];
         economy<<world.tick<<','<<actor.x<<','<<actor.y<<','<<(int)actor.state<<','<<(int)actor.nativeDock.phase<<','
                <<(int)actor.chronoReturn.phase<<','<<(int)actor.chronoReturn.ticksLeft<<','<<actor.oreLoad<<','<<world.harvestedIncome[0]<<'\n';
+        auto& first=world.harvestedIncome[0]>0?afterUnload:afterOrder;
+        if(actor.state==UState::HarvestDig && actor.oreCell==deposit) {
+            const Vec2i cell{(int)actor.x,(int)actor.y};
+            if(first.digAt<0) {
+                first.digAt=t;
+                first.digCell=cell;
+            }
+            if(first.pickedAt<0 && actor.oreLoad==1) {
+                first.pickedAt=t;
+                first.pickupCell=cell;
+                first.position={actor.x,actor.y};
+            }
+        }
         if(fullAt<0 && actor.oreLoad==20) {
             fullAt=t;
-            fullAtSource=actor.x==29.5f && actor.y==21.5f && world.harvestedIncome[0]==0
+            fullAtSource=afterOrder.pickedAt>=0 && actor.x==afterOrder.position.x && actor.y==afterOrder.position.y
+                && world.harvestedIncome[0]==0
                 && actor.chronoReturn.phase==ChronoReturnPhase::Charging && actor.chronoReturn.directBerth;
         }
         int arrivalsThisTick=0,departuresThisTick=0;
         for(const auto& effect:world.effects)if(effect.kind==9 && effect.age==1) {
             if(effect.aux==(int)ChronoVisual::Arrival && effect.x==23.5f && effect.y==21.5f)++arrivalsThisTick;
-            else if(effect.aux==(int)ChronoVisual::Departure && effect.x==29.5f && effect.y==21.5f)++departuresThisTick;
+            else if(effect.aux==(int)ChronoVisual::Departure && effect.x==afterOrder.position.x && effect.y==afterOrder.position.y)++departuresThisTick;
             else ++otherEffects;
         }
         arrivals+=arrivalsThisTick;
@@ -1248,18 +1270,59 @@ int GameRegression::groundTravelRegression(const char* outputDir) {
             checkpoints|=1u<<stage;
             replay &= roundTrip(world,"miner-current-stage-"+std::to_string(stage),390);
         }
-        if(creditAt>=0 && actor.state==UState::HarvestDig && actor.x>27) {againAt=t;break;}
+        if(afterUnload.pickedAt>=0)break;
     }
+    const auto pickupOnDeposit=[&](const FirstPickup& first,const char* route) {
+        std::printf("GROUND_TRAVEL_FIRST_PICKUP %s deposit=%d,%d digging=%d,%d dig_tick=%d cargo=%d,%d pickup_tick=%d\n",
+            route,deposit.x,deposit.y,first.digCell.x,first.digCell.y,first.digAt+1,
+            first.pickupCell.x,first.pickupCell.y,first.pickedAt+1);
+        return first.digAt>=0 && first.pickedAt>first.digAt && first.digCell==deposit && first.pickupCell==deposit;
+    };
+    check(pickupOnDeposit(afterOrder,"harvest-order") && harvestAdmitted,
+        "a normal Harvest order starts digging and collects its first ore on the target cell");
+    check(pickupOnDeposit(afterUnload,"after-unload") && exitAt>=0 && afterUnload.digAt>exitAt,
+        "after unloading and leaving the berth the miner starts digging and collects its next first ore on the target cell");
     std::printf("GROUND_TRAVEL_CYCLE full=%d warp=%d align=%d dock=%d credit=%d exit=%d mining=%d effects=%d/%d checkpoints=%u\n",
-        fullAt,warpAt,alignAt,unloadAt,creditAt,exitAt,againAt,departures,arrivals,checkpoints);
+        fullAt,warpAt,alignAt,unloadAt,creditAt,exitAt,afterUnload.digAt,departures,arrivals,checkpoints);
     check(fullAt>=0 && warpAt-fullAt==ChronoReturnTiming::ready && alignAt==warpAt && unloadAt>alignAt && creditAt-unloadAt==32
-        && exitAt-creditAt==30 && againAt>exitAt && world.harvestedIncome[0]==500 && world.valid(identity)
+        && exitAt-creditAt==30 && afterUnload.digAt>exitAt && world.harvestedIncome[0]==500 && world.valid(identity)
         && arrivals==1 && departures==1 && otherEffects==0 && fullAtSource && landedWithCargo && noSettling && noEnter
-        && world.ents[miner].oreCell==Vec2i{30,21},
+        && world.ents[miner].oreCell==deposit,
         "a naturally filled miner lands on the next update, docks, credits exactly once and walks back to its ore");
     constexpr unsigned directReturnCheckpoints=(1u<<0)|(1u<<1)|(1u<<3)|(1u<<4)|(1u<<5);
     check(checkpoints==directReturnCheckpoints && replay,
         "pending warp, berth alignment, unloading, exit and outbound travel each resume tick for tick");
+
+    {
+        if (!fresh()) return failures + 1;
+        const Vec2i occupiedOre{30, 21}, spareOre{29, 22};
+        for (const auto cell : {occupiedOre, spareOre}) {
+            auto& tile = world.map.at(cell.x, cell.y);
+            tile.terrain = Terrain::Ore;
+            tile.ore = tile.oreMax = 80;
+        }
+        const EID working = world.spawnUnit(0, UnitType::WarMiner, 30.5f, 21.5f, type("HARV"));
+        const EID arriving = world.spawnUnit(0, UnitType::WarMiner, 29.5f, 21.5f, type("HARV"));
+        if (!world.valid(working) || !world.valid(arriving)) return failures + 1;
+        command(World::Cmd::Harvest, working, occupiedOre.x, occupiedOre.y);
+        world.update();
+        command(World::Cmd::Harvest, arriving, occupiedOre.x, occupiedOre.y);
+        const auto& first = world.ents[working];
+        const auto& second = world.ents[arriving];
+        const bool staged = first.state == UState::HarvestDig && first.oreCell == occupiedOre
+            && second.state == UState::HarvestGo && second.oreCell == occupiedOre;
+        int pickupAt = 0;
+        for (int elapsed = 1; elapsed <= 240; ++elapsed) {
+            world.update();
+            if (second.oreLoad == 1) { pickupAt = elapsed; break; }
+        }
+        const Vec2i pickupCell{(int)second.x, (int)second.y};
+        std::printf("GROUND_TRAVEL_ORE_CONTENTION staged=%d pickup=%d cell=%d,%d target=%d,%d first_cargo=%d\n",
+            staged, pickupAt, pickupCell.x, pickupCell.y, second.oreCell.x, second.oreCell.y, first.oreLoad);
+        check(staged && pickupAt > 0 && pickupCell == spareOre && second.oreCell == spareOre
+            && first.state == UState::HarvestDig && first.oreCell == occupiedOre && first.oreLoad > 0,
+            "a miner waiting for its occupied target harvests a reachable free ore cell while the first miner keeps digging");
+    }
 
     for (bool atLanding : {false, true}) {
         if (!fresh()) return failures + 1;
@@ -1442,7 +1505,7 @@ int GameRegression::groundTravelRegression(const char* outputDir) {
             std::vector<uint8_t> bytes{std::istreambuf_iterator<char>(in), {}};
             const auto nested = embeddedWorldSaveOffset(bytes);
             if (!nested || std::memcmp(bytes.data(), "RA2GAM11", 8)
-                || std::memcmp(bytes.data() + *nested, "RA2WLD70", 8)) return false;
+                || !worldSaveHeaderMatches(std::span(bytes).subspan(*nested),"RA2WLD70")) return false;
             std::memcpy(bytes.data() + *nested, "RA2WLD69", 8);
             const auto downgraded = (output / "chrono-queued-exit-yield-world69-app11.sav").string();
             std::ofstream out(downgraded, std::ios::binary);
@@ -1477,8 +1540,8 @@ int GameRegression::groundTravelRegression(const char* outputDir) {
                 yieldAt = elapsed;
                 const auto checkpoint = roundTrip(world, "chrono-queued-exit-yield", 300);
                 std::ifstream raw(output / "chrono-queued-exit-yield.sav", std::ios::binary);
-                char header[8]{};
-                yieldReplay = checkpoint && raw.read(header, sizeof header) && std::memcmp(header, "RA2WLD70", sizeof header) == 0;
+                uint8_t header[13]{};
+                yieldReplay = checkpoint && raw.read(reinterpret_cast<char*>(header), sizeof header) && worldSaveHeaderMatches(header,"RA2WLD70");
                 appReplay = verifyYieldApplication();
                 {
                     World copy = world;

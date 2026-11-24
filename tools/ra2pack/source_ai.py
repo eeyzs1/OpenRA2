@@ -253,7 +253,26 @@ def runtime_profile(tree, edition, profile):
     ini = configparser.ConfigParser(interpolation=None)
     ini.optionxform = str
     ini.read(profile, encoding='utf-8-sig')
+    # The ordinary-only technician is an appended carrier, never a frozen slot.
+    last = int(ini['Scene']['Types']) - 1
+    if ini['Type.' + str(last)].get('Base') == 'NativeInfantry':
+        ini.remove_section('Type.' + str(last))
+        ini.remove_section('NativeProduction.Type.' + str(last))
+        ini['Scene']['Types'] = str(last)
+        # Rebuild the reachable graph after removing its only Pistola user.
+        # This also restores the original shrapnel references and index order.
+        from gen_native_weapon_catalog import export_native_weapon_catalog
+        export_native_weapon_catalog(ini, rules, {})
+        for prefix, field in (('NativeWeapon.', 'Weapons'), ('NativeProjectile.', 'Projectiles'), ('NativeWarhead.', 'Warheads')):
+            count = int(ini['NativeWeapons'][field])
+            for section in ini.sections():
+                if section.startswith(prefix) and int(section[len(prefix):]) >= count:
+                    ini.remove_section(section)
+    ini.remove_section('NativeSaleSurvivors')
     ini['Scene']['Version'] = '41'
+    # Frozen global-AI cohorts predate the ordinary Scene50 warning contract.
+    ini.remove_section('NativeCrushWarning')
+    ini.remove_section('NativeTransportUnload')
     # Scene38-41 are frozen experimental contracts, including the historical
     # project credit scale. Ordinary Scene43 economy is a separate cohort.
     ini['NativeProduction']['Version'] = '5'
@@ -262,9 +281,21 @@ def runtime_profile(tree, edition, profile):
     ini['NativeProduction'].pop('HarvesterLoadRate', None)
     ini['NativeProduction'].pop('HarvesterDumpFrames', None)
     ini['NativeProduction'].pop('PurifierBonus', None)
+    ini['NativeProduction'].pop('BuildingRepairFrames', None)
+    ini['NativeProduction'].pop('BuildingRepairStep', None)
     for section in ini.sections():
         if section.startswith('NativeProduction.Type.'):
             ini[section].pop('ROT', None)
+            ini[section].pop('BuildingRepairCost', None)
+            ini[section].pop('BuildingSaleHuman', None)
+            ini[section].pop('BuildingSaleOther', None)
+        elif section.startswith('Type.'):
+            ini[section].pop('Crusher', None)
+            ini[section].pop('Crushable', None)
+            ini[section].pop('Fraidycat', None)
+            ini[section].pop('IsTrain', None)
+            ini[section].pop('SaleCrewed', None)
+            ini[section].pop('Engineer', None)
     for name in ('triggers', 'events', 'actions', 'tags', 'celltags', 'waypoints', 'houses', 'houseNumbers', 'variableNames'):
         ini['NativeEvent.' + name] = {}
     for table, rows in [('taskforces', graph['taskForces']), ('scripttypes', graph['scripts']), ('teamtypes', graph['teams'])]:

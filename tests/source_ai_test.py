@@ -207,6 +207,19 @@ class OriginalAIIntegration(unittest.TestCase):
                 ini.read_string(exported.decode('utf-8'))
                 self.assertEqual(ini['Scene']['Version'], '41')
                 self.assertEqual(ini['NativeProduction']['Version'], '5')
+                self.assertNotIn('NativeCrushWarning', ini)
+                self.assertNotIn('NativeSaleSurvivors', ini)
+                if edition == 'ra2':
+                    reference=json.loads((ROOT/'tests/fixtures/ra2-sale-survivors-reference.json').read_text(encoding='utf-8'))
+                    if ini['Scene']['SourceSHA256']==reference['sourceRulesSHA256']:
+                        self.assertEqual(hashlib.sha256(exported).hexdigest(),reference['frozenScene41RA2SHA256'])
+                for section in ini.sections():
+                    if section.startswith('Type.'):
+                        for field in ('Crusher', 'Crushable', 'Fraidycat', 'SaleCrewed', 'Engineer'):
+                            self.assertNotIn(field, ini[section])
+                    if section.startswith('NativeProduction.Type.'):
+                        for field in ('BuildingSaleHuman', 'BuildingSaleOther'):
+                            self.assertNotIn(field, ini[section])
                 self.assertNotIn('OreValue', ini['NativeProduction'])
                 self.assertNotIn('GemValue', ini['NativeProduction'])
                 self.assertNotIn('HarvesterLoadRate', ini['NativeProduction'])

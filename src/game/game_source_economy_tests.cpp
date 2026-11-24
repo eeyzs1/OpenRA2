@@ -404,7 +404,9 @@ int GameRegression::sourceEconomyRegression(const char* outputDir) {
                 || line.starts_with("Crew") || line.starts_with("TemporalVersion = ") || line.starts_with("Warpable = ")
                 || line.starts_with("NativeIFV = ") || line.starts_with("IFV") || line.starts_with("VehicleRepairable = ")
                 || line.starts_with("ImmuneToPsionicWeapons = ") || line.starts_with("ImmuneToRadiation = ")
-                || line.starts_with("ImmuneToPoison = ") || line.starts_with("OreValue = ") || line.starts_with("GemValue = "))continue;
+                || line.starts_with("ImmuneToPoison = ") || line.starts_with("OreValue = ") || line.starts_with("GemValue = ")
+                || line.starts_with("BuildingRepairFrames = ") || line.starts_with("BuildingRepairStep = ") || line.starts_with("BuildingRepairCost = ")
+                || line.starts_with("BuildingSaleHuman = ") || line.starts_with("BuildingSaleOther = "))continue;
             clean+=line+'\n';
         }
         legacy=std::move(clean);

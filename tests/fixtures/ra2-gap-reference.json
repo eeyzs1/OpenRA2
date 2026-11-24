@@ -1,0 +1,109 @@
+{
+  "scope": "Original local RA2 flat interior gap activation/removal cell-counter coverage. This is not original real-frame visibility, sight gathering, rendered fog, elevation or map-edge calibration.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "sourceEdition": "ra2-local-base",
+  "sourceRulesSHA256": "fd1e95cea0306ea78049dc81c8cd816e18c28c496872a1ff02edd50bd082062f",
+  "sourceArchive": "ra2.mix/local.mix",
+  "sourceType": "GAGAP",
+  "gapFlag": true,
+  "radius": 10,
+  "sight": 5,
+  "originalCoveredCells": 373,
+  "previousProjectCoveredCells": 317,
+  "additionalEdgeCells": 56,
+  "flatCenterCell": [
+    32,
+    32
+  ],
+  "flatRawCoordinates": [
+    8320,
+    8320,
+    0
+  ],
+  "coverageFixture": "ra2-gap-radius10.csv",
+  "coverageFixtureSHA256": "87444030f97360a0d1ba33cfc344ab6a363482db38becf482f1b1526f7f333a6",
+  "coverageRepresentation": "Complete captured mutated-cell set sorted by dy,dx. No execution-order equivalence claim.",
+  "probeSourceSHA256": "cf97c8e8096b5374cafeafff518922550cc2e5f7099c52e6b69020f3710cb1e8",
+  "probeExecutableSHA256": "e363682a5f941c72eef3579e00baa9899236d5da0914793af32012ec8f028e8d",
+  "probeResultSHA256": "4ab7724a3b768e5ba48c5a2d02b60887d9424da769f7935437f0c0c2d4994be4",
+  "sourceEntries": {
+    "buildingPowerDispatch": "0x44f8e0",
+    "activate": "0x6c83f0",
+    "deactivate": "0x6c86f0",
+    "originalLocalHousePredicate": "0x4f52b0",
+    "originalHeightProjection": "0x6a2970"
+  },
+  "sourceOffsets": {
+    "typeGapFlag": "0xadd",
+    "typeRadius": "0xade",
+    "cachedRadius": "actor+0x200",
+    "active": "actor+0x1fd",
+    "rawLocation": "actor+0x88",
+    "cellShroudCounter": "0x130",
+    "cellGapCount": "0x134",
+    "cellFriendlyCount": "0x13c",
+    "cellCopyFlags": "0x12c"
+  },
+  "providedDependencies": [
+    "Provided actor/type/owner/current-viewer storage and virtual type/owner/power queries.",
+    "Map lookup0x548070 returns provided64x64 cell records; all measured cells are interior.",
+    "Ally predicate0x4e5540 supplied per case; no original alliance-table behavior claim.",
+    "Presentation invalidations0x634030 and0x4e09a0 intercepted; original gap cell mutations execute unmodified.",
+    "Initial copy flags0x18 and shroud counter0/-1 are provided test states. Negative-counter case establishes preservation of those bits, not full actual unit sight gathering.",
+    "Flat z0 only; no assumed YR ABI or original game entrypoint."
+  ],
+  "cases": [
+    {
+      "name": "radius1",
+      "radius": 1,
+      "cells": 9
+    },
+    {
+      "name": "radius3",
+      "radius": 3,
+      "cells": 45
+    },
+    {
+      "name": "radius10",
+      "radius": 10,
+      "cells": 373
+    },
+    {
+      "name": "overlap",
+      "radius": 10,
+      "cells": 373
+    },
+    {
+      "name": "one_removed",
+      "radius": 10,
+      "cells": 373
+    },
+    {
+      "name": "negative_counter",
+      "radius": 10,
+      "cells": 373
+    },
+    {
+      "name": "own",
+      "radius": 10,
+      "cells": 373
+    },
+    {
+      "name": "allied",
+      "radius": 10,
+      "cells": 373
+    },
+    {
+      "name": "power_off",
+      "radius": 10,
+      "cells": 0
+    },
+    {
+      "name": "flag_off",
+      "radius": 10,
+      "cells": 0
+    }
+  ],
+  "structuralAssertions": 9,
+  "allAssertionsPassed": true
+}

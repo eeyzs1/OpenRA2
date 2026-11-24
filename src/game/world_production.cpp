@@ -1,4 +1,6 @@
 #include "game/world.h"
+#include "game/actor_contents.h"
+#include "game/native_scene_contract.h"
 #include "game/world_priv.h"
 #include "game/lang.h"
 #include "game/script.h"
@@ -245,15 +247,28 @@ void World::setRally(EID factory, int x, int y) {
     ents[factory].rallyY = y;
 }
 
+Credits World::nativeBuildingSaleValue(const Ent& building) const {
+    if(nativeRulesBaseVersion<nativeBuildingSaleSceneVersion || !building.isBuilding
+        || !building.nativeIdentity.definition || !building.nativeIdentity.definition->production.available)return -1;
+    if(building.player<0 || building.player>=numPlayers)return 0;
+    const auto& profile=building.nativeIdentity.definition->production;
+    return players[building.player].isAI?profile.buildingSaleOther:profile.buildingSaleHuman;
+}
+
+bool World::constructionYardSaleEnabled() const {
+    return nativeRulesBaseVersion>=nativeConstructionYardSaleSceneVersion;
+}
+
 void World::sellBuilding(EID id) {
     if (!valid(id) || !ents[id].isBuilding) return;
     Ent& e = ents[id];
     if (e.player < 0 || e.selling || e.nativeTemporalHead!=INVALID_EID) return; // 中立/已在出售中不可再卖
     e.repairing = false;
     e.selling = true;
+    if(nativeSaleBuilding(e))e.nativeBuildingSale.pending=true;
     // 倒放建造动画（与起楼同帧率）；无 mk 序列时用固定时长
     e.constructAnim = g_gameRules.buildingAnimationTicks;
-    changeMoney(e.player,bldDef(e).cost/2);
+    if(nativeBuildingSaleValue(e)<0)changeMoney(e.player,bldDef(e).cost/2);
     emitSoundAt(Sfx::Sell, e.x, e.y);
 }
 
@@ -419,6 +434,11 @@ void World::checkDefeat() {
         for (const Ent& e : ents) {
             if (!e.alive || e.player != pi) continue;
             if (!shortGame || e.isBuilding || e.utype == UnitType::MCV) { hasAny = true; break; }
+        }
+        if(!hasAny && nativeRulesBaseVersion>=nativeCargoOwnerSceneVersion) {
+            visitLivePlayerContents(*this,pi,[&](const auto& actor) {
+                if constexpr(!requires {actor.isBuilding;})hasAny |= !shortGame || actor.type==UnitType::MCV;
+            });
         }
         if (!hasAny) {
             p.defeated = true;

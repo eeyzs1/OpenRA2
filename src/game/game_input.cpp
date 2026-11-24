@@ -283,7 +283,7 @@ void Game::issueSmartOrder(int mx, int my) {
         return;
     }
     // Friendly passenger carrier: simulation reports compatibility and capacity.
-    if (eu != INVALID_EID && world.ents[eu].player == localPlayer && !world.ents[eu].isBuilding
+    if (eu != INVALID_EID && world.boardOwnerAllowed(localPlayer,world.ents[eu].player) && !world.ents[eu].isBuilding
         && unitDef(world.ents[eu]).cargoCap > 0 && !sel.empty()) {
         World::Cmd c;c.type=World::Cmd::Board;c.ids=sel;c.a=eu;issueCmd(c);return;
     }
@@ -415,7 +415,7 @@ void Game::handleInput() {
                 command.ids.push_back(b);
                 // Packing and repair/sell feedback comes from execution receipts.
                 const bool repack=sideMode==2 && world.ents[b].player==localPlayer
-                    && world.ents[b].btype==BldType::ConYard && world.mcvRepacks;
+                    && world.ents[b].btype==BldType::ConYard && world.mcvRepacks && !world.constructionYardSaleEnabled();
                 command.type=repack?World::Cmd::Deploy:
                     sideMode==2?World::Cmd::SellBuilding:World::Cmd::RepairBuilding;
                 issueCmd(command);
@@ -502,7 +502,7 @@ void Game::handleInput() {
         bool contextual=cursorKind==CursorKind::Enter || cursorKind==CursorKind::Repair;
         if(cfgClassicOrders && cursorKind==CursorKind::NoMove && !sel.empty()) {
             const EID unit=pickCommandUnit(px,py),building=pickBuilding(px,py);
-            const bool transport=world.valid(unit) && world.ents[unit].player==localPlayer && unitDef(world.ents[unit]).cargoCap>0;
+            const bool transport=world.valid(unit) && world.boardOwnerAllowed(localPlayer,world.ents[unit].player) && unitDef(world.ents[unit]).cargoCap>0;
             const bool facility=world.valid(building) && world.ents[building].player==localPlayer && world.buildingEntryDomain(world.ents[building])>0;
             if(transport || facility)for(EID id:sel) {
                 const auto reason=world.entryRejection(id,transport?unit:building,transport?EntryKind::Board:EntryKind::Garrison);
@@ -709,9 +709,9 @@ void Game::handleInput() {
     // 快速存档 / 快速读档（联机禁用：lockstep 下存读档无法同步）
     if (!netGame && ka(KA_QuickSave)) message(saveGameFile(QUICKSAVE_PATH) ? TR(S::MsgSaved) : TR(S::MsgSaveFail));
     if (!netGame && ka(KA_QuickLoad)) message(loadGameFile(QUICKSAVE_PATH) ? TR(S::MsgLoaded) : TR(S::MsgLoadFail));
-    // 出售选中建筑（默认 Del）；建造厂在 MCV Repacks 开启时改为打包
+    // 出售选中建筑（默认 Del）；旧规则保留建造厂出售键改为打包的策略。
     if (ka(KA_Sell) && world.valid(selBuilding) && world.ents[selBuilding].player == localPlayer) {
-        if (world.ents[selBuilding].btype != BldType::ConYard) {
+        if (world.ents[selBuilding].btype != BldType::ConYard || world.constructionYardSaleEnabled()) {
             World::Cmd c; c.type = World::Cmd::SellBuilding; c.ids.push_back(selBuilding);
             issueCmd(c);
         } else if (world.mcvRepacks) {
