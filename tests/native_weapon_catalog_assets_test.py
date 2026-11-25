@@ -19,7 +19,7 @@ for edition in ('ra2', 'yr'):
     assert ini.read(ROOT / f'assets/rules/profiles/{edition}.ini', encoding='utf-8')
     _, raw, source_id = select_source(tree, edition)
     original = read_ini(raw)
-    assert ini['Scene']['Version'] == ('68' if edition == 'ra2' else '43') and ini['Scene']['RulesId'] == source_id
+    assert ini['Scene']['Version'] == ('69' if edition == 'ra2' else '43') and ini['Scene']['RulesId'] == source_id
     assert ini['Scene']['TemporalVersion'] == '1'
     for section in ini.sections():
         if section.startswith('Type.') and ini[section].get('Kind', '0') == '0':

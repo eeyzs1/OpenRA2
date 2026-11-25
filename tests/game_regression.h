@@ -135,6 +135,7 @@ public:
     int buildingSaleRegression(const char* outputDir);
     int buildingSurvivorsRegression(const char* outputDir);
     int playerScatterRegression(const char* outputDir);
+    int infantryTravelRegression(const char* outputDir);
     int sourceTransportRegression(const char* outputDir);
     int cargoOwnershipRegression(const char* outputDir);
     int groundUnloadRegression(const char* outputDir);

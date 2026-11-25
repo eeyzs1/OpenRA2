@@ -37,7 +37,8 @@ const Sprite* Game::swimmingSprite(const World::Ent& e,UnitType drawType,int col
         return &g_sprites.unitAnim(drawType,UAnim::WetFire,e.dir,phase,color);
     }
     const bool moving=std::abs(e.x-e.px)>1e-5f || std::abs(e.y-e.py)>1e-5f;
-    if(moving && info.swim>0)return &g_sprites.unitAnim(drawType,UAnim::Swim,e.dir,(e.walkAnim/std::max(1,info.swimRate))%info.swim,color);
+    const int walkTicks=e.walkAnim*(world.usesNativeWalk(e)?2:1);
+    if(moving && info.swim>0)return &g_sprites.unitAnim(drawType,UAnim::Swim,e.dir,(walkTicks/std::max(1,info.swimRate))%info.swim,color);
     if(info.tread>0)return &g_sprites.unitAnim(drawType,UAnim::Tread,e.dir,(world.tick/std::max(1,info.treadRate))%info.tread,color);
     return nullptr;
 }

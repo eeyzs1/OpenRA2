@@ -127,3 +127,7 @@ Scene65普通AI返修修正不读取展示反馈字段；Player.isAI和现有服
 ## Scene68车辆手动散开
 
 普通RA2 Scene68指纹区分Unit类地面/海军车辆的零抽样、Nearby及准入守卫。现有Cmd::Scatter、归属/世代、path/goal/state、nativeGround与卸载任务字段足够；World77/App11/12、Production11和未发布LAN96不增加线路或保存字段。Source67旧车辆重发命令保持原结果，YR43与冻结Scene41不启用新分支。
+
+## Scene69 Walk步兵移动
+
+同一未发布LAN96与既有Cmd/世代/World77/App11/12结构保持。Scene69规则指纹区分15Hz整数Walk；权威步进由既有World tick重建，不新增同步/保存阶段。展示缓存不入校验和存档，不参与模拟。历史Scene68及以前、YR43和冻结来源AI保留各自行为与实际续跑。

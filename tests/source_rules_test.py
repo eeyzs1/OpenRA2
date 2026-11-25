@@ -66,7 +66,7 @@ def main():
             profile = configparser.ConfigParser(interpolation=None);profile.optionxform = str
             profile.read(output, encoding="utf-8")
             scene = profile["Scene"]
-            assert scene["Version"] == ("68" if edition == "ra2" else "43") and scene["Mode"] == "Rules" and scene["Map"] == ""
+            assert scene["Version"] == ("69" if edition == "ra2" else "43") and scene["Mode"] == "Rules" and scene["Map"] == ""
             carrier=profile["NativeAircraft.0"]
             assert profile["NativeAircraft"]["Version"] == "2" and profile["NativeAircraft"]["Count"] == "2" and carrier["Capacity"] == "3"
             assert carrier["Regenerate"] == "600" and carrier["Reload"] == "150" and carrier["LaunchDelay"] == "20"

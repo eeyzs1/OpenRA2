@@ -212,7 +212,7 @@ def export_profile(tree, edition, output):
     general = rules["general"]
     ini = configparser.ConfigParser(interpolation=None);ini.optionxform = str
     label = "RA2 本地基础规则" if edition == "ra2" else "尤里本地基础规则"
-    ini["Scene"] = {"Version": "68" if edition == "ra2" else "43", "TemporalVersion": "1", "CrewVersion": "2", "Mode": "Rules", "RulesId": catalog["edition"], "RulesName": label,
+    ini["Scene"] = {"Version": "69" if edition == "ra2" else "43", "TemporalVersion": "1", "CrewVersion": "2", "Mode": "Rules", "RulesId": catalog["edition"], "RulesName": label,
                     "Map": "", "SourceSHA256": catalog["sha256"], "SourceArchive": catalog["source"],
                     "SourceArtSHA256": catalog["art_sha256"], "SourceArtArchive": catalog["art_source"],
                     "Houses": "0", "Actors": "0", "Types": "0",

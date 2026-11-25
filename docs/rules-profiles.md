@@ -1,6 +1,6 @@
 # 普通地图的原始规则包
 
-普通入口默认RA2与美国，融合和YR仍可手动选择。来源基线是`ra2-local-base`，规则来自`ra2.mix/local.mix`，SHA-256为`fd1e95cea0306ea78049dc81c8cd816e18c28c496872a1ff02edd50bd082062f`。当前普通RA2为Scene68 / NativeProduction11，用World77保存建筑初始阵营、占领历史和出售阶段，并封装既有64..74主体及COW1/TUN1；YR仍为Scene43 / NativeProduction6 / World60，作者场景及冻结来源AI各保留自身合同。App11/12 / LAN96及各World布局见[当前架构](architecture.md)。
+普通入口默认RA2与美国，融合和YR仍可手动选择。来源基线是`ra2-local-base`，规则来自`ra2.mix/local.mix`，SHA-256为`fd1e95cea0306ea78049dc81c8cd816e18c28c496872a1ff02edd50bd082062f`。当前普通RA2为Scene69 / NativeProduction11，用World77保存建筑初始阵营、占领历史和出售阶段，并封装既有64..74主体及COW1/TUN1；YR仍为Scene43 / NativeProduction6 / World60，作者场景及冻结来源AI各保留自身合同。App11/12 / LAN96及各World布局见[当前架构](architecture.md)。
 
 当前普通新局从`Riparius.Value`与`Cruentus.Value`读取25/50矿价。旧Scene37及缺省旧Scene42存档保留当时35/70。地图Scene42用`RulesBaseVersion=43/44/45/46`区分价格、采集、停靠和行驶语义。满载CMIN普通矿500、宝石1000，HARV普通矿1000、宝石2000。Production8起按类型整批卸矿，矿石先于宝石。每批的有效供电达到需求时，精炼器按当批数量计算增益并截断。拥有一个精炼器且两批均足电时，10矿石加10宝石实际入账937。
 
@@ -134,4 +134,8 @@ Scene67 / Production11不新增INI字段。手动Scatter复用现有PlayerScatte
 
 ## Scene68 Unit车辆散开
 
-当前普通RA2为Scene68 / Production11，不新增INI字段。新手动车辆分支重用IsTrain、MovementLocomotor及既有状态；与步兵不同，它不消费散开随机数。现有Scene67及以前的车辆算法保持，步兵/自动散开、YR43与冻结Scene41沿用；World77/App11/12和未发布LAN96不变。原版准入/水面/计时器捕获见tests/fixtures/ra2-vehicle-scatter-reference.json。
+Scene68 / Production11不新增INI字段。新手动车辆分支重用IsTrain、MovementLocomotor及既有状态；与步兵不同，它不消费散开随机数。现有Scene67及以前的车辆算法保持，步兵/自动散开、YR43与冻结Scene41沿用；World77/App11/12和未发布LAN96不变。原版准入/水面/计时器捕获见tests/fixtures/ra2-vehicle-scatter-reference.json。
+
+## Scene69 Walk整数步进
+
+普通RA2 Scene69沿用Production11与现有速度/老兵/增益来源，不增加INI字段。Walk类型在原版帧边界计算整数位移与分阶段舍入；既有Move、目标、占位和层查询继续负责准入。旧来源不切换新运动，YR43与冻结Scene41导出的字节合同保持。World77/App11/12/LAN96不加字段。

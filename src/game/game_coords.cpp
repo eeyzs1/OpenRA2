@@ -13,8 +13,11 @@ void Game::screenToWorld(int sx, int sy, float& wx, float& wy) const {
 
 Vector2 Game::unitScreenPos(const World::Ent& e) const {
     // 瓦片浮点坐标 → 世界像素：sx=(x-y)*32, sy=(x+y)*16 − height*16
-    float ex = e.px + (e.x - e.px) * interpAlpha;
-    float ey = e.py + (e.y - e.py) * interpAlpha;
+    const bool walkView=e.nativeWalkViewTick && world.tick>=e.nativeWalkViewTick && world.tick-e.nativeWalkViewTick<=1
+        && e.x==e.nativeWalkViewX && e.y==e.nativeWalkViewY;
+    const float alpha=walkView?((float)(world.tick-e.nativeWalkViewTick)+interpAlpha)*.5f:interpAlpha;
+    float ex = e.px + (e.x - e.px) * alpha;
+    float ey = e.py + (e.y - e.py) * alpha;
     float wx = (ex - ey) * (TILE_W / 2.0f);
     float wy = (ex + ey) * (TILE_H / 2.0f);
     int cx = (int)floorf(ex), cy = (int)floorf(ey);
@@ -22,7 +25,7 @@ Vector2 Game::unitScreenPos(const World::Ent& e) const {
         if(world.map.hasBridgeDecks()) {
             const float before=(float)world.map.surfaceHeight((int)std::floor(e.px),(int)std::floor(e.py),e.previousNavLayer);
             const float after=(float)world.actorSurfaceHeight(e);
-            wy-=(before+(after-before)*interpAlpha)*(TILE_H/2.f);
+            wy-=(before+(after-before)*alpha)*(TILE_H/2.f);
         } else wy-=(float)heightScreenY(world.map.at(cx,cy).height);
     }
     return {wx - camX, wy - camY};

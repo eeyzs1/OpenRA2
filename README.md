@@ -1,6 +1,16 @@
 # OpenRA2
 
-OpenRA2 是一个受《红色警戒 2》启发的 Windows 即时战略项目，使用 C++23、raylib 和 Lua。当前可进行遭遇战、局域网对战和盟军第一关。默认采用红警 2 基础规则，可在开局时选择《尤里的复仇》或融合规则。完整战役、规则与操作手感仍在逐项校准。
+OpenRA2 是一个以复刻《红色警戒 2》为目标的 Windows 即时战略项目，使用 C++23、raylib 和 Lua。当前可进行遭遇战、局域网对战和盟军第一关。默认采用红警 2 基础规则，可在开局时选择《尤里的复仇》或融合规则。完整原版 AI、战役、规则与操作手感仍在开发和验收中。
+
+## 当前状态与继续开发
+
+截至2026-11-25，[main](https://github.com/eeyzs1/OpenRA2/tree/main)已包含普通RA2 Scene69 / Production11与M1/MOVE-WALK验收。完整Release196/196、相关ASan11/11通过，使用World77、App11/12和LAN96。上一发布基线为Scene68（[dd5b677](https://github.com/eeyzs1/OpenRA2/commit/dd5b67746d0d256c94bad793e1e171520cc49685)）。这些验证覆盖已有范围，不等同于完整原版已经复刻。
+
+当前具备完整对局基础，普通AI主要使用项目策略；战役只接入盟军第一关`all01t`，其余23关仍待接入与验收，第一关的人工整关验收也未完成。影片按既定要求排除，简报、任务文字、语音和目标仍在范围内。YR与融合扩展另行验收。
+
+后续按[RA2完成标准与交付路线](docs/ra2-completion-plan.md)推进：先收敛RA2遭遇战交付版，再按共用机制依赖推进原版AI和完整战役，最后完成系统验收。进度以关闭的玩家能力和主要缺口为依据。
+
+**继续开发时先读[AGENTS.md当前交接](AGENTS.md)和交付路线。** 本次发布包含M1/MOVE-WALK：Scene69整数行走、移动/Stop/改令、定身与阻挡恢复、装载整合和精确续档已通过限定验收；完整Release196/196、相关ASan11/11通过。完整原版AI、其余23关战役和集中人工验收仍待推进；当前整条复刻路线尚未完成。
 
 ## 快速开始
 
@@ -79,6 +89,6 @@ python -X utf8 -B tests/verify.py --build build --all
 - [`src/`](src/) 存放共享运行库、游戏入口、图像、声音和网络代码。测试实现仅链接到回归程序。
 - [`tests/`](tests/) 存放验证入口和回归夹具，包括历史存档样本。
 - [`tools/`](tools/) 提供本地素材导入和开发工具。
-- 开始改动前请读[仓库规则](AGENTS.md)和[开发流程](docs/development.md)。版本与兼容范围以[架构文档](docs/architecture.md)为准，旧批次记录见[历史目录](docs/history/README.md)。
+- 开始改动前请读[仓库规则与当前交接](AGENTS.md)、[完成标准与交付路线](docs/ra2-completion-plan.md)和[开发流程](docs/development.md)。版本与兼容范围以[架构文档](docs/architecture.md)为准，旧批次记录见[历史目录](docs/history/README.md)。
 
 原版安装文件、生成素材、玩家存档和本地回归输出由 `.gitignore` 管理。用于回归的历史样本位于 `tests/fixtures/`。

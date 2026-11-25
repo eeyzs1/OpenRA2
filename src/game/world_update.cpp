@@ -22,7 +22,10 @@ void World::update() {
     movementReservations.assign(movementSlotCount(), INVALID_EID);
     resetMovementCorridors();
     for(auto& gate:trafficGates) gate.touched=false;
-    for (Ent& e : ents) { e.px = e.x; e.py = e.y;e.previousNavLayer=e.navLayer;
+    for (Ent& e : ents) {
+        const bool keepWalkView=e.nativeWalkViewTick && tick==e.nativeWalkViewTick+1
+            && e.x==e.nativeWalkViewX && e.y==e.nativeWalkViewY;
+        if(!keepWalkView){e.px=e.x;e.py=e.y;e.previousNavLayer=e.navLayer;}
         e.previousDir=e.dir;e.previousTurretDir=e.turretDir;
         if(usesNativeGround(e)){e.previousHullHeading=nativeHullHeading(e,tick-1);e.previousTurretHeading=nativeTurretHeading(e,tick-1);}
         if(e.nativeJumpjet.motion.started || e.supportAir)e.previousNativeAltitude=e.nativeAltitude;
@@ -1066,13 +1069,15 @@ void World::updateUnit(Ent& e, EID id) {
                 completeEntry(id,destination);
                 break;
             }
-            if(e.pathIdx>=(int)e.path.size() || (tick+(uint64_t)id)%30==0) {
+            const bool cellContact=!target.isBuilding && nativeRulesBaseVersion>=nativeTransportBoardingSceneVersion;
+            const bool retainedWalkRoute=usesNativeWalk(e) && cellContact && !e.path.empty()
+                && e.path.back()==Vec2i{(int)target.x,(int)target.y};
+            if(e.pathIdx>=(int)e.path.size() || ((tick+(uint64_t)id)%30==0 && !retainedWalkRoute)) {
                 if(repathsThisTick>=8) break;
                 ++repathsThisTick;++repathRequests;std::vector<Vec2i> path;
                 if(!entryPath(e,target,path)) { ++repathFailures;endEntry(e,id,EntryRejectReason::Unreachable);break; }
                 e.path=std::move(path);e.pathIdx=0;
             }
-            const bool cellContact=!target.isBuilding && nativeRulesBaseVersion>=nativeTransportBoardingSceneVersion;
             const auto actorRef=entityRef(id),carrierRef=entityRef(destination);
             moveAlongPath(e,id);
             if(cellContact && valid(actorRef) && valid(carrierRef)) {

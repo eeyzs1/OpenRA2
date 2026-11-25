@@ -247,7 +247,7 @@ int main(int argc, char** argv) {
         "--entity-identity-regression",
         "--transport-exit-regression",
         "--allied-boarding-regression",
-        "--transport-boarding-regression", "--building-repair-regression", "--building-sale-regression", "--building-survivors-regression", "--player-scatter-regression",
+        "--transport-boarding-regression", "--building-repair-regression", "--building-sale-regression", "--building-survivors-regression", "--player-scatter-regression", "--infantry-travel-regression",
         "--rules-profile-regression", "--source-match-regression", "--source-mode-regression", "--source-economy-regression", "--source-support-regression", "--support-delivery-regression", "--source-crate-regression", "--native-gatling-regression", "--rules-consistency-regression",
         "--rules-selection-regression",
         "--rules-spawner-regression",
@@ -982,6 +982,10 @@ int main(int argc, char** argv) {
     }
     if(int at=findFlag("--building-repair-regression");at>=0) {
         const int failures=game.buildingRepairRegression(at+1<argc?argv[at+1]:"review_out/building-repair");
+        game.shutdown();return failures?1:0;
+    }
+    if(int at=findFlag("--infantry-travel-regression");at>=0) {
+        const int failures=game.infantryTravelRegression(at+1<argc?argv[at+1]:"review_out/infantry-travel");
         game.shutdown();return failures?1:0;
     }
     if(int at=findFlag("--player-scatter-regression");at>=0) {

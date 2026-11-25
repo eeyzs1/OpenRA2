@@ -6,9 +6,48 @@
 - Define one observable problem, affected files and acceptance criteria before a change. Finish that scope before expanding features, campaign coverage or source-fidelity research.
 - Reuse the current checkout. Preserve unrelated dirty files, user saves, mods and existing evidence. Do not stage, commit, reset or clean unless requested.
 - Keep mechanical extraction separate from simulation behavior changes. Do not add a compatibility switch for a pure refactor.
-- Use the current architecture in `docs/architecture.md` and the bounded workflow in `docs/development.md`. Dated batch documents describe historical results.
+- Use the current architecture in `docs/architecture.md`, the bounded workflow in `docs/development.md`, and the delivery priorities in `docs/ra2-completion-plan.md`. Dated batch documents describe historical results.
+- Tie each batch to a player-visible gap in the completion plan. Keep related speed/movement/command/save work in one declared flow; use targeted checks during implementation and the required full Release suite once that batch is stable. Do not split every helper or reference query into a new delivery batch.
+- Report closed player capabilities and remaining milestone gaps. Scene numbers, test counts and captured sample counts are evidence/version metrics, not a completion percentage. Source research must resolve the current declared gap; defer unrelated discoveries to the completion table.
 
-## Project handoff (2026-11-24)
+## Current handoff (2026-11-25)
+
+### Product objective and next priority
+
+- This is a RA2 recreation project using C++23, raylib and Lua. Follow the existing target of original RA2 rules, operation, skirmishes and the Allied/Soviet campaigns, with RA2 1.006 as the target baseline still requiring verification. Movies remain excluded by the user's earlier request; briefings, mission text, voices and objectives remain in scope. YR/fusion are separate extensions, not RA2 completion evidence.
+- Read `docs/ra2-completion-plan.md` before choosing work. Delivery order: M1 a clearly accepted RA2 skirmish build; M2 original AI coverage and M3 original campaigns according to shared dependencies; M4 whole-product acceptance. Campaign work should not be indefinitely blocked by unrelated AI internals once its own dependencies are ready.
+- The declared M1/MOVE-WALK batch has reached acceptance and is included in this main publication; see below. Next return to the M1 type/special-ability/player-flow matrix and select a verified player gap. Distinguish limited source proofs from full original UI/mission scheduling and whole-product completion.
+- Only `all01t` is currently registered. It has automated task-flow checks, not completed human whole-mission acceptance. The other 23 RA2 campaign missions remain to be installed and accepted; retired prototype missions do not count.
+
+### Published and accepted baseline
+
+- This main publication includes the accepted cumulative work through **Scene69 / Production11**, including M1/MOVE-WALK. Read `git log -1` for its commit and check HEAD, remote tracking and the current worktree at session start. The preceding Scene68 publication is `dd5b67746d0d256c94bad793e1e171520cc49685`. Reuse this checkout and preserve unrelated local work.
+- Current ordinary RA2 uses World77 with its existing base layouts/optional sections, App11/12 and LAN96. The separately numbered historical World68 quadratic-turn format is not the Scene68 rule cohort. YR remains Scene43/Production6; experimental source AI remains frozen at Scene41 and has not replaced ordinary AI.
+- Scene68 calibrates manual ground/naval Unit Scatter: Nearby search with no RNG draw, preserving an existing destination/route and rejecting restricted states including an active hull turn, Sleep, IsTrain, Teleport locomotor and active staged unloading. Infantry Scene67 and automatic reaction policies retain their own rules. Earlier scene saves continue under their historical semantics.
+- Current Scene69 evidence: `review_out/ra2-walk-steps-20261124/acceptance-audit.json`. Full Release **196/196**, related Release **24/24**, related ASan **11/11**; 1291 selected fresh states reproduced and 747 ASan states match Release byte for byte. The previous Scene68 receipt remains `review_out/ra2-vehicle-scatter-20261124/acceptance-audit.json` (195/195 full, 16/16 related Release, 11/11 ASan). Publication updates only the handoff metadata; the tested code/configuration inputs are unchanged.
+- Fixed original maps retain seeds922/923 and180000-tick budgets. Scene69 `mp08t2`/`mp15s4` settled at17484/92448, with two exact App12 checkpoints each. Preserve those inputs and outcome assertions; the historical Scene68 outcomes remain in its sealed receipt.
+- Captured `tests/fixtures/ra2-*.csv` and the crush-warning destination text have `-text` attributes to preserve recorded byte hashes. Generated assets, original installs, user saves and `review_out/` evidence remain local/ignored; README covers setup and the MIX path.
+
+### MOVE-WALK acceptance (2026-11-25, Scene69 publication)
+
+- The user's explicit request to continue authorized M1/MOVE-WALK implementation, and the subsequent push request authorized this publication. Scene69 is accepted and included in main. Future commits and pushes still require a user request.
+- Scene69 Walk infantry commit integer-lepton motion at15Hz boundaries derived from saved World tick. The source speed stages and quantized math reuse NativeMovementMath/NativeFlightMath. No new World/App or LAN fields; presentation-only nativeWalkViewTick/X/Y smooth two ticks without driving simulation or checksums.
+- Source69 also fixes the integration exposed by integer movement: an off-center diagonal sweeping into a dynamically occupied side cell can insert a legal cardinal prefix; boarding retains a valid route whose endpoint still matches the carrier cell. Keep all terrain/layer/occupancy checks and original goals. These are project-controller integration changes, not original pathfinder/AI fidelity claims.
+- Evidence and current status are in review_out/ra2-walk-steps-20261124/acceptance-audit.json and verification-status.json. Preserved initial red:136/720 first positions and187/849 continuous positions; final:720/720 and849/849,792 controlled speed cases. Eight real-command journeys and eight actual prechangeScene68 journeys each replay600ticks exactly. Pure extraction kept58 fresh files exact.
+- The raw original probe remains original-walk-r5 (10450 observations); masks/callback dependencies are in tests/fixtures/ra2-walk-step-reference.json. Raw Stop/MoveTo does not establish UI scheduling. ILocomotion40 is Process71dff0;48 is Stop_Moving71e110. Preserve all failed probe and consumer records.
+- New regression is ra2.infantry_travel / --infantry-travel-regression <dir>; runtime implementation is world_native_walk.cpp/native_walk.h with common movement/entry integration in world_pathing.cpp/world_update.cpp. Presentation integration is isolated in game_coords.cpp/game_render_world.cpp/game_unit_animation.cpp. Actual old input reader is OPENRA2_LEGACY_WALK68_INPUT_DIR, pointing to native-red/states/infantry-travel-audit.
+- Final relatedRelease24/24, ASan11/11 and fullRelease196/196 passed; productON/OFF has201 identical runtime inputs/flags, retains195 old test names plus infantry_travel, and30 shipping flag rejections pass. Do not treat internal version/test counts as full RA2 completion. This closes only the stated MOVE-WALK scope; M1 and complete RA2 remain open.
+- Next priority is the M1 type/special-ability/player-flow acceptance matrix in docs/ra2-completion-plan.md. Select the next independently bounded gap from user authorization; do not extend Walk research merely because new adjacent details can be inspected.
+
+### Session entry and progress reporting
+
+1. Read this current handoff, `docs/ra2-completion-plan.md`, `docs/architecture.md` and the bounded workflow in `docs/development.md`; inspect HEAD/status and the accepted receipt. Verify the current inputs rather than inferring acceptance from the branch name; this publication only changed documentation after the accepted run.
+2. MOVE-WALK is accepted through Scene69. Reuse its evidence and select the next bounded player-visible gap from the M1 acceptance matrix; do not restart the old red reproduction as unfinished work.
+3. Close the declared batch and update its milestone status. Report what the player can now do, supporting evidence, and the main remaining gaps; select a later independent batch only from the user's current authorization and the completion priorities.
+
+## Historical handoff (2026-11-24, before the Scene68 publication)
+
+The following records preserve the earlier development history. Their “current”, “published baseline” and “uncommitted” wording describes that earlier checkpoint. Use the 2026-11-25 handoff above for present HEAD, accepted results and next work; preserve all referenced evidence.
 
 - `675661c` is the published `main` baseline for this handoff. Check the current HEAD and worktree when starting a new session. `README.md` covers Windows setup and the local MIX path. Generated assets, user saves, and verification output are local.
 - Recent gameplay work focused on refinery docking, unloading, and tank steering. War Miners drive into the berth and use an accelerated departure on the normal return-to-ore cycle. Chrono Miners jump directly into an admitted berth. A miner inside the berth can accept a group Move and use the apron before following its new route. The calibrated cubic tank turn applies to same-layer, same-height right angles.
@@ -132,3 +171,7 @@ Report the resulting behavior, changed boundaries, actual checks and remaining l
 - Scene68普通地面/海军车辆玩家散开是当前RA2 / Production11合同。Unit的empty-source手动Scatter直接Nearby、不抽RNG、无方向回退；现有路线/目标、未结束车体转向、Sleep、IsTrain、时空机车和活动地面Unload拒绝改令。复用已有路径/移动目标、nativeGround计时器、sleeping/IsTrain/机车类型与卸载任务，不新增字段；Source67及以前继续旧车辆算法，步兵67与自动反应策略沿用。原版CanScatter/COM标识/真实Facing计时器/Nearby及水面查询见`tests/fixtures/ra2-vehicle-scatter-reference.json`。Sticky没有独立普通世界状态，5c8来源位只作受控对照，不虚构新的存储或INI映射。World77/App11/12、Production11和未发布LAN96不变；原版整帧、完整任务/规划及物理移动仍开放。
 
 - 本批最终相关Release16/16、ASan11/11、完整Release195/195通过，使用同一689项代码/配置和额外固定CSV。原版2,715项包括1,680条目的地、1,024条准入、6条真实计时器边界及5条排队任务控制；项目映射四种现有速度类型的960条目的地与96条准入，修正前均0匹配，修正后全匹配。共用Nearby的纯改名/参数整理先保留226份输出逐字节一致。13条实际流程覆盖坦克/舰船/气垫、已有路线、Guard、转向、Stop、时空矿车、活动卸载、无出口、IsTrain和宽弯；各有下令前/后与中途保存及600tick续跑，轮式车辆另由命令矩阵覆盖。13份实际Scene67下令前档重发Scatter保持全部601个校验值；继承六组Scene66步兵控制。完整运行复现907份选定新状态，ASan的837份状态与Release逐字节相同。两张固定原图仍用种子922/923与180000tick窗口，在31911/116755自然结算，与Scene67时点相同，各有2份精确App12检查点。195个旧测试名全部保留，CMake/入口/发布参数未改；本批未重复产品ON/OFF检查。完整输入58项、14张新截图通过，用户文件恢复。首次夹具编译失败（0项执行）、有效红测16条失败及机械整理保留的失败均未覆盖；原有6770份封存证据保持。验收收据为`review_out/ra2-vehicle-scatter-20261124/acceptance-audit.json`。
+
+### MOVE-WALK final receipt
+
+M1/MOVE-WALK本批相关Release24/24、ASan11/11、完整Release196/196通过，使用同一693项代码/配置及额外固定CSV。普通速度八方向的720条首帧位置从136匹配变为720匹配，32组连续轨迹的849帧从187匹配变为849匹配；792条受控速度舍入全部匹配。8条Move/Stop/改令/速度/续档流程、定身恢复、受阻清口再令、编队与展示独立性通过；8份实际Scene68行走档各保留600tick的601个校验值。原有标量速度计算先纯提取，58份输出字节不变。消费检查曾有效失败于容量争抢与移动载具登车；修正动态格角的合法直角前缀与仍有效的登车路径保留，原输入/窗口/断言不改，两流程恢复通过。1291份选定状态在完整运行精确复现，ASan的747份与Release逐字节相同。两张原图沿922/923及180000tick原窗口自然结算于17484/92448，各两份App12检查点精确。产品ON/OFF的201项runtime输入与参数相同，195个旧测试名保留并新增infantry_travel；30次shipping参数拒绝、完整输入58项与14张新截图通过，用户文件恢复。源码与早期探针/红测/失败消费记录保留，旧Scene68的7195份封存工件不变。收据：`review_out/ra2-walk-steps-20261124/acceptance-audit.json`。

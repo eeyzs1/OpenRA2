@@ -1,0 +1,60 @@
+{
+  "scope": "Ordinary source Walk admitted flat-segment integer-lepton stepping and staged speed arithmetic; current project Move admission/command policy stays distinct from source whole scheduling.",
+  "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+  "probe": {
+    "exitCode": 0,
+    "seconds": 0.0779999999795109,
+    "probeSourceSHA256": "5f15687ff0bd624f1f10c3b70b425c1929944cb60b6969ab354756d5c8d3227f",
+    "probeExecutableSHA256": "47e9d3645feb04aa490f19b36c2ffad75d9348bc94810fc8003710e3ac845f70",
+    "originalExeSHA256": "fe67fdac5073530a79baec14c4e072b5e7e4c0c462cee9659870c5330e9e6e3e",
+    "logSHA256": "9158779350298fcc9e05df41bbd5f20d5d41edd3467aac557171055bbfb1d18a"
+  },
+  "cases": {
+    "speed": 3168,
+    "step": 1620,
+    "sequenceFrames": 5662,
+    "total": 10450
+  },
+  "fixtureInputs": {
+    "ra2-walk-speed-cases.csv": "53cf8cffd7839adaa14779fa02834a197bba222e01b1184b17bc87dc353b9048",
+    "ra2-walk-step-cases.csv": "ff58c5434f70dcc9fbcdbd403c02753446d6310d28de30a0eecd0528d73d87ef",
+    "ra2-walk-sequences.csv": "f05d0b75a8b18eccf04fa49dfd091c7f6b0f488115f64a52548f61bdeadd3d3a"
+  },
+  "addresses": {
+    "infantrySpeed": "0x508980",
+    "footSpeed": "0x4c9b10",
+    "baseSpeed": "0x6d8e90",
+    "houseSpeed": "0x4f5a20",
+    "currentSpeedSetter": "0x4c2df0",
+    "walkProcess": "0x71dff0",
+    "walkMovement": "0x71e220",
+    "admittedStep": "0x71f077",
+    "positionCommit": "0x4ca160",
+    "walkILocomotionVTable": "0x7aead8",
+    "infantryVTable": "0x7a3540",
+    "infantryTypeVTable": "0x7a3a78",
+    "sourceControlWord": "0x7d8964"
+  },
+  "observations": [
+    "The original speed getter multiplies integer maximum speed by the House infantry speed and actor470, truncates, applies Faster/veteran and truncates, then actor468 current-speed ratio and truncates. Controlled panic/crawls branches adjust that integer again.",
+    "The original Walk processor sets the current-speed ratio to1 for ordinary admitted advancement, executes its actual speed getter and quantized atan/trig tables, then commits integer coordinates.",
+    "Already admitted movement performs no new cell-admission query during these steps. A destination within original approximate distance<17 is snapped before the ordinary speed branch.",
+    "The existing NativeFlightMath.direction/planarStep and ordered NativeMovementMath arithmetic reproduced all3168 speed and1296 initial displacement controls before product changes. The same source math functions are shared; no second table implementation is needed.",
+    "Raw locomotor Stop_Moving clears the final destination while retaining an active head; Move_To can replace final destination while retaining that head. These isolated interface observations do not establish original UI Stop/Move mission dispatch.",
+    "The older player-scatter probe callback at ILocomotion slot40 was named stopLoco. Actual Walk vtable40 is Process71dff0; Stop_Moving is slot48/71e110. Captured old destination/RNG records stay valid within their stated callback limits."
+  ],
+  "dependencies": [
+    "Private PE image with actual local code/tables and source x87 control word0x0e7f; normal host control word restored after every call.",
+    "Synthetic real-layout Infantry/InfantryType/House/Country/rules objects; actual maximum-speed and House-kind lookup execute, using supplied base speed/float House factor and actor470/468 inputs.",
+    "Faster-ability query and immobilization are controlled callbacks; raw panic5c3/crawlsC0B are explicit inputs. Those fields do not create a new combat/panic implementation.",
+    "Actual Walk Process, Movement_AI, current-speed setter, coordinate/cell lookup, heading/displacement math and Foot/Object coordinate setters execute.",
+    "Foot mark/cell bookkeeping and mission/waypoint completion callbacks are intercepted. New admission can be suppliedlegal in sequences; initial step matrix recordszero admission calls.",
+    "Flat64x64 map, no bridges/slopes/actors or original construction/pathfinder/frame loop. Sequences explicitly start an already admitted head."
+  ],
+  "limits": [
+    "Speed flags are inputs, not full original construction, combat posture/panic or veterancy scheduling proof. Generic actor470/468 names are retained where setter provenance is outside this batch.",
+    "Raw Stop/MoveTo interface observations are not a source UI/command timing contract. Existing project command admission/cleanup is retained until independently established.",
+    "Original full map-edge/bridge/slope geometry, destination/subcell choice, walking animation scheduling and complete mission/frame-loop fidelity remain open.",
+    "15Hz source steps are compared at project30Hz native-frame boundaries; render interpolation is derived presentation and must not drive simulation or save checksums."
+  ]
+}

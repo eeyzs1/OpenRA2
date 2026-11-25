@@ -64,7 +64,9 @@ inline constexpr int nativeNearbyHeightSceneVersion=66;
 inline constexpr int nativePlayerScatterSceneVersion=67;
 // Scene68 calibrates manual ground/naval Unit Scatter and its zero-draw search.
 inline constexpr int nativeUnitScatterSceneVersion=68;
-inline constexpr int nativeCurrentRulesSceneVersion=nativeUnitScatterSceneVersion;
+// Scene69 commits source Walk positions and speed arithmetic at native frames.
+inline constexpr int nativeWalkStepSceneVersion=69;
+inline constexpr int nativeCurrentRulesSceneVersion=nativeWalkStepSceneVersion;
 inline constexpr bool nativeOrdinaryRulesScene(int version) {
     return version==nativeSkirmishRulesSemantics || version==nativeEconomySceneVersion || version==nativeHarvestSceneVersion
         || version==nativeGroundSceneVersion || version==nativeTravelSceneVersion || version==nativeCrushingSceneVersion
@@ -76,6 +78,7 @@ inline constexpr bool nativeOrdinaryRulesScene(int version) {
         || version==nativeBuildingRepairSceneVersion || version==nativeBuildingSaleSceneVersion
         || version==nativeConstructionYardSaleSceneVersion || version==nativeSaleSurvivorsSceneVersion
         || version==nativeNearbyScatterSceneVersion || version==nativeNearbyHeightSceneVersion
-        || version==nativePlayerScatterSceneVersion || version==nativeUnitScatterSceneVersion;
+        || version==nativePlayerScatterSceneVersion || version==nativeUnitScatterSceneVersion
+        || version==nativeWalkStepSceneVersion;
 }
 inline constexpr int maximumNativeSceneVersion=std::max(nativeCurrentRulesSceneVersion,nativeGlobalAIContracts.back().sceneVersion);

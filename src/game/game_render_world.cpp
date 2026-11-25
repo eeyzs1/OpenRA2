@@ -588,7 +588,8 @@ void Game::drawEntities() {
                        && e.state != UState::Idle && e.state != UState::Attacking && e.state != UState::Landed
                        && (std::abs(e.x-e.px)>1e-5f || std::abs(e.y-e.py)>1e-5f)
                        && drawType != UnitType::Chrono) { // 超时空军团兵传送移动，不用行走帧
-                bodyP = &g_sprites.unitAnim(drawType, UAnim::Walk, e.dir, (e.walkAnim / std::max(1, ai.walkRate)) % ai.walk, drawCid);
+                const int walkTicks=e.walkAnim*(world.usesNativeWalk(e)?2:1);
+                bodyP = &g_sprites.unitAnim(drawType, UAnim::Walk, e.dir, (walkTicks / std::max(1, ai.walkRate)) % ai.walk, drawCid);
             } else if (deployedPose && ai.dep) {
                 bodyP = &g_sprites.unitAnim(drawType, UAnim::Dep, e.dir, 0, drawCid);
             } else if (ud.canHarvet() && world.harvesterUnloading(e)) {

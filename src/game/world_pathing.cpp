@@ -1,5 +1,6 @@
 #include "game/world.h"
 #include "game/native_scene_contract.h"
+#include "game/native_walk.h"
 #include "game/world_priv.h"
 #include "game/lang.h"
 #include "game/script.h"
@@ -550,11 +551,13 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
     if (e.crateSpeedBoost > 0) moveDelay = std::max(1, (int)(moveDelay * 0.8f));
     float step = nativeCrateMultiplier(e.nativeIdentity,10) / (float)moveDelay;
     const bool sourceMovement=nativeMovementRules.available && e.nativeIdentity.definition && e.nativeIdentity.definition->movement.available();
+    const bool sourceWalk=usesNativeWalk(e);
     if(sourceMovement && e.x==next.x+.5f && e.y==next.y+.5f && e.navLayer==nextLayer) {
         // Traffic dwell nodes consume time, not distance. Their advancement
         // cannot depend on a nonzero locomotor velocity or accrue travel credit.
         releaseReservation();e.nativeMovement={};++e.pathIdx;e.moveTick=0;return;
     }
+    if(sourceWalk && tick%2!=0){releaseReservation();return;}
     const bool realTurning=usesNativeGround(e);
     const bool aimTurret=unitHasTurret(e.utype) && (e.state==UState::Attacking || e.state==UState::Chasing
         || (e.state==UState::AttackMoving && valid(e.target)));
@@ -567,6 +570,7 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
         e.blockTick=0;
         if(moved)e.walkAnim=e.walkAnim>=999999999?0:e.walkAnim+1;
         e.x=x;e.y=y;
+        if(sourceWalk && moved){e.nativeWalkViewTick=tick;e.nativeWalkViewX=e.x;e.nativeWalkViewY=e.y;}
         e.navLayer=(uint8_t)nextLayer;
         if(!keepCurve)e.driveArc={};
         ++e.pathIdx;
@@ -624,17 +628,15 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
         }
     }
     const float stopBefore=arc.active()?distf(entry.x,entry.y,next.x+.5f,next.y+.5f):0;
-    if(sourceMovement)step=nativeMovementStep(e,next.x,next.y,nextLayer,e.path.back(),stopBefore);
+    NativeWalkMath::Step walk;
+    if(sourceWalk) {
+        walk=NativeWalkMath::advance((int)(e.x*256),(int)(e.y*256),next.x*256+128,next.y*256+128,nativeWalkingSpeed(e));
+        step=std::hypot(walk.x/256.f-e.x,walk.y/256.f-e.y);
+    } else if(sourceMovement)step=nativeMovementStep(e,next.x,next.y,nextLayer,e.path.back(),stopBefore);
     else if(e.nativeIdentity.definition && e.nativeIdentity.definition->walkSpeedLeptons>=0) {
-        // Original Speed is percent -> 0..255 leptons per 15-Hz frame,
-        // never the prototype's inverted integer ticks-per-cell value.
-        const auto& profile=*e.nativeIdentity.definition;
-        float leptons=profile.walkSpeedLeptons*profile.walkVeteranSpeed[std::clamp(e.vetRank,0,2)]*nativeCrateMultiplier(e.nativeIdentity,10);
-        if(profile.rulesOnly)leptons*=(float)movementSpeedMultiplier(e.player);
-        if(e.crateSpeedBoost>0)leptons*=1.25f;
-        step=(int)leptons*(15.f/(256.f*LOGIC_FPS));
+        step=walkingMovementStep(e);
     }
-    if(step<=0){releaseReservation();return;}
+    if(step<=0 && !(sourceWalk && walk.arrived)){releaseReservation();return;}
     float tx = next.x + 0.5f, ty = next.y + 0.5f;
     float dx = tx - e.x, dy = ty - e.y;
     float dist = std::sqrt(dx * dx + dy * dy);
@@ -654,17 +656,32 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
         e.moveTick++;
     }
     // 落格前再检一次：防止两车同时滑入同格
-    if (dist <= step + 1e-4f) {
+    if (sourceWalk?walk.arrived:dist <= step + 1e-4f) {
         finishNode(tx,ty,dist>1e-4f);
     } else {
         const bool reachingArc=arc.active() && dist-stopBefore<=step+1e-5f;
-        const float mx=reachingArc?entry.x:e.x+(dx/dist)*step;
-        const float my=reachingArc?entry.y:e.y+(dy/dist)*step;
+        const float mx=sourceWalk?walk.x/256.f:reachingArc?entry.x:e.x+(dx/dist)*step;
+        const float my=sourceWalk?walk.y/256.f:reachingArc?entry.y:e.y+(dy/dist)*step;
         const int sweptLayer=map.hasBridgeDecks()?movementStep(e,(int)e.x,(int)e.y,e.navLayer,(int)mx,(int)my):0;
         // Diagonal interpolation can enter an orthogonal cell before the path
         // node's cell. Reserve/check the actual swept cell as well as the node.
         if (sweptLayer>=0 && cellHardBlockedForMove((int)mx,(int)my,id,sweptLayer,true)) {
             releaseReservation();
+            if(sourceWalk && std::abs(next.x-(int)e.x)==1 && std::abs(next.y-(int)e.y)==1
+                && Vec2i{(int)mx,(int)my}!=next && Vec2i{(int)mx,(int)my}!=Vec2i{(int)e.x,(int)e.y}) {
+                // A cell-center route can cut a dynamically occupied side
+                // cell from an off-center pose. Insert a legal cardinal leg
+                // instead of repeatedly requesting that same diagonal.
+                for(const Vec2i side:{Vec2i{next.x,(int)e.y},Vec2i{(int)e.x,next.y}}) {
+                    const int layer=movementStep(e,(int)e.x,(int)e.y,e.navLayer,side.x,side.y);
+                    if(layer<0 || bldBlocked(side.x,side.y,layer) || cellHardBlockedForMove(side.x,side.y,id,layer,true))continue;
+                    const auto first=NativeWalkMath::advance((int)(e.x*256),(int)(e.y*256),side.x*256+128,side.y*256+128,nativeWalkingSpeed(e));
+                    const int sx=first.x/256,sy=first.y/256;
+                    if(!passableStep((int)e.x,(int)e.y,sx,sy,ud.pathDomain(),e.navLayer)
+                        || bldBlocked(sx,sy,layer) || cellHardBlockedForMove(sx,sy,id,layer,true))continue;
+                    e.path.insert(e.path.begin()+e.pathIdx,side);e.blockTick=0;return;
+                }
+            }
             waitOrRepath(unitAtCell((int)mx,(int)my,sweptLayer));
             return;
         }
@@ -678,6 +695,7 @@ void World::moveAlongPath(Ent& e, EID id,int nativeSegments) {
         e.walkAnim=e.walkAnim>=999999999?0:e.walkAnim+1;
         e.x = mx;
         e.y = my;
+        if(sourceWalk){e.nativeWalkViewTick=tick;e.nativeWalkViewX=e.x;e.nativeWalkViewY=e.y;}
         e.navLayer=(uint8_t)sweptLayer;
         unitOccSync(id);
         airOccSync(id);

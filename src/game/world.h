@@ -294,6 +294,8 @@ public:
         int nativeEventTag=-1,nativeLastEnteredCell=-1;
         float x = 0, y = 0;        // 单位：浮点瓦片坐标；建筑：左上格
         float px = 0, py = 0;      // 上一逻辑帧位置（渲染插值用，update() 开头快照）
+        uint64_t nativeWalkViewTick=0; // presentation only: interpolate one native Walk frame across two ticks
+        float nativeWalkViewX=0,nativeWalkViewY=0; // presentation endpoint; neither saved nor hashed
         int occCell = -1;          // 单位格占位链表：当前 cellIdx，-1=未挂入（派生数据，不入存档/checksum）
         EID occNext = INVALID_EID; // 同格下一单位
         uint64_t nativeCellOrder=0; // Scene33: original movable-object LIFO order
@@ -825,6 +827,7 @@ public:
     bool usesNativeGround(const Ent& e) const;
     bool harvesterUnloading(const Ent& e) const {return e.state==UState::HarvestUnload && (!usesNativeGround(e) || e.nativeDock.phase==NativeDockPhase::Unload);}
     uint16_t nativeHullHeading(const Ent& e,uint64_t atTick) const;
+    bool usesNativeWalk(const Ent& e) const;
     uint16_t nativeTurretHeading(const Ent& e,uint64_t atTick) const;
     bool writeNativeMovementState(FILE* file) const;
     bool readNativeMovementState(FILE* file);
@@ -1222,6 +1225,8 @@ private:
     uint32_t nativeTravelChecksum() const;
     bool findNearestReachableOre(int sx, int sy, int maxR, Vec2i& out, EID mover=INVALID_EID) const;
     void moveAlongPath(Ent& e, EID id,int nativeSegments=8);
+    float walkingMovementStep(const Ent& e) const;
+    int nativeWalkingSpeed(const Ent& e) const;
     void prepareNativeMovement(Ent& e,int x,int y,int layer,Vec2i goal);
     float nativeMovementStep(Ent& e,int x,int y,int layer,Vec2i goal,float stopBefore=0);
     void tryUnstackIdle(Ent& e, EID id); // 静止叠格拆开（车互斥 / 步兵超叠）
